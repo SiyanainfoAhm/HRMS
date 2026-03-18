@@ -1,0 +1,214 @@
+import { NextRequest, NextResponse } from "next/server";
+import { supabase } from "@/lib/supabaseClient";
+import bcrypt from "bcryptjs";
+
+function isExpired(invite: any): boolean {
+  if (!invite?.expires_at) return false;
+  return new Date(invite.expires_at).getTime() < Date.now();
+}
+
+export async function GET(_: NextRequest, { params }: { params: Promise<{ token: string }> }) {
+  const { token } = await params;
+  if (!token) return NextResponse.json({ error: "Invalid token" }, { status: 400 });
+
+  const { data: invite, error } = await supabase
+    .from("HRMS_employee_invites")
+    .select("*")
+    .eq("token", token)
+    .maybeSingle();
+  if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+  if (!invite) return NextResponse.json({ error: "Invite not found" }, { status: 404 });
+  if (invite.status !== "pending") return NextResponse.json({ error: `Invite is ${invite.status}` }, { status: 400 });
+  if (isExpired(invite)) return NextResponse.json({ error: "Invite expired" }, { status: 400 });
+
+  let docQuery = supabase
+    .from("HRMS_company_documents")
+    .select("*")
+    .eq("company_id", invite.company_id)
+    .order("created_at", { ascending: true });
+
+  const requestedIds = Array.isArray(invite.requested_document_ids)
+    ? (invite.requested_document_ids as any[]).filter((x) => typeof x === "string")
+    : null;
+  if (requestedIds && requestedIds.length) {
+    docQuery = docQuery.in("id", requestedIds);
+  }
+
+  const { data: docs, error: docErr } = await docQuery;
+  if (docErr) return NextResponse.json({ error: docErr.message }, { status: 400 });
+
+  const { data: subs, error: subErr } = await supabase
+    .from("HRMS_employee_document_submissions")
+    .select("*")
+    .eq("invite_id", invite.id);
+  if (subErr) return NextResponse.json({ error: subErr.message }, { status: 400 });
+
+  return NextResponse.json({ invite, documents: docs ?? [], submissions: subs ?? [] });
+}
+
+export async function POST(request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
+  const { token } = await params;
+  if (!token) return NextResponse.json({ error: "Invalid token" }, { status: 400 });
+
+  const { data: invite, error } = await supabase
+    .from("HRMS_employee_invites")
+    .select("*")
+    .eq("token", token)
+    .maybeSingle();
+  if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+  if (!invite) return NextResponse.json({ error: "Invite not found" }, { status: 404 });
+  if (invite.status !== "pending") return NextResponse.json({ error: `Invite is ${invite.status}` }, { status: 400 });
+  if (isExpired(invite)) return NextResponse.json({ error: "Invite expired" }, { status: 400 });
+
+  const body = await request.json().catch(() => ({}));
+  const action = typeof body?.action === "string" ? body.action : "";
+
+  if (action === "submit_document") {
+    const documentId = typeof body?.documentId === "string" ? body.documentId : "";
+    const fileUrl = typeof body?.fileUrl === "string" ? body.fileUrl.trim() : "";
+    const signatureName = typeof body?.signatureName === "string" ? body.signatureName.trim() : "";
+
+    if (!documentId) return NextResponse.json({ error: "documentId is required" }, { status: 400 });
+
+    const { data: doc, error: docErr } = await supabase
+      .from("HRMS_company_documents")
+      .select("*")
+      .eq("company_id", invite.company_id)
+      .eq("id", documentId)
+      .maybeSingle();
+    if (docErr) return NextResponse.json({ error: docErr.message }, { status: 400 });
+    if (!doc) return NextResponse.json({ error: "Invalid document" }, { status: 400 });
+
+    if (doc.kind === "upload") {
+      if (!fileUrl) return NextResponse.json({ error: "fileUrl is required for upload documents" }, { status: 400 });
+      const { data, error: upErr } = await supabase
+        .from("HRMS_employee_document_submissions")
+        .upsert(
+          [
+            {
+              company_id: invite.company_id,
+              invite_id: invite.id,
+              user_id: invite.user_id,
+              document_id: documentId,
+              status: "submitted",
+              file_url: fileUrl,
+              submitted_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            },
+          ],
+          { onConflict: "invite_id,document_id" }
+        )
+        .select("*")
+        .single();
+      if (upErr) return NextResponse.json({ error: upErr.message }, { status: 400 });
+      return NextResponse.json({ submission: data });
+    }
+
+    // digital signature
+    if (!signatureName) return NextResponse.json({ error: "signatureName is required" }, { status: 400 });
+    const { data, error: sigErr } = await supabase
+      .from("HRMS_employee_document_submissions")
+      .upsert(
+        [
+          {
+            company_id: invite.company_id,
+            invite_id: invite.id,
+            user_id: invite.user_id,
+            document_id: documentId,
+            status: "signed",
+            file_url: fileUrl || null,
+            signature_name: signatureName,
+            signed_at: new Date().toISOString(),
+            submitted_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        ],
+        { onConflict: "invite_id,document_id" }
+      )
+      .select("*")
+      .single();
+    if (sigErr) return NextResponse.json({ error: sigErr.message }, { status: 400 });
+    return NextResponse.json({ submission: data });
+  }
+
+  if (action === "complete") {
+    const password = typeof body?.password === "string" ? body.password.trim() : "";
+    const profile = typeof body?.profile === "object" && body.profile ? body.profile : {};
+    if (!password || password.length < 8) return NextResponse.json({ error: "Password must be at least 8 characters" }, { status: 400 });
+
+    const requiredFields: { key: string; label: string }[] = [
+      { key: "name", label: "Full name" },
+      { key: "phone", label: "Phone" },
+      { key: "dateOfBirth", label: "Date of birth" },
+      { key: "dateOfJoining", label: "Date of joining" },
+      { key: "currentAddressLine1", label: "Current address" },
+      { key: "currentCity", label: "City" },
+      { key: "currentState", label: "State" },
+      { key: "currentCountry", label: "Country" },
+      { key: "currentPostalCode", label: "Postal code" },
+      { key: "bankAccountNumber", label: "Bank account number" },
+      { key: "bankIfsc", label: "IFSC" },
+    ];
+    const missingProfile = requiredFields
+      .filter(({ key }) => typeof (profile as any)?.[key] !== "string" || String((profile as any)[key]).trim() === "")
+      .map(({ label }) => label);
+    if (missingProfile.length) {
+      return NextResponse.json({ error: `Missing required fields: ${missingProfile.join(", ")}` }, { status: 400 });
+    }
+
+    // Ensure all mandatory documents are completed (submitted or signed).
+    const { data: docs, error: docErr } = await supabase
+      .from("HRMS_company_documents")
+      .select("id, is_mandatory")
+      .eq("company_id", invite.company_id);
+    if (docErr) return NextResponse.json({ error: docErr.message }, { status: 400 });
+
+    const mandatoryIds = (docs ?? []).filter((d: any) => d.is_mandatory).map((d: any) => d.id as string);
+    if (mandatoryIds.length) {
+      const { data: subs, error: subErr } = await supabase
+        .from("HRMS_employee_document_submissions")
+        .select("document_id, status")
+        .eq("invite_id", invite.id);
+      if (subErr) return NextResponse.json({ error: subErr.message }, { status: 400 });
+      const done = new Set((subs ?? []).filter((s: any) => s.status === "submitted" || s.status === "signed" || s.status === "approved").map((s: any) => s.document_id));
+      const missing = mandatoryIds.filter((id) => !done.has(id));
+      if (missing.length) return NextResponse.json({ error: "Please complete all mandatory documents first." }, { status: 400 });
+    }
+
+    const password_hash = await bcrypt.hash(password, 10);
+
+    if (invite.user_id) {
+      const { error: updErr } = await supabase
+        .from("HRMS_users")
+        .update({
+          password_hash,
+          name: typeof profile?.name === "string" ? profile.name.trim() || null : undefined,
+          phone: typeof profile?.phone === "string" ? profile.phone.trim() || null : undefined,
+          date_of_birth: typeof profile?.dateOfBirth === "string" ? profile.dateOfBirth || null : undefined,
+          date_of_joining: typeof profile?.dateOfJoining === "string" ? profile.dateOfJoining || null : undefined,
+          current_address_line1: typeof profile?.currentAddressLine1 === "string" ? profile.currentAddressLine1.trim() || null : undefined,
+          current_city: typeof profile?.currentCity === "string" ? profile.currentCity.trim() || null : undefined,
+          current_state: typeof profile?.currentState === "string" ? profile.currentState.trim() || null : undefined,
+          current_country: typeof profile?.currentCountry === "string" ? profile.currentCountry.trim() || null : undefined,
+          current_postal_code: typeof profile?.currentPostalCode === "string" ? profile.currentPostalCode.trim() || null : undefined,
+          bank_account_number: typeof profile?.bankAccountNumber === "string" ? profile.bankAccountNumber.trim() || null : undefined,
+          bank_ifsc: typeof profile?.bankIfsc === "string" ? profile.bankIfsc.trim() || null : undefined,
+          employment_status: "current",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", invite.user_id);
+      if (updErr) return NextResponse.json({ error: updErr.message }, { status: 400 });
+    }
+
+    const { error: invErr } = await supabase
+      .from("HRMS_employee_invites")
+      .update({ status: "completed", completed_at: new Date().toISOString() })
+      .eq("id", invite.id);
+    if (invErr) return NextResponse.json({ error: invErr.message }, { status: 400 });
+
+    return NextResponse.json({ ok: true });
+  }
+
+  return NextResponse.json({ error: "Invalid action" }, { status: 400 });
+}
+
