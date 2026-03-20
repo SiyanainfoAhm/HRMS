@@ -2,6 +2,7 @@
 
 import { useEffect, useState, FormEvent } from "react";
 import { useToast } from "@/components/ToastProvider";
+import { useAuth } from "@/contexts/AuthContext";
 
 type Employee = {
   id: string;
@@ -12,11 +13,15 @@ type Employee = {
   employeeCode: string;
   phone: string;
   dateOfJoining: string;
+  dateOfLeaving?: string;
+  ctc?: number | null;
   createdAt: string;
 };
 
 export default function EmployeesPage() {
   const { showToast } = useToast();
+  const { role } = useAuth();
+  const canEditCtc = role === "super_admin" || role === "admin" || role === "hr";
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -26,11 +31,22 @@ export default function EmployeesPage() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
-  const [role, setRole] = useState<Employee["role"]>("employee");
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [formRole, setFormRole] = useState<Employee["role"]>("employee");
   const [employmentStatus, setEmploymentStatus] = useState<Employee["employmentStatus"]>("preboarding");
   const [employeeCode, setEmployeeCode] = useState("");
   const [phone, setPhone] = useState("");
+  const [gender, setGender] = useState<"male" | "female" | "other" | "">("");
+  const [designation, setDesignation] = useState("");
+  const [aadhaar, setAadhaar] = useState("");
+  const [pan, setPan] = useState("");
+  const [uanNumber, setUanNumber] = useState("");
+  const [pfNumber, setPfNumber] = useState("");
+  const [esicNumber, setEsicNumber] = useState("");
   const [dateOfJoining, setDateOfJoining] = useState("");
+  const [grossSalary, setGrossSalary] = useState("");
+  const [pfEligible, setPfEligible] = useState(false);
+  const [esicEligible, setEsicEligible] = useState(false);
   const [currentAddressLine1, setCurrentAddressLine1] = useState("");
   const [currentAddressLine2, setCurrentAddressLine2] = useState("");
   const [currentCity, setCurrentCity] = useState("");
@@ -74,6 +90,14 @@ export default function EmployeesPage() {
   const [resendDocIds, setResendDocIds] = useState<string[]>([]);
   const [resending, setResending] = useState(false);
 
+  const [convertDialogOpen, setConvertDialogOpen] = useState(false);
+  const [convertTarget, setConvertTarget] = useState<Employee | null>(null);
+  const [convertConfirmStatus, setConvertConfirmStatus] = useState<"current" | "past">("current");
+  const [convertDate, setConvertDate] = useState("");
+  const [converting, setConverting] = useState(false);
+
+  const [companyPtMonthly, setCompanyPtMonthly] = useState<number>(200);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -95,6 +119,26 @@ export default function EmployeesPage() {
   }, []);
 
   useEffect(() => {
+    if (!canEditCtc) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/company/me");
+        const data = await res.json();
+        if (res.ok && data?.company && !cancelled) {
+          const pt = data.company.professional_tax_monthly ?? data.company.professional_tax_annual ?? 200;
+          setCompanyPtMonthly(Number(pt));
+        }
+      } catch {
+        // keep default 200
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [canEditCtc]);
+
+  useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") setIsDialogOpen(false);
     }
@@ -104,13 +148,24 @@ export default function EmployeesPage() {
 
   function resetForm() {
     setFormError(null);
+    setEmailError(null);
     setName("");
     setEmail("");
-    setRole("employee");
+    setFormRole("employee");
     setEmploymentStatus("preboarding");
     setEmployeeCode("");
     setPhone("");
+    setGender("");
+    setDesignation("");
+    setAadhaar("");
+    setPan("");
+    setUanNumber("");
+    setPfNumber("");
+    setEsicNumber("");
     setDateOfJoining("");
+    setGrossSalary("");
+    setPfEligible(false);
+    setEsicEligible(false);
     setCurrentAddressLine1("");
     setCurrentAddressLine2("");
     setCurrentCity("");
@@ -131,18 +186,41 @@ export default function EmployeesPage() {
     setPassword("");
   }
 
+  const gross = parseFloat(grossSalary) || 0;
+  const pfEmp = pfEligible ? Math.round(gross * 0.12) : 0;
+  const pfEmpr = pfEligible ? Math.round(gross * 0.12) : 0;
+  const esicEmp = esicEligible && gross < 21000 ? Math.round(gross * 0.0075) : 0;
+  const esicEmpr = esicEligible && gross < 21000 ? Math.round(gross * 0.0325) : 0;
+  const ptMonthly = companyPtMonthly;
+  const calculatedCtc = gross + pfEmpr + esicEmpr; // CTC = Gross + Employer PF + Employer ESIC
+  const calculatedTakeHome = gross - pfEmp - esicEmp - ptMonthly; // Take home = Gross - Emp PF - Emp ESIC - PT
+
+  function validateEmail(v: string): string | null {
+    const value = v.trim();
+    if (!value) return "Email is required";
+    // Simple RFC-like check (good UX, not overly strict)
+    const ok = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+    return ok ? null : "Enter a valid email (e.g. name@company.com)";
+  }
+
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
     setFormError(null);
     setFormLoading(true);
     try {
+      const eErr = validateEmail(email);
+      setEmailError(eErr);
+      if (eErr) {
+        setFormLoading(false);
+        return;
+      }
       const res = await fetch("/api/employees", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: name.trim() || undefined,
           email: email.trim(),
-          role,
+          role: formRole,
           employmentStatus,
           employeeCode: employeeCode.trim() || undefined,
           phone: phone.trim() || undefined,
@@ -164,6 +242,17 @@ export default function EmployeesPage() {
           bankName: bankName.trim() || undefined,
           bankAccountNumber: bankAccountNumber.trim() || undefined,
           bankIfsc: bankIfsc.trim() || undefined,
+          grossSalary: grossSalary.trim() ? parseFloat(grossSalary.trim()) : undefined,
+          pfEligible,
+          esicEligible,
+          gender: gender || undefined,
+          designation: designation || undefined,
+          aadhaar: aadhaar || undefined,
+          pan: pan || undefined,
+          uanNumber: uanNumber || undefined,
+          pfNumber: pfNumber || undefined,
+          esicNumber: esicNumber || undefined,
+          ctc: calculatedCtc || undefined,
           password: password.trim() || undefined,
           requestedDocumentIds: requestedDocIds.length ? requestedDocIds : undefined,
         }),
@@ -256,22 +345,29 @@ export default function EmployeesPage() {
     setResendDialogOpen(true);
   }
 
-  async function convertToCurrent(emp: Employee) {
+  async function convertEmployee(emp: Employee, status: "current" | "past", date: string) {
     try {
       setError(null);
+      setConverting(true);
       const res = await fetch("/api/employees", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "convert_to_current", userId: emp.id }),
+        body: JSON.stringify(
+          status === "current"
+            ? { action: "convert_to_current", userId: emp.id, dateOfJoining: date || undefined }
+            : { action: "convert_to_past", userId: emp.id, lastWorkingDate: date || undefined }
+        ),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to convert");
       const refreshed = await fetch("/api/employees");
       const refreshedData = await refreshed.json();
       if (refreshed.ok) setEmployees(refreshedData.employees);
-      showToast("success", "Employee moved to Current");
+      showToast("success", status === "current" ? "Employee moved to Current" : "Employee moved to Past");
     } catch (e: any) {
       showToast("error", e?.message || "Failed to convert");
+    } finally {
+      setConverting(false);
     }
   }
 
@@ -397,22 +493,68 @@ export default function EmployeesPage() {
                     type="email"
                     required
                     value={email}
-                    onChange={(e) => setEmail(e.target.value)}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setEmail(v);
+                      setEmailError(validateEmail(v));
+                    }}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  />
+                  {emailError && <p className="mt-1 text-xs text-red-600">{emailError}</p>}
+                </div>
+                <div className="md:col-span-1">
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Gross salary (monthly)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="100"
+                    value={grossSalary}
+                    onChange={(e) => setGrossSalary(e.target.value)}
+                    placeholder="e.g. 25000"
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                   />
                 </div>
                 <div className="md:col-span-1">
+                  <label className="mb-1 block text-sm font-medium text-slate-700">CTC</label>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                    {calculatedCtc > 0 ? calculatedCtc.toLocaleString("en-IN") : "—"}
+                  </div>
+                </div>
+                <div className="md:col-span-1">
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Take home (approx)</label>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                    {calculatedTakeHome > 0 ? calculatedTakeHome.toLocaleString("en-IN") : "—"}
+                  </div>
+                </div>
+                <div className="md:col-span-1 flex items-end gap-4 pb-2">
+                  <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={pfEligible}
+                      onChange={(e) => setPfEligible(e.target.checked)}
+                    />
+                    PF eligible
+                  </label>
+                  <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={esicEligible}
+                      onChange={(e) => setEsicEligible(e.target.checked)}
+                    />
+                    ESIC eligible
+                  </label>
+                </div>
+                <div className="md:col-span-1">
                   <label className="mb-1 block text-sm font-medium text-slate-700">Role</label>
                   <select
-                    value={role}
-                    onChange={(e) => setRole(e.target.value as Employee["role"])}
+                    value={formRole}
+                    onChange={(e) => setFormRole(e.target.value as Employee["role"])}
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                   >
                     <option value="employee">Employee</option>
                     <option value="manager">Manager</option>
                     <option value="hr">HR</option>
                     <option value="admin">Admin</option>
-                    <option value="super_admin">Super Admin</option>
                   </select>
                 </div>
                 <div className="md:col-span-1">
@@ -447,11 +589,81 @@ export default function EmployeesPage() {
                   />
                 </div>
                 <div className="md:col-span-1">
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Gender</label>
+                  <select
+                    value={gender}
+                    onChange={(e) => setGender(e.target.value as "male" | "female" | "other" | "")}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  >
+                    <option value="">Select</option>
+                    <option value="male">Male</option>
+                    <option value="female">Female</option>
+                    <option value="other">Other</option>
+                  </select>
+                </div>
+                <div className="md:col-span-1">
                   <label className="mb-1 block text-sm font-medium text-slate-700">Date of joining</label>
                   <input
                     type="date"
                     value={dateOfJoining}
                     onChange={(e) => setDateOfJoining(e.target.value)}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  />
+                </div>
+                <div className="md:col-span-1">
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Designation</label>
+                  <input
+                    type="text"
+                    value={designation}
+                    onChange={(e) => setDesignation(e.target.value)}
+                    placeholder="e.g. Software Engineer"
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  />
+                </div>
+                <div className="md:col-span-1">
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Aadhaar</label>
+                  <input
+                    type="text"
+                    value={aadhaar}
+                    onChange={(e) => setAadhaar(e.target.value)}
+                    placeholder="12-digit"
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  />
+                </div>
+                <div className="md:col-span-1">
+                  <label className="mb-1 block text-sm font-medium text-slate-700">PAN</label>
+                  <input
+                    type="text"
+                    value={pan}
+                    onChange={(e) => setPan(e.target.value)}
+                    placeholder="e.g. ABCD1234E"
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  />
+                </div>
+                <div className="md:col-span-1">
+                  <label className="mb-1 block text-sm font-medium text-slate-700">UAN</label>
+                  <input
+                    type="text"
+                    value={uanNumber}
+                    onChange={(e) => setUanNumber(e.target.value)}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  />
+                </div>
+                <div className="md:col-span-1">
+                  <label className="mb-1 block text-sm font-medium text-slate-700">PF number</label>
+                  <input
+                    type="text"
+                    value={pfNumber}
+                    onChange={(e) => setPfNumber(e.target.value)}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  />
+                </div>
+                <div className="md:col-span-1">
+                  <label className="mb-1 block text-sm font-medium text-slate-700">ESIC number</label>
+                  <input
+                    type="text"
+                    value={esicNumber}
+                    onChange={(e) => setEsicNumber(e.target.value)}
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                   />
                 </div>
@@ -789,13 +1001,13 @@ export default function EmployeesPage() {
               <thead className="text-slate-600">
                 <tr>
                   <th className="px-3 py-2">Name</th>
+                  <th className="px-3 py-2">CTC</th>
                   <th className="px-3 py-2">Email</th>
-                  <th className="px-3 py-2">Code</th>
                   <th className="px-3 py-2">Phone</th>
-                  <th className="px-3 py-2">Role</th>
-                  <th className="px-3 py-2">Status</th>
-                  <th className="px-3 py-2">Created</th>
+                  <th className="px-3 py-2">DOJ</th>
+                  <th className="px-3 py-2">Last working</th>
                   {activeTab === "preboarding" && <th className="px-3 py-2">Actions</th>}
+                  {activeTab === "current" && <th className="px-3 py-2">Actions</th>}
                 </tr>
               </thead>
               <tbody>
@@ -804,12 +1016,13 @@ export default function EmployeesPage() {
                   .map((e) => (
                   <tr key={e.id} className="border-t border-slate-200">
                     <td className="px-3 py-2">{e.name || "-"}</td>
+                    <td className="px-3 py-2">
+                      {e.ctc != null ? Number(e.ctc).toLocaleString("en-IN") : "—"}
+                    </td>
                     <td className="px-3 py-2">{e.email}</td>
-                    <td className="px-3 py-2">{e.employeeCode || "-"}</td>
                     <td className="px-3 py-2">{e.phone || "-"}</td>
-                    <td className="px-3 py-2">{e.role.replace("_", " ")}</td>
-                    <td className="px-3 py-2">{e.employmentStatus}</td>
-                    <td className="px-3 py-2">{new Date(e.createdAt).toLocaleDateString()}</td>
+                    <td className="px-3 py-2">{e.dateOfJoining || "-"}</td>
+                    <td className="px-3 py-2">{(e as any).dateOfLeaving || "-"}</td>
                     {activeTab === "preboarding" && (
                       <td className="px-3 py-2">
                         <div className="flex flex-wrap gap-2">
@@ -819,8 +1032,45 @@ export default function EmployeesPage() {
                           <button type="button" className="btn btn-outline" onClick={() => resendInvite(e)} title="Send documents again">
                             📩
                           </button>
-                          <button type="button" className="btn btn-primary" onClick={() => convertToCurrent(e)} title="Convert to current">
+                          <button
+                            type="button"
+                            className="btn btn-primary"
+                            onClick={() => {
+                              setConvertTarget(e);
+                              setConvertConfirmStatus("current");
+                              setConvertDate(new Date().toISOString().slice(0, 10));
+                              setConvertDialogOpen(true);
+                            }}
+                            title="Convert to current"
+                          >
                             ✅
+                          </button>
+                        </div>
+                      </td>
+                    )}
+                    {activeTab === "current" && (
+                      <td className="px-3 py-2">
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            className="btn btn-outline"
+                            onClick={() => openDetails(e.id)}
+                            title="View"
+                          >
+                            👁
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-outline"
+                            onClick={() => {
+                              setConvertTarget(e);
+                              setConvertConfirmStatus("past");
+                              setConvertDate(new Date().toISOString().slice(0, 10));
+                              setConvertDialogOpen(true);
+                            }}
+                            title="Convert to past"
+                          >
+                            📴
                           </button>
                         </div>
                       </td>
@@ -1017,6 +1267,63 @@ export default function EmployeesPage() {
                   }}
                 >
                   {resending ? "Sending..." : "Send link"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {convertDialogOpen && convertTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <button type="button" className="absolute inset-0 bg-black/40" aria-label="Close dialog" onClick={() => setConvertDialogOpen(false)} />
+          <div role="dialog" aria-modal="true" className="relative z-10 w-full max-w-lg rounded-xl border border-slate-200 bg-white shadow-xl">
+            <div className="border-b border-slate-200 px-5 py-4">
+              <h2 className="text-lg font-semibold text-slate-900">Convert employee</h2>
+              <p className="text-sm text-slate-500">
+                Convert <span className="font-medium">{convertTarget.email}</span> to{" "}
+                <span className="font-medium">{convertConfirmStatus === "current" ? "Current" : "Past"}</span>.
+              </p>
+            </div>
+            <div className="p-5 space-y-4">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-700">New status</label>
+                <select
+                  value={convertConfirmStatus}
+                  onChange={(e) => setConvertConfirmStatus(e.target.value as any)}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                >
+                  <option value="current">Current (default)</option>
+                  <option value="past">Past</option>
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-700">
+                  {convertConfirmStatus === "current" ? "Date of joining" : "Last working date"}
+                </label>
+                <input
+                  type="date"
+                  value={convertDate}
+                  onChange={(e) => setConvertDate(e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2">
+                <button type="button" className="btn btn-outline" onClick={() => setConvertDialogOpen(false)} disabled={converting}>
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={converting}
+                  onClick={async () => {
+                    if (!convertTarget) return;
+                    setConvertDialogOpen(false);
+                    await convertEmployee(convertTarget, convertConfirmStatus, convertDate);
+                  }}
+                >
+                  {converting ? "Converting..." : convertConfirmStatus === "current" ? "Convert to Current" : "Convert to Past"}
                 </button>
               </div>
             </div>

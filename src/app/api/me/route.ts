@@ -32,6 +32,14 @@ function mapUser(row: any) {
     bankAccountNumber: (row.bank_account_number ?? "") as string,
     bankIfsc: (row.bank_ifsc ?? "") as string,
     employmentStatus: (row.employment_status ?? "preboarding") as "preboarding" | "current" | "past",
+    ctc: row.ctc != null ? Number(row.ctc) : null as number | null,
+    gender: (row.gender ?? null) as string | null,
+    designation: (row.designation ?? "") as string,
+    aadhaar: (row.aadhaar ?? "") as string,
+    pan: (row.pan ?? "") as string,
+    uanNumber: (row.uan_number ?? "") as string,
+    pfNumber: (row.pf_number ?? "") as string,
+    esicNumber: (row.esic_number ?? "") as string,
   };
 }
 
@@ -108,6 +116,16 @@ export async function PUT(request: NextRequest) {
       typeof body?.bankAccountNumber === "string" ? body.bankAccountNumber.trim() || null : undefined,
     bank_ifsc: typeof body?.bankIfsc === "string" ? body.bankIfsc.trim() || null : undefined,
     employment_status: employmentStatus ?? undefined,
+    gender: (() => {
+      const allowed = ["male", "female", "other"];
+      return allowed.includes(body?.gender) ? body.gender : undefined;
+    })(),
+    designation: typeof body?.designation === "string" ? body.designation.trim() || null : undefined,
+    aadhaar: typeof body?.aadhaar === "string" ? body.aadhaar.trim() || null : undefined,
+    pan: typeof body?.pan === "string" ? body.pan.trim() || null : undefined,
+    uan_number: typeof body?.uanNumber === "string" ? body.uanNumber.trim() || null : undefined,
+    pf_number: typeof body?.pfNumber === "string" ? body.pfNumber.trim() || null : undefined,
+    esic_number: typeof body?.esicNumber === "string" ? body.esicNumber.trim() || null : undefined,
     updated_at: new Date().toISOString(),
   };
 

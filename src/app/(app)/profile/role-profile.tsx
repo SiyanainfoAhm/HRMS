@@ -21,6 +21,13 @@ export function ProfileContent() {
     name: "",
     employeeCode: "",
     phone: "",
+    gender: "" as "" | "male" | "female" | "other",
+    designation: "",
+    aadhaar: "",
+    pan: "",
+    uanNumber: "",
+    pfNumber: "",
+    esicNumber: "",
     dateOfBirth: "",
     dateOfJoining: "",
     currentAddressLine1: "",
@@ -41,23 +48,38 @@ export function ProfileContent() {
     bankAccountNumber: "",
     bankIfsc: "",
     employmentStatus: "preboarding" as "preboarding" | "current" | "past",
+    ctc: null as number | null,
   });
 
-  const [payslips, setPayslips] = useState<
-    {
+  const [payslipsData, setPayslipsData] = useState<{
+    company: { name: string; address: string } | null;
+    user: { name: string; employeeCode: string; designation: string; dateOfJoining: string; aadhaar: string; pan: string; uanNumber: string; pfNumber: string; esicNumber: string } | null;
+    payslips: {
       id: string;
-      payslipNumber: string | null;
+      periodMonth: string;
+      periodFormatted: string;
       generatedAt: string;
-      currency: string;
-      netPay: any;
-      grossPay: any;
-      bankName: string;
-      bankAccountNumber: string;
-      bankIfsc: string;
-    }[]
-  >([]);
+      payDays: number;
+      unpaidLeaves: number;
+      netPay: number;
+      grossPay: number;
+      basic: number;
+      hra: number;
+      allowances: number;
+      deductions: number;
+      pfEmployee: number;
+      esicEmployee: number;
+      professionalTax: number;
+      incentive: number;
+      prBonus: number;
+      reimbursement: number;
+      tds: number;
+    }[];
+  } | null>(null);
   const [payslipsLoading, setPayslipsLoading] = useState(false);
   const [payslipsError, setPayslipsError] = useState<string | null>(null);
+  const [selectedMonth, setSelectedMonth] = useState("");
+  const [selectedYear, setSelectedYear] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -74,6 +96,13 @@ export function ProfileContent() {
           name: u?.name ?? "",
           employeeCode: u?.employeeCode ?? "",
           phone: u?.phone ?? "",
+          gender: (["male", "female", "other"].includes(u?.gender) ? u.gender : "") as "" | "male" | "female" | "other",
+          designation: u?.designation ?? "",
+          aadhaar: u?.aadhaar ?? "",
+          pan: u?.pan ?? "",
+          uanNumber: u?.uanNumber ?? "",
+          pfNumber: u?.pfNumber ?? "",
+          esicNumber: u?.esicNumber ?? "",
           dateOfBirth: u?.dateOfBirth ?? "",
           dateOfJoining: u?.dateOfJoining ?? "",
           currentAddressLine1: u?.currentAddressLine1 ?? "",
@@ -94,7 +123,8 @@ export function ProfileContent() {
           bankAccountNumber: u?.bankAccountNumber ?? "",
           bankIfsc: u?.bankIfsc ?? "",
           employmentStatus: u?.employmentStatus ?? "preboarding",
-        });
+          ctc: u?.ctc ?? null,
+        } as any);
       } catch (e: any) {
         if (!cancelled) setError(e?.message || "Failed to load profile");
       } finally {
@@ -116,7 +146,24 @@ export function ProfileContent() {
         const res = await fetch("/api/payslips/me");
         const data = await res.json();
         if (!res.ok) throw new Error(data?.error || "Failed to load payslips");
-        if (!cancelled) setPayslips(data.payslips || []);
+        if (!cancelled) {
+          setPayslipsData({
+            company: data.company,
+            user: data.user,
+            payslips: data.payslips || [],
+          });
+          const slips = data.payslips || [];
+          const first = slips[0];
+          const now = new Date();
+          if (first?.periodMonth) {
+            const [y, m] = first.periodMonth.split("-");
+            setSelectedYear(y || String(now.getFullYear()));
+            setSelectedMonth(m || String(now.getMonth() + 1).padStart(2, "0"));
+          } else {
+            setSelectedYear(String(now.getFullYear()));
+            setSelectedMonth(String(now.getMonth() + 1).padStart(2, "0"));
+          }
+        }
       } catch (e: any) {
         if (!cancelled) setPayslipsError(e?.message || "Failed to load payslips");
       } finally {
@@ -228,6 +275,77 @@ export function ProfileContent() {
                   />
                 </div>
                 <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Gender</label>
+                  <select
+                    value={form.gender}
+                    onChange={(e) => setForm((p) => ({ ...p, gender: e.target.value as any }))}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  >
+                    <option value="">Select</option>
+                    <option value="male">Male</option>
+                    <option value="female">Female</option>
+                    <option value="other">Other</option>
+                  </select>
+                  <p className="mt-0.5 text-xs text-slate-500">Used for avatar display on dashboard.</p>
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Designation</label>
+                  <input
+                    type="text"
+                    value={form.designation}
+                    onChange={(e) => setForm((p) => ({ ...p, designation: e.target.value }))}
+                    placeholder="e.g. Software Engineer"
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Aadhaar</label>
+                  <input
+                    type="text"
+                    value={form.aadhaar}
+                    onChange={(e) => setForm((p) => ({ ...p, aadhaar: e.target.value }))}
+                    placeholder="12-digit Aadhaar"
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">PAN</label>
+                  <input
+                    type="text"
+                    value={form.pan}
+                    onChange={(e) => setForm((p) => ({ ...p, pan: e.target.value }))}
+                    placeholder="e.g. ABCD1234E"
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">UAN number</label>
+                  <input
+                    type="text"
+                    value={form.uanNumber}
+                    onChange={(e) => setForm((p) => ({ ...p, uanNumber: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">PF number</label>
+                  <input
+                    type="text"
+                    value={form.pfNumber}
+                    onChange={(e) => setForm((p) => ({ ...p, pfNumber: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">ESIC number</label>
+                  <input
+                    type="text"
+                    value={form.esicNumber}
+                    onChange={(e) => setForm((p) => ({ ...p, esicNumber: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  />
+                </div>
+                <div>
                   <label className="mb-1 block text-sm font-medium text-slate-700">Date of birth</label>
                   <input
                     type="date"
@@ -244,6 +362,18 @@ export function ProfileContent() {
                     onChange={(e) => setForm((p) => ({ ...p, dateOfJoining: e.target.value }))}
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                   />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">CTC (monthly)</label>
+                  <input
+                    type="text"
+                    value={form.ctc != null ? String(form.ctc) : ""}
+                    readOnly
+                    disabled
+                    placeholder="—"
+                    className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600"
+                  />
+                  <p className="mt-0.5 text-xs text-slate-500">View only. Admin/HR can edit in Employees.</p>
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-slate-700">Status</label>
@@ -423,48 +553,191 @@ export function ProfileContent() {
       {tab === "pay" && (
         <div className="card">
           <h2 className="mb-1 text-lg font-semibold text-slate-900">Payslips</h2>
-          <p className="muted">Each payslip shows the bank snapshot used for that payroll run.</p>
+          <p className="muted">Select month and year to view your salary slip. Available from your joining date.</p>
 
           <div className="mt-4">
             {payslipsLoading ? (
               <p className="muted">Loading...</p>
             ) : payslipsError ? (
               <p className="text-sm text-red-600">{payslipsError}</p>
-            ) : payslips.length === 0 ? (
-              <p className="muted">No payslips yet.</p>
+            ) : !payslipsData ? (
+              <p className="muted">Loading...</p>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead className="text-slate-600">
-                    <tr>
-                      <th className="px-3 py-2">Payslip #</th>
-                      <th className="px-3 py-2">Generated</th>
-                      <th className="px-3 py-2">Gross</th>
-                      <th className="px-3 py-2">Net</th>
-                      <th className="px-3 py-2">Bank</th>
-                      <th className="px-3 py-2">Account</th>
-                      <th className="px-3 py-2">IFSC</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {payslips.map((p) => (
-                      <tr key={p.id} className="border-t border-slate-200">
-                        <td className="px-3 py-2">{p.payslipNumber || "-"}</td>
-                        <td className="px-3 py-2">{new Date(p.generatedAt).toLocaleDateString()}</td>
-                        <td className="px-3 py-2">
-                          {p.currency} {p.grossPay}
-                        </td>
-                        <td className="px-3 py-2">
-                          {p.currency} {p.netPay}
-                        </td>
-                        <td className="px-3 py-2">{p.bankName || "-"}</td>
-                        <td className="px-3 py-2">{p.bankAccountNumber || "-"}</td>
-                        <td className="px-3 py-2">{p.bankIfsc || "-"}</td>
-                      </tr>
+              <>
+                <div className="mb-4 flex flex-wrap items-center gap-3">
+                  <select
+                    value={selectedMonth}
+                    onChange={(e) => setSelectedMonth(e.target.value)}
+                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  >
+                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((m) => (
+                      <option key={m} value={String(m).padStart(2, "0")}>
+                        {["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][m - 1]}
+                      </option>
                     ))}
-                  </tbody>
-                </table>
-              </div>
+                  </select>
+                  <select
+                    value={selectedYear}
+                    onChange={(e) => setSelectedYear(e.target.value)}
+                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  >
+                    {(() => {
+                      const doj = payslipsData.user?.dateOfJoining;
+                      const joinYear = doj ? parseInt(doj.slice(0, 4), 10) : new Date().getFullYear() - 2;
+                      const currentYear = new Date().getFullYear();
+                      const years = [];
+                      for (let y = currentYear; y >= Math.max(joinYear, 2020); y--) years.push(y);
+                      return years.map((y) => (
+                        <option key={y} value={String(y)}>
+                          {y}
+                        </option>
+                      ));
+                    })()}
+                  </select>
+                </div>
+
+                {(() => {
+                  const key = `${selectedYear}-${selectedMonth}`;
+                  const slip = payslipsData.payslips.find((p) => p.periodMonth === key);
+                  const company = payslipsData.company;
+                  const user = payslipsData.user;
+
+                  if (!slip) {
+                    return <p className="muted">No payslip for the selected period.</p>;
+                  }
+
+                  const salaryDate = new Date(slip.generatedAt).toLocaleDateString("en-IN", {
+                    day: "numeric",
+                    month: "long",
+                    year: "numeric",
+                  });
+                  const dojFormatted = user?.dateOfJoining
+                    ? new Date(user.dateOfJoining + "T12:00:00").toLocaleDateString("en-IN", {
+                        day: "numeric",
+                        month: "short",
+                        year: "numeric",
+                      })
+                    : "—";
+
+                  const n = (x: number) => (x ?? 0).toLocaleString("en-IN");
+                  const totalPerf = slip.incentive + slip.prBonus + slip.reimbursement;
+                  const netPay = slip.netPay - slip.tds + totalPerf;
+
+                  return (
+                    <div className="overflow-x-auto rounded-lg border border-slate-800">
+                      <table className="w-full border-collapse text-sm" style={{ border: "1px solid #1e293b" }}>
+                        <tbody>
+                          <tr>
+                            <td colSpan={6} className="border border-slate-800 px-4 py-3 text-center">
+                              <div className="font-bold text-slate-900">{company?.name || "Company"}</div>
+                              {company?.address && (
+                                <div className="text-xs text-slate-600">{company.address}</div>
+                              )}
+                              <div className="mt-2 font-bold uppercase tracking-wide">Salary Slip</div>
+                              <div className="font-semibold">
+                                {["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][
+                                  parseInt(selectedMonth, 10) - 1
+                                ]}{" "}
+                                {selectedYear}
+                              </div>
+                            </td>
+                          </tr>
+                          <tr>
+                            <td className="w-1/2 border border-slate-800 px-3 py-2 align-top">
+                              <div className="space-y-1">
+                                <div><span className="text-slate-600">Employee Code:</span> {user?.employeeCode || "—"}</div>
+                                <div><span className="text-slate-600">Employee Name:</span> {user?.name || "—"}</div>
+                                <div><span className="text-slate-600">Designation:</span> {user?.designation || "—"}</div>
+                                <div><span className="text-slate-600">Salary Date:</span> {salaryDate}</div>
+                                <div><span className="text-slate-600">Total Paid Days:</span> {slip.payDays}</div>
+                                <div><span className="text-slate-600">Unpaid Leaves:</span> {slip.unpaidLeaves}</div>
+                              </div>
+                            </td>
+                            <td className="w-1/2 border border-slate-800 px-3 py-2 align-top">
+                              <div className="space-y-1">
+                                <div><span className="text-slate-600">Joining Date:</span> {dojFormatted}</div>
+                                <div><span className="text-slate-600">Aadhaar:</span> {user?.aadhaar || "—"}</div>
+                                <div><span className="text-slate-600">PAN:</span> {user?.pan || "—"}</div>
+                                <div><span className="text-slate-600">ESIC number:</span> {user?.esicNumber || "—"}</div>
+                                <div><span className="text-slate-600">UAN number:</span> {user?.uanNumber || "—"}</div>
+                                <div><span className="text-slate-600">PF number:</span> {user?.pfNumber || "—"}</div>
+                              </div>
+                            </td>
+                          </tr>
+                          <tr>
+                            <td colSpan={2} className="border border-slate-800 p-0">
+                              <table className="w-full border-collapse text-sm">
+                                <thead>
+                                  <tr className="bg-slate-100">
+                                    <th className="border border-slate-800 px-2 py-1.5 text-left font-semibold">Earnings</th>
+                                    <th className="border border-slate-800 px-2 py-1.5 text-right w-20">Actual</th>
+                                    <th className="border border-slate-800 px-2 py-1.5 text-right w-20">Paid</th>
+                                    <th className="border border-slate-800 px-2 py-1.5 text-left font-semibold">Employee Deductions</th>
+                                    <th className="border border-slate-800 px-2 py-1.5 text-right w-20">Amount</th>
+                                    <th className="border border-slate-800 px-2 py-1.5 text-left font-semibold">Performance Earnings</th>
+                                    <th className="border border-slate-800 px-2 py-1.5 text-right w-20">Amount</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  <tr>
+                                    <td className="border border-slate-800 px-2 py-1">Basic & DA</td>
+                                    <td className="border border-slate-800 px-2 py-1 text-right">{n(slip.basic)}</td>
+                                    <td className="border border-slate-800 px-2 py-1 text-right">{n(slip.basic)}</td>
+                                    <td className="border border-slate-800 px-2 py-1">Professional Tax</td>
+                                    <td className="border border-slate-800 px-2 py-1 text-right">{n(slip.professionalTax)}</td>
+                                    <td className="border border-slate-800 px-2 py-1">Performance Bonus</td>
+                                    <td className="border border-slate-800 px-2 py-1 text-right">{n(slip.prBonus)}</td>
+                                  </tr>
+                                  <tr>
+                                    <td className="border border-slate-800 px-2 py-1">HRA</td>
+                                    <td className="border border-slate-800 px-2 py-1 text-right">{n(slip.hra)}</td>
+                                    <td className="border border-slate-800 px-2 py-1 text-right">{n(slip.hra)}</td>
+                                    <td className="border border-slate-800 px-2 py-1">PF</td>
+                                    <td className="border border-slate-800 px-2 py-1 text-right">{n(slip.pfEmployee)}</td>
+                                    <td className="border border-slate-800 px-2 py-1">Performance Incentive</td>
+                                    <td className="border border-slate-800 px-2 py-1 text-right">{n(slip.incentive)}</td>
+                                  </tr>
+                                  <tr>
+                                    <td className="border border-slate-800 px-2 py-1">Allowances</td>
+                                    <td className="border border-slate-800 px-2 py-1 text-right">{n(slip.allowances)}</td>
+                                    <td className="border border-slate-800 px-2 py-1 text-right">{n(slip.allowances)}</td>
+                                    <td className="border border-slate-800 px-2 py-1">ESIC</td>
+                                    <td className="border border-slate-800 px-2 py-1 text-right">{n(slip.esicEmployee)}</td>
+                                    <td className="border border-slate-800 px-2 py-1">Reimbursement</td>
+                                    <td className="border border-slate-800 px-2 py-1 text-right">{n(slip.reimbursement)}</td>
+                                  </tr>
+                                  <tr>
+                                    <td className="border border-slate-800 px-2 py-1 font-medium">GROSS</td>
+                                    <td className="border border-slate-800 px-2 py-1 text-right font-medium">{n(slip.grossPay)}</td>
+                                    <td className="border border-slate-800 px-2 py-1 text-right font-medium">{n(slip.grossPay)}</td>
+                                    <td className="border border-slate-800 px-2 py-1">TDS</td>
+                                    <td className="border border-slate-800 px-2 py-1 text-right">{n(slip.tds)}</td>
+                                    <td className="border border-slate-800 px-2 py-1 font-medium">Total</td>
+                                    <td className="border border-slate-800 px-2 py-1 text-right font-medium">{n(totalPerf)}</td>
+                                  </tr>
+                                  <tr>
+                                    <td className="border border-slate-800 px-2 py-1 font-medium">Net Payable Salary</td>
+                                    <td className="border border-slate-800 px-2 py-1 text-right font-medium">{n(netPay)}</td>
+                                    <td className="border border-slate-800 px-2 py-1 text-right font-medium">{n(netPay)}</td>
+                                    <td className="border border-slate-800 px-2 py-1 font-medium">Total Deduction</td>
+                                    <td className="border border-slate-800 px-2 py-1 text-right font-medium">{n(slip.deductions)}</td>
+                                    <td colSpan={2} className="border border-slate-800 px-2 py-1"></td>
+                                  </tr>
+                                  <tr>
+                                    <td className="border border-slate-800 px-2 py-1 font-bold">Net Pay</td>
+                                    <td colSpan={2} className="border border-slate-800 px-2 py-1 text-right font-bold">{n(netPay)}</td>
+                                    <td colSpan={4} className="border border-slate-800 px-2 py-1"></td>
+                                  </tr>
+                                </tbody>
+                              </table>
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })()}
+              </>
             )}
           </div>
         </div>

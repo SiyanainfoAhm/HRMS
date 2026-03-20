@@ -18,6 +18,8 @@ function mapRow(row: any) {
     employeeCode: (row.employee_code ?? "") as string,
     phone: (row.phone ?? "") as string,
     dateOfJoining: row.date_of_joining ? String(row.date_of_joining) : "",
+    dateOfLeaving: row.date_of_leaving ? String(row.date_of_leaving) : "",
+    ctc: row.ctc != null ? Number(row.ctc) : null as number | null,
     createdAt: new Date(row.created_at).toISOString(),
   };
 }
@@ -60,6 +62,7 @@ export async function GET() {
     .from("HRMS_users")
     .select("*")
     .eq("company_id", me.company_id)
+    .neq("role", "super_admin")
     .order("created_at", { ascending: false });
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
 
@@ -104,12 +107,23 @@ export async function POST(request: NextRequest) {
   const bankAccountNumber =
     typeof body?.bankAccountNumber === "string" ? body.bankAccountNumber.trim() : "";
   const bankIfsc = typeof body?.bankIfsc === "string" ? body.bankIfsc.trim() : "";
+  const grossSalary = body?.grossSalary != null ? Number(body.grossSalary) : undefined;
+  const pfEligible = body?.pfEligible === true;
+  const esicEligible = body?.esicEligible === true;
+  const allowedGenders = ["male", "female", "other"];
+  const gender = allowedGenders.includes(body?.gender) ? body.gender : null;
+  const designation = typeof body?.designation === "string" ? body.designation.trim() || null : null;
+  const aadhaar = typeof body?.aadhaar === "string" ? body.aadhaar.trim() || null : null;
+  const pan = typeof body?.pan === "string" ? body.pan.trim() || null : null;
+  const uanNumber = typeof body?.uanNumber === "string" ? body.uanNumber.trim() || null : null;
+  const pfNumber = typeof body?.pfNumber === "string" ? body.pfNumber.trim() || null : null;
+  const esicNumber = typeof body?.esicNumber === "string" ? body.esicNumber.trim() || null : null;
   const requestedDocumentIds = Array.isArray(body?.requestedDocumentIds)
     ? body.requestedDocumentIds.filter((x: any) => typeof x === "string")
     : null;
 
   if (!email) return NextResponse.json({ error: "Email is required" }, { status: 400 });
-  const allowedRoles = ["super_admin", "admin", "hr", "manager", "employee"];
+  const allowedRoles = ["admin", "hr", "manager", "employee"];
   const finalRole = allowedRoles.includes(role || "") ? (role as any) : "employee";
   const allowedStatus = ["preboarding", "current", "past"];
   const requestedStatus = allowedStatus.includes(employmentStatus) ? (employmentStatus as any) : "preboarding";
@@ -139,6 +153,12 @@ export async function POST(request: NextRequest) {
 
   const finalEmployeeCode = employeeCode || (await generateUniqueEmployeeCode());
 
+  // CTC = Gross + Employer PF + Employer ESIC (company cost). Take home = Gross - Emp PF - Emp ESIC - PT.
+  const gross = grossSalary != null && grossSalary >= 0 ? grossSalary : 0;
+  const pfEmpr = pfEligible ? Math.round(gross * 0.12) : 0;
+  const esicEmpr = esicEligible && gross < 21000 ? Math.round(gross * 0.0325) : 0;
+  const calculatedCtc = gross > 0 ? gross + pfEmpr + esicEmpr : null;
+
   const { data: inserted, error } = await supabase
     .from("HRMS_users")
     .insert([
@@ -151,6 +171,17 @@ export async function POST(request: NextRequest) {
         employee_code: finalEmployeeCode || null,
         phone: phone || null,
         date_of_joining: dateOfJoining || null,
+        ctc: calculatedCtc,
+        gross_salary: grossSalary != null && grossSalary >= 0 ? grossSalary : null,
+        pf_eligible: pfEligible,
+        esic_eligible: esicEligible,
+        gender: gender ?? null,
+        designation: designation,
+        aadhaar: aadhaar,
+        pan: pan,
+        uan_number: uanNumber,
+        pf_number: pfNumber,
+        esic_number: esicNumber,
         current_address_line1: currentAddressLine1 || null,
         current_address_line2: currentAddressLine2 || null,
         current_city: currentCity || null,
@@ -250,8 +281,11 @@ export async function PATCH(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
   const action = typeof body?.action === "string" ? body.action : "";
   const userId = typeof body?.userId === "string" ? body.userId : "";
+  const dateOfJoining = typeof body?.dateOfJoining === "string" ? body.dateOfJoining.trim() : "";
+  const lastWorkingDate = typeof body?.lastWorkingDate === "string" ? body.lastWorkingDate.trim() : "";
   if (!userId) return NextResponse.json({ error: "userId is required" }, { status: 400 });
-  if (action !== "convert_to_current") return NextResponse.json({ error: "Invalid action" }, { status: 400 });
+  if (action !== "convert_to_current" && action !== "convert_to_past")
+    return NextResponse.json({ error: "Invalid action" }, { status: 400 });
 
   const { data: me, error: meErr } = await supabase
     .from("HRMS_users")
@@ -271,41 +305,98 @@ export async function PATCH(request: NextRequest) {
     .maybeSingle();
   if (iErr) return NextResponse.json({ error: iErr.message }, { status: 400 });
   if (!invite) return NextResponse.json({ error: "No invite found for employee" }, { status: 400 });
-  if (invite.status !== "completed") return NextResponse.json({ error: "Invite not completed yet" }, { status: 400 });
 
-  const requestedIds = Array.isArray(invite.requested_document_ids)
-    ? (invite.requested_document_ids as any[]).filter((x) => typeof x === "string")
-    : null;
-  let docQuery = supabase
-    .from("HRMS_company_documents")
-    .select("id, is_mandatory")
-    .eq("company_id", me.company_id);
-  if (requestedIds && requestedIds.length) docQuery = docQuery.in("id", requestedIds);
-  const { data: docs, error: dErr } = await docQuery;
-  if (dErr) return NextResponse.json({ error: dErr.message }, { status: 400 });
+  if (action === "convert_to_current") {
+    if (invite.status !== "completed") return NextResponse.json({ error: "Invite not completed yet" }, { status: 400 });
 
-  const mandatoryIds = (docs ?? []).filter((d: any) => d.is_mandatory).map((d: any) => d.id as string);
-  if (mandatoryIds.length) {
-    const { data: subs, error: sErr } = await supabase
-      .from("HRMS_employee_document_submissions")
-      .select("document_id, status")
-      .eq("invite_id", invite.id);
-    if (sErr) return NextResponse.json({ error: sErr.message }, { status: 400 });
-    const done = new Set((subs ?? []).filter((s: any) => ["submitted", "signed", "approved"].includes(s.status)).map((s: any) => s.document_id));
-    const missing = mandatoryIds.filter((id) => !done.has(id));
-    if (missing.length) return NextResponse.json({ error: "Mandatory documents still pending" }, { status: 400 });
+    const requestedIds = Array.isArray(invite.requested_document_ids)
+      ? (invite.requested_document_ids as any[]).filter((x) => typeof x === "string")
+      : null;
+    let docQuery = supabase
+      .from("HRMS_company_documents")
+      .select("id, is_mandatory")
+      .eq("company_id", me.company_id);
+    if (requestedIds && requestedIds.length) docQuery = docQuery.in("id", requestedIds);
+    const { data: docs, error: dErr } = await docQuery;
+    if (dErr) return NextResponse.json({ error: dErr.message }, { status: 400 });
+
+    const mandatoryIds = (docs ?? []).filter((d: any) => d.is_mandatory).map((d: any) => d.id as string);
+    if (mandatoryIds.length) {
+      const { data: subs, error: sErr } = await supabase
+        .from("HRMS_employee_document_submissions")
+        .select("document_id, status")
+        .eq("user_id", userId);
+      if (sErr) return NextResponse.json({ error: sErr.message }, { status: 400 });
+      const done = new Set((subs ?? []).filter((s: any) => ["submitted", "signed", "approved"].includes(s.status)).map((s: any) => s.document_id));
+      const missing = mandatoryIds.filter((id) => !done.has(id));
+      if (missing.length) return NextResponse.json({ error: "Mandatory documents still pending" }, { status: 400 });
+    }
+
+    const doj = dateOfJoining || new Date().toISOString().slice(0, 10);
+    const { error: updErr } = await supabase
+      .from("HRMS_users")
+      .update({ employment_status: "current", date_of_joining: doj, date_of_leaving: null, updated_at: new Date().toISOString() })
+      .eq("company_id", me.company_id)
+      .eq("id", userId);
+    if (updErr) return NextResponse.json({ error: updErr.message }, { status: 400 });
+
+    await supabase
+      .from("HRMS_employees")
+      .update({ is_active: true, date_of_joining: doj, date_of_leaving: null, updated_at: new Date().toISOString() })
+      .eq("company_id", me.company_id)
+      .eq("user_id", userId);
+
+    const { data: company } = await supabase
+      .from("HRMS_companies")
+      .select("professional_tax_monthly")
+      .eq("id", me.company_id)
+      .single();
+    const ptMonthly = company?.professional_tax_monthly != null ? Number(company.professional_tax_monthly) : 200;
+
+    const { data: u } = await supabase.from("HRMS_users").select("ctc, gross_salary, pf_eligible, esic_eligible").eq("id", userId).single();
+    const gross = Number(u?.gross_salary ?? u?.ctc ?? 0);
+    const pfOn = Boolean(u?.pf_eligible);
+    const esicOn = Boolean(u?.esic_eligible);
+    const pfEmp = pfOn ? Math.round(gross * 0.12) : 0;
+    const pfEmpr = pfOn ? Math.round(gross * 0.12) : 0;
+    const esicEmp = esicOn && gross < 21000 ? Math.round(gross * 0.0075) : 0;
+    const esicEmpr = esicOn && gross < 21000 ? Math.round(gross * 0.0325) : 0;
+    const ctcVal = gross + pfEmpr + esicEmpr; // CTC = Gross + Employer PF + Employer ESIC
+    const takeHome = gross - pfEmp - esicEmp - ptMonthly; // Take home = Gross - Emp PF - Emp ESIC - PT
+    await supabase.from("HRMS_payroll_master").insert([{
+      company_id: me.company_id,
+      employee_user_id: userId,
+      gross_salary: gross,
+      ctc: ctcVal,
+      pf_eligible: pfOn,
+      esic_eligible: esicOn,
+      pf_employee: pfEmp,
+      pf_employer: pfEmpr,
+      esic_employee: esicEmp,
+      esic_employer: esicEmpr,
+      pt: ptMonthly,
+      take_home: Math.max(0, takeHome),
+      effective_start_date: doj,
+      effective_end_date: null,
+      reason_for_change: "NewJoin",
+      created_by: session.id,
+    }]);
+
+    return NextResponse.json({ ok: true });
   }
 
-  const { error: updErr } = await supabase
+  // convert_to_past
+  const dol = lastWorkingDate || new Date().toISOString().slice(0, 10);
+  const { error: pastErr } = await supabase
     .from("HRMS_users")
-    .update({ employment_status: "current", updated_at: new Date().toISOString() })
+    .update({ employment_status: "past", date_of_leaving: dol, updated_at: new Date().toISOString() })
     .eq("company_id", me.company_id)
     .eq("id", userId);
-  if (updErr) return NextResponse.json({ error: updErr.message }, { status: 400 });
+  if (pastErr) return NextResponse.json({ error: pastErr.message }, { status: 400 });
 
   await supabase
     .from("HRMS_employees")
-    .update({ is_active: true, updated_at: new Date().toISOString() })
+    .update({ is_active: false, date_of_leaving: dol, updated_at: new Date().toISOString() })
     .eq("company_id", me.company_id)
     .eq("user_id", userId);
 

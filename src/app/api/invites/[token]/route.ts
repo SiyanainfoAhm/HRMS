@@ -1,10 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabaseClient";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import bcrypt from "bcryptjs";
 
 function isExpired(invite: any): boolean {
   if (!invite?.expires_at) return false;
   return new Date(invite.expires_at).getTime() < Date.now();
+}
+
+function getBucketName(): string {
+  return process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET || "photomedia";
+}
+
+function extractStoragePathFromPublicUrl(bucket: string, publicUrl: string | null | undefined): string | null {
+  if (!publicUrl) return null;
+  const marker = `/object/public/${bucket}/`;
+  const idx = publicUrl.indexOf(marker);
+  if (idx !== -1) return publicUrl.slice(idx + marker.length);
+  const alt = `/${bucket}/`;
+  const idx2 = publicUrl.indexOf(alt);
+  if (idx2 !== -1) return publicUrl.slice(idx2 + alt.length);
+  return null;
 }
 
 export async function GET(_: NextRequest, { params }: { params: Promise<{ token: string }> }) {
@@ -18,8 +34,13 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ token:
     .maybeSingle();
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
   if (!invite) return NextResponse.json({ error: "Invite not found" }, { status: 404 });
-  if (invite.status !== "pending") return NextResponse.json({ error: `Invite is ${invite.status}` }, { status: 400 });
-  if (isExpired(invite)) return NextResponse.json({ error: "Invite expired" }, { status: 400 });
+  // Allow viewing completed invites (so the invite page doesn't show a false error toast after completion).
+  if (invite.status === "pending" && isExpired(invite)) {
+    return NextResponse.json({ error: "Invite expired" }, { status: 400 });
+  }
+  if (invite.status !== "pending" && invite.status !== "completed") {
+    return NextResponse.json({ error: `Invite is ${invite.status}` }, { status: 400 });
+  }
 
   let docQuery = supabase
     .from("HRMS_company_documents")
@@ -37,10 +58,11 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ token:
   const { data: docs, error: docErr } = await docQuery;
   if (docErr) return NextResponse.json({ error: docErr.message }, { status: 400 });
 
-  const { data: subs, error: subErr } = await supabase
-    .from("HRMS_employee_document_submissions")
-    .select("*")
-    .eq("invite_id", invite.id);
+  // Submissions are unique per (user_id, document_id), so read by user_id (works across re-invites).
+  let subQuery = supabase.from("HRMS_employee_document_submissions").select("*");
+  if (invite.user_id) subQuery = subQuery.eq("user_id", invite.user_id);
+  else subQuery = subQuery.eq("invite_id", invite.id);
+  const { data: subs, error: subErr } = await subQuery;
   if (subErr) return NextResponse.json({ error: subErr.message }, { status: 400 });
 
   return NextResponse.json({ invite, documents: docs ?? [], submissions: subs ?? [] });
@@ -69,6 +91,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const signatureName = typeof body?.signatureName === "string" ? body.signatureName.trim() : "";
 
     if (!documentId) return NextResponse.json({ error: "documentId is required" }, { status: 400 });
+    if (!invite.user_id) return NextResponse.json({ error: "Invite is not linked to a user" }, { status: 400 });
 
     const { data: doc, error: docErr } = await supabase
       .from("HRMS_company_documents")
@@ -81,6 +104,25 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     if (doc.kind === "upload") {
       if (!fileUrl) return NextResponse.json({ error: "fileUrl is required for upload documents" }, { status: 400 });
+
+      // Delete previously uploaded file for this user+document (best-effort).
+      try {
+        const { data: existing } = await supabase
+          .from("HRMS_employee_document_submissions")
+          .select("file_url")
+          .eq("user_id", invite.user_id)
+          .eq("document_id", documentId)
+          .maybeSingle();
+        const bucket = getBucketName();
+        const oldPath = extractStoragePathFromPublicUrl(bucket, existing?.file_url);
+        const newPath = extractStoragePathFromPublicUrl(bucket, fileUrl);
+        if (oldPath && newPath && oldPath !== newPath) {
+          await supabaseAdmin.storage.from(bucket).remove([oldPath]);
+        }
+      } catch {
+        // ignore cleanup errors (policy/service key may be missing)
+      }
+
       const { data, error: upErr } = await supabase
         .from("HRMS_employee_document_submissions")
         .upsert(
@@ -96,7 +138,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
               updated_at: new Date().toISOString(),
             },
           ],
-          { onConflict: "invite_id,document_id" }
+          // One submission per employee per document, even across re-invites.
+          { onConflict: "user_id,document_id" }
         )
         .select("*")
         .single();
@@ -106,6 +149,25 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     // digital signature
     if (!signatureName) return NextResponse.json({ error: "signatureName is required" }, { status: 400 });
+
+    // Delete previously stored signature receipt file (best-effort).
+    try {
+      const { data: existing } = await supabase
+        .from("HRMS_employee_document_submissions")
+        .select("file_url")
+        .eq("user_id", invite.user_id)
+        .eq("document_id", documentId)
+        .maybeSingle();
+      const bucket = getBucketName();
+      const oldPath = extractStoragePathFromPublicUrl(bucket, existing?.file_url);
+      const newPath = extractStoragePathFromPublicUrl(bucket, fileUrl);
+      if (oldPath && newPath && oldPath !== newPath) {
+        await supabaseAdmin.storage.from(bucket).remove([oldPath]);
+      }
+    } catch {
+      // ignore cleanup errors
+    }
+
     const { data, error: sigErr } = await supabase
       .from("HRMS_employee_document_submissions")
       .upsert(
@@ -123,7 +185,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
             updated_at: new Date().toISOString(),
           },
         ],
-        { onConflict: "invite_id,document_id" }
+        // One signature per employee per document, even across re-invites.
+        { onConflict: "user_id,document_id" }
       )
       .select("*")
       .single();
@@ -140,7 +203,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       { key: "name", label: "Full name" },
       { key: "phone", label: "Phone" },
       { key: "dateOfBirth", label: "Date of birth" },
-      { key: "dateOfJoining", label: "Date of joining" },
       { key: "currentAddressLine1", label: "Current address" },
       { key: "currentCity", label: "City" },
       { key: "currentState", label: "State" },
@@ -185,7 +247,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           name: typeof profile?.name === "string" ? profile.name.trim() || null : undefined,
           phone: typeof profile?.phone === "string" ? profile.phone.trim() || null : undefined,
           date_of_birth: typeof profile?.dateOfBirth === "string" ? profile.dateOfBirth || null : undefined,
-          date_of_joining: typeof profile?.dateOfJoining === "string" ? profile.dateOfJoining || null : undefined,
           current_address_line1: typeof profile?.currentAddressLine1 === "string" ? profile.currentAddressLine1.trim() || null : undefined,
           current_city: typeof profile?.currentCity === "string" ? profile.currentCity.trim() || null : undefined,
           current_state: typeof profile?.currentState === "string" ? profile.currentState.trim() || null : undefined,

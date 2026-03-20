@@ -35,6 +35,8 @@ export function SettingsContent() {
     state: "",
     country: "",
     postalCode: "",
+    professionalTaxAnnual: "200",
+    professionalTaxMonthly: "200",
   });
 
   // Settings modules
@@ -442,6 +444,8 @@ export function SettingsContent() {
       state: company?.state ?? "",
       country: company?.country ?? "",
       postalCode: company?.postal_code ?? "",
+      professionalTaxAnnual: String(company?.professional_tax_annual ?? 200),
+      professionalTaxMonthly: String(company?.professional_tax_monthly ?? 200),
     });
     setIsCompanyDialogOpen(true);
   }
@@ -454,6 +458,8 @@ export function SettingsContent() {
       const payload = {
         ...form,
         industry: form.industry === "Other" ? form.industryOther.trim() : form.industry,
+        professionalTaxAnnual: form.professionalTaxAnnual ? parseFloat(form.professionalTaxAnnual) : 200,
+        professionalTaxMonthly: form.professionalTaxMonthly ? parseFloat(form.professionalTaxMonthly) : 200,
       };
       const res = await fetch("/api/company/me", {
         method: "PUT",
@@ -544,6 +550,18 @@ export function SettingsContent() {
                 </p>
                 <p>
                   <span className="text-slate-500">Phone:</span> {company?.phone || "-"}
+                </p>
+                <p>
+                  <span className="text-slate-500">PT annual (₹):</span>{" "}
+                  {company?.professional_tax_annual != null
+                    ? Number(company.professional_tax_annual).toLocaleString("en-IN")
+                    : "200"}
+                </p>
+                <p>
+                  <span className="text-slate-500">PT monthly fixed (₹):</span>{" "}
+                  {company?.professional_tax_monthly != null
+                    ? Number(company.professional_tax_monthly).toLocaleString("en-IN")
+                    : "200"}
                 </p>
               </div>
             </div>
@@ -1131,6 +1149,37 @@ export function SettingsContent() {
                     onChange={(e) => setForm((p) => ({ ...p, postalCode: e.target.value }))}
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                   />
+                </div>
+                <div className="md:col-span-1">
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    PT (annual ₹)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={form.professionalTaxAnnual}
+                    onChange={(e) => setForm((p) => ({ ...p, professionalTaxAnnual: e.target.value }))}
+                    placeholder="200"
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  />
+                  <p className="mt-1 text-xs text-slate-500">For take-home calculation.</p>
+                </div>
+                <div className="md:col-span-1">
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    PT (monthly ₹, fixed)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={form.professionalTaxMonthly}
+                    onChange={(e) => setForm((p) => ({ ...p, professionalTaxMonthly: e.target.value }))}
+                    placeholder="200"
+                    title="Fixed deduction per month in payroll. Common: 200."
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  />
+                  <p className="mt-1 text-xs text-slate-500">Fixed per month, not prorated.</p>
                 </div>
 
                 <div className="md:col-span-3 flex items-center justify-between">

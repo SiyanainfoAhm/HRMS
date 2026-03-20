@@ -75,14 +75,10 @@ export function computeEntitled(policy: LeavePolicy, joinDate: Date | null, asOf
     return Math.max(0, capped);
   }
 
-  // annual
+  // annual: grant full annual quota for the leave year (no proration).
+  // Sick leave, etc. typically give full quota (e.g. 3 days) regardless of join date.
   const q = policy.annual_quota == null ? 0 : Number(policy.annual_quota);
-  if (!policy.prorate_on_join || !joinDate) return Math.max(0, q);
-
-  // Prorate annual quota by eligible months in this leave-year.
-  const months = monthsInclusive(eligibleStart, asOf);
-  const prorated = (q * months) / 12;
-  return Math.max(0, prorated);
+  return Math.max(0, q);
 }
 
 export function computeUsedDaysForYear(

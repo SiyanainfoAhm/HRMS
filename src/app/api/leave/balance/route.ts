@@ -1,10 +1,14 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { COOKIE_NAME, getSessionFromCookie } from "@/lib/auth";
 import { supabase } from "@/lib/supabaseClient";
 import { computeEntitled, computeUsedDaysForYear, leaveYearStart, type LeavePolicy } from "@/lib/leavePolicy";
 
-export async function GET() {
+function isApprover(role: string): boolean {
+  return role === "super_admin" || role === "admin" || role === "hr";
+}
+
+export async function GET(request: NextRequest) {
   const cookieStore = await cookies();
   const session = getSessionFromCookie(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -17,20 +21,38 @@ export async function GET() {
   if (meErr) return NextResponse.json({ error: meErr.message }, { status: 400 });
   if (!me?.company_id) return NextResponse.json({ balances: [] });
 
-  const asOf = new Date();
-  const joinDate = me.date_of_joining ? new Date(String(me.date_of_joining) + "T00:00:00Z") : null;
+  const searchParams = request.nextUrl.searchParams;
+  const userIdParam = searchParams.get("userId");
+  const leaveTypeIdParam = searchParams.get("leaveTypeId");
+  const asOfParam = searchParams.get("asOf");
 
-  const { data: policies, error: polErr } = await supabase
+  const targetUserId = userIdParam && isApprover(session.role) ? userIdParam : session.id;
+  if (userIdParam && !isApprover(session.role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+  const { data: targetUser, error: targetErr } = await supabase
+    .from("HRMS_users")
+    .select("id, company_id, date_of_joining")
+    .eq("id", targetUserId)
+    .maybeSingle();
+  if (targetErr) return NextResponse.json({ error: targetErr.message }, { status: 400 });
+  if (!targetUser || targetUser.company_id !== me.company_id) return NextResponse.json({ balances: [] });
+
+  const asOf = asOfParam ? new Date(asOfParam + "T00:00:00Z") : new Date();
+  const joinDate = targetUser.date_of_joining ? new Date(String(targetUser.date_of_joining) + "T00:00:00Z") : null;
+
+  let policiesQuery = supabase
     .from("HRMS_leave_policies")
     .select("*, HRMS_leave_types(id, name, is_paid, code)")
     .eq("company_id", me.company_id);
+  if (leaveTypeIdParam) policiesQuery = policiesQuery.eq("leave_type_id", leaveTypeIdParam);
+  const { data: policies, error: polErr } = await policiesQuery;
   if (polErr) return NextResponse.json({ error: polErr.message }, { status: 400 });
 
   const { data: leaves, error: leaveErr } = await supabase
     .from("HRMS_leave_requests")
     .select("leave_type_id, start_date, end_date, total_days")
     .eq("company_id", me.company_id)
-    .eq("employee_user_id", session.id)
+    .eq("employee_user_id", targetUserId)
     .eq("status", "approved");
   if (leaveErr) return NextResponse.json({ error: leaveErr.message }, { status: 400 });
 

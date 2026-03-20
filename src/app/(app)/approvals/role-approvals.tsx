@@ -36,6 +36,8 @@ export function ApprovalsContent() {
   const [error, setError] = useState<string | null>(null);
 
   const [leaveTypeId, setLeaveTypeId] = useState("");
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState("");
+  const [currentEmployees, setCurrentEmployees] = useState<{ id: string; name: string | null; email: string }[]>([]);
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [reason, setReason] = useState("");
@@ -43,6 +45,7 @@ export function ApprovalsContent() {
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [rejectDialog, setRejectDialog] = useState<null | { id: string; reason: string }>(null);
   const [leaveDialogOpen, setLeaveDialogOpen] = useState(false);
+  const [balancePreview, setBalancePreview] = useState<{ paidDays: number; unpaidDays: number } | null>(null);
 
   const [manageTypesOpen, setManageTypesOpen] = useState(false);
   const [newTypeName, setNewTypeName] = useState("");
@@ -59,6 +62,17 @@ export function ApprovalsContent() {
   const [editAnnualQuota, setEditAnnualQuota] = useState("12");
   const [editProrateOnJoin, setEditProrateOnJoin] = useState(true);
   const [savingPolicy, setSavingPolicy] = useState(false);
+
+  function diffDaysInclusive(start: string, end: string): number {
+    if (!start || !end) return 0;
+    const s = new Date(start + "T00:00:00Z").getTime();
+    const e = new Date(end + "T00:00:00Z").getTime();
+    if (Number.isNaN(s) || Number.isNaN(e) || e < s) return 0;
+    return Math.floor((e - s) / (24 * 60 * 60 * 1000)) + 1;
+  }
+
+  const selectedLeaveType = typeRows.find((t: any) => t.id === leaveTypeId);
+  const totalDays = diffDaysInclusive(startDate, endDate);
 
   useEffect(() => {
     if (tab !== "leave") return;
@@ -89,6 +103,69 @@ export function ApprovalsContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
+  useEffect(() => {
+    if (!leaveDialogOpen || !canApprove) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/employees");
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.error || "Failed to load employees");
+        if (cancelled) return;
+        const current = (data.employees || []).filter((e: any) => e.employmentStatus === "current");
+        setCurrentEmployees(current.map((e: any) => ({ id: e.id, name: e.name, email: e.email })));
+        if (!selectedEmployeeId && current.length) setSelectedEmployeeId(current[0].id);
+      } catch {
+        if (!cancelled) setCurrentEmployees([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [leaveDialogOpen, canApprove]);
+
+  useEffect(() => {
+    if (!leaveDialogOpen || totalDays <= 0) {
+      setBalancePreview(null);
+      return;
+    }
+    if (canApprove && !selectedEmployeeId) {
+      setBalancePreview(null);
+      return;
+    }
+    const userId = canApprove ? selectedEmployeeId : undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const params = new URLSearchParams();
+        if (leaveTypeId) params.set("leaveTypeId", leaveTypeId);
+        if (startDate) params.set("asOf", startDate);
+        if (userId) params.set("userId", userId);
+        const res = await fetch(`/api/leave/balance?${params.toString()}`);
+        const data = await res.json();
+        if (!res.ok || cancelled) return;
+        const bal = Array.isArray(data.balances) ? data.balances[0] : null;
+        if (!selectedLeaveType) {
+          setBalancePreview(null);
+          return;
+        }
+        if (selectedLeaveType.is_paid === false) {
+          setBalancePreview({ paidDays: 0, unpaidDays: totalDays });
+          return;
+        }
+        const remaining = bal?.remaining;
+        const paid = remaining == null ? totalDays : Math.min(totalDays, Math.max(0, remaining));
+        const unpaid = totalDays - paid;
+        setBalancePreview({ paidDays: paid, unpaidDays: unpaid });
+      } catch {
+        if (!cancelled) setBalancePreview(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [leaveDialogOpen, totalDays, leaveTypeId, startDate, selectedEmployeeId, canApprove, selectedLeaveType]);
+
   async function refreshLeaveData() {
     const [typesRes, reqRes] = await Promise.all([fetch("/api/leave/types"), fetch("/api/leave/requests")]);
     const typesData = await typesRes.json();
@@ -108,7 +185,13 @@ export function ApprovalsContent() {
       const res = await fetch("/api/leave/requests", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ leaveTypeId, startDate, endDate, reason: reason.trim() || undefined }),
+        body: JSON.stringify({
+        leaveTypeId,
+        startDate,
+        endDate,
+        reason: reason.trim() || undefined,
+        ...(canApprove ? { employeeUserId: selectedEmployeeId } : {}),
+      }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to submit request");
@@ -325,6 +408,7 @@ export function ApprovalsContent() {
                 disabled={loading}
                 onClick={() => {
                   setError(null);
+                  setSelectedEmployeeId("");
                   setLeaveDialogOpen(true);
                 }}
               >
@@ -501,50 +585,88 @@ export function ApprovalsContent() {
                 </div>
 
                 <form onSubmit={submitLeave} className="p-5">
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-                    <div className="md:col-span-1">
-                      <label className="mb-1 block text-sm font-medium text-slate-700">Type</label>
-                      <select
-                        value={leaveTypeId}
-                        onChange={(e) => setLeaveTypeId(e.target.value)}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                      >
-                        {types.map((t) => (
-                          <option key={t.id} value={t.id}>
-                            {t.name}
-                          </option>
-                        ))}
-                      </select>
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
+                      {canApprove && (
+                        <div>
+                          <label className="mb-1 block text-sm font-medium text-slate-700">Employee</label>
+                          <select
+                            required={canApprove}
+                            value={selectedEmployeeId}
+                            onChange={(e) => setSelectedEmployeeId(e.target.value)}
+                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                          >
+                            <option value="">Select employee</option>
+                            {currentEmployees.map((e) => (
+                              <option key={e.id} value={e.id}>
+                                {e.name || e.email}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-slate-700">Type</label>
+                        <select
+                          value={leaveTypeId}
+                          onChange={(e) => setLeaveTypeId(e.target.value)}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                        >
+                          {types.map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-slate-700">Reason (optional)</label>
+                        <input
+                          type="text"
+                          value={reason}
+                          onChange={(e) => setReason(e.target.value)}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                        />
+                      </div>
                     </div>
-                    <div className="md:col-span-1">
-                      <label className="mb-1 block text-sm font-medium text-slate-700">Start date</label>
-                      <input
-                        type="date"
-                        required
-                        value={startDate}
-                        onChange={(e) => setStartDate(e.target.value)}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                      />
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-slate-700">Start date</label>
+                        <input
+                          type="date"
+                          required
+                          value={startDate}
+                          onChange={(e) => setStartDate(e.target.value)}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-slate-700">End date</label>
+                        <input
+                          type="date"
+                          required
+                          value={endDate}
+                          onChange={(e) => setEndDate(e.target.value)}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                        />
+                      </div>
                     </div>
-                    <div className="md:col-span-1">
-                      <label className="mb-1 block text-sm font-medium text-slate-700">End date</label>
-                      <input
-                        type="date"
-                        required
-                        value={endDate}
-                        onChange={(e) => setEndDate(e.target.value)}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                      />
-                    </div>
-                    <div className="md:col-span-1">
-                      <label className="mb-1 block text-sm font-medium text-slate-700">Reason (optional)</label>
-                      <input
-                        type="text"
-                        value={reason}
-                        onChange={(e) => setReason(e.target.value)}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                      />
-                    </div>
+                    {totalDays > 0 && (
+                      <div className="rounded-lg bg-slate-50 px-4 py-2 text-sm text-slate-700">
+                        <span className="font-medium">Total: {totalDays} day{totalDays !== 1 ? "s" : ""}</span>
+                        {balancePreview ? (
+                          <>
+                            {balancePreview.paidDays > 0 && <span className="ml-2 text-emerald-700">{Math.round(balancePreview.paidDays)} paid</span>}
+                            {balancePreview.unpaidDays > 0 && <span className="ml-2 text-amber-700">{Math.round(balancePreview.unpaidDays)} unpaid</span>}
+                          </>
+                        ) : selectedLeaveType?.is_paid === false ? (
+                          <span className="ml-2 text-amber-700">{totalDays} unpaid</span>
+                        ) : (
+                          <span className="ml-2 text-slate-500">Calculating...</span>
+                        )}
+                      </div>
+                    )}
+
                   </div>
 
                   <div className="mt-4 flex items-center justify-between gap-3">
@@ -553,7 +675,11 @@ export function ApprovalsContent() {
                       <button type="button" className="btn btn-outline" onClick={() => setLeaveDialogOpen(false)} disabled={submitting || loading}>
                         Cancel
                       </button>
-                      <button type="submit" className="btn btn-primary" disabled={submitting || loading}>
+                      <button
+                        type="submit"
+                        className="btn btn-primary"
+                        disabled={submitting || loading || (canApprove && currentEmployees.length === 0)}
+                      >
                         {submitting ? (canApprove ? "Adding..." : "Submitting...") : canApprove ? "Add leave" : "Submit request"}
                       </button>
                     </div>

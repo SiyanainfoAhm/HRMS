@@ -17,9 +17,18 @@ function roleLabel(role: string): string {
   return role.replace("_", " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-export function TopNav({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
+export function TopNav({
+  user,
+  onLogout,
+  onToggleSidebar,
+  sidebarCollapsed,
+}: {
+  user: SessionUser;
+  onLogout: () => void;
+  onToggleSidebar: () => void;
+  sidebarCollapsed: boolean;
+}) {
   const router = useRouter();
-  const initials = getInitials(user.name, user.email);
 
   async function handleLogout() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -30,23 +39,20 @@ export function TopNav({ user, onLogout }: { user: SessionUser; onLogout: () => 
 
   return (
     <header className="flex h-14 shrink-0 items-center justify-between border-b border-slate-200 bg-white px-4">
-      <div className="text-sm text-slate-500">HRMS</div>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={onToggleSidebar}
+          className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+          aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+        >
+          {sidebarCollapsed ? "☰" : "⟨⟩"}
+        </button>
+        <div className="text-sm text-slate-500">HRMS</div>
+      </div>
       <div className="flex items-center gap-3">
         <span className="text-sm text-slate-600">{roleLabel(user.role)}</span>
-        <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
-          <div
-            className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-600 text-xs font-medium text-white"
-            title={user.email}
-          >
-            {initials}
-          </div>
-          <div className="flex flex-col">
-            <span className="text-sm font-medium text-slate-900">
-              {user.name || user.email.split("@")[0]}
-            </span>
-            <span className="text-xs text-slate-500">{user.email}</span>
-          </div>
-        </div>
         <button
           type="button"
           onClick={handleLogout}

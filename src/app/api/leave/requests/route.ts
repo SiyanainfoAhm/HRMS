@@ -69,6 +69,7 @@ export async function POST(request: NextRequest) {
   const startDate = typeof body?.startDate === "string" ? body.startDate : "";
   const endDate = typeof body?.endDate === "string" ? body.endDate : "";
   const reason = typeof body?.reason === "string" ? body.reason.trim() : undefined;
+  const employeeUserId = typeof body?.employeeUserId === "string" ? body.employeeUserId : null;
   if (!leaveTypeId || !startDate || !endDate) {
     return NextResponse.json({ error: "Leave type, start date and end date are required" }, { status: 400 });
   }
@@ -83,6 +84,26 @@ export async function POST(request: NextRequest) {
   if (meErr) return NextResponse.json({ error: meErr.message }, { status: 400 });
   if (!me?.company_id) return NextResponse.json({ error: "User not linked to company" }, { status: 400 });
 
+  // Resolve employee: approvers must select a current employee; others add for self
+  let targetEmployeeId: string;
+  let targetJoinDate: string | null = null;
+  if (isApprover(session.role)) {
+    if (!employeeUserId) return NextResponse.json({ error: "Please select an employee" }, { status: 400 });
+    const { data: emp, error: empErr } = await supabase
+      .from("HRMS_users")
+      .select("id, company_id, employment_status, date_of_joining")
+      .eq("id", employeeUserId)
+      .maybeSingle();
+    if (empErr) return NextResponse.json({ error: empErr.message }, { status: 400 });
+    if (!emp || emp.company_id !== me.company_id) return NextResponse.json({ error: "Invalid employee" }, { status: 400 });
+    if (emp.employment_status !== "current") return NextResponse.json({ error: "Only current employees can have leave added" }, { status: 400 });
+    targetEmployeeId = emp.id as string;
+    targetJoinDate = emp.date_of_joining ? String(emp.date_of_joining) : null;
+  } else {
+    targetEmployeeId = session.id;
+    targetJoinDate = me.date_of_joining ? String(me.date_of_joining) : null;
+  }
+
   // Ensure leave type belongs to the same company, and apply visibility rules
   const { data: lt, error: ltErr } = await supabase
     .from("HRMS_leave_types")
@@ -96,9 +117,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "You are not allowed to request unpaid leave" }, { status: 403 });
   }
 
-  // Enforce company leave policy for paid leave types (balance must be sufficient).
-  // Unpaid leave remains allowed (tracked for payroll).
-  if (lt.is_paid === true) {
+  // Compute paid vs unpaid days for payroll: excess beyond balance = unpaid
+  let paidDays = totalDays;
+  let unpaidDays = 0;
+  if (lt.is_paid === false) {
+    paidDays = 0;
+    unpaidDays = totalDays;
+  } else {
     const pRaw = Array.isArray((lt as any).HRMS_leave_policies) ? (lt as any).HRMS_leave_policies[0] : (lt as any).HRMS_leave_policies;
     if (pRaw) {
       const policy: LeavePolicy = {
@@ -114,7 +139,7 @@ export async function POST(request: NextRequest) {
       };
 
       const asOf = new Date(startDate + "T00:00:00Z");
-      const joinDate = me.date_of_joining ? new Date(String(me.date_of_joining) + "T00:00:00Z") : null;
+      const joinDate = targetJoinDate ? new Date(targetJoinDate + "T00:00:00Z") : null;
       const yearStart = leaveYearStart(asOf, policy.reset_month, policy.reset_day);
       const yearEndExclusive = new Date(Date.UTC(yearStart.getUTCFullYear() + 1, yearStart.getUTCMonth(), yearStart.getUTCDate(), 0, 0, 0, 0));
 
@@ -122,21 +147,14 @@ export async function POST(request: NextRequest) {
         .from("HRMS_leave_requests")
         .select("leave_type_id, start_date, end_date, total_days")
         .eq("company_id", me.company_id)
-        .eq("employee_user_id", session.id)
+        .eq("employee_user_id", targetEmployeeId)
         .eq("status", "approved");
       if (usedErr) return NextResponse.json({ error: usedErr.message }, { status: 400 });
 
       const entitled = computeEntitled(policy, joinDate, asOf);
-      if (entitled != null) {
-        const used = computeUsedDaysForYear(approvedLeaves ?? [], leaveTypeId, yearStart, yearEndExclusive);
-        const remaining = entitled - used;
-        if (totalDays > remaining + 1e-9) {
-          return NextResponse.json(
-            { error: `Insufficient leave balance. Available ${Math.max(0, remaining).toFixed(2)} day(s).` },
-            { status: 400 }
-          );
-        }
-      }
+      const remaining = entitled == null ? totalDays : Math.max(0, entitled - computeUsedDaysForYear(approvedLeaves ?? [], leaveTypeId, yearStart, yearEndExclusive));
+      paidDays = Math.min(totalDays, remaining);
+      unpaidDays = totalDays - paidDays;
     }
   }
 
@@ -147,11 +165,13 @@ export async function POST(request: NextRequest) {
     .insert([
       {
         company_id: me.company_id,
-        employee_user_id: session.id,
+        employee_user_id: targetEmployeeId,
         leave_type_id: leaveTypeId,
         start_date: startDate,
         end_date: endDate,
         total_days: totalDays,
+        paid_days: paidDays,
+        unpaid_days: unpaidDays,
         reason: reason || null,
         status: autoApprove ? "approved" : "pending",
         approver_user_id: autoApprove ? session.id : null,

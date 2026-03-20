@@ -43,6 +43,8 @@ export async function PUT(request: NextRequest) {
     country: typeof body?.country === "string" ? body.country.trim() || null : undefined,
     postal_code: typeof body?.postalCode === "string" ? body.postalCode.trim() || null : undefined,
     phone: typeof body?.phone === "string" ? body.phone.trim() || null : undefined,
+    professional_tax_annual: body?.professionalTaxAnnual != null ? Math.max(0, Number(body.professionalTaxAnnual)) : undefined,
+    professional_tax_monthly: body?.professionalTaxMonthly != null ? Math.max(0, Number(body.professionalTaxMonthly)) : undefined,
     updated_at: new Date().toISOString(),
   };
   for (const k of Object.keys(payload)) if (payload[k] === undefined) delete payload[k];

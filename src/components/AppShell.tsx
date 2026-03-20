@@ -2,19 +2,39 @@
 
 import type { SessionUser } from "@/lib/auth";
 import { Sidebar } from "./Sidebar";
-import { TopNav } from "./TopNav";
 import { ToastProvider } from "./ToastProvider";
+import { useEffect, useState } from "react";
 
 export function AppShell({ user, children }: { user: SessionUser; children: React.ReactNode }) {
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem("hrms.sidebarCollapsed");
+      if (saved === "1") setSidebarCollapsed(true);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  function toggleSidebar() {
+    setSidebarCollapsed((v) => {
+      const next = !v;
+      try {
+        window.localStorage.setItem("hrms.sidebarCollapsed", next ? "1" : "0");
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  }
+
   return (
     <ToastProvider>
-      <div className="flex h-screen flex-col bg-slate-50">
-        <TopNav user={user} onLogout={() => {}} />
-        <div className="flex flex-1 overflow-hidden">
-          <Sidebar />
-          <div className="flex-1 overflow-y-auto">
-            <div className="mx-auto max-w-5xl p-6">{children}</div>
-          </div>
+      <div className="flex h-screen bg-slate-50">
+        <Sidebar user={user} collapsed={sidebarCollapsed} onToggle={toggleSidebar} />
+        <div className="flex-1 overflow-y-auto">
+          <div className="w-full p-6">{children}</div>
         </div>
       </div>
     </ToastProvider>

@@ -35,18 +35,47 @@ function InvitePageInner() {
   const [password, setPassword] = useState("");
   const [completing, setCompleting] = useState(false);
   const [name, setName] = useState("");
+  const [countryCode, setCountryCode] = useState("+91");
   const [phone, setPhone] = useState("");
+  const [phoneError, setPhoneError] = useState<string | null>(null);
+  const [countryOpen, setCountryOpen] = useState(false);
   const [dateOfBirth, setDateOfBirth] = useState("");
-  const [dateOfJoining, setDateOfJoining] = useState("");
   const [currentAddressLine1, setCurrentAddressLine1] = useState("");
   const [currentCity, setCurrentCity] = useState("");
   const [currentState, setCurrentState] = useState("");
   const [currentCountry, setCurrentCountry] = useState("");
   const [currentPostalCode, setCurrentPostalCode] = useState("");
+  const [postalError, setPostalError] = useState<string | null>(null);
   const [bankAccountNumber, setBankAccountNumber] = useState("");
   const [bankIfsc, setBankIfsc] = useState("");
 
   const bucket = process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET || "photomedia";
+  const countryOptions = [
+    { iso: "in", alpha2: "IN", code: "+91" },
+    { iso: "us", alpha2: "US", code: "+1" },
+    { iso: "gb", alpha2: "UK", code: "+44" },
+    { iso: "au", alpha2: "AU", code: "+61" },
+    { iso: "ae", alpha2: "AE", code: "+971" },
+  ] as const;
+  const selectedCountry = countryOptions.find((c) => c.code === countryCode) ?? countryOptions[0];
+
+  function normalizeDigits(s: string): string {
+    return (s || "").replace(/\D+/g, "");
+  }
+
+  function validatePhoneDigits(v: string): string | null {
+    const digits = normalizeDigits(v);
+    if (!digits) return "Phone is required";
+    if (digits.length !== 10) return "Phone must be exactly 10 digits";
+    return null;
+  }
+
+  function validatePostal(v: string): string | null {
+    const digits = normalizeDigits(v);
+    if (!digits) return "Postal code is required";
+    if (digits !== v.trim()) return "Postal code must contain numbers only";
+    return null;
+  }
 
   function sanitizeSegment(s: string): string {
     return (s || "")
@@ -106,6 +135,18 @@ function InvitePageInner() {
     await refresh();
   }
 
+  function extractStoragePathFromPublicUrl(publicUrl: string): string | null {
+    if (!publicUrl) return null;
+    const marker = `/object/public/${bucket}/`;
+    const idx = publicUrl.indexOf(marker);
+    if (idx !== -1) return publicUrl.slice(idx + marker.length);
+    // Fallback for some Supabase URL shapes
+    const alt = `/${bucket}/`;
+    const idx2 = publicUrl.indexOf(alt);
+    if (idx2 !== -1) return publicUrl.slice(idx2 + alt.length);
+    return null;
+  }
+
   async function uploadToStorage(document: Doc, file: File): Promise<string> {
     const userId = String(invite?.user_id || "unknown");
     const employeeName = sanitizeSegment(name) || "Employee";
@@ -115,7 +156,8 @@ function InvitePageInner() {
     const ext = (file.name.split(".").pop() || "").slice(0, 10);
     const safeBase = docFolder;
     const finalFileName = ext ? `${safeBase}.${ext}` : safeBase;
-    const path = `HRMS/${employeeFolder}/${category}/${docFolder}/${Date.now()}_${finalFileName}`;
+    // Deterministic path so re-uploads overwrite the previous file for this doc.
+    const path = `HRMS/${employeeFolder}/${category}/${docFolder}/${finalFileName}`;
     const { error: upErr } = await supabase.storage.from(bucket).upload(path, file, { upsert: true });
     if (upErr) throw new Error(upErr.message);
     const { data } = supabase.storage.from(bucket).getPublicUrl(path);
@@ -169,14 +211,17 @@ function InvitePageInner() {
     try {
       const requiredMissing: string[] = [];
       if (!name.trim()) requiredMissing.push("Full name");
-      if (!phone.trim()) requiredMissing.push("Phone");
+      const pErr = validatePhoneDigits(phone);
+      setPhoneError(pErr);
+      if (pErr) requiredMissing.push("Phone");
       if (!dateOfBirth.trim()) requiredMissing.push("Date of birth");
-      if (!dateOfJoining.trim()) requiredMissing.push("Date of joining");
       if (!currentAddressLine1.trim()) requiredMissing.push("Current address");
       if (!currentCity.trim()) requiredMissing.push("City");
       if (!currentState.trim()) requiredMissing.push("State");
       if (!currentCountry.trim()) requiredMissing.push("Country");
-      if (!currentPostalCode.trim()) requiredMissing.push("Postal code");
+      const pcErr = validatePostal(currentPostalCode);
+      setPostalError(pcErr);
+      if (pcErr) requiredMissing.push("Postal code");
       if (!bankAccountNumber.trim()) requiredMissing.push("Bank account number");
       if (!bankIfsc.trim()) requiredMissing.push("IFSC");
       if (requiredMissing.length) throw new Error(`Please fill all required fields: ${requiredMissing.join(", ")}`);
@@ -189,14 +234,13 @@ function InvitePageInner() {
           password,
           profile: {
             name,
-            phone,
+            phone: `${countryCode}${normalizeDigits(phone)}`,
             dateOfBirth,
-            dateOfJoining,
             currentAddressLine1,
             currentCity,
             currentState,
             currentCountry,
-            currentPostalCode,
+            currentPostalCode: normalizeDigits(currentPostalCode),
             bankAccountNumber,
             bankIfsc,
           },
@@ -267,11 +311,19 @@ function InvitePageInner() {
                     {d.kind === "upload" ? (
                       <UploadBox
                         disabled={!!done}
-                        initialValue={s?.file_url ?? ""}
-                        onSubmit={(url) => submitUpload(d.id, url)}
+                        existingUrl={s?.file_url ?? ""}
+                        documentName={d.name}
                         onUpload={async (file) => {
                           if (!invite?.id) throw new Error("Invite not loaded");
-                          return await uploadToStorage(d, file);
+                          // Remove previous file from storage (if any), then upload and submit.
+                          const prevUrl = s?.file_url ?? "";
+                          const prevPath = extractStoragePathFromPublicUrl(prevUrl);
+                          if (prevPath) {
+                            await supabase.storage.from(bucket).remove([prevPath]);
+                          }
+                          const publicUrl = await uploadToStorage(d, file);
+                          await submitUpload(d.id, publicUrl);
+                          return publicUrl;
                         }}
                       />
                     ) : (
@@ -305,13 +357,63 @@ function InvitePageInner() {
           </div>
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700">Phone</label>
-            <input
-              type="text"
-              required
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-            />
+            <div className="grid grid-cols-[120px_1fr] gap-2">
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setCountryOpen((v) => !v)}
+                  className="flex w-full items-center justify-between gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                >
+                  <span className="flex items-center gap-2">
+                    {/* flagcdn uses lowercase iso */}
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={`https://flagcdn.com/w20/${selectedCountry.iso}.png`}
+                      alt={selectedCountry.alpha2}
+                      className="h-4 w-5 rounded-sm border border-slate-200"
+                    />
+                    <span className="font-medium">{selectedCountry.alpha2}</span>
+                    <span className="text-slate-600">{selectedCountry.code}</span>
+                  </span>
+                  <span className="text-slate-500">▾</span>
+                </button>
+                {countryOpen && (
+                  <div className="absolute z-20 mt-1 w-full overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg">
+                    {countryOptions.map((c) => (
+                      <button
+                        key={c.code}
+                        type="button"
+                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-slate-50"
+                        onClick={() => {
+                          setCountryCode(c.code);
+                          setCountryOpen(false);
+                        }}
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={`https://flagcdn.com/w20/${c.iso}.png`} alt={c.alpha2} className="h-4 w-5 rounded-sm border border-slate-200" />
+                        <span className="flex-1 font-medium">{c.alpha2}</span>
+                        <span className="text-slate-600">{c.code}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <input
+                type="tel"
+                inputMode="numeric"
+                required
+                value={phone}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  const digits = normalizeDigits(v).slice(0, 10);
+                  setPhone(digits);
+                  setPhoneError(validatePhoneDigits(digits));
+                }}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                placeholder="10-digit number"
+              />
+            </div>
+            {phoneError && <p className="mt-1 text-xs text-red-600">{phoneError}</p>}
           </div>
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700">Date of birth</label>
@@ -320,16 +422,6 @@ function InvitePageInner() {
               required
               value={dateOfBirth}
               onChange={(e) => setDateOfBirth(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">Date of joining</label>
-            <input
-              type="date"
-              required
-              value={dateOfJoining}
-              onChange={(e) => setDateOfJoining(e.target.value)}
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
             />
           </div>
@@ -379,9 +471,16 @@ function InvitePageInner() {
               type="text"
               required
               value={currentPostalCode}
-              onChange={(e) => setCurrentPostalCode(e.target.value)}
+              inputMode="numeric"
+              onChange={(e) => {
+                const raw = e.target.value;
+                const digits = normalizeDigits(raw);
+                setCurrentPostalCode(digits);
+                setPostalError(validatePostal(digits));
+              }}
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
             />
+            {postalError && <p className="mt-1 text-xs text-red-600">{postalError}</p>}
           </div>
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700">Bank account number</label>
@@ -440,19 +539,20 @@ export default function InvitePage() {
 
 function UploadBox({
   disabled,
-  initialValue,
-  onSubmit,
+  existingUrl,
+  documentName,
   onUpload,
 }: {
   disabled: boolean;
-  initialValue: string;
-  onSubmit: (url: string) => void;
+  existingUrl: string;
+  documentName: string;
   onUpload: (file: File) => Promise<string>;
 }) {
-  const [url, setUrl] = useState(initialValue);
+  const [url, setUrl] = useState(existingUrl);
   const [uploading, setUploading] = useState(false);
+  const isImage = /\.(png|jpe?g|gif|webp)$/i.test(url || "");
   return (
-    <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-[1fr_auto] md:items-end">
+    <div className="mt-3 space-y-3">
       <div>
         <label className="mb-1 block text-sm font-medium text-slate-700">Upload file</label>
         <input
@@ -471,21 +571,27 @@ function UploadBox({
             }
           }}
         />
-        <div className="mt-2">
-          <label className="mb-1 block text-sm font-medium text-slate-700">File URL</label>
-        <input
-          type="text"
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          disabled={disabled || uploading}
-          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-100"
-          placeholder="Will auto-fill after upload (or paste URL)"
-        />
-        </div>
       </div>
-      <button type="button" className="btn btn-outline" disabled={disabled || uploading || !url.trim()} onClick={() => onSubmit(url.trim())}>
-        {uploading ? "Uploading..." : "Submit"}
-      </button>
+
+      {uploading ? (
+        <p className="text-sm text-slate-600">Uploading…</p>
+      ) : url ? (
+        <div className="rounded-xl border border-slate-200 p-3">
+          <div className="text-sm font-medium text-slate-900">{documentName}</div>
+          <div className="mt-2">
+            {isImage ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={url} alt={documentName} className="max-h-64 w-auto rounded-lg border border-slate-200" />
+            ) : (
+              <a className="text-emerald-700 underline" href={url} target="_blank" rel="noreferrer">
+                View document
+              </a>
+            )}
+          </div>
+        </div>
+      ) : (
+        <p className="text-sm text-slate-600">No file uploaded yet.</p>
+      )}
     </div>
   );
 }

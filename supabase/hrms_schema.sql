@@ -16,6 +16,8 @@ create table if not exists "HRMS_companies" (
   country text,
   postal_code text,
   phone text,
+  professional_tax_annual numeric(12,2) not null default 200,
+  professional_tax_monthly numeric(12,2) not null default 200,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -59,6 +61,7 @@ alter table if exists "HRMS_users" add column if not exists employee_code text;
 alter table if exists "HRMS_users" add column if not exists phone text;
 alter table if exists "HRMS_users" add column if not exists date_of_birth date;
 alter table if exists "HRMS_users" add column if not exists date_of_joining date;
+alter table if exists "HRMS_users" add column if not exists date_of_leaving date;
 alter table if exists "HRMS_users" add column if not exists current_address_line1 text;
 alter table if exists "HRMS_users" add column if not exists current_address_line2 text;
 alter table if exists "HRMS_users" add column if not exists current_city text;
@@ -78,6 +81,14 @@ alter table if exists "HRMS_users" add column if not exists bank_account_number 
 alter table if exists "HRMS_users" add column if not exists bank_ifsc text;
 alter table if exists "HRMS_users" add column if not exists employment_status text;
 alter table if exists "HRMS_users" alter column employment_status set default 'preboarding';
+alter table if exists "HRMS_users" add column if not exists ctc numeric(12,2);
+alter table if exists "HRMS_users" add column if not exists gender text check (gender in ('male', 'female', 'other'));
+alter table if exists "HRMS_users" add column if not exists designation text;
+alter table if exists "HRMS_users" add column if not exists aadhaar text;
+alter table if exists "HRMS_users" add column if not exists pan text;
+alter table if exists "HRMS_users" add column if not exists uan_number text;
+alter table if exists "HRMS_users" add column if not exists pf_number text;
+alter table if exists "HRMS_users" add column if not exists esic_number text;
 
 -- Employee code uniqueness per company (when company_id is set)
 create unique index if not exists hrms_users_company_employee_code_uniq
@@ -169,6 +180,7 @@ create table if not exists "HRMS_employees" (
   phone text,
   date_of_birth date,
   date_of_joining date,
+  date_of_leaving date,
   division_id uuid references "HRMS_divisions"(id) on delete set null,
   department_id uuid references "HRMS_departments"(id) on delete set null,
   designation_id uuid references "HRMS_designations"(id) on delete set null,
@@ -196,6 +208,7 @@ create table if not exists "HRMS_employees" (
 -- If you already created HRMS_employees, run these ALTERs
 alter table if exists "HRMS_employees" alter column auth_user_id drop not null;
 alter table if exists "HRMS_employees" add column if not exists user_id uuid;
+alter table if exists "HRMS_employees" add column if not exists date_of_leaving date;
 do $$
 begin
   alter table "HRMS_employees"
@@ -291,6 +304,8 @@ create table if not exists "HRMS_leave_requests" (
 
 alter table if exists "HRMS_leave_requests" add column if not exists employee_user_id uuid;
 alter table if exists "HRMS_leave_requests" add column if not exists approver_user_id uuid;
+alter table if exists "HRMS_leave_requests" add column if not exists paid_days numeric(5,2);
+alter table if exists "HRMS_leave_requests" add column if not exists unpaid_days numeric(5,2);
 
 create table if not exists "HRMS_holidays" (
   id uuid primary key default gen_random_uuid(),
@@ -313,6 +328,7 @@ create table if not exists "HRMS_payroll_periods" (
   created_at timestamptz not null default now(),
   unique (company_id, period_start, period_end)
 );
+alter table if exists "HRMS_payroll_periods" add column if not exists excel_file_path text;
 
 create table if not exists "HRMS_payslips" (
   id uuid primary key default gen_random_uuid(),
@@ -361,6 +377,48 @@ alter table if exists "HRMS_payslips" add column if not exists employee_user_id 
 alter table if exists "HRMS_payslips" add column if not exists bank_name text;
 alter table if exists "HRMS_payslips" add column if not exists bank_account_number text;
 alter table if exists "HRMS_payslips" add column if not exists bank_ifsc text;
+alter table if exists "HRMS_payslips" add column if not exists pay_days numeric(5,2);
+alter table if exists "HRMS_payslips" add column if not exists ctc numeric(12,2);
+alter table if exists "HRMS_payslips" add column if not exists pf_employee numeric(12,2) default 0;
+alter table if exists "HRMS_payslips" add column if not exists pf_employer numeric(12,2) default 0;
+alter table if exists "HRMS_payslips" add column if not exists esic_employee numeric(12,2) default 0;
+alter table if exists "HRMS_payslips" add column if not exists esic_employer numeric(12,2) default 0;
+alter table if exists "HRMS_payslips" add column if not exists professional_tax numeric(12,2) default 0;
+alter table if exists "HRMS_payslips" add column if not exists incentive numeric(12,2) default 0;
+alter table if exists "HRMS_payslips" add column if not exists pr_bonus numeric(12,2) default 0;
+alter table if exists "HRMS_payslips" add column if not exists reimbursement numeric(12,2) default 0;
+alter table if exists "HRMS_payslips" add column if not exists tds numeric(12,2) default 0;
+alter table if exists "HRMS_payslips" alter column employee_id drop not null;
+create unique index if not exists hrms_payslips_period_user_uniq on "HRMS_payslips"(payroll_period_id, employee_user_id) where employee_user_id is not null;
+
+-- Payroll master: salary structure per employee, versioned by effective dates
+create table if not exists "HRMS_payroll_master" (
+  id uuid primary key default gen_random_uuid(),
+  company_id uuid not null references "HRMS_companies"(id) on delete cascade,
+  employee_user_id uuid not null references "HRMS_users"(id) on delete cascade,
+  gross_salary numeric(12,2) not null default 0,
+  ctc numeric(12,2) not null default 0,
+  pf_eligible boolean not null default false,
+  esic_eligible boolean not null default false,
+  pf_employee numeric(12,2) not null default 0,
+  pf_employer numeric(12,2) not null default 0,
+  esic_employee numeric(12,2) not null default 0,
+  esic_employer numeric(12,2) not null default 0,
+  pt numeric(12,2) not null default 0,
+  take_home numeric(12,2) not null default 0,
+  effective_start_date date not null,
+  effective_end_date date,
+  reason_for_change text,
+  created_at timestamptz not null default now(),
+  created_by uuid references "HRMS_users"(id) on delete set null
+);
+create index if not exists hrms_payroll_master_user_effective_idx on "HRMS_payroll_master"(employee_user_id, effective_end_date);
+
+alter table if exists "HRMS_users" add column if not exists gross_salary numeric(12,2);
+alter table if exists "HRMS_users" add column if not exists pf_eligible boolean default false;
+alter table if exists "HRMS_users" add column if not exists esic_eligible boolean default false;
+alter table if exists "HRMS_companies" add column if not exists professional_tax_annual numeric(12,2) default 200;
+alter table if exists "HRMS_companies" add column if not exists professional_tax_monthly numeric(12,2) default 200;
 
 do $$
 begin
