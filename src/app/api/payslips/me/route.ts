@@ -19,7 +19,7 @@ export async function GET() {
   const [slipRes, companyRes, userRes] = await Promise.all([
     supabase
       .from("HRMS_payslips")
-      .select("id, payroll_period_id, net_pay, gross_pay, pay_days, basic, hra, allowances, deductions, currency, payslip_number, generated_at, bank_name, bank_account_number, bank_ifsc, pf_employee, esic_employee, professional_tax, incentive, pr_bonus, reimbursement, tds")
+      .select("id, payroll_period_id, net_pay, gross_pay, pay_days, basic, hra, allowances, medical, trans, lta, personal, deductions, currency, payslip_number, generated_at, bank_name, bank_account_number, bank_ifsc, pf_employee, esic_employee, professional_tax, incentive, pr_bonus, reimbursement, tds")
       .eq("company_id", me.company_id)
       .eq("employee_user_id", session.id)
       .order("generated_at", { ascending: false }),
@@ -93,6 +93,10 @@ export async function GET() {
         basic: Number(p.basic) ?? 0,
         hra: Number(p.hra) ?? 0,
         allowances: Number(p.allowances) ?? 0,
+        medical: Number(p.medical) ?? 0,
+        trans: Number(p.trans) ?? 0,
+        lta: Number(p.lta) ?? 0,
+        personal: Number(p.personal) ?? 0,
         deductions: Number(p.deductions) ?? 0,
         pfEmployee: Number(p.pf_employee) ?? 0,
         esicEmployee: Number(p.esic_employee) ?? 0,

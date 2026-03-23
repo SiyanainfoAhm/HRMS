@@ -3,6 +3,10 @@ import { cookies } from "next/headers";
 import { COOKIE_NAME, getSessionFromCookie } from "@/lib/auth";
 import { supabase } from "@/lib/supabaseClient";
 
+function isManagerial(role: string): boolean {
+  return role === "super_admin" || role === "admin" || role === "hr";
+}
+
 function mapUser(row: any) {
   return {
     id: row.id as string,
@@ -123,7 +127,7 @@ export async function PUT(request: NextRequest) {
     designation: typeof body?.designation === "string" ? body.designation.trim() || null : undefined,
     aadhaar: typeof body?.aadhaar === "string" ? body.aadhaar.trim() || null : undefined,
     pan: typeof body?.pan === "string" ? body.pan.trim() || null : undefined,
-    uan_number: typeof body?.uanNumber === "string" ? body.uanNumber.trim() || null : undefined,
+    uan_number: isManagerial(session.role) && typeof body?.uanNumber === "string" ? body.uanNumber.trim() || null : undefined,
     pf_number: typeof body?.pfNumber === "string" ? body.pfNumber.trim() || null : undefined,
     esic_number: typeof body?.esicNumber === "string" ? body.esicNumber.trim() || null : undefined,
     updated_at: new Date().toISOString(),

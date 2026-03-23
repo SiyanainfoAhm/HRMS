@@ -19,6 +19,12 @@ export default function PayrollPage() {
   const [mastersLoading, setMastersLoading] = useState(false);
   const [editMasterOpen, setEditMasterOpen] = useState<any>(null);
   const [editGross, setEditGross] = useState("");
+  const [editBasic, setEditBasic] = useState("");
+  const [editHra, setEditHra] = useState("");
+  const [editMedical, setEditMedical] = useState("");
+  const [editTrans, setEditTrans] = useState("");
+  const [editLta, setEditLta] = useState("");
+  const [editPersonal, setEditPersonal] = useState("");
   const [editPfEligible, setEditPfEligible] = useState(false);
   const [editEsicEligible, setEditEsicEligible] = useState(false);
   const [editEffectiveDate, setEditEffectiveDate] = useState("");
@@ -242,12 +248,24 @@ export default function PayrollPage() {
     setEditSaving(true);
     try {
       const gross = parseFloat(editGross) || 0;
+      const basic = parseFloat(editBasic) || 0;
+      const hra = parseFloat(editHra) || 0;
+      const medical = parseFloat(editMedical) || 0;
+      const trans = parseFloat(editTrans) || 0;
+      const lta = parseFloat(editLta) || 0;
+      const personal = parseFloat(editPersonal) || 0;
       const res = await fetch("/api/payroll/master", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           employeeUserId: editMasterOpen.employeeUserId,
           grossSalary: gross,
+          basic: basic || undefined,
+          hra: hra || undefined,
+          medical: medical || undefined,
+          trans: trans || undefined,
+          lta: lta || undefined,
+          personal: personal || undefined,
           pfEligible: editPfEligible,
           esicEligible: editEsicEligible,
           effectiveStartDate: editEffectiveDate,
@@ -394,6 +412,12 @@ export default function PayrollPage() {
                               onClick={() => {
                                 setEditMasterOpen(row);
                                 setEditGross(String(row.master.grossSalary || ""));
+                                setEditBasic(String(row.master.basic ?? ""));
+                                setEditHra(String(row.master.hra ?? ""));
+                                setEditMedical(String(row.master.medical ?? ""));
+                                setEditTrans(String(row.master.trans ?? ""));
+                                setEditLta(String(row.master.lta ?? ""));
+                                setEditPersonal(String(row.master.personal ?? ""));
                                 setEditPfEligible(row.master.pfEligible || false);
                                 setEditEsicEligible(row.master.esicEligible || false);
                                 setEditEffectiveDate(new Date().toISOString().slice(0, 10));
@@ -439,6 +463,36 @@ export default function PayrollPage() {
                   required
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                 />
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <p className="mb-2 text-xs font-medium text-slate-600">Salary breakdown (optional, for payslip)</p>
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div>
+                    <label className="text-slate-600">Basic</label>
+                    <input type="number" min="0" step="100" value={editBasic} onChange={(e) => setEditBasic(e.target.value)} className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm" />
+                  </div>
+                  <div>
+                    <label className="text-slate-600">HRA</label>
+                    <input type="number" min="0" step="100" value={editHra} onChange={(e) => setEditHra(e.target.value)} className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm" />
+                  </div>
+                  <div>
+                    <label className="text-slate-600">Medical</label>
+                    <input type="number" min="0" step="100" value={editMedical} onChange={(e) => setEditMedical(e.target.value)} className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm" />
+                  </div>
+                  <div>
+                    <label className="text-slate-600">Trans</label>
+                    <input type="number" min="0" step="100" value={editTrans} onChange={(e) => setEditTrans(e.target.value)} className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm" />
+                  </div>
+                  <div>
+                    <label className="text-slate-600">LTA</label>
+                    <input type="number" min="0" step="100" value={editLta} onChange={(e) => setEditLta(e.target.value)} className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm" />
+                  </div>
+                  <div>
+                    <label className="text-slate-600">Personal</label>
+                    <input type="number" min="0" step="100" value={editPersonal} onChange={(e) => setEditPersonal(e.target.value)} className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm" />
+                  </div>
+                </div>
+                <p className="mt-2 text-xs text-slate-500">Leave blank for auto-split. If filled, sum used as gross.</p>
               </div>
               <div className="flex gap-4">
                 <label className="flex items-center gap-2 text-sm">

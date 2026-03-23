@@ -8,14 +8,18 @@ const TEAL = "#0d9488";
 
 function getGreeting(): string {
   const h = new Date().getHours();
-  if (h < 12) return "Good Morning";
+  if (h < 12) return "S";
   if (h < 17) return "Good Afternoon";
   return "Good Evening";
 }
 
 function AvatarUrl({ userId, gender }: { userId: string; gender: string | null }) {
-  const g = gender === "female" ? "female" : "male";
-  return `https://api.dicebear.com/7.x/personas/svg?seed=${encodeURIComponent(userId)}&backgroundColor=0d9488&gender=${g}`;
+  const seed = encodeURIComponent(userId);
+  const base = `https://api.dicebear.com/9.x/personas/svg?seed=${seed}&backgroundColor=0d9488`;
+  if (gender === "female") {
+    return `${base}&hair=bobCut,long,pigtails,curlyBun,straightBun,bobBangs&facialHairProbability=0`;
+  }
+  return `${base}&hair=bald,buzzcut,shortCombover,fade,mohawk,balding&facialHairProbability=50`;
 }
 
 export function DashboardContent() {

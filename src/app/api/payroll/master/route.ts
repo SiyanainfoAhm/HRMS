@@ -59,6 +59,12 @@ export async function GET() {
           pt: m.pt,
           takeHome: m.take_home,
           effectiveStartDate: m.effective_start_date,
+          basic: m.basic ?? 0,
+          hra: m.hra ?? 0,
+          medical: m.medical ?? 0,
+          trans: m.trans ?? 0,
+          lta: m.lta ?? 0,
+          personal: m.personal ?? 0,
         },
       };
     });
@@ -74,11 +80,21 @@ export async function PATCH(request: NextRequest) {
 
   const body = await request.json().catch(() => ({}));
   const userId = typeof body?.employeeUserId === "string" ? body.employeeUserId : "";
-  const grossSalary = body?.grossSalary != null ? Number(body.grossSalary) : 0;
+  let grossSalary = body?.grossSalary != null ? Number(body.grossSalary) : 0;
   const pfEligible = body?.pfEligible === true;
   const esicEligible = body?.esicEligible === true;
   const effectiveStartDate = typeof body?.effectiveStartDate === "string" ? body.effectiveStartDate : "";
   const reasonForChange = typeof body?.reasonForChange === "string" ? body.reasonForChange.trim() : "";
+
+  // Optional salary component breakdown (Basic, HRA, Medical, Trans, LTA, Personal)
+  const basic = body?.basic != null ? Number(body.basic) : 0;
+  const hra = body?.hra != null ? Number(body.hra) : 0;
+  const medical = body?.medical != null ? Number(body.medical) : 0;
+  const trans = body?.trans != null ? Number(body.trans) : 0;
+  const lta = body?.lta != null ? Number(body.lta) : 0;
+  const personal = body?.personal != null ? Number(body.personal) : 0;
+  const componentsSum = basic + hra + medical + trans + lta + personal;
+  if (componentsSum > 0) grossSalary = componentsSum;
 
   if (!userId || !effectiveStartDate || !reasonForChange) {
     return NextResponse.json({ error: "employeeUserId, effectiveStartDate and reasonForChange are required" }, { status: 400 });
@@ -132,6 +148,24 @@ export async function PATCH(request: NextRequest) {
       .eq("id", oldMaster.id);
   }
 
+  const salaryComponents = componentsSum > 0
+    ? {
+        basic: Math.round(basic),
+        hra: Math.round(hra),
+        medical: Math.round(medical),
+        trans: Math.round(trans),
+        lta: Math.round(lta),
+        personal: Math.round(personal),
+      }
+    : {
+        basic: Math.round(grossSalary * 0.5),
+        hra: Math.round(grossSalary * 0.2),
+        medical: Math.round(grossSalary * 0.05),
+        trans: Math.round(grossSalary * 0.05),
+        lta: Math.round(grossSalary * 0.1),
+        personal: Math.round(grossSalary * 0.1),
+      };
+
   await supabase.from("HRMS_payroll_master").insert([
     {
       company_id: me.company_id,
@@ -150,6 +184,7 @@ export async function PATCH(request: NextRequest) {
       effective_end_date: null,
       reason_for_change: reasonForChange,
       created_by: session.id,
+      ...salaryComponents,
     },
   ]);
 

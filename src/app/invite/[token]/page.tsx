@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { ToastProvider, useToast } from "@/components/ToastProvider";
@@ -29,6 +29,7 @@ function InvitePageInner() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [invite, setInvite] = useState<any>(null);
+  const hasPopulatedFromUserRef = useRef(false);
   const [documents, setDocuments] = useState<Doc[]>([]);
   const [submissions, setSubmissions] = useState<Submission[]>([]);
 
@@ -105,6 +106,32 @@ function InvitePageInner() {
       setInvite(data.invite);
       setDocuments(data.documents || []);
       setSubmissions(data.submissions || []);
+
+      // Pre-populate form with admin-filled user details (only on first load, not on refresh)
+      const u = data.user;
+      if (u && !hasPopulatedFromUserRef.current) {
+        hasPopulatedFromUserRef.current = true;
+        setName(String(u.name ?? "").trim());
+        const rawPhone = String(u.phone ?? "").trim();
+        const digits = rawPhone.replace(/\D+/g, "");
+        if (digits.length >= 10) {
+          const local = digits.length === 12 && digits.startsWith("91") ? digits.slice(2) : digits.slice(-10);
+          setPhone(local);
+          if (digits.startsWith("91") && digits.length === 12) setCountryCode("+91");
+          else if (digits.startsWith("1") && digits.length === 11) setCountryCode("+1");
+          else if (digits.startsWith("44") && digits.length >= 12) setCountryCode("+44");
+          else if (digits.startsWith("61") && digits.length >= 11) setCountryCode("+61");
+          else if (digits.startsWith("971") && digits.length >= 12) setCountryCode("+971");
+        }
+        setDateOfBirth(String(u.dateOfBirth ?? "").trim());
+        setCurrentAddressLine1(String(u.currentAddressLine1 ?? "").trim());
+        setCurrentCity(String(u.currentCity ?? "").trim());
+        setCurrentState(String(u.currentState ?? "").trim());
+        setCurrentCountry(String(u.currentCountry ?? "").trim());
+        setCurrentPostalCode(String(u.currentPostalCode ?? "").replace(/\D+/g, ""));
+        setBankAccountNumber(String(u.bankAccountNumber ?? "").trim());
+        setBankIfsc(String(u.bankIfsc ?? "").trim());
+      }
     } catch (e: any) {
       setError(e?.message || "Failed to load invite");
       showToast("error", e?.message || "Failed to load invite");
@@ -258,6 +285,18 @@ function InvitePageInner() {
     }
   }
 
+  if (invite?.status === "completed") {
+    return (
+      <section className="mx-auto max-w-3xl space-y-4 p-4 md:p-8">
+        <div className="card text-center py-12">
+          <h1 className="text-2xl font-semibold text-slate-900">Thank you!</h1>
+          <p className="mt-3 text-slate-600">Your onboarding is complete. Your account is now active.</p>
+          <p className="mt-2 text-sm text-slate-500">You can log in with your email and password.</p>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="mx-auto max-w-3xl space-y-4 p-4 md:p-8">
       <div>
@@ -343,8 +382,18 @@ function InvitePageInner() {
 
       <div className="card">
         <h2 className="text-base font-semibold text-slate-900">Your details</h2>
-        <p className="text-sm text-slate-500 mt-1">Complete your information (visible to HR/Admin).</p>
+        <p className="text-sm text-slate-500 mt-1">Complete your information (visible to HR/Admin). Pre-filled fields were entered by your admin.</p>
         <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">Email</label>
+            <input
+              type="email"
+              readOnly
+              value={invite?.email ?? ""}
+              className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600"
+            />
+            <p className="mt-0.5 text-xs text-slate-500">Pre-filled by admin</p>
+          </div>
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700">Full name</label>
             <input

@@ -257,7 +257,7 @@ export async function POST(request: NextRequest) {
           emergency_contact_phone: emergencyContactPhone || null,
           bank_account_number: bankAccountNumber || null,
           bank_ifsc: bankIfsc || null,
-          is_active: finalStatus !== "past",
+          is_active: requestedStatus !== "past",
         },
       ]);
     }

@@ -3,14 +3,15 @@
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
-import { useEffect, useMemo, useState, FormEvent } from "react";
+import { useEffect, useMemo, useState, useRef, FormEvent } from "react";
 
 export function ProfileContent() {
   const { role } = useAuth();
   const params = useSearchParams();
   const tab = params.get("tab") || "profile";
 
-  const canEditEmployment = useMemo(() => role === "super_admin" || role === "admin" || role === "hr", [role]);
+  const canEditEmployment = useMemo(() => role === "admin" || role === "hr", [role]);
+  const isSuperAdmin = role === "super_admin";
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -18,6 +19,7 @@ export function ProfileContent() {
   const [success, setSuccess] = useState<string | null>(null);
 
   const [form, setForm] = useState({
+    email: "",
     name: "",
     employeeCode: "",
     phone: "",
@@ -66,6 +68,10 @@ export function ProfileContent() {
       basic: number;
       hra: number;
       allowances: number;
+      medical: number;
+      trans: number;
+      lta: number;
+      personal: number;
       deductions: number;
       pfEmployee: number;
       esicEmployee: number;
@@ -80,6 +86,51 @@ export function ProfileContent() {
   const [payslipsError, setPayslipsError] = useState<string | null>(null);
   const [selectedMonth, setSelectedMonth] = useState("");
   const [selectedYear, setSelectedYear] = useState("");
+  const payslipRef = useRef<HTMLDivElement>(null);
+
+  const [pdfDownloading, setPdfDownloading] = useState(false);
+
+  async function handleDownloadPdf(userName?: string, month?: string, year?: string) {
+    const el = payslipRef.current;
+    if (!el) return;
+
+    setPdfDownloading(true);
+    try {
+      const html2canvas = (await import("html2canvas")).default;
+      const { jsPDF } = await import("jspdf");
+
+      const canvas = await html2canvas(el, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        backgroundColor: "#ffffff",
+      });
+
+      const imgData = canvas.toDataURL("image/png");
+      const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = pdf.internal.pageSize.getHeight();
+      const imgWidth = canvas.width;
+      const imgHeight = canvas.height;
+      const ratio = Math.min(pdfWidth / imgWidth, pdfHeight / imgHeight) * 0.95;
+      const imgX = (pdfWidth - imgWidth * ratio) / 2;
+      const imgY = 5;
+
+      pdf.addImage(imgData, "PNG", imgX, imgY, imgWidth * ratio, imgHeight * ratio);
+
+      const namePart = (userName || "Employee").replace(/[^a-zA-Z0-9]/g, "-").replace(/-+/g, "-") || "Employee";
+      const monthStr = (month || String(new Date().getMonth() + 1)).padStart(2, "0");
+      const yearStr = year || String(new Date().getFullYear());
+      const fileName = `Salary-Slip-${namePart}-${monthStr}-${yearStr}.pdf`;
+
+      pdf.save(fileName);
+    } catch (err) {
+      console.error("PDF download failed:", err);
+      window.print();
+    } finally {
+      setPdfDownloading(false);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -93,6 +144,7 @@ export function ProfileContent() {
         if (cancelled) return;
         const u = data.user;
         setForm({
+          email: u?.email ?? "",
           name: u?.name ?? "",
           employeeCode: u?.employeeCode ?? "",
           phone: u?.phone ?? "",
@@ -201,8 +253,9 @@ export function ProfileContent() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Profile</h1>
         <p className="muted">
-          For employees this shows personal, bank and emergency contact information from
-          HRMS_employees.
+          {isSuperAdmin
+            ? "You are the master admin. Manage companies and edit company details—employee fields do not apply to you."
+            : "For employees this shows personal, bank and emergency contact information."}
         </p>
       </div>
 
@@ -213,26 +266,36 @@ export function ProfileContent() {
         >
           My Profile
         </Link>
-        <Link
-          href="/profile?tab=pay"
-          className={`btn ${tab === "pay" ? "btn-primary" : "btn-outline"}`}
-        >
-          My Pay
-        </Link>
-        <Link
-          href="/profile?tab=documents"
-          className={`btn ${tab === "documents" ? "btn-primary" : "btn-outline"}`}
-        >
-          My Documents
-        </Link>
+        {!isSuperAdmin && (
+          <>
+            <Link
+              href="/profile?tab=pay"
+              className={`btn ${tab === "pay" ? "btn-primary" : "btn-outline"}`}
+            >
+              My Pay
+            </Link>
+            <Link
+              href="/profile?tab=documents"
+              className={`btn ${tab === "documents" ? "btn-primary" : "btn-outline"}`}
+            >
+              My Documents
+            </Link>
+          </>
+        )}
       </div>
 
       {tab === "profile" && (
         <form onSubmit={handleSave} className="card space-y-6">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h2 className="mb-1 text-lg font-semibold text-slate-900">My details</h2>
-              <p className="muted">These fields are stored in `HRMS_users` for custom auth.</p>
+              <h2 className="mb-1 text-lg font-semibold text-slate-900">
+                {isSuperAdmin ? "Account details" : "My details"}
+              </h2>
+              <p className="muted">
+                {isSuperAdmin
+                  ? "Basic account info. You manage companies from the Companies section."
+                  : "These fields are stored in `HRMS_users` for custom auth."}
+              </p>
             </div>
             <button type="submit" className="btn btn-primary" disabled={saving || loading}>
               {saving ? "Saving..." : "Save"}
@@ -246,22 +309,25 @@ export function ProfileContent() {
               {error && <p className="text-sm text-red-600">{error}</p>}
               {success && <p className="text-sm text-emerald-700">{success}</p>}
 
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <div className={`grid grid-cols-1 gap-4 ${isSuperAdmin ? "md:grid-cols-3" : "md:grid-cols-3"}`}>
+                {isSuperAdmin && (
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Email</label>
+                  <input
+                    type="email"
+                    value={form.email}
+                    readOnly
+                    disabled
+                    className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600"
+                  />
+                </div>
+                )}
                 <div>
                   <label className="mb-1 block text-sm font-medium text-slate-700">Full name</label>
                   <input
                     type="text"
                     value={form.name}
                     onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-slate-700">Employee code</label>
-                  <input
-                    type="text"
-                    value={form.employeeCode}
-                    onChange={(e) => setForm((p) => ({ ...p, employeeCode: e.target.value }))}
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                   />
                 </div>
@@ -287,6 +353,17 @@ export function ProfileContent() {
                     <option value="other">Other</option>
                   </select>
                   <p className="mt-0.5 text-xs text-slate-500">Used for avatar display on dashboard.</p>
+                </div>
+                {!isSuperAdmin && (
+                <>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Employee code</label>
+                  <input
+                    type="text"
+                    value={form.employeeCode}
+                    onChange={(e) => setForm((p) => ({ ...p, employeeCode: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  />
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-slate-700">Designation</label>
@@ -324,8 +401,13 @@ export function ProfileContent() {
                     type="text"
                     value={form.uanNumber}
                     onChange={(e) => setForm((p) => ({ ...p, uanNumber: e.target.value }))}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    readOnly={!canEditEmployment}
+                    disabled={!canEditEmployment}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-50 disabled:text-slate-600"
                   />
+                  {!canEditEmployment && (
+                    <p className="mt-1 text-xs text-slate-500">View only. Admin/HR can edit in Employees.</p>
+                  )}
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-slate-700">PF number</label>
@@ -393,8 +475,12 @@ export function ProfileContent() {
                     <p className="mt-1 text-xs text-slate-500">Only Admin/HR can change status.</p>
                   )}
                 </div>
+              </>
+              )}
+
               </div>
 
+              {!isSuperAdmin && (
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div>
                   <h3 className="text-sm font-semibold text-slate-900">Current address</h3>
@@ -545,6 +631,7 @@ export function ProfileContent() {
                   </div>
                 </div>
               </div>
+              )}
             </div>
           )}
         </form>
@@ -594,6 +681,16 @@ export function ProfileContent() {
                       ));
                     })()}
                   </select>
+                  {payslipsData.payslips.some((p) => p.periodMonth === `${selectedYear}-${selectedMonth}`) && (
+                    <button
+                      type="button"
+                      onClick={() => handleDownloadPdf(payslipsData.user?.name, selectedMonth, selectedYear)}
+                      disabled={pdfDownloading}
+                      className="btn btn-primary print:hidden"
+                    >
+                      {pdfDownloading ? "Generating..." : "Download PDF"}
+                    </button>
+                  )}
                 </div>
 
                 {(() => {
@@ -623,18 +720,21 @@ export function ProfileContent() {
                   const totalPerf = slip.incentive + slip.prBonus + slip.reimbursement;
                   const netPay = slip.netPay - slip.tds + totalPerf;
 
+                  const cellClass = "border border-black px-3 py-2 align-top text-sm";
+                  const thClass = "border border-black px-3 py-2 text-left font-semibold text-sm";
+
                   return (
-                    <div className="overflow-x-auto rounded-lg border border-slate-800">
-                      <table className="w-full border-collapse text-sm" style={{ border: "1px solid #1e293b" }}>
+                    <div ref={payslipRef} className="payslip-print-area overflow-x-auto rounded-lg border border-black bg-white p-6 print:overflow-visible print:max-w-[190mm]" style={{ minWidth: "min(100%, 190mm)" }}>
+                      <table className="payslip-header-table w-full border-collapse" style={{ border: "1px solid #000" }}>
                         <tbody>
                           <tr>
-                            <td colSpan={6} className="border border-slate-800 px-4 py-3 text-center">
-                              <div className="font-bold text-slate-900">{company?.name || "Company"}</div>
+                            <td colSpan={2} className="border border-black px-4 py-4 text-center">
+                              <div className="text-base font-bold text-slate-900">{company?.name || "Company"}</div>
                               {company?.address && (
-                                <div className="text-xs text-slate-600">{company.address}</div>
+                                <div className="mt-0.5 text-sm text-slate-600">{company.address}</div>
                               )}
-                              <div className="mt-2 font-bold uppercase tracking-wide">Salary Slip</div>
-                              <div className="font-semibold">
+                              <div className="mt-2 text-base font-bold uppercase tracking-wide">Salary Slip</div>
+                              <div className="text-sm font-semibold">
                                 {["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][
                                   parseInt(selectedMonth, 10) - 1
                                 ]}{" "}
@@ -643,21 +743,30 @@ export function ProfileContent() {
                             </td>
                           </tr>
                           <tr>
-                            <td className="w-1/2 border border-slate-800 px-3 py-2 align-top">
-                              <div className="space-y-1">
-                                <div><span className="text-slate-600">Employee Code:</span> {user?.employeeCode || "—"}</div>
+                            <td className={`w-1/2 ${cellClass}`}>
+                              <div className="space-y-1.5 text-sm leading-relaxed">
                                 <div><span className="text-slate-600">Employee Name:</span> {user?.name || "—"}</div>
                                 <div><span className="text-slate-600">Designation:</span> {user?.designation || "—"}</div>
                                 <div><span className="text-slate-600">Salary Date:</span> {salaryDate}</div>
+                              </div>
+                            </td>
+                            <td className={`w-1/2 ${cellClass}`}>
+                              <div className="space-y-1.5 text-sm leading-relaxed">
+                                <div><span className="text-slate-600">Joining Date:</span> {dojFormatted}</div>
+                                <div><span className="text-slate-600">Aadhaar:</span> {user?.aadhaar || "—"}</div>
+                                <div><span className="text-slate-600">PAN:</span> {user?.pan || "—"}</div>
+                              </div>
+                            </td>
+                          </tr>
+                          <tr>
+                            <td className={cellClass}>
+                              <div className="space-y-1.5 text-sm leading-relaxed">
                                 <div><span className="text-slate-600">Total Paid Days:</span> {slip.payDays}</div>
                                 <div><span className="text-slate-600">Unpaid Leaves:</span> {slip.unpaidLeaves}</div>
                               </div>
                             </td>
-                            <td className="w-1/2 border border-slate-800 px-3 py-2 align-top">
-                              <div className="space-y-1">
-                                <div><span className="text-slate-600">Joining Date:</span> {dojFormatted}</div>
-                                <div><span className="text-slate-600">Aadhaar:</span> {user?.aadhaar || "—"}</div>
-                                <div><span className="text-slate-600">PAN:</span> {user?.pan || "—"}</div>
+                            <td className={cellClass}>
+                              <div className="space-y-1.5 text-sm leading-relaxed">
                                 <div><span className="text-slate-600">ESIC number:</span> {user?.esicNumber || "—"}</div>
                                 <div><span className="text-slate-600">UAN number:</span> {user?.uanNumber || "—"}</div>
                                 <div><span className="text-slate-600">PF number:</span> {user?.pfNumber || "—"}</div>
@@ -665,68 +774,107 @@ export function ProfileContent() {
                             </td>
                           </tr>
                           <tr>
-                            <td colSpan={2} className="border border-slate-800 p-0">
-                              <table className="w-full border-collapse text-sm">
+                            <td colSpan={2} className="border border-black p-0">
+                              <table className="payslip-financial-table w-full border-collapse text-sm">
+                                <colgroup>
+                                  <col />
+                                  <col />
+                                  <col />
+                                  <col />
+                                  <col />
+                                  <col />
+                                  <col />
+                                </colgroup>
                                 <thead>
-                                  <tr className="bg-slate-100">
-                                    <th className="border border-slate-800 px-2 py-1.5 text-left font-semibold">Earnings</th>
-                                    <th className="border border-slate-800 px-2 py-1.5 text-right w-20">Actual</th>
-                                    <th className="border border-slate-800 px-2 py-1.5 text-right w-20">Paid</th>
-                                    <th className="border border-slate-800 px-2 py-1.5 text-left font-semibold">Employee Deductions</th>
-                                    <th className="border border-slate-800 px-2 py-1.5 text-right w-20">Amount</th>
-                                    <th className="border border-slate-800 px-2 py-1.5 text-left font-semibold">Performance Earnings</th>
-                                    <th className="border border-slate-800 px-2 py-1.5 text-right w-20">Amount</th>
+                                  <tr>
+                                    <th className={`${thClass} w-20`}>Earnings</th>
+                                    <th className="border border-black px-3 py-2 text-right w-14 font-semibold text-sm">Actual</th>
+                                    <th className="border border-black px-3 py-2 text-right w-14 font-semibold text-sm">Paid</th>
+                                    <th className={`${thClass} w-24`}>Employee Deductions</th>
+                                    <th className="border border-black px-3 py-2 text-right w-14 font-semibold text-sm">Amount</th>
+                                    <th className={`${thClass} w-24`}>Performance Earnings</th>
+                                    <th className="border border-black px-3 py-2 text-right w-14 font-semibold text-sm">Amount</th>
                                   </tr>
                                 </thead>
                                 <tbody>
                                   <tr>
-                                    <td className="border border-slate-800 px-2 py-1">Basic & DA</td>
-                                    <td className="border border-slate-800 px-2 py-1 text-right">{n(slip.basic)}</td>
-                                    <td className="border border-slate-800 px-2 py-1 text-right">{n(slip.basic)}</td>
-                                    <td className="border border-slate-800 px-2 py-1">Professional Tax</td>
-                                    <td className="border border-slate-800 px-2 py-1 text-right">{n(slip.professionalTax)}</td>
-                                    <td className="border border-slate-800 px-2 py-1">Performance Bonus</td>
-                                    <td className="border border-slate-800 px-2 py-1 text-right">{n(slip.prBonus)}</td>
+                                    <td className={cellClass}>Basic</td>
+                                    <td className={`${cellClass} text-right`}>{n(slip.basic)}</td>
+                                    <td className={`${cellClass} text-right`}>{n(slip.basic)}</td>
+                                    <td className={cellClass}>Professional Tax</td>
+                                    <td className={`${cellClass} text-right`}>{n(slip.professionalTax)}</td>
+                                    <td className={cellClass}>Bonus</td>
+                                    <td className={`${cellClass} text-right`}>{n(slip.prBonus)}</td>
                                   </tr>
                                   <tr>
-                                    <td className="border border-slate-800 px-2 py-1">HRA</td>
-                                    <td className="border border-slate-800 px-2 py-1 text-right">{n(slip.hra)}</td>
-                                    <td className="border border-slate-800 px-2 py-1 text-right">{n(slip.hra)}</td>
-                                    <td className="border border-slate-800 px-2 py-1">PF</td>
-                                    <td className="border border-slate-800 px-2 py-1 text-right">{n(slip.pfEmployee)}</td>
-                                    <td className="border border-slate-800 px-2 py-1">Performance Incentive</td>
-                                    <td className="border border-slate-800 px-2 py-1 text-right">{n(slip.incentive)}</td>
+                                    <td className={cellClass}>HRA</td>
+                                    <td className={`${cellClass} text-right`}>{n(slip.hra)}</td>
+                                    <td className={`${cellClass} text-right`}>{n(slip.hra)}</td>
+                                    <td className={cellClass}>PF</td>
+                                    <td className={`${cellClass} text-right`}>{n(slip.pfEmployee)}</td>
+                                    <td className={cellClass}>Incentive</td>
+                                    <td className={`${cellClass} text-right`}>{n(slip.incentive)}</td>
                                   </tr>
                                   <tr>
-                                    <td className="border border-slate-800 px-2 py-1">Allowances</td>
-                                    <td className="border border-slate-800 px-2 py-1 text-right">{n(slip.allowances)}</td>
-                                    <td className="border border-slate-800 px-2 py-1 text-right">{n(slip.allowances)}</td>
-                                    <td className="border border-slate-800 px-2 py-1">ESIC</td>
-                                    <td className="border border-slate-800 px-2 py-1 text-right">{n(slip.esicEmployee)}</td>
-                                    <td className="border border-slate-800 px-2 py-1">Reimbursement</td>
-                                    <td className="border border-slate-800 px-2 py-1 text-right">{n(slip.reimbursement)}</td>
+                                    <td className={cellClass}>Medical</td>
+                                    <td className={`${cellClass} text-right`}>{n(slip.medical)}</td>
+                                    <td className={`${cellClass} text-right`}>{n(slip.medical)}</td>
+                                    <td className={cellClass}>ESIC</td>
+                                    <td className={`${cellClass} text-right`}>{n(slip.esicEmployee)}</td>
+                                    <td className={cellClass}>Reimbursement</td>
+                                    <td className={`${cellClass} text-right`}>{n(slip.reimbursement)}</td>
                                   </tr>
                                   <tr>
-                                    <td className="border border-slate-800 px-2 py-1 font-medium">GROSS</td>
-                                    <td className="border border-slate-800 px-2 py-1 text-right font-medium">{n(slip.grossPay)}</td>
-                                    <td className="border border-slate-800 px-2 py-1 text-right font-medium">{n(slip.grossPay)}</td>
-                                    <td className="border border-slate-800 px-2 py-1">TDS</td>
-                                    <td className="border border-slate-800 px-2 py-1 text-right">{n(slip.tds)}</td>
-                                    <td className="border border-slate-800 px-2 py-1 font-medium">Total</td>
-                                    <td className="border border-slate-800 px-2 py-1 text-right font-medium">{n(totalPerf)}</td>
+                                    <td className={cellClass}>Trans</td>
+                                    <td className={`${cellClass} text-right`}>{n(slip.trans)}</td>
+                                    <td className={`${cellClass} text-right`}>{n(slip.trans)}</td>
+                                    <td colSpan={2} className={cellClass}></td>
+                                    <td colSpan={2} className={cellClass}></td>
                                   </tr>
                                   <tr>
-                                    <td className="border border-slate-800 px-2 py-1 font-medium">Net Payable Salary</td>
-                                    <td className="border border-slate-800 px-2 py-1 text-right font-medium">{n(netPay)}</td>
-                                    <td className="border border-slate-800 px-2 py-1 text-right font-medium">{n(netPay)}</td>
-                                    <td className="border border-slate-800 px-2 py-1 font-medium">Total Deduction</td>
-                                    <td className="border border-slate-800 px-2 py-1 text-right font-medium">{n(slip.deductions)}</td>
-                                    <td colSpan={2} className="border border-slate-800 px-2 py-1"></td>
+                                    <td className={cellClass}>LTA</td>
+                                    <td className={`${cellClass} text-right`}>{n(slip.lta)}</td>
+                                    <td className={`${cellClass} text-right`}>{n(slip.lta)}</td>
+                                    <td colSpan={2} className={cellClass}></td>
+                                    <td colSpan={2} className={cellClass}></td>
                                   </tr>
                                   <tr>
-                                    <td className="border border-slate-800 px-2 py-1 font-bold">Net Pay</td>
-                                    <td colSpan={2} className="border border-slate-800 px-2 py-1 text-right font-bold">{n(netPay)}</td>
-                                    <td colSpan={4} className="border border-slate-800 px-2 py-1"></td>
+                                    <td className={cellClass}>Personal</td>
+                                    <td className={`${cellClass} text-right`}>{n(slip.personal)}</td>
+                                    <td className={`${cellClass} text-right`}>{n(slip.personal)}</td>
+                                    <td colSpan={2} className={cellClass}></td>
+                                    <td colSpan={2} className={cellClass}></td>
+                                  </tr>
+                                  <tr>
+                                    <td className={`${cellClass} font-medium`}>GROSS</td>
+                                    <td className={`${cellClass} text-right font-medium`}>{n(slip.grossPay)}</td>
+                                    <td className={`${cellClass} text-right font-medium`}>{n(slip.grossPay)}</td>
+                                    <td className={`${cellClass} font-medium`}>Total Deduction</td>
+                                    <td className={`${cellClass} text-right font-medium`}>{n(slip.deductions)}</td>
+                                    <td className={`${cellClass} font-medium`}>Total</td>
+                                    <td className={`${cellClass} text-right font-medium`}>{n(totalPerf)}</td>
+                                  </tr>
+                                  <tr>
+                                    <td className={`${cellClass} font-medium`}>Net Payable Salary</td>
+                                    <td className={`${cellClass} text-right font-medium`}>{n(netPay)}</td>
+                                    <td className={`${cellClass} text-right font-medium`}>{n(netPay)}</td>
+                                    <td colSpan={2} className={cellClass}></td>
+                                    <td colSpan={2} className={cellClass}></td>
+                                  </tr>
+                                  <tr>
+                                    <td className={`${cellClass} font-bold`}>Net Pay</td>
+                                    <td colSpan={5} className={cellClass}></td>
+                                    <td className={`${cellClass} text-right font-bold`}>{n(netPay)}</td>
+                                  </tr>
+                                  <tr>
+                                    <td colSpan={3} className={cellClass}></td>
+                                    <td colSpan={2} className={cellClass}></td>
+                                    <td colSpan={2} className={cellClass}></td>
+                                  </tr>
+                                  <tr>
+                                    <td colSpan={3} className={cellClass}></td>
+                                    <td colSpan={2} className={cellClass}></td>
+                                    <td colSpan={2} className={cellClass}></td>
                                   </tr>
                                 </tbody>
                               </table>

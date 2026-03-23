@@ -30,3 +30,43 @@ body {
   @apply text-slate-500 text-sm;
 }
 
+/* Print: show only payslip, A4 portrait */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .payslip-print-area,
+  .payslip-print-area * {
+    visibility: visible;
+  }
+  .payslip-print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 190mm !important;
+    max-width: 190mm !important;
+    overflow: visible !important;
+    box-sizing: border-box;
+  }
+  .payslip-print-area .payslip-financial-table {
+    table-layout: fixed;
+    width: 100% !important;
+    font-size: 12px !important;
+  }
+  .payslip-print-area .payslip-financial-table th,
+  .payslip-print-area .payslip-financial-table td {
+    padding: 8px 12px !important;
+    border-color: #000 !important;
+  }
+  .payslip-print-area .payslip-header-table { font-size: 14px !important; }
+  .payslip-print-area .payslip-header-table td {
+    padding: 12px 16px !important;
+    border-color: #000 !important;
+  }
+  @page {
+    /* Shorter page to fit salary slip content, reduce white space */
+    size: 210mm 170mm;
+    margin: 10mm;
+  }
+}
+

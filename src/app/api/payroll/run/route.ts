@@ -116,7 +116,7 @@ async function computePreview(
 
   const { data: masters } = await supabase
     .from("HRMS_payroll_master")
-    .select("employee_user_id, gross_salary, ctc, pf_employee, pf_employer, esic_employee, esic_employer")
+    .select("employee_user_id, gross_salary, ctc, pf_employee, pf_employer, esic_employee, esic_employer, basic, hra, medical, trans, lta, personal")
     .eq("company_id", companyId)
     .is("effective_end_date", null);
   if (!masters?.length) {
@@ -182,10 +182,31 @@ async function computePreview(
     if (payDays <= 0) continue;
 
     const grossMonthly = Number(m.gross_salary) || 0;
-    const ctcMonthly = Number(m.ctc) || grossMonthly; // CTC from master = Gross + Employer PF + Employer ESIC
+    const ctcMonthly = Number(m.ctc) || grossMonthly;
     if (grossMonthly <= 0) continue;
 
+    const ratio = payDays / daysInMonth;
+    const mb = Number(m.basic) ?? 0;
+    const mh = Number(m.hra) ?? 0;
+    const mm = Number(m.medical) ?? 0;
+    const mt = Number(m.trans) ?? 0;
+    const ml = Number(m.lta) ?? 0;
+    const mp = Number(m.personal) ?? 0;
+    const componentsSum = mb + mh + mm + mt + ml + mp;
+    const basicMonthly = componentsSum > 0 ? mb : Math.round(grossMonthly * 0.5);
+    const hraMonthly = componentsSum > 0 ? mh : Math.round(grossMonthly * 0.2);
+    const medicalMonthly = componentsSum > 0 ? mm : Math.round(grossMonthly * 0.05);
+    const transMonthly = componentsSum > 0 ? mt : Math.round(grossMonthly * 0.05);
+    const ltaMonthly = componentsSum > 0 ? ml : Math.round(grossMonthly * 0.1);
+    const personalMonthly = componentsSum > 0 ? mp : Math.round(grossMonthly * 0.1);
+
     const grossPay = Math.round((grossMonthly * payDays) / daysInMonth);
+    const basicPay = Math.round(basicMonthly * ratio);
+    const hraPay = Math.round(hraMonthly * ratio);
+    const medicalPay = Math.round(medicalMonthly * ratio);
+    const transPay = Math.round(transMonthly * ratio);
+    const ltaPay = Math.round(ltaMonthly * ratio);
+    const personalPay = Math.round(personalMonthly * ratio);
     const pfEmp = (Number(m.pf_employee) || 0) * (payDays / daysInMonth);
     const pfEmpr = (Number(m.pf_employer) || 0) * (payDays / daysInMonth);
     const esicEmp = (Number(m.esic_employee) || 0) * (payDays / daysInMonth);
@@ -208,6 +229,12 @@ async function computePreview(
       unpaidLeaveDays,
       grossMonthly: Math.round(grossMonthly),
       grossPay,
+      basicPay,
+      hraPay,
+      medicalPay,
+      transPay,
+      ltaPay,
+      personalPay,
       pfEmployee: Math.round(pfEmp),
       pfEmployer: Math.round(pfEmpr),
       esicEmployee: Math.round(esicEmp),
@@ -307,7 +334,7 @@ export async function POST(request: NextRequest) {
 
   const { data: masters } = await supabase
     .from("HRMS_payroll_master")
-    .select("employee_user_id, gross_salary, ctc, pf_employee, pf_employer, esic_employee, esic_employer")
+    .select("employee_user_id, gross_salary, ctc, pf_employee, pf_employer, esic_employee, esic_employer, basic, hra, medical, trans, lta, personal")
     .eq("company_id", me.company_id)
     .is("effective_end_date", null);
   if (!masters?.length) return NextResponse.json({ ok: true, periodId: period.id, periodName, periodStart, periodEnd, payslipsGenerated: 0 });
@@ -346,14 +373,25 @@ export async function POST(request: NextRequest) {
       const esicEmp = Math.round(Number(row.esicEmployee) || 0);
       const esicEmpr = Math.round(Number(row.esicEmployer) || 0);
       const profTax = Math.round(Number(row.profTax) || 0);
+      const basic = Math.round(Number(row.basicPay) || grossPay * 0.5);
+      const hra = Math.round(Number(row.hraPay) || grossPay * 0.2);
+      const medical = Math.round(Number(row.medicalPay) || grossPay * 0.05);
+      const trans = Math.round(Number(row.transPay) || grossPay * 0.05);
+      const lta = Math.round(Number(row.ltaPay) || grossPay * 0.1);
+      const personal = Math.round(Number(row.personalPay) || grossPay * 0.1);
+      const allowances = 0;
       payslips.push({
         company_id: me.company_id,
         employee_id: null,
         employee_user_id: employeeUserId,
         payroll_period_id: period.id,
-        basic: grossPay,
-        hra: 0,
-        allowances: 0,
+        basic,
+        hra,
+        medical,
+        trans,
+        lta,
+        personal,
+        allowances,
         deductions,
         gross_pay: grossPay,
         net_pay: takeHome,
@@ -427,7 +465,21 @@ export async function POST(request: NextRequest) {
       const ctcMonthly = Number(m.ctc) || grossMonthly; // CTC from master = Gross + Employer PF + Employer ESIC
       if (grossMonthly <= 0) continue;
 
+      const ratio = payDays / daysInMonth;
       const grossPay = Math.round((grossMonthly * payDays) / daysInMonth);
+      const mb = Number(m.basic) ?? 0;
+      const mh = Number(m.hra) ?? 0;
+      const mm = Number(m.medical) ?? 0;
+      const mt = Number(m.trans) ?? 0;
+      const ml = Number(m.lta) ?? 0;
+      const mp = Number(m.personal) ?? 0;
+      const componentsSum = mb + mh + mm + mt + ml + mp;
+      const basicPay = componentsSum > 0 ? Math.round(mb * ratio) : Math.round(grossPay * 0.5);
+      const hraPay = componentsSum > 0 ? Math.round(mh * ratio) : Math.round(grossPay * 0.2);
+      const medicalPay = componentsSum > 0 ? Math.round(mm * ratio) : Math.round(grossPay * 0.05);
+      const transPay = componentsSum > 0 ? Math.round(mt * ratio) : Math.round(grossPay * 0.05);
+      const ltaPay = componentsSum > 0 ? Math.round(ml * ratio) : Math.round(grossPay * 0.1);
+      const personalPay = componentsSum > 0 ? Math.round(mp * ratio) : Math.round(grossPay * 0.1);
       const pfEmp = Math.round((Number(m.pf_employee) || 0) * (payDays / daysInMonth));
       const pfEmpr = Math.round((Number(m.pf_employer) || 0) * (payDays / daysInMonth));
       const esicEmp = Math.round((Number(m.esic_employee) || 0) * (payDays / daysInMonth));
@@ -440,8 +492,12 @@ export async function POST(request: NextRequest) {
         employee_id: null,
         employee_user_id: m.employee_user_id,
         payroll_period_id: period.id,
-        basic: grossPay,
-        hra: 0,
+        basic: basicPay,
+        hra: hraPay,
+        medical: medicalPay,
+        trans: transPay,
+        lta: ltaPay,
+        personal: personalPay,
         allowances: 0,
         deductions,
         gross_pay: grossPay,

@@ -34,7 +34,6 @@ export default function EmployeesPage() {
   const [emailError, setEmailError] = useState<string | null>(null);
   const [formRole, setFormRole] = useState<Employee["role"]>("employee");
   const [employmentStatus, setEmploymentStatus] = useState<Employee["employmentStatus"]>("preboarding");
-  const [employeeCode, setEmployeeCode] = useState("");
   const [phone, setPhone] = useState("");
   const [gender, setGender] = useState<"male" | "female" | "other" | "">("");
   const [designation, setDesignation] = useState("");
@@ -153,7 +152,6 @@ export default function EmployeesPage() {
     setEmail("");
     setFormRole("employee");
     setEmploymentStatus("preboarding");
-    setEmployeeCode("");
     setPhone("");
     setGender("");
     setDesignation("");
@@ -222,7 +220,6 @@ export default function EmployeesPage() {
           email: email.trim(),
           role: formRole,
           employmentStatus,
-          employeeCode: employeeCode.trim() || undefined,
           phone: phone.trim() || undefined,
           dateOfJoining: dateOfJoining || undefined,
           currentAddressLine1: currentAddressLine1.trim() || undefined,
@@ -570,15 +567,6 @@ export default function EmployeesPage() {
                   </select>
                 </div>
 
-                <div className="md:col-span-1">
-                  <label className="mb-1 block text-sm font-medium text-slate-700">Employee code</label>
-                  <input
-                    type="text"
-                    value={employeeCode}
-                    onChange={(e) => setEmployeeCode(e.target.value)}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                  />
-                </div>
                 <div className="md:col-span-1">
                   <label className="mb-1 block text-sm font-medium text-slate-700">Phone</label>
                   <input

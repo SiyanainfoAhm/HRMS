@@ -65,7 +65,35 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ token:
   const { data: subs, error: subErr } = await subQuery;
   if (subErr) return NextResponse.json({ error: subErr.message }, { status: 400 });
 
-  return NextResponse.json({ invite, documents: docs ?? [], submissions: subs ?? [] });
+  // Fetch user details (admin-filled when adding employee) for pre-populating the form
+  let user: Record<string, unknown> | null = null;
+  if (invite.user_id) {
+    const { data: userRow } = await supabase
+      .from("HRMS_users")
+      .select("name, email, phone, date_of_birth, date_of_joining, designation, current_address_line1, current_address_line2, current_city, current_state, current_country, current_postal_code, bank_account_number, bank_ifsc")
+      .eq("id", invite.user_id)
+      .maybeSingle();
+    if (userRow) {
+      user = {
+        name: userRow.name ?? "",
+        email: userRow.email ?? invite.email ?? "",
+        phone: userRow.phone ?? "",
+        dateOfBirth: userRow.date_of_birth ? String(userRow.date_of_birth) : "",
+        dateOfJoining: userRow.date_of_joining ? String(userRow.date_of_joining) : "",
+        designation: userRow.designation ?? "",
+        currentAddressLine1: userRow.current_address_line1 ?? "",
+        currentAddressLine2: userRow.current_address_line2 ?? "",
+        currentCity: userRow.current_city ?? "",
+        currentState: userRow.current_state ?? "",
+        currentCountry: userRow.current_country ?? "",
+        currentPostalCode: userRow.current_postal_code ?? "",
+        bankAccountNumber: userRow.bank_account_number ?? "",
+        bankIfsc: userRow.bank_ifsc ?? "",
+      };
+    }
+  }
+
+  return NextResponse.json({ invite, user, documents: docs ?? [], submissions: subs ?? [] });
 }
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
