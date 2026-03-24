@@ -1,15 +1,15 @@
 "use client";
 
-import { useSearchParams, useRouter } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useState, useRef } from "react";
 import { useToast } from "@/components/ToastProvider";
+import { defaultSalaryBreakup } from "@/lib/payrollCalc";
 
 export default function PayrollPage() {
   const { role } = useAuth();
   const { showToast } = useToast();
-  const router = useRouter();
   const params = useSearchParams();
   const tab = params.get("tab") || "master";
 
@@ -91,6 +91,46 @@ export default function PayrollPage() {
     }[]
   >([]);
 
+  // Salary slips tab (admin/HR view employee payslips)
+  const [employees, setEmployees] = useState<{ id: string; name: string | null; email: string }[]>([]);
+  const [employeesLoading, setEmployeesLoading] = useState(false);
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState("");
+  const [slipsData, setSlipsData] = useState<{
+    company: { name: string; address: string } | null;
+    user: { name: string; employeeCode: string; designation: string; dateOfJoining: string; aadhaar: string; pan: string; uanNumber: string; pfNumber: string; esicNumber: string } | null;
+    payslips: {
+      id: string;
+      periodMonth: string;
+      periodFormatted: string;
+      generatedAt: string;
+      payDays: number;
+      unpaidLeaves: number;
+      netPay: number;
+      grossPay: number;
+      basic: number;
+      hra: number;
+      allowances: number;
+      medical: number;
+      trans: number;
+      lta: number;
+      personal: number;
+      deductions: number;
+      pfEmployee: number;
+      esicEmployee: number;
+      professionalTax: number;
+      incentive: number;
+      prBonus: number;
+      reimbursement: number;
+      tds: number;
+    }[];
+  } | null>(null);
+  const [slipsLoading, setSlipsLoading] = useState(false);
+  const [slipsError, setSlipsError] = useState<string | null>(null);
+  const [slipMonth, setSlipMonth] = useState(() => String(new Date().getMonth() + 1).padStart(2, "0"));
+  const [slipYear, setSlipYear] = useState(() => String(new Date().getFullYear()));
+  const [pdfDownloading, setPdfDownloading] = useState(false);
+  const payslipRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     if (preview?.rows?.length && preview.daysInMonth) {
       setEditableRows(
@@ -108,6 +148,97 @@ export default function PayrollPage() {
       setEditableRows([]);
     }
   }, [preview?.rows, preview?.daysInMonth]);
+
+  useEffect(() => {
+    if (tab !== "slips" || !canManage) return;
+    let cancelled = false;
+    (async () => {
+      setEmployeesLoading(true);
+      try {
+        const res = await fetch("/api/employees");
+        const data = await res.json();
+        if (!cancelled && res.ok) {
+          const list = data.employees ?? [];
+          setEmployees(list.map((e: any) => ({ id: e.id, name: e.name, email: e.email })));
+          if (list.length && !selectedEmployeeId) setSelectedEmployeeId(list[0].id);
+        }
+      } finally {
+        if (!cancelled) setEmployeesLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [tab, canManage]);
+
+  useEffect(() => {
+    if (tab !== "slips" || !selectedEmployeeId) {
+      setSlipsData(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      setSlipsLoading(true);
+      setSlipsError(null);
+      try {
+        const res = await fetch(`/api/payslips/employee?employeeUserId=${encodeURIComponent(selectedEmployeeId)}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.error || "Failed to load payslips");
+        if (!cancelled) {
+          setSlipsData({
+            company: data.company,
+            user: data.user,
+            payslips: data.payslips || [],
+          });
+          const slips = data.payslips || [];
+          const first = slips[0];
+          const now = new Date();
+          if (first?.periodMonth) {
+            const [y, m] = first.periodMonth.split("-");
+            setSlipYear(y || String(now.getFullYear()));
+            setSlipMonth(m || String(now.getMonth() + 1).padStart(2, "0"));
+          } else {
+            setSlipYear(String(now.getFullYear()));
+            setSlipMonth(String(now.getMonth() + 1).padStart(2, "0"));
+          }
+        }
+      } catch (e: any) {
+        if (!cancelled) setSlipsError(e?.message || "Failed to load payslips");
+      } finally {
+        if (!cancelled) setSlipsLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [tab, selectedEmployeeId]);
+
+  async function handleSlipDownloadPdf() {
+    const el = payslipRef.current;
+    if (!el) return;
+    setPdfDownloading(true);
+    try {
+      const html2canvas = (await import("html2canvas")).default;
+      const { jsPDF } = await import("jspdf");
+      const canvas = await html2canvas(el, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        backgroundColor: "#ffffff",
+      });
+      const imgData = canvas.toDataURL("image/png");
+      const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const imgWidth = canvas.width;
+      const imgHeight = canvas.height;
+      const ratio = Math.min(pdfWidth / imgWidth, (pdf.internal.pageSize.getHeight() / imgHeight)) * 0.95;
+      pdf.addImage(imgData, "PNG", (pdfWidth - imgWidth * ratio) / 2, 5, imgWidth * ratio, imgHeight * ratio);
+      const namePart = (slipsData?.user?.name || "Employee").replace(/[^a-zA-Z0-9]/g, "-").replace(/-+/g, "-") || "Employee";
+      const fileName = `Salary-Slip-${namePart}-${slipMonth}-${slipYear}.pdf`;
+      pdf.save(fileName);
+    } catch (err) {
+      console.error("PDF download failed:", err);
+      window.print();
+    } finally {
+      setPdfDownloading(false);
+    }
+  }
 
   function updateEditableRow(
     employeeUserId: string,
@@ -322,7 +453,12 @@ export default function PayrollPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to run payroll");
       showToast("success", `Payroll generated: ${data.payslipsGenerated} payslips. Excel saved to storage.`);
-      router.push("/payroll?tab=master");
+      // Stay on Run tab and refetch preview to show generated records + Download Excel
+      const refreshRes = await fetch(
+        `/api/payroll/run?year=${runYear}&month=${runMonth}&runDay=${runDay}`
+      );
+      const refreshData = await refreshRes.json();
+      if (refreshRes.ok && refreshData.preview) setPreview(refreshData.preview);
     } catch (e: any) {
       setRunError(e?.message || "Failed to run payroll");
       showToast("error", e?.message || "Failed to run payroll");
@@ -359,6 +495,12 @@ export default function PayrollPage() {
           className={`btn ${tab === "run" ? "btn-primary" : "btn-outline"}`}
         >
           Run Payroll
+        </Link>
+        <Link
+          href="/payroll?tab=slips"
+          className={`btn ${tab === "slips" ? "btn-primary" : "btn-outline"}`}
+        >
+          Salary Slips
         </Link>
       </div>
 
@@ -410,17 +552,26 @@ export default function PayrollPage() {
                               type="button"
                               className="btn btn-outline !py-1 !text-xs"
                               onClick={() => {
+                                const gross = Number(row.master.grossSalary) || 0;
+                                const b = Number(row.master.basic) || 0;
+                                const h = Number(row.master.hra) || 0;
+                                const med = Number(row.master.medical) || 0;
+                                const tr = Number(row.master.trans) || 0;
+                                const lt = Number(row.master.lta) || 0;
+                                const per = Number(row.master.personal) || 0;
+                                const componentsSum = b + h + med + tr + lt + per;
+                                const split = componentsSum > 0 ? { basic: b, hra: h, medical: med, trans: tr, lta: lt, personal: per } : defaultSalaryBreakup(gross);
                                 setEditMasterOpen(row);
-                                setEditGross(String(row.master.grossSalary || ""));
-                                setEditBasic(String(row.master.basic ?? ""));
-                                setEditHra(String(row.master.hra ?? ""));
-                                setEditMedical(String(row.master.medical ?? ""));
-                                setEditTrans(String(row.master.trans ?? ""));
-                                setEditLta(String(row.master.lta ?? ""));
-                                setEditPersonal(String(row.master.personal ?? ""));
+                                setEditGross(String(gross || ""));
+                                setEditBasic(String(split.basic));
+                                setEditHra(String(split.hra));
+                                setEditMedical(String(split.medical));
+                                setEditTrans(String(split.trans));
+                                setEditLta(String(split.lta));
+                                setEditPersonal(String(split.personal));
                                 setEditPfEligible(row.master.pfEligible || false);
                                 setEditEsicEligible(row.master.esicEligible || false);
-                                setEditEffectiveDate(new Date().toISOString().slice(0, 10));
+                                setEditEffectiveDate(row.master.effectiveStartDate ? String(row.master.effectiveStartDate).slice(0, 10) : new Date().toISOString().slice(0, 10));
                                 setEditReason("UpdateOnly");
                               }}
                             >
@@ -459,7 +610,21 @@ export default function PayrollPage() {
                   min="0"
                   step="100"
                   value={editGross}
-                  onChange={(e) => setEditGross(e.target.value)}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setEditGross(v);
+                    const g = parseFloat(v) || 0;
+                    const sum = (parseFloat(editBasic) || 0) + (parseFloat(editHra) || 0) + (parseFloat(editMedical) || 0) + (parseFloat(editTrans) || 0) + (parseFloat(editLta) || 0) + (parseFloat(editPersonal) || 0);
+                    if (g > 0 && sum === 0) {
+                      const s = defaultSalaryBreakup(g);
+                      setEditBasic(String(s.basic));
+                      setEditHra(String(s.hra));
+                      setEditMedical(String(s.medical));
+                      setEditTrans(String(s.trans));
+                      setEditLta(String(s.lta));
+                      setEditPersonal(String(s.personal));
+                    }
+                  }}
                   required
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                 />
@@ -701,8 +866,272 @@ export default function PayrollPage() {
             ) : null}
             </form>
           </div>
+        </div>
+      )}
 
-          
+      {tab === "slips" && (
+        <div className="card">
+          <h2 className="mb-1 text-lg font-semibold text-slate-900">Employee Salary Slips</h2>
+          <p className="muted mb-4">Select an employee and period to view or download their salary slip.</p>
+
+          <div className="mb-4 flex flex-wrap items-end gap-4">
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">Employee</label>
+              <select
+                value={selectedEmployeeId}
+                onChange={(e) => setSelectedEmployeeId(e.target.value)}
+                className="min-w-[200px] rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              >
+                <option value="">Select employee</option>
+                {employees.map((e) => (
+                  <option key={e.id} value={e.id}>
+                    {e.name || e.email || e.id}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {slipsData && (
+              <>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Month</label>
+                  <select
+                    value={slipMonth}
+                    onChange={(e) => setSlipMonth(e.target.value)}
+                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  >
+                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((m) => (
+                      <option key={m} value={String(m).padStart(2, "0")}>
+                        {["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][m - 1]}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Year</label>
+                  <select
+                    value={slipYear}
+                    onChange={(e) => setSlipYear(e.target.value)}
+                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  >
+                    {(() => {
+                      const joinYear = slipsData.user?.dateOfJoining
+                        ? parseInt(slipsData.user.dateOfJoining.slice(0, 4), 10)
+                        : new Date().getFullYear() - 2;
+                      const currentYear = new Date().getFullYear();
+                      const years = [];
+                      for (let y = currentYear; y >= Math.max(joinYear, 2020); y--) years.push(y);
+                      return years.map((y) => (
+                        <option key={y} value={String(y)}>
+                          {y}
+                        </option>
+                      ));
+                    })()}
+                  </select>
+                </div>
+                {slipsData.payslips.some((p) => p.periodMonth === `${slipYear}-${slipMonth}`) && (
+                  <button
+                    type="button"
+                    onClick={handleSlipDownloadPdf}
+                    disabled={pdfDownloading}
+                    className="btn btn-primary"
+                  >
+                    {pdfDownloading ? "Generating..." : "Download PDF"}
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+
+          {employeesLoading ? (
+            <p className="muted">Loading employees...</p>
+          ) : slipsLoading ? (
+            <p className="muted">Loading payslips...</p>
+          ) : slipsError ? (
+            <p className="text-sm text-red-600">{slipsError}</p>
+          ) : !slipsData || !selectedEmployeeId ? (
+            <p className="muted">Select an employee to view their salary slips.</p>
+          ) : (
+            (() => {
+              const key = `${slipYear}-${slipMonth}`;
+              const slip = slipsData.payslips.find((p) => p.periodMonth === key);
+              const company = slipsData.company;
+              const user = slipsData.user;
+
+              if (!slip) {
+                return <p className="muted">No payslip for the selected period.</p>;
+              }
+
+              const salaryDate = new Date(slip.generatedAt).toLocaleDateString("en-IN", {
+                day: "numeric",
+                month: "long",
+                year: "numeric",
+              });
+              const dojFormatted = user?.dateOfJoining
+                ? new Date(user.dateOfJoining + "T12:00:00").toLocaleDateString("en-IN", {
+                    day: "numeric",
+                    month: "short",
+                    year: "numeric",
+                  })
+                : "—";
+
+              const n = (x: number) => (x ?? 0).toLocaleString("en-IN");
+              const totalPerf = slip.incentive + slip.prBonus + slip.reimbursement;
+              const netPay = slip.netPay - slip.tds + totalPerf;
+
+              const cellClass = "border border-black px-3 py-2 align-top text-sm";
+              const thClass = "border border-black px-3 py-2 text-left font-semibold text-sm";
+
+              return (
+                <div
+                  ref={payslipRef}
+                  className="payslip-print-area overflow-x-auto rounded-lg border border-black bg-white p-6 print:overflow-visible print:max-w-[190mm]"
+                  style={{ minWidth: "min(100%, 190mm)" }}
+                >
+                  <table className="payslip-header-table w-full border-collapse" style={{ border: "1px solid #000" }}>
+                    <tbody>
+                      <tr>
+                        <td colSpan={2} className="border border-black px-4 py-4 text-center">
+                          <div className="text-base font-bold text-slate-900">{company?.name || "Company"}</div>
+                          {company?.address && (
+                            <div className="mt-0.5 text-sm text-slate-600">{company.address}</div>
+                          )}
+                          <div className="mt-2 text-base font-bold uppercase tracking-wide">Salary Slip</div>
+                          <div className="text-sm font-semibold">
+                            {["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][
+                              parseInt(slipMonth, 10) - 1
+                            ]}{" "}
+                            {slipYear}
+                          </div>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className={`w-1/2 ${cellClass}`}>
+                          <div className="space-y-1.5 text-sm leading-relaxed">
+                            <div><span className="text-slate-600">Employee Name:</span> {user?.name || "—"}</div>
+                            <div><span className="text-slate-600">Designation:</span> {user?.designation || "—"}</div>
+                            <div><span className="text-slate-600">Salary Date:</span> {salaryDate}</div>
+                          </div>
+                        </td>
+                        <td className={`w-1/2 ${cellClass}`}>
+                          <div className="space-y-1.5 text-sm leading-relaxed">
+                            <div><span className="text-slate-600">Joining Date:</span> {dojFormatted}</div>
+                            <div><span className="text-slate-600">Aadhaar:</span> {user?.aadhaar || "—"}</div>
+                            <div><span className="text-slate-600">PAN:</span> {user?.pan || "—"}</div>
+                          </div>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className={cellClass}>
+                          <div className="space-y-1.5 text-sm leading-relaxed">
+                            <div><span className="text-slate-600">Total Paid Days:</span> {slip.payDays}</div>
+                            <div><span className="text-slate-600">Unpaid Leaves:</span> {slip.unpaidLeaves}</div>
+                          </div>
+                        </td>
+                        <td className={cellClass}>
+                          <div className="space-y-1.5 text-sm leading-relaxed">
+                            <div><span className="text-slate-600">ESIC number:</span> {user?.esicNumber || "—"}</div>
+                            <div><span className="text-slate-600">UAN number:</span> {user?.uanNumber || "—"}</div>
+                            <div><span className="text-slate-600">PF number:</span> {user?.pfNumber || "—"}</div>
+                          </div>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td colSpan={2} className="border border-black p-0">
+                          <table className="payslip-financial-table w-full border-collapse text-sm">
+                            <colgroup>
+                              <col /><col /><col /><col /><col /><col /><col />
+                            </colgroup>
+                            <thead>
+                              <tr>
+                                <th className={`${thClass} w-20`}>Earnings</th>
+                                <th className="border border-black px-3 py-2 text-right w-14 font-semibold text-sm">Actual</th>
+                                <th className="border border-black px-3 py-2 text-right w-14 font-semibold text-sm">Paid</th>
+                                <th className={`${thClass} w-24`}>Employee Deductions</th>
+                                <th className="border border-black px-3 py-2 text-right w-14 font-semibold text-sm">Amount</th>
+                                <th className={`${thClass} w-24`}>Performance Earnings</th>
+                                <th className="border border-black px-3 py-2 text-right w-14 font-semibold text-sm">Amount</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              <tr>
+                                <td className={cellClass}>Basic</td>
+                                <td className={`${cellClass} text-right`}>{n(slip.basic)}</td>
+                                <td className={`${cellClass} text-right`}>{n(slip.basic)}</td>
+                                <td className={cellClass}>Professional Tax</td>
+                                <td className={`${cellClass} text-right`}>{n(slip.professionalTax)}</td>
+                                <td className={cellClass}>Bonus</td>
+                                <td className={`${cellClass} text-right`}>{n(slip.prBonus)}</td>
+                              </tr>
+                              <tr>
+                                <td className={cellClass}>HRA</td>
+                                <td className={`${cellClass} text-right`}>{n(slip.hra)}</td>
+                                <td className={`${cellClass} text-right`}>{n(slip.hra)}</td>
+                                <td className={cellClass}>PF</td>
+                                <td className={`${cellClass} text-right`}>{n(slip.pfEmployee)}</td>
+                                <td className={cellClass}>Incentive</td>
+                                <td className={`${cellClass} text-right`}>{n(slip.incentive)}</td>
+                              </tr>
+                              <tr>
+                                <td className={cellClass}>Medical</td>
+                                <td className={`${cellClass} text-right`}>{n(slip.medical)}</td>
+                                <td className={`${cellClass} text-right`}>{n(slip.medical)}</td>
+                                <td className={cellClass}>ESIC</td>
+                                <td className={`${cellClass} text-right`}>{n(slip.esicEmployee)}</td>
+                                <td className={cellClass}>Reimbursement</td>
+                                <td className={`${cellClass} text-right`}>{n(slip.reimbursement)}</td>
+                              </tr>
+                              <tr>
+                                <td className={cellClass}>Trans</td>
+                                <td className={`${cellClass} text-right`}>{n(slip.trans)}</td>
+                                <td className={`${cellClass} text-right`}>{n(slip.trans)}</td>
+                                <td colSpan={2} className={cellClass}></td>
+                                <td colSpan={2} className={cellClass}></td>
+                              </tr>
+                              <tr>
+                                <td className={cellClass}>LTA</td>
+                                <td className={`${cellClass} text-right`}>{n(slip.lta)}</td>
+                                <td className={`${cellClass} text-right`}>{n(slip.lta)}</td>
+                                <td colSpan={2} className={cellClass}></td>
+                                <td colSpan={2} className={cellClass}></td>
+                              </tr>
+                              <tr>
+                                <td className={cellClass}>Personal</td>
+                                <td className={`${cellClass} text-right`}>{n(slip.personal)}</td>
+                                <td className={`${cellClass} text-right`}>{n(slip.personal)}</td>
+                                <td colSpan={2} className={cellClass}></td>
+                                <td colSpan={2} className={cellClass}></td>
+                              </tr>
+                              <tr>
+                                <td className={`${cellClass} font-medium`}>GROSS</td>
+                                <td className={`${cellClass} text-right font-medium`}>{n(slip.grossPay)}</td>
+                                <td className={`${cellClass} text-right font-medium`}>{n(slip.grossPay)}</td>
+                                <td className={`${cellClass} font-medium`}>Total Deduction</td>
+                                <td className={`${cellClass} text-right font-medium`}>{n(slip.deductions)}</td>
+                                <td className={`${cellClass} font-medium`}>Total</td>
+                                <td className={`${cellClass} text-right font-medium`}>{n(totalPerf)}</td>
+                              </tr>
+                              <tr>
+                                <td className={`${cellClass} font-medium`}>Net Payable Salary</td>
+                                <td className={`${cellClass} text-right font-medium`}>{n(netPay)}</td>
+                                <td className={`${cellClass} text-right font-medium`}>{n(netPay)}</td>
+                                <td colSpan={2} className={cellClass}></td>
+                                <td colSpan={2} className={cellClass}></td>
+                              </tr>
+                              <tr>
+                                <td className={`${cellClass} font-bold`}>Net Pay</td>
+                                <td colSpan={5} className={cellClass}></td>
+                                <td className={`${cellClass} text-right font-bold`}>{n(netPay)}</td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()
+          )}
         </div>
       )}
     </section>

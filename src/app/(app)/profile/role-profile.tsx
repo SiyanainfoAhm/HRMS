@@ -25,6 +25,10 @@ export function ProfileContent() {
     phone: "",
     gender: "" as "" | "male" | "female" | "other",
     designation: "",
+    designationId: "",
+    departmentId: "",
+    divisionId: "",
+    shiftId: "",
     aadhaar: "",
     pan: "",
     uanNumber: "",
@@ -89,6 +93,12 @@ export function ProfileContent() {
   const payslipRef = useRef<HTMLDivElement>(null);
 
   const [pdfDownloading, setPdfDownloading] = useState(false);
+  const [designations, setDesignations] = useState<{ id: string; title: string }[]>([]);
+  const [departments, setDepartments] = useState<{ id: string; name: string; division_id?: string }[]>([]);
+  const [divisions, setDivisions] = useState<{ id: string; name: string }[]>([]);
+  const [shifts, setShifts] = useState<{ id: string; name: string }[]>([]);
+  const [designationAddPrompt, setDesignationAddPrompt] = useState<string | null>(null);
+  const [addingDesignation, setAddingDesignation] = useState(false);
 
   async function handleDownloadPdf(userName?: string, month?: string, year?: string) {
     const el = payslipRef.current;
@@ -150,6 +160,10 @@ export function ProfileContent() {
           phone: u?.phone ?? "",
           gender: (["male", "female", "other"].includes(u?.gender) ? u.gender : "") as "" | "male" | "female" | "other",
           designation: u?.designation ?? "",
+          designationId: u?.designationId ?? "",
+          departmentId: u?.departmentId ?? "",
+          divisionId: u?.divisionId ?? "",
+          shiftId: u?.shiftId ?? "",
           aadhaar: u?.aadhaar ?? "",
           pan: u?.pan ?? "",
           uanNumber: u?.uanNumber ?? "",
@@ -187,6 +201,36 @@ export function ProfileContent() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (tab !== "profile" || isSuperAdmin) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [desRes, depRes, divRes, shiftRes] = await Promise.all([
+          fetch("/api/settings/designations"),
+          fetch("/api/settings/departments"),
+          fetch("/api/settings/divisions"),
+          fetch("/api/settings/shifts"),
+        ]);
+        if (cancelled) return;
+        const [desData, depData, divData, shiftData] = await Promise.all([
+          desRes.json(),
+          depRes.json(),
+          divRes.json(),
+          shiftRes.json(),
+        ]);
+        if (cancelled) return;
+        setDesignations((desData.designations ?? []).filter((d: any) => d.is_active !== false).map((d: any) => ({ id: d.id, title: d.title })));
+        setDepartments((depData.departments ?? []).filter((d: any) => d.is_active !== false).map((d: any) => ({ id: d.id, name: d.name, division_id: d.division_id })));
+        setDivisions((divData.divisions ?? []).filter((d: any) => d.is_active !== false).map((d: any) => ({ id: d.id, name: d.name })));
+        setShifts((shiftData.shifts ?? []).filter((d: any) => d.is_active !== false).map((d: any) => ({ id: d.id, name: d.name })));
+      } catch {
+        // keep empty
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [tab, isSuperAdmin]);
 
   useEffect(() => {
     if (tab !== "pay") return;
@@ -249,6 +293,64 @@ export function ProfileContent() {
   }
 
   return (
+    <>
+      {designationAddPrompt && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/50"
+            aria-label="Close"
+            onClick={() => setDesignationAddPrompt(null)}
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            className="relative z-10 w-full max-w-sm rounded-xl border border-slate-200 bg-white p-5 shadow-xl"
+          >
+            <p className="text-sm text-slate-700">
+              Add &quot;{designationAddPrompt}&quot; to designations?
+            </p>
+            <p className="mt-1 text-xs text-slate-500">This will add it to the master list for future use.</p>
+            <div className="mt-4 flex gap-2">
+              <button
+                type="button"
+                onClick={async () => {
+                  setAddingDesignation(true);
+                  try {
+                    const res = await fetch("/api/settings/designations", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ title: designationAddPrompt }),
+                    });
+                    const data = await res.json();
+                    if (res.ok && data?.designation) {
+                      setDesignations((prev) => [...prev, { id: data.designation.id, title: data.designation.title }]);
+                      setForm((p) => ({ ...p, designationId: data.designation.id, designation: data.designation.title }));
+                      setDesignationAddPrompt(null);
+                    }
+                  } catch {
+                    // ignore
+                  } finally {
+                    setAddingDesignation(false);
+                  }
+                }}
+                disabled={addingDesignation}
+                className="btn btn-primary"
+              >
+                {addingDesignation ? "Adding..." : "Add"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setDesignationAddPrompt(null)}
+                className="btn btn-outline"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     <section className="space-y-4">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Profile</h1>
@@ -367,13 +469,75 @@ export function ProfileContent() {
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-slate-700">Designation</label>
-                  <input
-                    type="text"
-                    value={form.designation}
-                    onChange={(e) => setForm((p) => ({ ...p, designation: e.target.value }))}
-                    placeholder="e.g. Software Engineer"
+                  <div className="relative">
+                    <input
+                      type="text"
+                      list="profile-designation-list"
+                      value={form.designation}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setDesignationAddPrompt(null);
+                        const match = designations.find((d) => d.title.toLowerCase() === v.trim().toLowerCase());
+                        setForm((p) => ({ ...p, designation: v, designationId: match ? match.id : "" }));
+                      }}
+                      onBlur={() => {
+                        const v = form.designation.trim();
+                        if (!v) return;
+                        const match = designations.find((d) => d.title.toLowerCase() === v.toLowerCase());
+                        if (!match) setDesignationAddPrompt(v);
+                        else setDesignationAddPrompt(null);
+                      }}
+                      placeholder="Search or type new"
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    />
+                    <datalist id="profile-designation-list">
+                      {designations.map((d) => (
+                        <option key={d.id} value={d.title} />
+                      ))}
+                    </datalist>
+                  </div>
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Department</label>
+                  <select
+                    value={form.departmentId}
+                    onChange={(e) => setForm((p) => ({ ...p, departmentId: e.target.value }))}
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                  />
+                  >
+                    <option value="">Select department</option>
+                    {departments.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.name}
+                        {d.division_id ? ` (${divisions.find((x) => x.id === d.division_id)?.name ?? ""})` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Division</label>
+                  <select
+                    value={form.divisionId}
+                    onChange={(e) => setForm((p) => ({ ...p, divisionId: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  >
+                    <option value="">Select division</option>
+                    {divisions.map((d) => (
+                      <option key={d.id} value={d.id}>{d.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Shift</label>
+                  <select
+                    value={form.shiftId}
+                    onChange={(e) => setForm((p) => ({ ...p, shiftId: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  >
+                    <option value="">Select shift</option>
+                    {shifts.map((s) => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-slate-700">Aadhaar</label>
@@ -901,5 +1065,6 @@ export function ProfileContent() {
         </div>
       )}
     </section>
+    </>
   );
 }

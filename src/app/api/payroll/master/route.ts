@@ -124,12 +124,17 @@ export async function PATCH(request: NextRequest) {
     .single();
   const ptMonthly = company?.professional_tax_monthly != null ? Number(company.professional_tax_monthly) : 200;
 
-  const pfEmp = pfEligible ? Math.round(grossSalary * 0.12) : 0;
-  const pfEmpr = pfEligible ? Math.round(grossSalary * 0.12) : 0;
-  const esicEmp = esicEligible && grossSalary < 21000 ? Math.round(grossSalary * 0.0075) : 0;
-  const esicEmpr = esicEligible && grossSalary < 21000 ? Math.round(grossSalary * 0.0325) : 0;
-  const ctc = grossSalary + pfEmpr + esicEmpr; // CTC = Gross + Employer PF + Employer ESIC
-  const takeHome = grossSalary - pfEmp - esicEmp - ptMonthly; // Take home = Gross - Emp PF - Emp ESIC - PT
+  const salaryBreakup = componentsSum > 0
+    ? { basic, hra, medical, trans, lta, personal }
+    : undefined;
+  const calc = (await import("@/lib/payrollCalc")).computePayrollFromGross(
+    grossSalary,
+    pfEligible,
+    esicEligible,
+    ptMonthly,
+    salaryBreakup
+  );
+  const { pfEmp, pfEmpr, esicEmp, esicEmpr, ctc, takeHome, basic: calcBasic, hra: calcHra, medical: calcMedical, trans: calcTrans, lta: calcLta, personal: calcPersonal } = calc;
 
   const { data: oldMaster } = await supabase
     .from("HRMS_payroll_master")
@@ -148,23 +153,14 @@ export async function PATCH(request: NextRequest) {
       .eq("id", oldMaster.id);
   }
 
-  const salaryComponents = componentsSum > 0
-    ? {
-        basic: Math.round(basic),
-        hra: Math.round(hra),
-        medical: Math.round(medical),
-        trans: Math.round(trans),
-        lta: Math.round(lta),
-        personal: Math.round(personal),
-      }
-    : {
-        basic: Math.round(grossSalary * 0.5),
-        hra: Math.round(grossSalary * 0.2),
-        medical: Math.round(grossSalary * 0.05),
-        trans: Math.round(grossSalary * 0.05),
-        lta: Math.round(grossSalary * 0.1),
-        personal: Math.round(grossSalary * 0.1),
-      };
+  const salaryComponents = {
+    basic: calcBasic,
+    hra: calcHra,
+    medical: calcMedical,
+    trans: calcTrans,
+    lta: calcLta,
+    personal: calcPersonal,
+  };
 
   await supabase.from("HRMS_payroll_master").insert([
     {

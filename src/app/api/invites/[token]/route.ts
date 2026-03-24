@@ -70,7 +70,7 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ token:
   if (invite.user_id) {
     const { data: userRow } = await supabase
       .from("HRMS_users")
-      .select("name, email, phone, date_of_birth, date_of_joining, designation, current_address_line1, current_address_line2, current_city, current_state, current_country, current_postal_code, bank_account_number, bank_ifsc")
+      .select("name, email, phone, date_of_birth, date_of_joining, designation, current_address_line1, current_address_line2, current_city, current_state, current_country, current_postal_code, permanent_address_line1, permanent_address_line2, permanent_city, permanent_state, permanent_country, permanent_postal_code, bank_account_number, bank_ifsc, aadhaar, pan")
       .eq("id", invite.user_id)
       .maybeSingle();
     if (userRow) {
@@ -87,8 +87,16 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ token:
         currentState: userRow.current_state ?? "",
         currentCountry: userRow.current_country ?? "",
         currentPostalCode: userRow.current_postal_code ?? "",
+        permanentAddressLine1: userRow.permanent_address_line1 ?? "",
+        permanentAddressLine2: userRow.permanent_address_line2 ?? "",
+        permanentCity: userRow.permanent_city ?? "",
+        permanentState: userRow.permanent_state ?? "",
+        permanentCountry: userRow.permanent_country ?? "",
+        permanentPostalCode: userRow.permanent_postal_code ?? "",
         bankAccountNumber: userRow.bank_account_number ?? "",
         bankIfsc: userRow.bank_ifsc ?? "",
+        aadhaar: userRow.aadhaar ?? "",
+        pan: userRow.pan ?? "",
       };
     }
   }
@@ -276,13 +284,21 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           phone: typeof profile?.phone === "string" ? profile.phone.trim() || null : undefined,
           date_of_birth: typeof profile?.dateOfBirth === "string" ? profile.dateOfBirth || null : undefined,
           current_address_line1: typeof profile?.currentAddressLine1 === "string" ? profile.currentAddressLine1.trim() || null : undefined,
+          current_address_line2: typeof profile?.currentAddressLine2 === "string" ? profile.currentAddressLine2.trim() || null : undefined,
           current_city: typeof profile?.currentCity === "string" ? profile.currentCity.trim() || null : undefined,
           current_state: typeof profile?.currentState === "string" ? profile.currentState.trim() || null : undefined,
           current_country: typeof profile?.currentCountry === "string" ? profile.currentCountry.trim() || null : undefined,
           current_postal_code: typeof profile?.currentPostalCode === "string" ? profile.currentPostalCode.trim() || null : undefined,
+          permanent_address_line1: typeof profile?.permanentAddressLine1 === "string" ? profile.permanentAddressLine1.trim() || null : undefined,
+          permanent_address_line2: typeof profile?.permanentAddressLine2 === "string" ? profile.permanentAddressLine2.trim() || null : undefined,
+          permanent_city: typeof profile?.permanentCity === "string" ? profile.permanentCity.trim() || null : undefined,
+          permanent_state: typeof profile?.permanentState === "string" ? profile.permanentState.trim() || null : undefined,
+          permanent_country: typeof profile?.permanentCountry === "string" ? profile.permanentCountry.trim() || null : undefined,
+          permanent_postal_code: typeof profile?.permanentPostalCode === "string" ? profile.permanentPostalCode.trim() || null : undefined,
           bank_account_number: typeof profile?.bankAccountNumber === "string" ? profile.bankAccountNumber.trim() || null : undefined,
           bank_ifsc: typeof profile?.bankIfsc === "string" ? profile.bankIfsc.trim() || null : undefined,
-          employment_status: "current",
+          aadhaar: typeof profile?.aadhaar === "string" ? profile.aadhaar.trim() || null : undefined,
+          pan: typeof profile?.pan === "string" ? profile.pan.trim() || null : undefined,
           updated_at: new Date().toISOString(),
         })
         .eq("id", invite.user_id);

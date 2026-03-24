@@ -23,7 +23,7 @@ export async function GET() {
 
   const { data, error } = await supabase
     .from("HRMS_payroll_periods")
-    .select("id, period_name, period_start, period_end, is_locked, excel_file_path, created_at")
+    .select("id, period_name, period_start, period_end, is_locked, created_at")
     .eq("company_id", me.company_id)
     .order("period_start", { ascending: false });
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
@@ -35,7 +35,7 @@ export async function GET() {
       periodStart: String(p.period_start),
       periodEnd: String(p.period_end),
       isLocked: Boolean(p.is_locked),
-      excelFilePath: p.excel_file_path ?? null,
+      excelFilePath: null,
       createdAt: new Date(p.created_at).toISOString(),
     })),
   });

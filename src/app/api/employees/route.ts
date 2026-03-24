@@ -2,13 +2,33 @@ import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { COOKIE_NAME, getSessionFromCookie } from "@/lib/auth";
 import { supabase } from "@/lib/supabaseClient";
+import { computePayrollFromGross } from "@/lib/payrollCalc";
 import bcrypt from "bcryptjs";
 
 function isManagerial(role: string): boolean {
   return role === "super_admin" || role === "admin" || role === "hr";
 }
 
-function mapRow(row: any) {
+function mapRow(row: any, lookups?: {
+  designationById: Map<string, { title: string }>;
+  departmentById: Map<string, { name: string }>;
+  divisionById: Map<string, { name: string }>;
+  shiftById: Map<string, { name: string }>;
+}) {
+  let ctc: number | null = row.ctc != null ? Number(row.ctc) : null;
+  if (ctc == null && row.gross_salary != null && Number(row.gross_salary) > 0) {
+    const { ctc: computed } = computePayrollFromGross(
+      Number(row.gross_salary),
+      Boolean(row.pf_eligible),
+      Boolean(row.esic_eligible),
+      0
+    );
+    ctc = computed;
+  }
+  const designationTitle = lookups?.designationById?.get(row.designation_id)?.title ?? row.designation ?? "";
+  const departmentName = lookups?.departmentById?.get(row.department_id)?.name ?? "";
+  const divisionName = lookups?.divisionById?.get(row.division_id)?.name ?? "";
+  const shiftName = lookups?.shiftById?.get(row.shift_id)?.name ?? "";
   return {
     id: row.id as string,
     email: row.email as string,
@@ -19,8 +39,16 @@ function mapRow(row: any) {
     phone: (row.phone ?? "") as string,
     dateOfJoining: row.date_of_joining ? String(row.date_of_joining) : "",
     dateOfLeaving: row.date_of_leaving ? String(row.date_of_leaving) : "",
-    ctc: row.ctc != null ? Number(row.ctc) : null as number | null,
+    ctc,
     createdAt: new Date(row.created_at).toISOString(),
+    designation: designationTitle,
+    designationId: row.designation_id ?? null,
+    departmentId: row.department_id ?? null,
+    departmentName: departmentName || null,
+    divisionId: row.division_id ?? null,
+    divisionName: divisionName || null,
+    shiftId: row.shift_id ?? null,
+    shiftName: shiftName || null,
   };
 }
 
@@ -66,7 +94,26 @@ export async function GET() {
     .order("created_at", { ascending: false });
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
 
-  return NextResponse.json({ employees: (data ?? []).map(mapRow) });
+  const rows = data ?? [];
+  const designationIds = [...new Set(rows.map((r: any) => r.designation_id).filter(Boolean))];
+  const departmentIds = [...new Set(rows.map((r: any) => r.department_id).filter(Boolean))];
+  const divisionIds = [...new Set(rows.map((r: any) => r.division_id).filter(Boolean))];
+  const shiftIds = [...new Set(rows.map((r: any) => r.shift_id).filter(Boolean))];
+
+  const [designationsRes, departmentsRes, divisionsRes, shiftsRes] = await Promise.all([
+    designationIds.length ? supabase.from("HRMS_designations").select("id, title").in("id", designationIds) : { data: [] },
+    departmentIds.length ? supabase.from("HRMS_departments").select("id, name").in("id", departmentIds) : { data: [] },
+    divisionIds.length ? supabase.from("HRMS_divisions").select("id, name").in("id", divisionIds) : { data: [] },
+    shiftIds.length ? supabase.from("HRMS_shifts").select("id, name").in("id", shiftIds) : { data: [] },
+  ]);
+
+  const designationById = new Map((designationsRes.data ?? []).map((d: any) => [d.id, { title: d.title }]));
+  const departmentById = new Map((departmentsRes.data ?? []).map((d: any) => [d.id, { name: d.name }]));
+  const divisionById = new Map((divisionsRes.data ?? []).map((d: any) => [d.id, { name: d.name }]));
+  const shiftById = new Map((shiftsRes.data ?? []).map((d: any) => [d.id, { name: d.name }]));
+  const lookups = { designationById, departmentById, divisionById, shiftById };
+
+  return NextResponse.json({ employees: rows.map((r: any) => mapRow(r, lookups)) });
 }
 
 export async function POST(request: NextRequest) {
@@ -112,7 +159,11 @@ export async function POST(request: NextRequest) {
   const esicEligible = body?.esicEligible === true;
   const allowedGenders = ["male", "female", "other"];
   const gender = allowedGenders.includes(body?.gender) ? body.gender : null;
+  const designationId = typeof body?.designationId === "string" ? body.designationId.trim() || null : null;
   const designation = typeof body?.designation === "string" ? body.designation.trim() || null : null;
+  const departmentId = typeof body?.departmentId === "string" ? body.departmentId.trim() || null : null;
+  const divisionId = typeof body?.divisionId === "string" ? body.divisionId.trim() || null : null;
+  const shiftId = typeof body?.shiftId === "string" ? body.shiftId.trim() || null : null;
   const aadhaar = typeof body?.aadhaar === "string" ? body.aadhaar.trim() || null : null;
   const pan = typeof body?.pan === "string" ? body.pan.trim() || null : null;
   const uanNumber = typeof body?.uanNumber === "string" ? body.uanNumber.trim() || null : null;
@@ -123,6 +174,10 @@ export async function POST(request: NextRequest) {
     : null;
 
   if (!email) return NextResponse.json({ error: "Email is required" }, { status: 400 });
+  if (!designation?.trim()) return NextResponse.json({ error: "Designation is required" }, { status: 400 });
+  if (!departmentId) return NextResponse.json({ error: "Department is required" }, { status: 400 });
+  if (!divisionId) return NextResponse.json({ error: "Division is required" }, { status: 400 });
+  if (!shiftId) return NextResponse.json({ error: "Shift is required" }, { status: 400 });
   const allowedRoles = ["admin", "hr", "manager", "employee"];
   const finalRole = allowedRoles.includes(role || "") ? (role as any) : "employee";
   const allowedStatus = ["preboarding", "current", "past"];
@@ -153,11 +208,10 @@ export async function POST(request: NextRequest) {
 
   const finalEmployeeCode = employeeCode || (await generateUniqueEmployeeCode());
 
-  // CTC = Gross + Employer PF + Employer ESIC (company cost). Take home = Gross - Emp PF - Emp ESIC - PT.
+  // designation_id: only when user explicitly selects from dropdown or adds to master
+  // designation (text): always stored for display, even when not in designations master
   const gross = grossSalary != null && grossSalary >= 0 ? grossSalary : 0;
-  const pfEmpr = pfEligible ? Math.round(gross * 0.12) : 0;
-  const esicEmpr = esicEligible && gross < 21000 ? Math.round(gross * 0.0325) : 0;
-  const calculatedCtc = gross > 0 ? gross + pfEmpr + esicEmpr : null;
+  const { ctc: calculatedCtc } = computePayrollFromGross(gross, pfEligible, esicEligible, 0);
 
   const { data: inserted, error } = await supabase
     .from("HRMS_users")
@@ -171,12 +225,16 @@ export async function POST(request: NextRequest) {
         employee_code: finalEmployeeCode || null,
         phone: phone || null,
         date_of_joining: dateOfJoining || null,
-        ctc: calculatedCtc,
+        ctc: gross > 0 ? calculatedCtc : null,
         gross_salary: grossSalary != null && grossSalary >= 0 ? grossSalary : null,
         pf_eligible: pfEligible,
         esic_eligible: esicEligible,
         gender: gender ?? null,
-        designation: designation,
+        designation: designation ?? null,
+        designation_id: designationId ?? null,
+        department_id: departmentId ?? null,
+        division_id: divisionId ?? null,
+        shift_id: shiftId ?? null,
         aadhaar: aadhaar,
         pan: pan,
         uan_number: uanNumber,
@@ -258,6 +316,10 @@ export async function POST(request: NextRequest) {
           bank_account_number: bankAccountNumber || null,
           bank_ifsc: bankIfsc || null,
           is_active: requestedStatus !== "past",
+          designation_id: designationId ?? null,
+          department_id: departmentId ?? null,
+          division_id: divisionId ?? null,
+          shift_id: shiftId ?? null,
         },
       ]);
     }
@@ -332,7 +394,12 @@ export async function PATCH(request: NextRequest) {
       if (missing.length) return NextResponse.json({ error: "Mandatory documents still pending" }, { status: 400 });
     }
 
-    const doj = dateOfJoining || new Date().toISOString().slice(0, 10);
+    const { data: userForDoj } = await supabase
+      .from("HRMS_users")
+      .select("date_of_joining")
+      .eq("id", userId)
+      .single();
+    const doj = dateOfJoining || (userForDoj?.date_of_joining ? String(userForDoj.date_of_joining).slice(0, 10) : null) || new Date().toISOString().slice(0, 10);
     const { error: updErr } = await supabase
       .from("HRMS_users")
       .update({ employment_status: "current", date_of_joining: doj, date_of_leaving: null, updated_at: new Date().toISOString() })
@@ -357,30 +424,41 @@ export async function PATCH(request: NextRequest) {
     const gross = Number(u?.gross_salary ?? u?.ctc ?? 0);
     const pfOn = Boolean(u?.pf_eligible);
     const esicOn = Boolean(u?.esic_eligible);
-    const pfEmp = pfOn ? Math.round(gross * 0.12) : 0;
-    const pfEmpr = pfOn ? Math.round(gross * 0.12) : 0;
-    const esicEmp = esicOn && gross < 21000 ? Math.round(gross * 0.0075) : 0;
-    const esicEmpr = esicOn && gross < 21000 ? Math.round(gross * 0.0325) : 0;
-    const ctcVal = gross + pfEmpr + esicEmpr; // CTC = Gross + Employer PF + Employer ESIC
-    const takeHome = gross - pfEmp - esicEmp - ptMonthly; // Take home = Gross - Emp PF - Emp ESIC - PT
-    await supabase.from("HRMS_payroll_master").insert([{
-      company_id: me.company_id,
-      employee_user_id: userId,
-      gross_salary: gross,
-      ctc: ctcVal,
-      pf_eligible: pfOn,
-      esic_eligible: esicOn,
-      pf_employee: pfEmp,
-      pf_employer: pfEmpr,
-      esic_employee: esicEmp,
-      esic_employer: esicEmpr,
-      pt: ptMonthly,
-      take_home: Math.max(0, takeHome),
-      effective_start_date: doj,
-      effective_end_date: null,
-      reason_for_change: "NewJoin",
-      created_by: session.id,
-    }]);
+    const { basic, hra, medical, trans, lta, personal, pfEmp, pfEmpr, esicEmp, esicEmpr, ctc: ctcVal, takeHome } = computePayrollFromGross(gross, pfOn, esicOn, ptMonthly);
+
+    const { data: existingMaster } = await supabase
+      .from("HRMS_payroll_master")
+      .select("id")
+      .eq("employee_user_id", userId)
+      .is("effective_end_date", null)
+      .maybeSingle();
+
+    if (!existingMaster) {
+      await supabase.from("HRMS_payroll_master").insert([{
+        company_id: me.company_id,
+        employee_user_id: userId,
+        gross_salary: gross,
+        ctc: ctcVal,
+        pf_eligible: pfOn,
+        esic_eligible: esicOn,
+        pf_employee: pfEmp,
+        pf_employer: pfEmpr,
+        esic_employee: esicEmp,
+        esic_employer: esicEmpr,
+        pt: ptMonthly,
+        take_home: takeHome,
+        effective_start_date: doj,
+        effective_end_date: null,
+        reason_for_change: "NewJoin",
+        created_by: session.id,
+        basic,
+        hra,
+        medical,
+        trans,
+        lta,
+        personal,
+      }]);
+    }
 
     return NextResponse.json({ ok: true });
   }

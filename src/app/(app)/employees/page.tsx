@@ -3,6 +3,7 @@
 import { useEffect, useState, FormEvent } from "react";
 import { useToast } from "@/components/ToastProvider";
 import { useAuth } from "@/contexts/AuthContext";
+import { computePayrollFromGross } from "@/lib/payrollCalc";
 
 type Employee = {
   id: string;
@@ -16,6 +17,10 @@ type Employee = {
   dateOfLeaving?: string;
   ctc?: number | null;
   createdAt: string;
+  designation?: string | null;
+  departmentName?: string | null;
+  divisionName?: string | null;
+  shiftName?: string | null;
 };
 
 export default function EmployeesPage() {
@@ -37,6 +42,16 @@ export default function EmployeesPage() {
   const [phone, setPhone] = useState("");
   const [gender, setGender] = useState<"male" | "female" | "other" | "">("");
   const [designation, setDesignation] = useState("");
+  const [designationId, setDesignationId] = useState("");
+  const [departmentId, setDepartmentId] = useState("");
+  const [divisionId, setDivisionId] = useState("");
+  const [shiftId, setShiftId] = useState("");
+  const [designationAddPrompt, setDesignationAddPrompt] = useState<string | null>(null);
+  const [addingDesignation, setAddingDesignation] = useState(false);
+  const [designations, setDesignations] = useState<{ id: string; title: string }[]>([]);
+  const [departments, setDepartments] = useState<{ id: string; name: string; division_id?: string }[]>([]);
+  const [divisions, setDivisions] = useState<{ id: string; name: string }[]>([]);
+  const [shifts, setShifts] = useState<{ id: string; name: string }[]>([]);
   const [aadhaar, setAadhaar] = useState("");
   const [pan, setPan] = useState("");
   const [uanNumber, setUanNumber] = useState("");
@@ -118,7 +133,6 @@ export default function EmployeesPage() {
   }, []);
 
   useEffect(() => {
-    if (!canEditCtc) return;
     let cancelled = false;
     (async () => {
       try {
@@ -135,7 +149,7 @@ export default function EmployeesPage() {
     return () => {
       cancelled = true;
     };
-  }, [canEditCtc]);
+  }, []);
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -143,6 +157,33 @@ export default function EmployeesPage() {
     }
     if (isDialogOpen) window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isDialogOpen]);
+
+  useEffect(() => {
+    if (!isDialogOpen) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [desRes, depRes, divRes, shiftRes] = await Promise.all([
+          fetch("/api/settings/designations"),
+          fetch("/api/settings/departments"),
+          fetch("/api/settings/divisions"),
+          fetch("/api/settings/shifts"),
+        ]);
+        if (cancelled) return;
+        const desData = await desRes.json();
+        const depData = await depRes.json();
+        const divData = await divRes.json();
+        const shiftData = await shiftRes.json();
+        if (desRes.ok) setDesignations((desData.designations ?? []).filter((d: any) => d.is_active !== false).map((d: any) => ({ id: d.id, title: d.title })));
+        if (depRes.ok) setDepartments((depData.departments ?? []).filter((d: any) => d.is_active !== false).map((d: any) => ({ id: d.id, name: d.name, division_id: d.division_id })));
+        if (divRes.ok) setDivisions((divData.divisions ?? []).filter((d: any) => d.is_active !== false).map((d: any) => ({ id: d.id, name: d.name })));
+        if (shiftRes.ok) setShifts((shiftData.shifts ?? []).filter((d: any) => d.is_active !== false).map((d: any) => ({ id: d.id, name: d.name })));
+      } catch {
+        // keep empty
+      }
+    })();
+    return () => { cancelled = true; };
   }, [isDialogOpen]);
 
   function resetForm() {
@@ -155,6 +196,11 @@ export default function EmployeesPage() {
     setPhone("");
     setGender("");
     setDesignation("");
+    setDesignationId("");
+    setDepartmentId("");
+    setDivisionId("");
+    setShiftId("");
+    setDesignationAddPrompt(null);
     setAadhaar("");
     setPan("");
     setUanNumber("");
@@ -185,13 +231,8 @@ export default function EmployeesPage() {
   }
 
   const gross = parseFloat(grossSalary) || 0;
-  const pfEmp = pfEligible ? Math.round(gross * 0.12) : 0;
-  const pfEmpr = pfEligible ? Math.round(gross * 0.12) : 0;
-  const esicEmp = esicEligible && gross < 21000 ? Math.round(gross * 0.0075) : 0;
-  const esicEmpr = esicEligible && gross < 21000 ? Math.round(gross * 0.0325) : 0;
   const ptMonthly = companyPtMonthly;
-  const calculatedCtc = gross + pfEmpr + esicEmpr; // CTC = Gross + Employer PF + Employer ESIC
-  const calculatedTakeHome = gross - pfEmp - esicEmp - ptMonthly; // Take home = Gross - Emp PF - Emp ESIC - PT
+  const { ctc: calculatedCtc, takeHome: calculatedTakeHome } = computePayrollFromGross(gross, pfEligible, esicEligible, ptMonthly);
 
   function validateEmail(v: string): string | null {
     const value = v.trim();
@@ -244,6 +285,10 @@ export default function EmployeesPage() {
           esicEligible,
           gender: gender || undefined,
           designation: designation || undefined,
+          designationId: designationId || undefined,
+          departmentId: departmentId || undefined,
+          divisionId: divisionId || undefined,
+          shiftId: shiftId || undefined,
           aadhaar: aadhaar || undefined,
           pan: pan || undefined,
           uanNumber: uanNumber || undefined,
@@ -450,6 +495,67 @@ export default function EmployeesPage() {
         </button>
       </div>
 
+      {designationAddPrompt && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/50"
+            aria-label="Close"
+            onClick={() => setDesignationAddPrompt(null)}
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            className="relative z-10 w-full max-w-sm rounded-xl border border-slate-200 bg-white p-5 shadow-xl"
+          >
+            <p className="text-sm text-slate-700">
+              Add &quot;{designationAddPrompt}&quot; to designations?
+            </p>
+            <p className="mt-1 text-xs text-slate-500">This will add it to the master list for future use.</p>
+            <div className="mt-4 flex gap-2">
+              <button
+                type="button"
+                onClick={async () => {
+                  setAddingDesignation(true);
+                  try {
+                    const res = await fetch("/api/settings/designations", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ title: designationAddPrompt }),
+                    });
+                    const data = await res.json();
+                    if (res.ok && data?.designation) {
+                      setDesignations((prev) => [...prev, { id: data.designation.id, title: data.designation.title }]);
+                      setDesignationId(data.designation.id);
+                      setDesignation(data.designation.title);
+                      setDesignationAddPrompt(null);
+                      showToast("success", "Designation added");
+                    } else {
+                      showToast("error", data?.error || "Failed to add");
+                    }
+                  } catch {
+                    showToast("error", "Failed to add designation");
+                  } finally {
+                    setAddingDesignation(false);
+                  }
+                }}
+                disabled={addingDesignation}
+                className="btn btn-primary"
+              >
+                {addingDesignation ? "Adding..." : "Add"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setDesignationAddPrompt(null)}
+                className="btn btn-outline"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {isDialogOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <button
@@ -461,9 +567,9 @@ export default function EmployeesPage() {
           <div
             role="dialog"
             aria-modal="true"
-            className="relative z-10 w-full max-w-4xl rounded-xl border border-slate-200 bg-white shadow-xl"
+            className="relative z-10 flex w-full max-w-6xl max-h-[95vh] flex-col rounded-xl border border-slate-200 bg-white shadow-xl"
           >
-            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+            <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-5 py-4">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">Add employee</h2>
                 <p className="text-sm text-slate-500">Create an employee in your company directory.</p>
@@ -473,7 +579,7 @@ export default function EmployeesPage() {
               </button>
             </div>
 
-            <form onSubmit={handleCreate} className="max-h-[75vh] overflow-y-auto p-5">
+            <form onSubmit={handleCreate} className="flex-1 overflow-y-auto p-5" style={{ minHeight: "70vh", maxHeight: "calc(95vh - 80px)" }}>
               <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
                 <div className="md:col-span-1">
                   <label className="mb-1 block text-sm font-medium text-slate-700">Name</label>
@@ -570,9 +676,12 @@ export default function EmployeesPage() {
                 <div className="md:col-span-1">
                   <label className="mb-1 block text-sm font-medium text-slate-700">Phone</label>
                   <input
-                    type="text"
+                    type="tel"
+                    inputMode="numeric"
+                    maxLength={10}
                     value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
+                    onChange={(e) => setPhone(e.target.value.replace(/\D/g, "").slice(0, 10))}
+                    placeholder="10 digits only"
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                   />
                 </div>
@@ -599,14 +708,81 @@ export default function EmployeesPage() {
                   />
                 </div>
                 <div className="md:col-span-1">
-                  <label className="mb-1 block text-sm font-medium text-slate-700">Designation</label>
-                  <input
-                    type="text"
-                    value={designation}
-                    onChange={(e) => setDesignation(e.target.value)}
-                    placeholder="e.g. Software Engineer"
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Designation <span className="text-red-500">*</span></label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      required
+                      list="designation-list"
+                      value={designation}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setDesignation(v);
+                        setDesignationAddPrompt(null);
+                        const match = designations.find((d) => d.title.toLowerCase() === v.trim().toLowerCase());
+                        setDesignationId(match ? match.id : "");
+                      }}
+                      onBlur={() => {
+                        const v = designation.trim();
+                        if (!v) return;
+                        const match = designations.find((d) => d.title.toLowerCase() === v.toLowerCase());
+                        if (!match) setDesignationAddPrompt(v);
+                        else setDesignationAddPrompt(null);
+                      }}
+                      placeholder="Search or type new"
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    />
+                    <datalist id="designation-list">
+                      {designations.map((d) => (
+                        <option key={d.id} value={d.title} />
+                      ))}
+                    </datalist>
+                  </div>
+                </div>
+                <div className="md:col-span-1">
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Department <span className="text-red-500">*</span></label>
+                  <select
+                    required
+                    value={departmentId}
+                    onChange={(e) => setDepartmentId(e.target.value)}
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                  />
+                  >
+                    <option value="">Select department</option>
+                    {departments.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.name}
+                        {d.division_id ? ` (${divisions.find((x) => x.id === d.division_id)?.name ?? ""})` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="md:col-span-1">
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Division <span className="text-red-500">*</span></label>
+                  <select
+                    required
+                    value={divisionId}
+                    onChange={(e) => setDivisionId(e.target.value)}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  >
+                    <option value="">Select division</option>
+                    {divisions.map((d) => (
+                      <option key={d.id} value={d.id}>{d.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="md:col-span-1">
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Shift <span className="text-red-500">*</span></label>
+                  <select
+                    required
+                    value={shiftId}
+                    onChange={(e) => setShiftId(e.target.value)}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  >
+                    <option value="">Select shift</option>
+                    {shifts.map((s) => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
                 </div>
                 <div className="md:col-span-1">
                   <label className="mb-1 block text-sm font-medium text-slate-700">Aadhaar</label>
@@ -654,170 +830,6 @@ export default function EmployeesPage() {
                     onChange={(e) => setEsicNumber(e.target.value)}
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                   />
-                </div>
-
-                <div className="md:col-span-4">
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                    <div>
-                      <h3 className="text-sm font-semibold text-slate-900">Current address</h3>
-                      <div className="mt-3 space-y-3">
-                        <input
-                          type="text"
-                          placeholder="Address line 1"
-                          value={currentAddressLine1}
-                          onChange={(e) => setCurrentAddressLine1(e.target.value)}
-                          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                        />
-                        <input
-                          type="text"
-                          placeholder="Address line 2"
-                          value={currentAddressLine2}
-                          onChange={(e) => setCurrentAddressLine2(e.target.value)}
-                          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                        />
-                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                          <input
-                            type="text"
-                            placeholder="City"
-                            value={currentCity}
-                            onChange={(e) => setCurrentCity(e.target.value)}
-                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                          />
-                          <input
-                            type="text"
-                            placeholder="State"
-                            value={currentState}
-                            onChange={(e) => setCurrentState(e.target.value)}
-                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                          />
-                          <input
-                            type="text"
-                            placeholder="Country"
-                            value={currentCountry}
-                            onChange={(e) => setCurrentCountry(e.target.value)}
-                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                          />
-                          <input
-                            type="text"
-                            placeholder="Postal code"
-                            value={currentPostalCode}
-                            onChange={(e) => setCurrentPostalCode(e.target.value)}
-                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                          />
-                        </div>
-                      </div>
-                    </div>
-
-                    <div>
-                      <h3 className="text-sm font-semibold text-slate-900">Permanent address</h3>
-                      <div className="mt-3 space-y-3">
-                        <input
-                          type="text"
-                          placeholder="Address line 1"
-                          value={permanentAddressLine1}
-                          onChange={(e) => setPermanentAddressLine1(e.target.value)}
-                          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                        />
-                        <input
-                          type="text"
-                          placeholder="Address line 2"
-                          value={permanentAddressLine2}
-                          onChange={(e) => setPermanentAddressLine2(e.target.value)}
-                          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                        />
-                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                          <input
-                            type="text"
-                            placeholder="City"
-                            value={permanentCity}
-                            onChange={(e) => setPermanentCity(e.target.value)}
-                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                          />
-                          <input
-                            type="text"
-                            placeholder="State"
-                            value={permanentState}
-                            onChange={(e) => setPermanentState(e.target.value)}
-                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                          />
-                          <input
-                            type="text"
-                            placeholder="Country"
-                            value={permanentCountry}
-                            onChange={(e) => setPermanentCountry(e.target.value)}
-                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                          />
-                          <input
-                            type="text"
-                            placeholder="Postal code"
-                            value={permanentPostalCode}
-                            onChange={(e) => setPermanentPostalCode(e.target.value)}
-                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="md:col-span-4">
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                    <div>
-                      <label className="mb-1 block text-sm font-medium text-slate-700">Emergency contact name</label>
-                      <input
-                        type="text"
-                        value={emergencyContactName}
-                        onChange={(e) => setEmergencyContactName(e.target.value)}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                      />
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-sm font-medium text-slate-700">Emergency contact phone</label>
-                      <input
-                        type="text"
-                        value={emergencyContactPhone}
-                        onChange={(e) => setEmergencyContactPhone(e.target.value)}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                      />
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-sm font-medium text-slate-700">Bank name</label>
-                      <input
-                        type="text"
-                        value={bankName}
-                        onChange={(e) => setBankName(e.target.value)}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                      />
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-sm font-medium text-slate-700">Account number</label>
-                      <input
-                        type="text"
-                        value={bankAccountNumber}
-                        onChange={(e) => setBankAccountNumber(e.target.value)}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                      />
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-sm font-medium text-slate-700">IFSC</label>
-                      <input
-                        type="text"
-                        value={bankIfsc}
-                        onChange={(e) => setBankIfsc(e.target.value)}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                      />
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-sm font-medium text-slate-700">Temp password (optional)</label>
-                      <input
-                        type="text"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        placeholder="Generate automatically if empty"
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                      />
-                    </div>
-                  </div>
                 </div>
 
                 <div className="md:col-span-4">
@@ -989,6 +1001,9 @@ export default function EmployeesPage() {
               <thead className="text-slate-600">
                 <tr>
                   <th className="px-3 py-2">Name</th>
+                  <th className="px-3 py-2">Designation</th>
+                  <th className="px-3 py-2">Department</th>
+                  <th className="px-3 py-2">Shift</th>
                   <th className="px-3 py-2">CTC</th>
                   <th className="px-3 py-2">Email</th>
                   <th className="px-3 py-2">Phone</th>
@@ -1004,6 +1019,9 @@ export default function EmployeesPage() {
                   .map((e) => (
                   <tr key={e.id} className="border-t border-slate-200">
                     <td className="px-3 py-2">{e.name || "-"}</td>
+                    <td className="px-3 py-2">{e.designation || "-"}</td>
+                    <td className="px-3 py-2">{e.departmentName || "-"}</td>
+                    <td className="px-3 py-2">{e.shiftName || "-"}</td>
                     <td className="px-3 py-2">
                       {e.ctc != null ? Number(e.ctc).toLocaleString("en-IN") : "—"}
                     </td>
@@ -1026,7 +1044,7 @@ export default function EmployeesPage() {
                             onClick={() => {
                               setConvertTarget(e);
                               setConvertConfirmStatus("current");
-                              setConvertDate(new Date().toISOString().slice(0, 10));
+                              setConvertDate(e.dateOfJoining || new Date().toISOString().slice(0, 10));
                               setConvertDialogOpen(true);
                             }}
                             title="Convert to current"

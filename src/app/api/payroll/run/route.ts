@@ -212,7 +212,7 @@ async function computePreview(
     const esicEmp = (Number(m.esic_employee) || 0) * (payDays / daysInMonth);
     const esicEmpr = (Number(m.esic_employer) || 0) * (payDays / daysInMonth);
     const profTax = ptFixed;
-    const deductions = Math.round(pfEmp + esicEmp + profTax);
+    const deductions = Math.round(pfEmp + pfEmpr + esicEmp + esicEmpr + profTax);
     const netPay = grossPay - deductions;
     const incentive = 0;
     const prBonus = 0;
@@ -484,7 +484,7 @@ export async function POST(request: NextRequest) {
       const pfEmpr = Math.round((Number(m.pf_employer) || 0) * (payDays / daysInMonth));
       const esicEmp = Math.round((Number(m.esic_employee) || 0) * (payDays / daysInMonth));
       const esicEmpr = Math.round((Number(m.esic_employer) || 0) * (payDays / daysInMonth));
-      const deductions = pfEmp + esicEmp + ptFixed;
+      const deductions = pfEmp + pfEmpr + esicEmp + esicEmpr + ptFixed;
       const netPay = grossPay - deductions;
 
       payslips.push({
@@ -600,6 +600,7 @@ export async function POST(request: NextRequest) {
         .from("HRMS_payroll_periods")
         .update({ excel_file_path: excelPath })
         .eq("id", period.id);
+      // Update may fail if excel_file_path column does not exist; Excel remains in storage
     }
   }
 

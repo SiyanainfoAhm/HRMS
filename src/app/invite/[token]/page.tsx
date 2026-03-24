@@ -42,11 +42,20 @@ function InvitePageInner() {
   const [countryOpen, setCountryOpen] = useState(false);
   const [dateOfBirth, setDateOfBirth] = useState("");
   const [currentAddressLine1, setCurrentAddressLine1] = useState("");
+  const [currentAddressLine2, setCurrentAddressLine2] = useState("");
   const [currentCity, setCurrentCity] = useState("");
   const [currentState, setCurrentState] = useState("");
   const [currentCountry, setCurrentCountry] = useState("");
   const [currentPostalCode, setCurrentPostalCode] = useState("");
   const [postalError, setPostalError] = useState<string | null>(null);
+  const [permanentAddressLine1, setPermanentAddressLine1] = useState("");
+  const [permanentAddressLine2, setPermanentAddressLine2] = useState("");
+  const [permanentCity, setPermanentCity] = useState("");
+  const [permanentState, setPermanentState] = useState("");
+  const [permanentCountry, setPermanentCountry] = useState("");
+  const [permanentPostalCode, setPermanentPostalCode] = useState("");
+  const [aadhaar, setAadhaar] = useState("");
+  const [pan, setPan] = useState("");
   const [bankAccountNumber, setBankAccountNumber] = useState("");
   const [bankIfsc, setBankIfsc] = useState("");
 
@@ -125,10 +134,19 @@ function InvitePageInner() {
         }
         setDateOfBirth(String(u.dateOfBirth ?? "").trim());
         setCurrentAddressLine1(String(u.currentAddressLine1 ?? "").trim());
+        setCurrentAddressLine2(String(u.currentAddressLine2 ?? "").trim());
         setCurrentCity(String(u.currentCity ?? "").trim());
         setCurrentState(String(u.currentState ?? "").trim());
         setCurrentCountry(String(u.currentCountry ?? "").trim());
         setCurrentPostalCode(String(u.currentPostalCode ?? "").replace(/\D+/g, ""));
+        setPermanentAddressLine1(String(u.permanentAddressLine1 ?? "").trim());
+        setPermanentAddressLine2(String(u.permanentAddressLine2 ?? "").trim());
+        setPermanentCity(String(u.permanentCity ?? "").trim());
+        setPermanentState(String(u.permanentState ?? "").trim());
+        setPermanentCountry(String(u.permanentCountry ?? "").trim());
+        setPermanentPostalCode(String(u.permanentPostalCode ?? "").replace(/\D+/g, ""));
+        setAadhaar(String(u.aadhaar ?? "").trim());
+        setPan(String(u.pan ?? "").trim());
         setBankAccountNumber(String(u.bankAccountNumber ?? "").trim());
         setBankIfsc(String(u.bankIfsc ?? "").trim());
       }
@@ -264,10 +282,19 @@ function InvitePageInner() {
             phone: `${countryCode}${normalizeDigits(phone)}`,
             dateOfBirth,
             currentAddressLine1,
+            currentAddressLine2,
             currentCity,
             currentState,
             currentCountry,
             currentPostalCode: normalizeDigits(currentPostalCode),
+            permanentAddressLine1,
+            permanentAddressLine2,
+            permanentCity,
+            permanentState,
+            permanentCountry,
+            permanentPostalCode: normalizeDigits(permanentPostalCode),
+            aadhaar,
+            pan,
             bankAccountNumber,
             bankIfsc,
           },
@@ -275,7 +302,7 @@ function InvitePageInner() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to complete onboarding");
-      showToast("success", "Onboarding completed. Your account is now active.");
+      showToast("success", "Onboarding completed. An admin will activate your account.");
       await refresh();
     } catch (e: any) {
       setError(e?.message || "Failed to complete onboarding");
@@ -287,10 +314,10 @@ function InvitePageInner() {
 
   if (invite?.status === "completed") {
     return (
-      <section className="mx-auto max-w-3xl space-y-4 p-4 md:p-8">
+      <section className="mx-auto max-w-5xl space-y-4 p-4 md:p-8">
         <div className="card text-center py-12">
           <h1 className="text-2xl font-semibold text-slate-900">Thank you!</h1>
-          <p className="mt-3 text-slate-600">Your onboarding is complete. Your account is now active.</p>
+          <p className="mt-3 text-slate-600">Your onboarding is complete. An admin will activate your account shortly.</p>
           <p className="mt-2 text-sm text-slate-500">You can log in with your email and password.</p>
         </div>
       </section>
@@ -298,7 +325,7 @@ function InvitePageInner() {
   }
 
   return (
-    <section className="mx-auto max-w-3xl space-y-4 p-4 md:p-8">
+    <section className="mx-auto max-w-5xl space-y-4 p-4 md:p-8">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Employee onboarding</h1>
         <p className="muted">Complete the mandatory documents to activate your account.</p>
@@ -383,7 +410,7 @@ function InvitePageInner() {
       <div className="card">
         <h2 className="text-base font-semibold text-slate-900">Your details</h2>
         <p className="text-sm text-slate-500 mt-1">Complete your information (visible to HR/Admin). Pre-filled fields were entered by your admin.</p>
-        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700">Email</label>
             <input
@@ -474,13 +501,47 @@ function InvitePageInner() {
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
             />
           </div>
-          <div className="md:col-span-2">
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">Aadhaar</label>
+            <input
+              type="text"
+              inputMode="numeric"
+              value={aadhaar}
+              onChange={(e) => setAadhaar(e.target.value.replace(/\D/g, "").slice(0, 12))}
+              placeholder="12 digits"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            />
+            <p className="mt-0.5 text-xs text-slate-500">Check and update if needed</p>
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">PAN</label>
+            <input
+              type="text"
+              value={pan}
+              onChange={(e) => setPan(e.target.value.toUpperCase().slice(0, 10))}
+              placeholder="e.g. ABCD1234E"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            />
+            <p className="mt-0.5 text-xs text-slate-500">Check and update if needed</p>
+          </div>
+          <div className="sm:col-span-2 lg:col-span-4">
             <label className="mb-1 block text-sm font-medium text-slate-700">Current address</label>
             <input
               type="text"
               required
               value={currentAddressLine1}
               onChange={(e) => setCurrentAddressLine1(e.target.value)}
+              placeholder="Address line 1"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            />
+          </div>
+          <div className="sm:col-span-2 lg:col-span-4">
+            <label className="mb-1 block text-sm font-medium text-slate-700">Current address (line 2)</label>
+            <input
+              type="text"
+              value={currentAddressLine2}
+              onChange={(e) => setCurrentAddressLine2(e.target.value)}
+              placeholder="Address line 2 (optional)"
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
             />
           </div>
@@ -531,6 +592,72 @@ function InvitePageInner() {
             />
             {postalError && <p className="mt-1 text-xs text-red-600">{postalError}</p>}
           </div>
+
+          <div className="sm:col-span-2 lg:col-span-4">
+            <h3 className="text-sm font-semibold text-slate-800 mt-4 mb-2">Permanent address</h3>
+          </div>
+          <div className="sm:col-span-2">
+            <label className="mb-1 block text-sm font-medium text-slate-700">Permanent address line 1</label>
+            <input
+              type="text"
+              value={permanentAddressLine1}
+              onChange={(e) => setPermanentAddressLine1(e.target.value)}
+              placeholder="Address line 1"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            />
+          </div>
+          <div className="sm:col-span-2">
+            <label className="mb-1 block text-sm font-medium text-slate-700">Permanent address line 2</label>
+            <input
+              type="text"
+              value={permanentAddressLine2}
+              onChange={(e) => setPermanentAddressLine2(e.target.value)}
+              placeholder="Address line 2 (optional)"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">Permanent city</label>
+            <input
+              type="text"
+              value={permanentCity}
+              onChange={(e) => setPermanentCity(e.target.value)}
+              placeholder="City"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">Permanent state</label>
+            <input
+              type="text"
+              value={permanentState}
+              onChange={(e) => setPermanentState(e.target.value)}
+              placeholder="State"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">Permanent country</label>
+            <input
+              type="text"
+              value={permanentCountry}
+              onChange={(e) => setPermanentCountry(e.target.value)}
+              placeholder="Country"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">Permanent postal code</label>
+            <input
+              type="text"
+              inputMode="numeric"
+              value={permanentPostalCode}
+              onChange={(e) => setPermanentPostalCode(e.target.value.replace(/\D/g, ""))}
+              placeholder="Postal code"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            />
+          </div>
+
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700">Bank account number</label>
             <input
