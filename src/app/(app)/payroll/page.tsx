@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
 import { FormEvent, useEffect, useState, useRef } from "react";
 import { useToast } from "@/components/ToastProvider";
+import { SkeletonTable, SkeletonText } from "@/components/Skeleton";
 import { defaultSalaryBreakup } from "@/lib/payrollCalc";
 
 export default function PayrollPage() {
@@ -167,7 +168,7 @@ export default function PayrollPage() {
       }
     })();
     return () => { cancelled = true; };
-  }, [tab, canManage]);
+  }, [tab, canManage, selectedEmployeeId]);
 
   useEffect(() => {
     if (tab !== "slips" || !selectedEmployeeId) {
@@ -512,7 +513,7 @@ export default function PayrollPage() {
               Current employees&apos; salary structure. Master record is created when converted to current. Only record with effective end date = null is used for monthly payroll.
             </p>
             {mastersLoading ? (
-              <p className="muted">Loading...</p>
+              <SkeletonTable rows={6} columns={8} />
             ) : masters.length === 0 ? (
               <p className="muted">No current employees with payroll master.</p>
             ) : (
@@ -783,7 +784,9 @@ export default function PayrollPage() {
                 </div>
               )}
               {previewLoading ? (
-                <p className="muted py-6">Loading payroll for selected month and year...</p>
+                <div className="py-4">
+                  <SkeletonTable rows={8} columns={8} />
+                </div>
               ) : editableRows.length ? (
                 <div className="mt-4 border-t border-slate-200 pt-4">
                   <p className="mb-3 text-sm text-slate-600">
@@ -943,9 +946,11 @@ export default function PayrollPage() {
           </div>
 
           {employeesLoading ? (
-            <p className="muted">Loading employees...</p>
+            <SkeletonText lines={2} />
           ) : slipsLoading ? (
-            <p className="muted">Loading payslips...</p>
+            <div className="py-4">
+              <SkeletonTable rows={6} columns={6} />
+            </div>
           ) : slipsError ? (
             <p className="text-sm text-red-600">{slipsError}</p>
           ) : !slipsData || !selectedEmployeeId ? (

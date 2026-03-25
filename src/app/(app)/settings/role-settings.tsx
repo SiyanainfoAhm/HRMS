@@ -3,6 +3,7 @@
 import { useAuth } from "@/contexts/AuthContext";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useToast } from "@/components/ToastProvider";
+import { SkeletonList, SkeletonTable, SkeletonText } from "@/components/Skeleton";
 
 export function SettingsContent() {
   const { role } = useAuth();
@@ -53,6 +54,7 @@ export function SettingsContent() {
   const [roles, setRoles] = useState<any[]>([]);
 
   const [moduleError, setModuleError] = useState<string | null>(null);
+  const [moduleTabLoading, setModuleTabLoading] = useState(false);
   const [moduleSaving, setModuleSaving] = useState(false);
   const [confirmState, setConfirmState] = useState<null | { kind: "shifts" | "divisions" | "departments" | "designations" | "roles"; id: string; title: string }>(null);
 
@@ -108,17 +110,25 @@ export function SettingsContent() {
   const [roleForm, setRoleForm] = useState({ id: "", roleKey: "employee", name: "", description: "", isDefault: false });
 
   useEffect(() => {
-    // Lazy-load tab data
+    if (activeTab === "company") return;
+    let cancelled = false;
     (async () => {
+      setModuleTabLoading(true);
+      setModuleError(null);
       try {
         if (activeTab === "shifts") await refreshShifts();
         if (activeTab === "roles") await refreshRoles();
         if (activeTab === "designations") await refreshDesignations();
         if (activeTab === "org") await refreshOrg();
       } catch (e: any) {
-        setModuleError(e?.message || "Failed to load settings data");
+        if (!cancelled) setModuleError(e?.message || "Failed to load settings data");
+      } finally {
+        if (!cancelled) setModuleTabLoading(false);
       }
     })();
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
 
@@ -541,29 +551,37 @@ export function SettingsContent() {
                   </button>
                 )}
               </div>
-              <div className="mt-4 text-sm text-slate-700">
-                <p>
-                  <span className="text-slate-500">Name:</span> {company?.name || "-"}
-                </p>
-                <p>
-                  <span className="text-slate-500">Industry:</span> {company?.industry || "-"}
-                </p>
-                <p>
-                  <span className="text-slate-500">Phone:</span> {company?.phone || "-"}
-                </p>
-                <p>
-                  <span className="text-slate-500">PT annual (₹):</span>{" "}
-                  {company?.professional_tax_annual != null
-                    ? Number(company.professional_tax_annual).toLocaleString("en-IN")
-                    : "200"}
-                </p>
-                <p>
-                  <span className="text-slate-500">PT monthly fixed (₹):</span>{" "}
-                  {company?.professional_tax_monthly != null
-                    ? Number(company.professional_tax_monthly).toLocaleString("en-IN")
-                    : "200"}
-                </p>
-              </div>
+              {loading ? (
+                <div className="mt-4">
+                  <SkeletonText lines={5} />
+                </div>
+              ) : error ? (
+                <p className="mt-4 text-sm text-red-600">{error}</p>
+              ) : (
+                <div className="mt-4 text-sm text-slate-700">
+                  <p>
+                    <span className="text-slate-500">Name:</span> {company?.name || "—"}
+                  </p>
+                  <p>
+                    <span className="text-slate-500">Industry:</span> {company?.industry || "—"}
+                  </p>
+                  <p>
+                    <span className="text-slate-500">Phone:</span> {company?.phone || "—"}
+                  </p>
+                  <p>
+                    <span className="text-slate-500">PT annual (₹):</span>{" "}
+                    {company?.professional_tax_annual != null
+                      ? Number(company.professional_tax_annual).toLocaleString("en-IN")
+                      : "—"}
+                  </p>
+                  <p>
+                    <span className="text-slate-500">PT monthly fixed (₹):</span>{" "}
+                    {company?.professional_tax_monthly != null
+                      ? Number(company.professional_tax_monthly).toLocaleString("en-IN")
+                      : "—"}
+                  </p>
+                </div>
+              )}
             </div>
           )}
 
@@ -594,7 +612,9 @@ export function SettingsContent() {
                   </button>
                 )}
               </div>
-              {shifts.length === 0 ? (
+              {moduleTabLoading ? (
+                <SkeletonTable rows={5} columns={6} />
+              ) : shifts.length === 0 ? (
                 <p className="muted">No shifts yet.</p>
               ) : (
                 <div className="overflow-x-auto">
@@ -689,7 +709,9 @@ export function SettingsContent() {
                   </button>
                 )}
               </div>
-              {roles.length === 0 ? (
+              {moduleTabLoading ? (
+                <SkeletonTable rows={5} columns={5} />
+              ) : roles.length === 0 ? (
                 <p className="muted">No roles yet.</p>
               ) : (
                 <div className="overflow-x-auto">
@@ -788,7 +810,9 @@ export function SettingsContent() {
                   </button>
                 )}
               </div>
-              {designations.length === 0 ? (
+              {moduleTabLoading ? (
+                <SkeletonTable rows={5} columns={4} />
+              ) : designations.length === 0 ? (
                 <p className="muted">No designations yet.</p>
               ) : (
                 <div className="overflow-x-auto">
@@ -875,7 +899,9 @@ export function SettingsContent() {
                     </button>
                   )}
                 </div>
-                {divisions.length === 0 ? (
+                {moduleTabLoading ? (
+                  <SkeletonList items={4} />
+                ) : divisions.length === 0 ? (
                   <p className="muted">No divisions yet.</p>
                 ) : (
                   <ul className="space-y-2">
@@ -947,7 +973,9 @@ export function SettingsContent() {
                     </button>
                   )}
                 </div>
-                {departments.length === 0 ? (
+                {moduleTabLoading ? (
+                  <SkeletonList items={4} />
+                ) : departments.length === 0 ? (
                   <p className="muted">No departments yet.</p>
                 ) : (
                   <ul className="space-y-2">

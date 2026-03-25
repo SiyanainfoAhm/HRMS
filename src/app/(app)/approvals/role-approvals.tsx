@@ -122,7 +122,7 @@ export function ApprovalsContent() {
     return () => {
       cancelled = true;
     };
-  }, [leaveDialogOpen, canApprove]);
+  }, [leaveDialogOpen, canApprove, selectedEmployeeId]);
 
   useEffect(() => {
     if (!leaveDialogOpen || totalDays <= 0) {

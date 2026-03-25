@@ -69,7 +69,7 @@ async function generateUniqueEmployeeCode(): Promise<string> {
   return `EMP-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const cookieStore = await cookies();
   const session = getSessionFromCookie(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -84,14 +84,77 @@ export async function GET() {
     .eq("id", session.id)
     .maybeSingle();
   if (meErr) return NextResponse.json({ error: meErr.message }, { status: 400 });
-  if (!me?.company_id) return NextResponse.json({ employees: [] });
+  if (!me?.company_id) {
+    return NextResponse.json({ employees: [], total: 0, page: 1, pageSize: 25 });
+  }
 
-  const { data, error } = await supabase
-    .from("HRMS_users")
-    .select("*")
-    .eq("company_id", me.company_id)
-    .neq("role", "super_admin")
-    .order("created_at", { ascending: false });
+  const companyId = me.company_id;
+
+  const { searchParams } = new URL(request.url);
+  const paginated = searchParams.has("page");
+
+  function buildBaseQuery() {
+    let q = paginated
+      ? supabase.from("HRMS_users").select("*", { count: "exact" })
+      : supabase.from("HRMS_users").select("*");
+    q = q
+      .eq("company_id", companyId)
+      .neq("role", "super_admin")
+      .order("created_at", { ascending: false });
+    if (paginated) {
+      const statusFilter = searchParams.get("employmentStatus");
+      if (statusFilter === "preboarding" || statusFilter === "current" || statusFilter === "past") {
+        q = q.eq("employment_status", statusFilter);
+      }
+    }
+    return q;
+  }
+
+  let data: any[] | null;
+  let error: any;
+  let count: number | null = null;
+
+  if (paginated) {
+    const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10) || 1);
+    const rawSize = parseInt(searchParams.get("pageSize") || "25", 10) || 25;
+    const pageSize = Math.min(100, Math.max(1, rawSize));
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+    const res = await buildBaseQuery().range(from, to);
+    data = res.data;
+    error = res.error;
+    count = res.count ?? null;
+    if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+    const rows = data ?? [];
+    const designationIds = [...new Set(rows.map((r: any) => r.designation_id).filter(Boolean))];
+    const departmentIds = [...new Set(rows.map((r: any) => r.department_id).filter(Boolean))];
+    const divisionIds = [...new Set(rows.map((r: any) => r.division_id).filter(Boolean))];
+    const shiftIds = [...new Set(rows.map((r: any) => r.shift_id).filter(Boolean))];
+
+    const [designationsRes, departmentsRes, divisionsRes, shiftsRes] = await Promise.all([
+      designationIds.length ? supabase.from("HRMS_designations").select("id, title").in("id", designationIds) : { data: [] },
+      departmentIds.length ? supabase.from("HRMS_departments").select("id, name").in("id", departmentIds) : { data: [] },
+      divisionIds.length ? supabase.from("HRMS_divisions").select("id, name").in("id", divisionIds) : { data: [] },
+      shiftIds.length ? supabase.from("HRMS_shifts").select("id, name").in("id", shiftIds) : { data: [] },
+    ]);
+
+    const designationById = new Map((designationsRes.data ?? []).map((d: any) => [d.id, { title: d.title }]));
+    const departmentById = new Map((departmentsRes.data ?? []).map((d: any) => [d.id, { name: d.name }]));
+    const divisionById = new Map((divisionsRes.data ?? []).map((d: any) => [d.id, { name: d.name }]));
+    const shiftById = new Map((shiftsRes.data ?? []).map((d: any) => [d.id, { name: d.name }]));
+    const lookups = { designationById, departmentById, divisionById, shiftById };
+
+    return NextResponse.json({
+      employees: rows.map((r: any) => mapRow(r, lookups)),
+      total: count ?? 0,
+      page,
+      pageSize,
+    });
+  }
+
+  const res = await buildBaseQuery();
+  data = res.data;
+  error = res.error;
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
 
   const rows = data ?? [];

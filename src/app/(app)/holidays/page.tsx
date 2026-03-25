@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { SkeletonTable } from "@/components/Skeleton";
 
 type Holiday = {
   id: string;
@@ -204,7 +205,7 @@ export default function HolidaysPage() {
 
       <div className="card">
         {loading ? (
-          <p className="muted">Loading...</p>
+          <SkeletonTable rows={6} columns={4} />
         ) : error ? (
           <p className="text-sm text-red-600">{error}</p>
         ) : holidays.length === 0 ? (

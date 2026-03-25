@@ -2,6 +2,7 @@
 
 import { useEffect, useState, FormEvent } from "react";
 import { useToast } from "@/components/ToastProvider";
+import { SkeletonTable } from "@/components/Skeleton";
 import { useAuth } from "@/contexts/AuthContext";
 import { computePayrollFromGross } from "@/lib/payrollCalc";
 
@@ -28,6 +29,10 @@ export default function EmployeesPage() {
   const { role } = useAuth();
   const canEditCtc = role === "super_admin" || role === "admin" || role === "hr";
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [employeePage, setEmployeePage] = useState(1);
+  const [employeeTotal, setEmployeeTotal] = useState(0);
+  const [listRefresh, setListRefresh] = useState(0);
+  const PAGE_SIZE = 25;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -116,11 +121,26 @@ export default function EmployeesPage() {
     let cancelled = false;
     (async () => {
       setLoading(true);
+      setError(null);
       try {
-        const res = await fetch("/api/employees");
+        const params = new URLSearchParams({
+          page: String(employeePage),
+          pageSize: String(PAGE_SIZE),
+          employmentStatus: activeTab,
+        });
+        const res = await fetch(`/api/employees?${params}`);
         const data = await res.json();
         if (!res.ok) throw new Error(data?.error || "Failed to load employees");
-        if (!cancelled) setEmployees(data.employees);
+        if (!cancelled) {
+          const total = typeof data.total === "number" ? data.total : 0;
+          const rows = data.employees ?? [];
+          if (rows.length === 0 && total > 0 && employeePage > 1) {
+            setEmployeePage(Math.max(1, Math.ceil(total / PAGE_SIZE)));
+          } else {
+            setEmployees(rows);
+            setEmployeeTotal(total);
+          }
+        }
       } catch (e: any) {
         if (!cancelled) setError(e?.message || "Failed to load employees");
       } finally {
@@ -130,7 +150,7 @@ export default function EmployeesPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [employeePage, activeTab, listRefresh]);
 
   useEffect(() => {
     let cancelled = false;
@@ -305,7 +325,9 @@ export default function EmployeesPage() {
         setFormLoading(false);
         return;
       }
-      setEmployees((prev) => [data.employee, ...prev]);
+      setEmployeePage(1);
+      setActiveTab(employmentStatus);
+      setListRefresh((n) => n + 1);
       if (data.inviteUrl) {
         const link = String(data.inviteUrl);
         try {
@@ -402,9 +424,7 @@ export default function EmployeesPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to convert");
-      const refreshed = await fetch("/api/employees");
-      const refreshedData = await refreshed.json();
-      if (refreshed.ok) setEmployees(refreshedData.employees);
+      setListRefresh((n) => n + 1);
       showToast("success", status === "current" ? "Employee moved to Current" : "Employee moved to Past");
     } catch (e: any) {
       showToast("error", e?.message || "Failed to convert");
@@ -452,21 +472,30 @@ export default function EmployeesPage() {
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
-          onClick={() => setActiveTab("preboarding")}
+          onClick={() => {
+            setActiveTab("preboarding");
+            setEmployeePage(1);
+          }}
           className={`btn ${activeTab === "preboarding" ? "btn-primary" : "btn-outline"}`}
         >
           Preboarding
         </button>
         <button
           type="button"
-          onClick={() => setActiveTab("current")}
+          onClick={() => {
+            setActiveTab("current");
+            setEmployeePage(1);
+          }}
           className={`btn ${activeTab === "current" ? "btn-primary" : "btn-outline"}`}
         >
           Current
         </button>
         <button
           type="button"
-          onClick={() => setActiveTab("past")}
+          onClick={() => {
+            setActiveTab("past");
+            setEmployeePage(1);
+          }}
           className={`btn ${activeTab === "past" ? "btn-primary" : "btn-outline"}`}
         >
           Past
@@ -990,57 +1019,87 @@ export default function EmployeesPage() {
 
       <div className="card">
         {loading ? (
-          <p className="muted">Loading...</p>
+          <SkeletonTable rows={8} columns={10} />
         ) : error ? (
           <p className="text-sm text-red-600">{error}</p>
-        ) : employees.filter((e) => e.employmentStatus === activeTab).length === 0 ? (
+        ) : employees.length === 0 ? (
           <p className="muted">No employees yet.</p>
         ) : (
+          <>
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
+            <table className="w-full min-w-[920px] table-fixed border-collapse text-left text-[11px] leading-tight text-slate-800">
               <thead className="text-slate-600">
                 <tr>
-                  <th className="px-3 py-2">Name</th>
-                  <th className="px-3 py-2">Designation</th>
-                  <th className="px-3 py-2">Department</th>
-                  <th className="px-3 py-2">Shift</th>
-                  <th className="px-3 py-2">CTC</th>
-                  <th className="px-3 py-2">Email</th>
-                  <th className="px-3 py-2">Phone</th>
-                  <th className="px-3 py-2">DOJ</th>
-                  <th className="px-3 py-2">Last working</th>
-                  {activeTab === "preboarding" && <th className="px-3 py-2">Actions</th>}
-                  {activeTab === "current" && <th className="px-3 py-2">Actions</th>}
+                  <th className="w-[10%] px-1.5 py-1.5 font-medium whitespace-nowrap">Name</th>
+                  <th className="w-[9%] px-1.5 py-1.5 font-medium whitespace-nowrap">Designation</th>
+                  <th className="w-[9%] px-1.5 py-1.5 font-medium whitespace-nowrap">Department</th>
+                  <th className="w-[8%] px-1.5 py-1.5 font-medium whitespace-nowrap">Shift</th>
+                  <th className="w-[7%] px-1.5 py-1.5 font-medium whitespace-nowrap">CTC</th>
+                  <th className="w-[18%] px-1.5 py-1.5 font-medium whitespace-nowrap">Email</th>
+                  <th className="w-[10%] px-1.5 py-1.5 font-medium whitespace-nowrap">Phone</th>
+                  <th className="w-[8%] px-1.5 py-1.5 font-medium whitespace-nowrap">DOJ</th>
+                  <th className="w-[8%] px-1.5 py-1.5 font-medium whitespace-nowrap">Last working</th>
+                  {activeTab === "preboarding" && (
+                    <th className="w-[13%] px-1.5 py-1.5 font-medium whitespace-nowrap">Actions</th>
+                  )}
+                  {activeTab === "current" && (
+                    <th className="w-[10%] px-1.5 py-1.5 font-medium whitespace-nowrap">Actions</th>
+                  )}
                 </tr>
               </thead>
               <tbody>
-                {employees
-                  .filter((e) => e.employmentStatus === activeTab)
-                  .map((e) => (
+                {employees.map((e) => (
                   <tr key={e.id} className="border-t border-slate-200">
-                    <td className="px-3 py-2">{e.name || "-"}</td>
-                    <td className="px-3 py-2">{e.designation || "-"}</td>
-                    <td className="px-3 py-2">{e.departmentName || "-"}</td>
-                    <td className="px-3 py-2">{e.shiftName || "-"}</td>
-                    <td className="px-3 py-2">
+                    <td className="max-w-0 px-1.5 py-1 whitespace-nowrap">{e.name || "—"}</td>
+                    <td
+                      className="max-w-0 truncate px-1.5 py-1"
+                      title={e.designation || undefined}
+                    >
+                      {e.designation || "—"}
+                    </td>
+                    <td
+                      className="max-w-0 truncate px-1.5 py-1"
+                      title={e.departmentName || undefined}
+                    >
+                      {e.departmentName || "—"}
+                    </td>
+                    <td
+                      className="max-w-0 truncate px-1.5 py-1"
+                      title={e.shiftName || undefined}
+                    >
+                      {e.shiftName || "—"}
+                    </td>
+                    <td className="whitespace-nowrap px-1.5 py-1 tabular-nums">
                       {e.ctc != null ? Number(e.ctc).toLocaleString("en-IN") : "—"}
                     </td>
-                    <td className="px-3 py-2">{e.email}</td>
-                    <td className="px-3 py-2">{e.phone || "-"}</td>
-                    <td className="px-3 py-2">{e.dateOfJoining || "-"}</td>
-                    <td className="px-3 py-2">{(e as any).dateOfLeaving || "-"}</td>
+                    <td className="max-w-0 truncate px-1.5 py-1" title={e.email}>
+                      {e.email}
+                    </td>
+                    <td className="whitespace-nowrap px-1.5 py-1">{e.phone || "—"}</td>
+                    <td className="whitespace-nowrap px-1.5 py-1">{e.dateOfJoining || "—"}</td>
+                    <td className="whitespace-nowrap px-1.5 py-1">{(e as any).dateOfLeaving || "—"}</td>
                     {activeTab === "preboarding" && (
-                      <td className="px-3 py-2">
-                        <div className="flex flex-wrap gap-2">
-                          <button type="button" className="btn btn-outline" onClick={() => openDetails(e.id)} title="View">
+                      <td className="px-1.5 py-1">
+                        <div className="flex flex-nowrap items-center gap-1">
+                          <button
+                            type="button"
+                            className="btn btn-outline !min-h-0 shrink-0 !px-1.5 !py-0.5 !text-[11px] leading-none"
+                            onClick={() => openDetails(e.id)}
+                            title="View"
+                          >
                             👁
                           </button>
-                          <button type="button" className="btn btn-outline" onClick={() => resendInvite(e)} title="Send documents again">
+                          <button
+                            type="button"
+                            className="btn btn-outline !min-h-0 shrink-0 !px-1.5 !py-0.5 !text-[11px] leading-none"
+                            onClick={() => resendInvite(e)}
+                            title="Send documents again"
+                          >
                             📩
                           </button>
                           <button
                             type="button"
-                            className="btn btn-primary"
+                            className="btn btn-primary !min-h-0 shrink-0 !px-1.5 !py-0.5 !text-[11px] leading-none"
                             onClick={() => {
                               setConvertTarget(e);
                               setConvertConfirmStatus("current");
@@ -1055,11 +1114,11 @@ export default function EmployeesPage() {
                       </td>
                     )}
                     {activeTab === "current" && (
-                      <td className="px-3 py-2">
-                        <div className="flex flex-wrap gap-2">
+                      <td className="px-1.5 py-1">
+                        <div className="flex flex-nowrap items-center gap-1">
                           <button
                             type="button"
-                            className="btn btn-outline"
+                            className="btn btn-outline !min-h-0 shrink-0 !px-1.5 !py-0.5 !text-[11px] leading-none"
                             onClick={() => openDetails(e.id)}
                             title="View"
                           >
@@ -1067,7 +1126,7 @@ export default function EmployeesPage() {
                           </button>
                           <button
                             type="button"
-                            className="btn btn-outline"
+                            className="btn btn-outline !min-h-0 shrink-0 !px-1.5 !py-0.5 !text-[11px] leading-none"
                             onClick={() => {
                               setConvertTarget(e);
                               setConvertConfirmStatus("past");
@@ -1086,6 +1145,39 @@ export default function EmployeesPage() {
               </tbody>
             </table>
           </div>
+          {employeeTotal > 0 && (
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 pt-3 text-[11px] text-slate-600">
+              <span>
+                Showing{" "}
+                {employeeTotal === 0
+                  ? "0"
+                  : `${(employeePage - 1) * PAGE_SIZE + 1}–${Math.min(employeePage * PAGE_SIZE, employeeTotal)}`}{" "}
+                of {employeeTotal}
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className="btn btn-outline !min-h-0 !px-2 !py-1 !text-[11px]"
+                  disabled={employeePage <= 1 || loading}
+                  onClick={() => setEmployeePage((p) => Math.max(1, p - 1))}
+                >
+                  Previous
+                </button>
+                <span className="tabular-nums">
+                  Page {employeePage} of {Math.max(1, Math.ceil(employeeTotal / PAGE_SIZE))}
+                </span>
+                <button
+                  type="button"
+                  className="btn btn-outline !min-h-0 !px-2 !py-1 !text-[11px]"
+                  disabled={loading || employeePage * PAGE_SIZE >= employeeTotal}
+                  onClick={() => setEmployeePage((p) => p + 1)}
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
+          </>
         )}
       </div>
 

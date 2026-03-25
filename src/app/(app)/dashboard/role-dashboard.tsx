@@ -1,8 +1,10 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
 import { useEffect, useState } from "react";
+import { Skeleton } from "@/components/Skeleton";
 
 const TEAL = "#0d9488";
 
@@ -103,9 +105,12 @@ export function DashboardContent() {
           <div className="lg:col-span-1">
             <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
               <div className="mb-6 flex items-center gap-4">
-                <img
+                <Image
                   src={AvatarUrl({ userId: id, gender: user?.gender ?? null })}
                   alt=""
+                  width={80}
+                  height={80}
+                  unoptimized
                   className="h-20 w-20 rounded-full object-cover ring-2 ring-slate-200"
                 />
                 <div>
@@ -116,7 +121,20 @@ export function DashboardContent() {
 
               <div className="space-y-4">
                 {loading ? (
-                  <div className="py-4 text-center text-sm text-slate-500">Loading leave balances...</div>
+                  <div className="space-y-3" aria-busy="true" aria-label="Loading leave balances">
+                    {[1, 2, 3].map((i) => (
+                      <div
+                        key={i}
+                        className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50/50 px-4 py-3"
+                      >
+                        <div className="flex items-center gap-3">
+                          <Skeleton className="h-10 w-10 shrink-0 rounded-lg" />
+                          <Skeleton className="h-4 w-32" />
+                        </div>
+                        <Skeleton className="h-8 w-12" />
+                      </div>
+                    ))}
+                  </div>
                 ) : leaveBalances.length > 0 ? (
                   leaveBalances.map((b) => (
                     <div
