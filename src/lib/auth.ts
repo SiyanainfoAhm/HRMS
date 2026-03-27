@@ -43,12 +43,14 @@ export function getSessionFromCookie(cookieValue: string | undefined): SessionUs
 
 export function getCookieOptions() {
   const isProd = process.env.NODE_ENV === "production";
+  const maxAge = 60 * 60 * 24 * 365; // 1 year
   return {
     httpOnly: true,
     secure: isProd,
     sameSite: "lax" as const,
     path: "/",
-    maxAge: 60 * 60 * 24 * 7, // 7 days
+    maxAge,
+    expires: new Date(Date.now() + maxAge * 1000),
   };
 }
 
