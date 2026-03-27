@@ -3,7 +3,7 @@
 import type { SessionUser } from "@/lib/auth";
 import { Sidebar } from "./Sidebar";
 import { ToastProvider } from "./ToastProvider";
-import { useEffect, useState } from "react";
+import { startTransition, useEffect, useState } from "react";
 
 export function AppShell({ user, children }: { user: SessionUser; children: React.ReactNode }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -11,7 +11,9 @@ export function AppShell({ user, children }: { user: SessionUser; children: Reac
   useEffect(() => {
     try {
       const saved = window.localStorage.getItem("hrms.sidebarCollapsed");
-      if (saved === "1") setSidebarCollapsed(true);
+      if (saved === "1") {
+        startTransition(() => setSidebarCollapsed(true));
+      }
     } catch {
       // ignore
     }

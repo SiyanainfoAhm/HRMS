@@ -1,6 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // Next 16 defaults to Turbopack; an empty object acknowledges Turbopack when not using `--webpack`.
+  // `npm run dev` / `npm run build` pass `--webpack` so the `webpack` hook below still applies.
+  turbopack: {},
   images: {
     remotePatterns: [
       {
