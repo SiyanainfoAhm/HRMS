@@ -14,6 +14,67 @@ function getDaysInMonth(year: number, month: number): number {
   return new Date(Date.UTC(year, month, 0)).getUTCDate();
 }
 
+/** Match payroll run calendar month to expense claim_date (YYYY-MM-DD), not stored payroll_* columns. */
+function claimDateMatchesPayrollMonth(claimDateStr: string | null | undefined, year: number, month: number): boolean {
+  const raw = claimDateStr != null ? String(claimDateStr).slice(0, 10) : "";
+  const m = /^(\d{4})-(\d{2})-\d{2}$/.exec(raw);
+  if (!m) return false;
+  return parseInt(m[1], 10) === year && parseInt(m[2], 10) === month;
+}
+
+/** After payroll is generated for a period, mark all approved (unpaid) reimbursements for that company whose claim falls in that calendar month. */
+async function markReimbursementsPaidForPayrollMonth(
+  companyId: string,
+  periodId: string,
+  year: number,
+  month: number
+): Promise<void> {
+  const { data: pendingReimb, error } = await supabase
+    .from("HRMS_reimbursements")
+    .select("id, claim_date")
+    .eq("company_id", companyId)
+    .eq("status", "approved")
+    .is("included_in_payroll_period_id", null);
+  if (error) throw new Error(error.message);
+  const idsToMark = (pendingReimb ?? [])
+    .filter((r: any) => claimDateMatchesPayrollMonth(r.claim_date, year, month))
+    .map((r: any) => r.id);
+  if (!idsToMark.length) return;
+  const { error: upErr } = await supabase
+    .from("HRMS_reimbursements")
+    .update({
+      status: "paid",
+      paid_at: new Date().toISOString(),
+      included_in_payroll_period_id: periodId,
+    })
+    .in("id", idsToMark);
+  if (upErr) throw new Error(upErr.message);
+}
+
+/** Approved reimbursements for this payroll month, not yet paid out on a payslip. */
+async function fetchApprovedReimbursementTotalsByUser(
+  companyId: string,
+  year: number,
+  month: number
+): Promise<Map<string, number>> {
+  const { data, error } = await supabase
+    .from("HRMS_reimbursements")
+    .select("employee_user_id, amount, claim_date")
+    .eq("company_id", companyId)
+    .eq("status", "approved")
+    .is("included_in_payroll_period_id", null);
+  if (error) throw new Error(error.message);
+  const map = new Map<string, number>();
+  for (const r of data ?? []) {
+    if (!claimDateMatchesPayrollMonth(r.claim_date as string, year, month)) continue;
+    const uid = r.employee_user_id as string | null;
+    if (!uid) continue;
+    const amt = Number(r.amount) || 0;
+    map.set(uid, (map.get(uid) || 0) + amt);
+  }
+  return map;
+}
+
 async function computePreview(
   companyId: string,
   year: number,
@@ -158,6 +219,8 @@ async function computePreview(
     unpaidByUser.set(l.employee_user_id, (unpaidByUser.get(l.employee_user_id) || 0) + unpaidInOverlap);
   }
 
+  const reimbByUser = await fetchApprovedReimbursementTotalsByUser(companyId, year, month);
+
   const rows: any[] = [];
   for (const m of masters) {
     const u = userById.get(m.employee_user_id);
@@ -216,7 +279,7 @@ async function computePreview(
     const netPay = grossPay - deductions;
     const incentive = 0;
     const prBonus = 0;
-    const reimbursement = 0;
+    const reimbursement = Math.round(reimbByUser.get(m.employee_user_id) || 0);
     const tds = 0;
     const takeHome = netPay - tds + incentive + prBonus + reimbursement;
 
@@ -337,7 +400,14 @@ export async function POST(request: NextRequest) {
     .select("employee_user_id, gross_salary, ctc, pf_employee, pf_employer, esic_employee, esic_employer, basic, hra, medical, trans, lta, personal")
     .eq("company_id", me.company_id)
     .is("effective_end_date", null);
-  if (!masters?.length) return NextResponse.json({ ok: true, periodId: period.id, periodName, periodStart, periodEnd, payslipsGenerated: 0 });
+  if (!masters?.length) {
+    try {
+      await markReimbursementsPaidForPayrollMonth(me.company_id, period.id, year, month);
+    } catch (e: any) {
+      return NextResponse.json({ error: e?.message || "Failed to update reimbursement status" }, { status: 400 });
+    }
+    return NextResponse.json({ ok: true, periodId: period.id, periodName, periodStart, periodEnd, payslipsGenerated: 0 });
+  }
 
   const userIds = masters.map((m: any) => m.employee_user_id);
   const { data: users, error: usersErr } = await supabase
@@ -439,6 +509,8 @@ export async function POST(request: NextRequest) {
       unpaidByUser.set(l.employee_user_id, (unpaidByUser.get(l.employee_user_id) || 0) + unpaidInOverlap);
     }
 
+    const reimbByUser = await fetchApprovedReimbursementTotalsByUser(me.company_id, year, month);
+
     for (const m of masters ?? []) {
       const u = userById.get(m.employee_user_id);
       if (!u || u.role === "super_admin") continue;
@@ -486,6 +558,7 @@ export async function POST(request: NextRequest) {
       const esicEmpr = Math.round((Number(m.esic_employer) || 0) * (payDays / daysInMonth));
       const deductions = pfEmp + pfEmpr + esicEmp + esicEmpr + ptFixed;
       const netPay = grossPay - deductions;
+      const reimbursement = Math.round(reimbByUser.get(m.employee_user_id) || 0);
 
       payslips.push({
         company_id: me.company_id,
@@ -511,7 +584,7 @@ export async function POST(request: NextRequest) {
         professional_tax: ptFixed,
         incentive: 0,
         pr_bonus: 0,
-        reimbursement: 0,
+        reimbursement,
         tds: 0,
         bank_name: u?.bank_name ?? null,
         bank_account_number: u?.bank_account_number ?? null,
@@ -523,6 +596,12 @@ export async function POST(request: NextRequest) {
   if (payslips.length) {
     const { error: slipErr } = await supabase.from("HRMS_payslips").insert(payslips);
     if (slipErr) return NextResponse.json({ error: slipErr.message }, { status: 400 });
+  }
+
+  try {
+    await markReimbursementsPaidForPayrollMonth(me.company_id, period.id, year, month);
+  } catch (e: any) {
+    return NextResponse.json({ error: e?.message || "Failed to update reimbursement status" }, { status: 400 });
   }
 
   let excelPath: string | null = null;
@@ -549,7 +628,14 @@ export async function POST(request: NextRequest) {
         ProfessionalTax: p.professional_tax ?? 0,
         Reimbursement: p.reimbursement ?? 0,
         TDS: p.tds ?? 0,
-        TakeHome: p.net_pay ?? 0,
+        TakeHome:
+          Math.round(
+            (Number(p.net_pay) || 0) -
+              (Number(p.tds) || 0) +
+              (Number(p.incentive) || 0) +
+              (Number(p.pr_bonus) || 0) +
+              (Number(p.reimbursement) || 0)
+          ),
       };
     });
 

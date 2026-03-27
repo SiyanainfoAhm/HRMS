@@ -882,7 +882,10 @@ export function ProfileContent() {
 
                   const n = (x: number) => (x ?? 0).toLocaleString("en-IN");
                   const totalPerf = slip.incentive + slip.prBonus + slip.reimbursement;
-                  const netPay = slip.netPay - slip.tds + totalPerf;
+                  const salaryAfterDeductions = slip.grossPay - slip.deductions;
+                  const takeHome = Math.round(
+                    salaryAfterDeductions - slip.tds + slip.incentive + slip.prBonus + slip.reimbursement
+                  );
 
                   const cellClass = "border border-black px-3 py-2 align-top text-sm";
                   const thClass = "border border-black px-3 py-2 text-left font-semibold text-sm";
@@ -1020,15 +1023,15 @@ export function ProfileContent() {
                                   </tr>
                                   <tr>
                                     <td className={`${cellClass} font-medium`}>Net Payable Salary</td>
-                                    <td className={`${cellClass} text-right font-medium`}>{n(netPay)}</td>
-                                    <td className={`${cellClass} text-right font-medium`}>{n(netPay)}</td>
+                                    <td className={`${cellClass} text-right font-medium`}>{n(takeHome)}</td>
+                                    <td className={`${cellClass} text-right font-medium`}>{n(takeHome)}</td>
                                     <td colSpan={2} className={cellClass}></td>
                                     <td colSpan={2} className={cellClass}></td>
                                   </tr>
                                   <tr>
                                     <td className={`${cellClass} font-bold`}>Net Pay</td>
                                     <td colSpan={5} className={cellClass}></td>
-                                    <td className={`${cellClass} text-right font-bold`}>{n(netPay)}</td>
+                                    <td className={`${cellClass} text-right font-bold`}>{n(takeHome)}</td>
                                   </tr>
                                   <tr>
                                     <td colSpan={3} className={cellClass}></td>

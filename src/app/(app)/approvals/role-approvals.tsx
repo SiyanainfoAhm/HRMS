@@ -4,6 +4,29 @@ import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
 import { FormEvent, useEffect, useMemo, useState } from "react";
+
+function payrollHintFromClaimDate(claimDate: string): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(claimDate)) return null;
+  const [y, m] = claimDate.split("-").map((x) => parseInt(x, 10));
+  if (!y || !m || m < 1 || m > 12) return null;
+  const label = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][m - 1];
+  return `${label} ${y}`;
+}
+
+/** Prefer calendar month/year from claim_date so the table matches the expense date. */
+function payrollPeriodLabel(claimDate: string | null | undefined, payrollYear: number | null | undefined, payrollMonth: number | null | undefined) {
+  const raw = claimDate != null ? String(claimDate).slice(0, 10) : "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    const [y, m] = raw.split("-").map((x) => parseInt(x, 10));
+    if (y && m >= 1 && m <= 12) {
+      const label = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][m - 1];
+      return `${label} ${y}`;
+    }
+  }
+  const m = payrollMonth ?? 1;
+  const label = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][m - 1];
+  return `${label} ${payrollYear ?? "—"}`;
+}
 import { useToast } from "@/components/ToastProvider";
 
 export function ApprovalsContent() {
@@ -63,6 +86,18 @@ export function ApprovalsContent() {
   const [editProrateOnJoin, setEditProrateOnJoin] = useState(true);
   const [savingPolicy, setSavingPolicy] = useState(false);
 
+  const [reimbClaims, setReimbClaims] = useState<any[]>([]);
+  const [reimbLoading, setReimbLoading] = useState(false);
+  const [reimbCat, setReimbCat] = useState("");
+  const [reimbAmount, setReimbAmount] = useState("");
+  const [reimbClaimDate, setReimbClaimDate] = useState("");
+  const [reimbDesc, setReimbDesc] = useState("");
+  const [reimbFile, setReimbFile] = useState<File | null>(null);
+  const [reimbSubmitting, setReimbSubmitting] = useState(false);
+  const [reimbActionId, setReimbActionId] = useState<string | null>(null);
+  const [reimbRejectDialog, setReimbRejectDialog] = useState<null | { id: string; reason: string }>(null);
+  const [reimbDialogOpen, setReimbDialogOpen] = useState(false);
+
   function diffDaysInclusive(start: string, end: string): number {
     if (!start || !end) return 0;
     const s = new Date(start + "T00:00:00Z").getTime();
@@ -73,6 +108,7 @@ export function ApprovalsContent() {
 
   const selectedLeaveType = typeRows.find((t: any) => t.id === leaveTypeId);
   const totalDays = diffDaysInclusive(startDate, endDate);
+  const reimbPayrollHint = useMemo(() => payrollHintFromClaimDate(reimbClaimDate), [reimbClaimDate]);
 
   useEffect(() => {
     if (tab !== "leave") return;
@@ -101,6 +137,28 @@ export function ApprovalsContent() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
+  useEffect(() => {
+    if (tab !== "reimbursement") return;
+    let cancelled = false;
+    (async () => {
+      setReimbLoading(true);
+      setError(null);
+      try {
+        const res = await fetch("/api/reimbursements");
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.error || "Failed to load reimbursement claims");
+        if (!cancelled) setReimbClaims(data.claims || []);
+      } catch (e: any) {
+        if (!cancelled) setError(e?.message || "Failed to load reimbursements");
+      } finally {
+        if (!cancelled) setReimbLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [tab]);
 
   useEffect(() => {
@@ -361,6 +419,103 @@ export function ApprovalsContent() {
       showToast("error", e?.message || "Failed to reject request");
     } finally {
       setActionLoadingId(null);
+    }
+  }
+
+  async function submitReimbursement(e: FormEvent) {
+    e.preventDefault();
+    setReimbSubmitting(true);
+    setError(null);
+    try {
+      let attachmentUrl = "";
+      if (reimbFile) {
+        const fd = new FormData();
+        fd.append("file", reimbFile);
+        const up = await fetch("/api/reimbursements/upload", { method: "POST", body: fd });
+        const upData = await up.json();
+        if (!up.ok) throw new Error(upData?.error || "Upload failed");
+        attachmentUrl = String(upData.url || "");
+      }
+      const res = await fetch("/api/reimbursements", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          category: reimbCat.trim(),
+          amount: parseFloat(reimbAmount),
+          claimDate: reimbClaimDate,
+          description: reimbDesc.trim() || undefined,
+          attachmentUrl: attachmentUrl || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Failed to submit claim");
+      const list = await fetch("/api/reimbursements");
+      const listData = await list.json();
+      if (!list.ok) throw new Error(listData?.error || "Failed to refresh");
+      setReimbClaims(listData.claims || []);
+      setReimbCat("");
+      setReimbAmount("");
+      setReimbClaimDate("");
+      setReimbDesc("");
+      setReimbFile(null);
+      setReimbDialogOpen(false);
+      showToast("success", "Reimbursement claim submitted");
+    } catch (err: any) {
+      setError(err?.message || "Failed to submit");
+      showToast("error", err?.message || "Failed to submit");
+    } finally {
+      setReimbSubmitting(false);
+    }
+  }
+
+  async function actReimbursement(id: string, action: "approve" | "reject") {
+    if (action === "reject") {
+      setReimbRejectDialog({ id, reason: "" });
+      return;
+    }
+    setReimbActionId(id);
+    try {
+      const res = await fetch(`/api/reimbursements/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "approve" }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Failed to approve");
+      const list = await fetch("/api/reimbursements");
+      const listData = await list.json();
+      if (!list.ok) throw new Error(listData?.error || "Failed to refresh");
+      setReimbClaims(listData.claims || []);
+      showToast("success", "Claim approved");
+    } catch (err: any) {
+      showToast("error", err?.message || "Failed");
+    } finally {
+      setReimbActionId(null);
+    }
+  }
+
+  async function submitReimbReject() {
+    if (!reimbRejectDialog) return;
+    const { id, reason } = reimbRejectDialog;
+    setReimbActionId(id);
+    try {
+      const res = await fetch(`/api/reimbursements/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "reject", rejectionReason: reason.trim() || undefined }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Failed to reject");
+      const list = await fetch("/api/reimbursements");
+      const listData = await list.json();
+      if (!list.ok) throw new Error(listData?.error || "Failed to refresh");
+      setReimbClaims(listData.claims || []);
+      setReimbRejectDialog(null);
+      showToast("success", "Claim rejected");
+    } catch (err: any) {
+      showToast("error", err?.message || "Failed");
+    } finally {
+      setReimbActionId(null);
     }
   }
 
@@ -872,12 +1027,272 @@ export function ApprovalsContent() {
       )}
 
       {tab === "reimbursement" && (
-        <div className="card">
-          <h2 className="mb-1 text-lg font-semibold text-slate-900">Reimbursement claims</h2>
-          <p className="muted mb-3">
-            Map this UI to the HRMS_reimbursements table. Employees raise claims, managers /
-            approvers change status and add approval timestamps.
-          </p>
+        <div className="space-y-4">
+          <div className="card">
+            <h2 className="mb-1 text-lg font-semibold text-slate-900">Request reimbursement</h2>
+            <p className="muted">
+              Submit an expense claim with optional proof. Payroll period follows your expense date. Super Admin, Admin, or
+              HR must approve before it is paid in payroll.
+            </p>
+            <div className="mt-4 flex items-center justify-between gap-3">
+              {error && tab === "reimbursement" && !reimbDialogOpen && <p className="text-sm text-red-600">{error}</p>}
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={reimbLoading}
+                onClick={() => {
+                  setError(null);
+                  setReimbDialogOpen(true);
+                }}
+              >
+                Request reimbursement
+              </button>
+            </div>
+          </div>
+
+          <div className="card">
+            <h2 className="mb-1 text-lg font-semibold text-slate-900">Claims</h2>
+            {reimbLoading ? (
+              <p className="muted">Loading…</p>
+            ) : reimbClaims.length === 0 ? (
+              <p className="muted">No reimbursement claims yet.</p>
+            ) : (
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full min-w-[960px] text-left text-sm">
+                  <thead className="text-slate-600">
+                    <tr>
+                      <th className="px-2 py-2">Employee</th>
+                      <th className="px-2 py-2">Category</th>
+                      <th className="px-2 py-2">Amount</th>
+                      <th className="px-2 py-2">Claim date</th>
+                      <th className="px-2 py-2">Payroll period</th>
+                      <th className="px-2 py-2">Status</th>
+                      <th className="px-2 py-2">Approved by</th>
+                      <th className="px-2 py-2">Attachment</th>
+                      {canApprove && <th className="px-2 py-2">Action</th>}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reimbClaims.map((c: any) => (
+                      <tr key={c.id} className="border-t border-slate-200">
+                        <td className="px-2 py-2">
+                          <div>{c.employeeName || "—"}</div>
+                          <div className="text-xs text-slate-500">{c.employeeEmail || ""}</div>
+                        </td>
+                        <td className="px-2 py-2">{c.category}</td>
+                        <td className="px-2 py-2">₹{Number(c.amount ?? 0).toLocaleString("en-IN")}</td>
+                        <td className="px-2 py-2">{c.claim_date}</td>
+                        <td className="px-2 py-2">
+                          {payrollPeriodLabel(c.claim_date, c.payroll_year, c.payroll_month)}
+                        </td>
+                        <td className="px-2 py-2 capitalize">
+                          {c.status === "paid" ? "Paid (payroll)" : c.status}
+                        </td>
+                        <td className="px-2 py-2">
+                          {c.status === "approved" || c.status === "rejected" || c.status === "paid" ? (
+                            <div>
+                              <div>{c.approverName || "—"}</div>
+                              {c.status === "paid" && c.paid_at ? (
+                                <div className="text-xs text-slate-500">{`Paid ${new Date(c.paid_at).toLocaleString()}`}</div>
+                              ) : c.status === "approved" && c.approved_at ? (
+                                <div className="text-xs text-slate-500">{`Approved ${new Date(c.approved_at).toLocaleString()}`}</div>
+                              ) : c.status === "rejected" && c.rejected_at ? (
+                                <div className="text-xs text-slate-500">{`Rejected ${new Date(c.rejected_at).toLocaleString()}`}</div>
+                              ) : null}
+                              {c.status === "rejected" && c.rejection_reason && (
+                                <div className="text-xs text-red-600">{c.rejection_reason}</div>
+                              )}
+                            </div>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                        <td className="px-2 py-2">
+                          {c.attachment_url ? (
+                            <a
+                              href={c.attachment_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-emerald-700 underline"
+                            >
+                              View
+                            </a>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                        {canApprove && (
+                          <td className="px-2 py-2">
+                            {c.status === "pending" ? (
+                              <div className="flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  className="btn btn-primary text-xs"
+                                  disabled={reimbActionId === c.id}
+                                  onClick={() => actReimbursement(c.id, "approve")}
+                                >
+                                  Approve
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn btn-outline text-xs"
+                                  disabled={reimbActionId === c.id}
+                                  onClick={() => actReimbursement(c.id, "reject")}
+                                >
+                                  Reject
+                                </button>
+                              </div>
+                            ) : (
+                              <span className="text-slate-400">—</span>
+                            )}
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {reimbDialogOpen && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+              <button
+                type="button"
+                className="absolute inset-0 bg-black/40"
+                aria-label="Close dialog"
+                onClick={() => setReimbDialogOpen(false)}
+              />
+              <div
+                role="dialog"
+                aria-modal="true"
+                className="relative z-10 max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-xl"
+              >
+                <div className="border-b border-slate-200 px-5 py-4">
+                  <h3 className="text-base font-semibold text-slate-900">Request reimbursement</h3>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Enter the expense date and amount; payroll period is set from that date. Optional attachment (max 8 MB).
+                  </p>
+                </div>
+                <form onSubmit={submitReimbursement} className="p-5">
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                      <div className="sm:col-span-2">
+                        <label className="mb-1 block text-sm font-medium text-slate-700">Category</label>
+                        <input
+                          required
+                          value={reimbCat}
+                          onChange={(e) => setReimbCat(e.target.value)}
+                          placeholder="e.g. Travel, Medical, Meals"
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-slate-700">Amount (INR)</label>
+                        <input
+                          required
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          value={reimbAmount}
+                          onChange={(e) => setReimbAmount(e.target.value)}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-slate-700">Expense / claim date</label>
+                        <input
+                          required
+                          type="date"
+                          value={reimbClaimDate}
+                          onChange={(e) => setReimbClaimDate(e.target.value)}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                        />
+                        {reimbPayrollHint && (
+                          <p className="mt-1.5 text-xs text-slate-600">
+                            Included in the <span className="font-medium text-slate-800">{reimbPayrollHint}</span> payroll
+                            when approved (based on this date).
+                          </p>
+                        )}
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="mb-1 block text-sm font-medium text-slate-700">Description (optional)</label>
+                        <textarea
+                          value={reimbDesc}
+                          onChange={(e) => setReimbDesc(e.target.value)}
+                          rows={2}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="mb-1 block text-sm font-medium text-slate-700">Attachment (optional, max 8 MB)</label>
+                        <input
+                          type="file"
+                          accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/*"
+                          onChange={(e) => setReimbFile(e.target.files?.[0] ?? null)}
+                          className="w-full text-sm text-slate-600 file:mr-3 file:rounded file:border file:border-slate-300 file:bg-slate-50 file:px-3 file:py-1.5"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mt-4 flex flex-col gap-2">
+                    {error && <p className="text-sm text-red-600">{error}</p>}
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        className="btn btn-outline"
+                        onClick={() => setReimbDialogOpen(false)}
+                        disabled={reimbSubmitting}
+                      >
+                        Cancel
+                      </button>
+                      <button type="submit" className="btn btn-primary" disabled={reimbSubmitting}>
+                        {reimbSubmitting ? "Submitting…" : "Submit claim"}
+                      </button>
+                    </div>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {reimbRejectDialog && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+              <button
+                type="button"
+                className="absolute inset-0 bg-black/40"
+                aria-label="Close dialog"
+                onClick={() => setReimbRejectDialog(null)}
+              />
+              <div
+                role="dialog"
+                aria-modal="true"
+                className="relative z-10 w-full max-w-lg rounded-xl border border-slate-200 bg-white shadow-xl"
+              >
+                <div className="border-b border-slate-200 px-5 py-4">
+                  <h3 className="text-base font-semibold text-slate-900">Reject reimbursement</h3>
+                  <p className="mt-1 text-sm text-slate-500">Reason is optional.</p>
+                </div>
+                <div className="space-y-3 p-5">
+                  <input
+                    type="text"
+                    value={reimbRejectDialog.reason}
+                    onChange={(e) => setReimbRejectDialog({ ...reimbRejectDialog, reason: e.target.value })}
+                    placeholder="Reason"
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  />
+                  <div className="flex justify-end gap-2">
+                    <button type="button" className="btn btn-outline" onClick={() => setReimbRejectDialog(null)}>
+                      Cancel
+                    </button>
+                    <button type="button" className="btn btn-primary" onClick={() => void submitReimbReject()}>
+                      Reject
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </section>
