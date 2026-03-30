@@ -5,14 +5,51 @@ import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
 import { useEffect, useState } from "react";
 import { Skeleton } from "@/components/Skeleton";
+import { useToast } from "@/components/ToastProvider";
 
 const TEAL = "#0d9488";
 
 function getGreeting(): string {
   const h = new Date().getHours();
-  if (h < 12) return "S";
+  if (h < 12) return "Good Morning";
   if (h < 17) return "Good Afternoon";
   return "Good Evening";
+}
+
+function formatTimeIST(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  try {
+    return new Date(iso).toLocaleTimeString("en-IN", {
+      timeZone: "Asia/Kolkata",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return "—";
+  }
+}
+
+type AttendanceLog = {
+  id: string;
+  work_date: string;
+  check_in_at: string | null;
+  check_out_at: string | null;
+  total_hours: number | null;
+  lunch_break_minutes: number | null;
+  tea_break_minutes: number | null;
+  lunch_break_started_at?: string | null;
+  tea_break_started_at?: string | null;
+  status: string | null;
+};
+
+/** Display ms as H:MM:SS or M:SS for live counters */
+function formatDurationMs(ms: number): string {
+  const x = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(x / 3600);
+  const m = Math.floor((x % 3600) / 60);
+  const s = x % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  return `${m}:${String(s).padStart(2, "0")}`;
 }
 
 function AvatarUrl({ userId, gender }: { userId: string; gender: string | null }) {
@@ -26,21 +63,46 @@ function AvatarUrl({ userId, gender }: { userId: string; gender: string | null }
 
 export function DashboardContent() {
   const { role, name, id } = useAuth();
+  const { showToast } = useToast();
   const [user, setUser] = useState<{ gender: string | null } | null>(null);
   const [leaveBalances, setLeaveBalances] = useState<{ leaveTypeName: string; used: number; remaining: number | null; isPaid: boolean }[]>([]);
   const [payslips, setPayslips] = useState<{ periodFormatted: string; generatedAt: string; payDays: number | null }[]>([]);
   const [upcomingHolidays, setUpcomingHolidays] = useState<{ name: string; holiday_date: string }[]>([]);
   const [loading, setLoading] = useState(true);
+  const [attendance, setAttendance] = useState<{
+    hasEmployee: boolean;
+    workDate: string;
+    log: AttendanceLog | null;
+  } | null>(null);
+  const [attendanceLoading, setAttendanceLoading] = useState(true);
+  const [punching, setPunching] = useState(false);
+  /** Drives live HH:MM:SS / counters while punched in */
+  const [tick, setTick] = useState(() => Date.now());
+
+  async function refreshAttendance() {
+    const res = await fetch("/api/attendance");
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setAttendance(null);
+      return;
+    }
+    setAttendance({
+      hasEmployee: data.hasEmployee === true,
+      workDate: String(data.workDate ?? ""),
+      log: (data.log as AttendanceLog) ?? null,
+    });
+  }
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const [meRes, balanceRes, payslipRes, holidaysRes] = await Promise.all([
+        const [meRes, balanceRes, payslipRes, holidaysRes, attRes] = await Promise.all([
           fetch("/api/me"),
           fetch("/api/leave/balance"),
           fetch("/api/payslips/me"),
           fetch("/api/holidays"),
+          fetch("/api/attendance"),
         ]);
         if (!cancelled && meRes.ok) {
           const d = await meRes.json();
@@ -69,14 +131,86 @@ export function DashboardContent() {
             .map((h: any) => ({ name: h.name ?? "", holiday_date: String(h.holiday_date) }));
           setUpcomingHolidays(upcoming);
         }
+        if (!cancelled && attRes.ok) {
+          const d = await attRes.json();
+          setAttendance({
+            hasEmployee: d.hasEmployee === true,
+            workDate: String(d.workDate ?? ""),
+            log: (d.log as AttendanceLog) ?? null,
+          });
+        } else if (!cancelled) {
+          setAttendance(null);
+        }
       } catch {
         // ignore
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+          setAttendanceLoading(false);
+        }
       }
     })();
     return () => { cancelled = true; };
   }, []);
+
+  /** 1s clock while punched in (for live elapsed + break counters) */
+  useEffect(() => {
+    const log = attendance?.log;
+    if (!log?.check_in_at || log?.check_out_at) return;
+    const t = setInterval(() => setTick(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [attendance?.log?.check_in_at, attendance?.log?.check_out_at]);
+
+  async function handleBreakToggle(kind: "lunch" | "tea") {
+    setPunching(true);
+    try {
+      const res = await fetch("/api/attendance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "break", kind }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(typeof data?.error === "string" ? data.error : "Request failed");
+      if (data.log) {
+        setAttendance((prev) => (prev ? { ...prev, log: data.log as AttendanceLog } : null));
+      } else {
+        await refreshAttendance();
+      }
+    } catch (e: unknown) {
+      showToast("error", e instanceof Error ? e.message : "Failed");
+    } finally {
+      setPunching(false);
+    }
+  }
+
+  async function handleAttendancePunch(action: "in" | "out", opts?: { allowRepunchOut?: boolean; allowRepunchIn?: boolean }) {
+    setPunching(true);
+    try {
+      const res = await fetch("/api/attendance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action,
+          allowRepunchOut: opts?.allowRepunchOut === true ? true : undefined,
+          allowRepunchIn: opts?.allowRepunchIn === true ? true : undefined,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(typeof data?.error === "string" ? data.error : "Request failed");
+      showToast("success", action === "in" ? "Punched in successfully" : "Punched out successfully");
+      if (data.log) {
+        setAttendance((prev) =>
+          prev ? { ...prev, log: data.log as AttendanceLog } : null
+        );
+      } else {
+        await refreshAttendance();
+      }
+    } catch (e: unknown) {
+      showToast("error", e instanceof Error ? e.message : "Failed");
+    } finally {
+      setPunching(false);
+    }
+  }
 
   const displayName = name || "Employee";
   const greeting = getGreeting();
@@ -87,6 +221,39 @@ export function DashboardContent() {
     const lastPayDate = lastPay?.generatedAt
       ? new Date(lastPay.generatedAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })
       : "—";
+
+    const attLog = attendance?.log;
+    const attDateLabel = attendance?.workDate
+      ? new Date(attendance.workDate + "T12:00:00Z").toLocaleDateString("en-IN", {
+          weekday: "short",
+          day: "numeric",
+          month: "short",
+          year: "numeric",
+        })
+      : "";
+
+    const nowMs = tick;
+    const punchedInOpen = !!(attLog?.check_in_at && !attLog?.check_out_at);
+    const punchInMs = punchedInOpen && attLog?.check_in_at ? new Date(attLog.check_in_at).getTime() : 0;
+    const lunchBaseMs = (Number(attLog?.lunch_break_minutes) || 0) * 60 * 1000;
+    const teaBaseMs = (Number(attLog?.tea_break_minutes) || 0) * 60 * 1000;
+    const lunchRunningSinceMs =
+      punchedInOpen && attLog?.lunch_break_started_at ? new Date(attLog.lunch_break_started_at).getTime() : null;
+    const teaRunningSinceMs =
+      punchedInOpen && attLog?.tea_break_started_at ? new Date(attLog.tea_break_started_at).getTime() : null;
+    const lunchTotalMs =
+      punchedInOpen && lunchRunningSinceMs != null && Number.isFinite(lunchRunningSinceMs)
+        ? lunchBaseMs + Math.max(0, nowMs - lunchRunningSinceMs)
+        : lunchBaseMs;
+    const teaTotalMs =
+      punchedInOpen && teaRunningSinceMs != null && Number.isFinite(teaRunningSinceMs)
+        ? teaBaseMs + Math.max(0, nowMs - teaRunningSinceMs)
+        : teaBaseMs;
+    const elapsedMs = punchInMs ? nowMs - punchInMs : 0;
+    const activeMs = punchedInOpen ? Math.max(0, elapsedMs - lunchTotalMs - teaTotalMs) : 0;
+    const activeMeetsPresent = activeMs >= 6 * 60 * 60 * 1000;
+    const lunchRunning = punchedInOpen && !!attLog?.lunch_break_started_at;
+    const teaRunning = punchedInOpen && !!attLog?.tea_break_started_at;
 
     return (
       <section className="min-h-[60vh]">
@@ -190,8 +357,192 @@ export function DashboardContent() {
             </div>
           </div>
 
-          {/* Right: My Pay + placeholder */}
+          {/* Right: Attendance + My Pay + holidays */}
           <div className="lg:col-span-2 space-y-6">
+            <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+              <div
+                className="px-6 py-3 text-lg font-semibold text-white"
+                style={{ backgroundColor: TEAL }}
+              >
+                Today&apos;s attendance
+              </div>
+              <div className="p-6">
+                {attendanceLoading ? (
+                  <div className="flex gap-4" aria-busy="true" aria-label="Loading attendance">
+                    <Skeleton className="h-12 flex-1 rounded-xl" />
+                    <Skeleton className="h-12 flex-1 rounded-xl" />
+                  </div>
+                ) : !attendance?.hasEmployee ? (
+                  <p className="text-sm text-slate-600">
+                    Your account is not linked to an employee profile yet. Ask HR to complete your employee record, then you can punch in and out here.
+                  </p>
+                ) : (
+                  <div className="space-y-4">
+                    <p className="text-xs text-slate-500">{attDateLabel}</p>
+                    {attLog?.check_in_at && attLog?.check_out_at ? (
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="rounded-lg border border-slate-100 bg-slate-50/80 px-4 py-3">
+                          <p className="text-xs font-medium text-slate-500">Punch in</p>
+                          <p className="text-lg font-semibold text-slate-900">{formatTimeIST(attLog.check_in_at)}</p>
+                        </div>
+                        <div className="rounded-lg border border-slate-100 bg-slate-50/80 px-4 py-3">
+                          <p className="text-xs font-medium text-slate-500">Punch out</p>
+                          <p className="text-lg font-semibold text-slate-900">{formatTimeIST(attLog.check_out_at)}</p>
+                        </div>
+                        <div className="rounded-lg border border-slate-100 bg-slate-50/80 px-4 py-3 sm:col-span-2">
+                          <p className="text-xs font-medium text-slate-500">Gross hours · Lunch · Tea (min)</p>
+                          <p className="text-sm text-slate-800">
+                            {attLog.total_hours != null ? `${Number(attLog.total_hours).toFixed(2)} h` : "—"}
+                            <span className="text-slate-400"> · </span>
+                            {attLog.lunch_break_minutes ?? 0}
+                            <span className="text-slate-400"> · </span>
+                            {attLog.tea_break_minutes ?? 0}
+                          </p>
+                          <p className="mt-1 text-sm text-slate-800">
+                            <span className="text-xs font-medium text-slate-500">Active hours: </span>
+                            {(() => {
+                              const grossMin = Math.round((Number(attLog.total_hours) || 0) * 60);
+                              const breaks = (Number(attLog.lunch_break_minutes) || 0) + (Number(attLog.tea_break_minutes) || 0);
+                              const activeMin = Math.max(0, grossMin - breaks);
+                              return `${(activeMin / 60).toFixed(2)} h`;
+                            })()}
+                          </p>
+                          <p className="mt-2 text-xs text-slate-500">
+                            Payroll counts a day as present when active work time (after breaks) is at least 6 hours.
+                          </p>
+                          <div className="mt-3">
+                            <button
+                              type="button"
+                              disabled={punching}
+                              onClick={() => handleAttendancePunch("in", { allowRepunchIn: true })}
+                              className="btn btn-outline !py-1.5 !text-sm"
+                            >
+                              {punching ? "Re-opening…" : "Punch in again"}
+                            </button>
+                            <p className="mt-1 text-[11px] text-slate-500">
+                              If you punched out by mistake, this will reopen today’s attendance so you can continue and punch out later.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    ) : attLog?.check_in_at && !attLog?.check_out_at ? (
+                      <div className="space-y-4">
+                        <div className="rounded-lg border border-emerald-100 bg-emerald-50/60 px-4 py-4">
+                          <p className="text-xs font-medium text-emerald-800">Punched in at {formatTimeIST(attLog.check_in_at)}</p>
+                          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                            <div>
+                              <p className="text-xs font-medium text-emerald-700/90">Time since punch in</p>
+                              <p className="font-mono text-2xl font-semibold tabular-nums text-emerald-900">
+                                {formatDurationMs(elapsedMs)}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-xs font-medium text-emerald-700/90">Active work time (after breaks)</p>
+                              <p className="font-mono text-2xl font-semibold tabular-nums text-emerald-900">
+                                {formatDurationMs(activeMs)}
+                              </p>
+                              <p className="mt-1 text-[11px] text-emerald-800/80">
+                                {activeMeetsPresent ? (
+                                  <span className="font-medium">≥ 6h — counts as present for payroll</span>
+                                ) : (
+                                  <span>Present when active time reaches 6h</span>
+                                )}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <div
+                            className={`rounded-xl border-2 px-4 py-3 transition ${
+                              lunchRunning
+                                ? "border-amber-400 bg-amber-50/80"
+                                : "border-slate-200 bg-slate-50/80"
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div>
+                                <p className="text-xs font-semibold text-slate-700">Lunch break</p>
+                                <p className="mt-1 font-mono text-lg font-semibold tabular-nums text-slate-900">
+                                  {formatDurationMs(lunchTotalMs)}
+                                </p>
+                                <p className="text-[11px] text-slate-500">
+                                  {lunchRunning ? "On break — tap to end" : "Tap to start timer"}
+                                </p>
+                              </div>
+                              <button
+                                type="button"
+                                disabled={punching}
+                                onClick={() => handleBreakToggle("lunch")}
+                                className={`shrink-0 rounded-lg px-3 py-2 text-xs font-semibold transition ${
+                                  lunchRunning
+                                    ? "bg-amber-600 text-white hover:bg-amber-700"
+                                    : "bg-white text-slate-800 ring-1 ring-slate-300 hover:bg-slate-100"
+                                }`}
+                              >
+                                {lunchRunning ? "End" : "Start"}
+                              </button>
+                            </div>
+                          </div>
+
+                          <div
+                            className={`rounded-xl border-2 px-4 py-3 transition ${
+                              teaRunning
+                                ? "border-sky-400 bg-sky-50/80"
+                                : "border-slate-200 bg-slate-50/80"
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div>
+                                <p className="text-xs font-semibold text-slate-700">Tea break</p>
+                                <p className="mt-1 font-mono text-lg font-semibold tabular-nums text-slate-900">
+                                  {formatDurationMs(teaTotalMs)}
+                                </p>
+                                <p className="text-[11px] text-slate-500">
+                                  {teaRunning ? "On break — tap to end" : "Tap to start timer"}
+                                </p>
+                              </div>
+                              <button
+                                type="button"
+                                disabled={punching}
+                                onClick={() => handleBreakToggle("tea")}
+                                className={`shrink-0 rounded-lg px-3 py-2 text-xs font-semibold transition ${
+                                  teaRunning
+                                    ? "bg-sky-600 text-white hover:bg-sky-700"
+                                    : "bg-white text-slate-800 ring-1 ring-slate-300 hover:bg-slate-100"
+                                }`}
+                              >
+                                {teaRunning ? "End" : "Start"}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          disabled={punching}
+                          onClick={() => handleAttendancePunch("out")}
+                          className="w-full rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-center text-base font-semibold text-slate-800 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
+                        >
+                          {punching ? "Saving…" : "Punch out"}
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={punching}
+                        onClick={() => handleAttendancePunch("in")}
+                        className="w-full rounded-xl px-4 py-4 text-center text-base font-semibold text-white shadow-md transition hover:opacity-95 disabled:opacity-50"
+                        style={{ backgroundColor: TEAL }}
+                      >
+                        {punching ? "Saving…" : "Punch in"}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
             <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
               <div
                 className="px-6 py-3 text-lg font-semibold text-white"

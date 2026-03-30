@@ -1,6 +1,13 @@
 import Link from "next/link";
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
+import { COOKIE_NAME, getSessionFromCookie } from "@/lib/auth";
 
-export default function LandingPage() {
+export default async function LandingPage() {
+  const cookieStore = await cookies();
+  const session = getSessionFromCookie(cookieStore.get(COOKIE_NAME)?.value);
+  if (session) redirect("/dashboard");
+
   return (
     <div className="min-h-screen">
       <header className="border-b border-slate-200 bg-white">

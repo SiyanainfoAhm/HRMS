@@ -14,6 +14,180 @@ function getDaysInMonth(year: number, month: number): number {
   return new Date(Date.UTC(year, month, 0)).getUTCDate();
 }
 
+function toYmdUtc(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+function toUtcMidnightFromYmd(ymd: string): Date {
+  return new Date(String(ymd).slice(0, 10) + "T00:00:00Z");
+}
+
+function addDaysUtc(d: Date, days: number): Date {
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + days, 0, 0, 0, 0));
+}
+
+function* iterateYmdInclusive(startYmd: string, endYmd: string): Generator<string> {
+  let d = toUtcMidnightFromYmd(startYmd);
+  const end = toUtcMidnightFromYmd(endYmd);
+  while (d.getTime() <= end.getTime()) {
+    yield toYmdUtc(d);
+    d = addDaysUtc(d, 1);
+  }
+}
+
+function clamp(n: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, n));
+}
+
+type LeaveRow = {
+  employee_user_id: string | null;
+  start_date: string;
+  end_date: string;
+  total_days: number | null;
+  paid_days: number | null;
+  unpaid_days: number | null;
+  // Supabase nested select may return object OR array depending on relationship shape
+  HRMS_leave_types?: { is_paid: boolean } | { is_paid: boolean }[] | null;
+};
+
+function computeLeavePaidUnpaidInWindow(
+  leave: LeaveRow,
+  windowStartYmd: string,
+  windowEndExclusive: Date
+): { overlapDays: number; paidDays: number; unpaidDays: number; leaveDays: Set<string> } {
+  const leaveDays = new Set<string>();
+  const start = new Date(String(leave.start_date).slice(0, 10) + "T00:00:00Z");
+  const end = new Date(String(leave.end_date).slice(0, 10) + "T00:00:00Z");
+  const windowStart = new Date(windowStartYmd + "T00:00:00Z");
+  const overlap = overlapDaysInclusive(start, end, windowStart, windowEndExclusive);
+  if (overlap <= 0) return { overlapDays: 0, paidDays: 0, unpaidDays: 0, leaveDays };
+
+  const overlapStart = start.getTime() > windowStart.getTime() ? toYmdUtc(start) : windowStartYmd;
+  const overlapEndInclusive = toYmdUtc(new Date(windowEndExclusive.getTime() - 24 * 60 * 60 * 1000));
+  const effectiveEndInclusive =
+    toUtcMidnightFromYmd(end.toISOString().slice(0, 10)).getTime() <
+    toUtcMidnightFromYmd(overlapEndInclusive).getTime()
+      ? toYmdUtc(end)
+      : overlapEndInclusive;
+
+  for (const ymd of iterateYmdInclusive(overlapStart, effectiveEndInclusive)) leaveDays.add(ymd);
+
+  const ltRaw: any = (leave as any).HRMS_leave_types;
+  const ltObj: any = Array.isArray(ltRaw) ? ltRaw[0] : ltRaw;
+  const isPaidType = ltObj?.is_paid !== false;
+  const total = Number(leave.total_days) || 1;
+  const unpaid = Number(leave.unpaid_days) ?? 0;
+  const unpaidInOverlap = isPaidType ? (total > 0 ? Math.round(overlap * (unpaid / total)) : 0) : overlap;
+  const paidInOverlap = Math.max(0, overlap - unpaidInOverlap);
+  return { overlapDays: overlap, paidDays: paidInOverlap, unpaidDays: unpaidInOverlap, leaveDays };
+}
+
+async function computeAttendanceDrivenPayDays(args: {
+  companyId: string;
+  userIds: string[];
+  periodStartYmd: string;
+  periodEndExclusive: Date;
+  effectiveRunDay: number;
+  year: number;
+  month: number;
+}): Promise<{
+  presentDaysByUser: Map<string, number>;
+  paidLeaveDaysByUser: Map<string, number>;
+  unpaidLeaveDaysByUser: Map<string, number>;
+}> {
+  const { companyId, userIds, periodStartYmd, periodEndExclusive } = args;
+
+  // Map user -> employee_id for attendance logs
+  const { data: employees, error: empErr } = await supabase
+    .from("HRMS_employees")
+    .select("id, user_id")
+    .eq("company_id", companyId)
+    .in("user_id", userIds);
+  if (empErr) throw new Error(empErr.message);
+  const employeeIdByUser = new Map<string, string>();
+  for (const e of employees ?? []) {
+    if (e?.user_id && e?.id) employeeIdByUser.set(e.user_id as string, e.id as string);
+  }
+  const employeeIds = [...employeeIdByUser.values()];
+
+  // Approved leaves (paid/unpaid totals + leave day override)
+  const { data: leaves, error: leaveErr } = await supabase
+    .from("HRMS_leave_requests")
+    .select("employee_user_id, start_date, end_date, total_days, paid_days, unpaid_days, HRMS_leave_types(is_paid)")
+    .eq("company_id", companyId)
+    .eq("status", "approved")
+    .in("employee_user_id", userIds);
+  if (leaveErr) throw new Error(leaveErr.message);
+
+  const paidLeaveDaysByUser = new Map<string, number>();
+  const unpaidLeaveDaysByUser = new Map<string, number>();
+  const leaveDaysByUser = new Map<string, Set<string>>();
+  for (const lAny of (leaves ?? []) as any[]) {
+    const l = lAny as LeaveRow;
+    const uid = l?.employee_user_id;
+    if (!uid) continue;
+    const r = computeLeavePaidUnpaidInWindow(l, periodStartYmd, periodEndExclusive);
+    if (r.overlapDays <= 0) continue;
+    paidLeaveDaysByUser.set(uid, (paidLeaveDaysByUser.get(uid) || 0) + r.paidDays);
+    unpaidLeaveDaysByUser.set(uid, (unpaidLeaveDaysByUser.get(uid) || 0) + r.unpaidDays);
+    const set = leaveDaysByUser.get(uid) || new Set<string>();
+    for (const d of r.leaveDays) set.add(d);
+    leaveDaysByUser.set(uid, set);
+  }
+
+  const presentDaysByUser = new Map<string, number>();
+  if (!employeeIds.length) {
+    return { presentDaysByUser, paidLeaveDaysByUser, unpaidLeaveDaysByUser };
+  }
+
+  const periodEndYmdInclusive = toYmdUtc(new Date(periodEndExclusive.getTime() - 24 * 60 * 60 * 1000));
+  const { data: att, error: attErr } = await supabase
+    .from("HRMS_attendance_logs")
+    .select("employee_id, work_date, check_in_at, check_out_at, total_hours, lunch_break_minutes, tea_break_minutes")
+    .eq("company_id", companyId)
+    .in("employee_id", employeeIds)
+    .gte("work_date", periodStartYmd)
+    .lte("work_date", periodEndYmdInclusive);
+  if (attErr) throw new Error(attErr.message);
+
+  const userIdByEmployeeId = new Map<string, string>();
+  for (const [uid, eid] of employeeIdByUser.entries()) userIdByEmployeeId.set(eid, uid);
+
+  for (const row of att ?? []) {
+    const eid = row.employee_id as string | null;
+    if (!eid) continue;
+    const uid = userIdByEmployeeId.get(eid);
+    if (!uid) continue;
+
+    const workDate = String(row.work_date).slice(0, 10);
+    const leaveSet = leaveDaysByUser.get(uid);
+    if (leaveSet?.has(workDate)) continue; // leave overrides punch-based presence
+
+    const lunchMin = clamp(Number((row as any).lunch_break_minutes ?? 0) || 0, 0, 24 * 60);
+    const teaMin = clamp(Number((row as any).tea_break_minutes ?? 0) || 0, 0, 24 * 60);
+    const breakMin = lunchMin + teaMin;
+
+    let durationMinutes: number | null = null;
+    const inAt = row.check_in_at ? new Date(String(row.check_in_at)) : null;
+    const outAt = row.check_out_at ? new Date(String(row.check_out_at)) : null;
+    if (inAt && outAt && !Number.isNaN(inAt.getTime()) && !Number.isNaN(outAt.getTime())) {
+      durationMinutes = Math.max(0, Math.round((outAt.getTime() - inAt.getTime()) / 60000));
+    } else if (row.total_hours != null) {
+      const th = Number(row.total_hours) || 0;
+      durationMinutes = Math.max(0, Math.round(th * 60));
+    }
+    if (durationMinutes == null) continue;
+
+    const activeMinutes = Math.max(0, durationMinutes - breakMin);
+    const activeHours = activeMinutes / 60;
+    if (activeHours >= 6) {
+      presentDaysByUser.set(uid, (presentDaysByUser.get(uid) || 0) + 1);
+    }
+  }
+
+  return { presentDaysByUser, paidLeaveDaysByUser, unpaidLeaveDaysByUser };
+}
+
 /** Match payroll run calendar month to expense claim_date (YYYY-MM-DD), not stored payroll_* columns. */
 function claimDateMatchesPayrollMonth(claimDateStr: string | null | undefined, year: number, month: number): boolean {
   const raw = claimDateStr != null ? String(claimDateStr).slice(0, 10) : "";
@@ -190,34 +364,19 @@ async function computePreview(
     .select("id, name, email, date_of_joining, date_of_leaving, role")
     .in("id", userIds);
 
-  const { data: leaves } = await supabase
-    .from("HRMS_leave_requests")
-    .select("employee_user_id, leave_type_id, start_date, end_date, total_days, paid_days, unpaid_days, HRMS_leave_types(is_paid)")
-    .eq("company_id", companyId)
-    .eq("status", "approved")
-    .in("employee_user_id", userIds);
-
   const userById = new Map((users ?? []).map((u: any) => [u.id, u]));
   const periodStartDate = new Date(periodStart + "T00:00:00Z");
   const periodEndExclusive = new Date(Date.UTC(year, month - 1, effectiveRunDay + 1, 0, 0, 0, 0));
 
-  const unpaidByUser = new Map<string, number>();
-  for (const l of leaves ?? []) {
-    if (!l.employee_user_id) continue;
-    const start = new Date(String(l.start_date) + "T00:00:00Z");
-    const end = new Date(String(l.end_date) + "T00:00:00Z");
-    const overlap = overlapDaysInclusive(start, end, periodStartDate, periodEndExclusive);
-    if (overlap <= 0) continue;
-    const lt = (l as any).HRMS_leave_types;
-    const isPaid = lt?.is_paid !== false;
-    const total = Number(l.total_days) || 1;
-    const unpaid = Number(l.unpaid_days) ?? 0;
-    const paid = Number(l.paid_days) ?? (total - unpaid);
-    let unpaidInOverlap: number;
-    if (!isPaid) unpaidInOverlap = overlap;
-    else unpaidInOverlap = total > 0 ? Math.round(overlap * (unpaid / total)) : 0;
-    unpaidByUser.set(l.employee_user_id, (unpaidByUser.get(l.employee_user_id) || 0) + unpaidInOverlap);
-  }
+  const { presentDaysByUser, paidLeaveDaysByUser, unpaidLeaveDaysByUser } = await computeAttendanceDrivenPayDays({
+    companyId,
+    userIds,
+    periodStartYmd: periodStart,
+    periodEndExclusive,
+    effectiveRunDay,
+    year,
+    month,
+  });
 
   const reimbByUser = await fetchApprovedReimbursementTotalsByUser(companyId, year, month);
 
@@ -232,16 +391,23 @@ async function computePreview(
     if (dol && dol < periodStartDate) continue;
     if (doj && doj > periodEndExclusive) continue;
 
-    let basePayDays = effectiveRunDay;
-    if (dol && dol < periodEndExclusive) {
-      basePayDays = Math.min(dol.getUTCDate(), effectiveRunDay);
-    } else if (doj && doj >= periodStartDate && doj < periodEndExclusive) {
-      const joinDay = doj.getUTCDate();
-      basePayDays = Math.max(0, effectiveRunDay - joinDay + 1);
-    }
+    // Eligible days within employment window for this payroll period
+    const employmentStart = doj && doj > periodStartDate ? doj : periodStartDate;
+    const employmentEndInclusive =
+      dol && dol < new Date(periodEndExclusive.getTime() - 1) ? dol : new Date(periodEndExclusive.getTime() - 1);
+    const eligibleStartYmd = toYmdUtc(employmentStart);
+    const eligibleEndYmd = toYmdUtc(employmentEndInclusive);
+    const eligibleDays = overlapDaysInclusive(
+      toUtcMidnightFromYmd(eligibleStartYmd),
+      toUtcMidnightFromYmd(eligibleEndYmd),
+      periodStartDate,
+      periodEndExclusive
+    );
 
-    const unpaidLeaveDays = unpaidByUser.get(m.employee_user_id) || 0;
-    const payDays = Math.max(0, Math.round(basePayDays - unpaidLeaveDays));
+    const unpaidLeaveDays = unpaidLeaveDaysByUser.get(m.employee_user_id) || 0;
+    const paidLeaveDays = paidLeaveDaysByUser.get(m.employee_user_id) || 0;
+    const presentDays = presentDaysByUser.get(m.employee_user_id) || 0;
+    const payDays = clamp(Math.round(presentDays + paidLeaveDays), 0, Math.max(0, eligibleDays));
     if (payDays <= 0) continue;
 
     const grossMonthly = Number(m.gross_salary) || 0;
@@ -482,32 +648,18 @@ export async function POST(request: NextRequest) {
       });
     }
   } else {
-    const { data: leaves } = await supabase
-      .from("HRMS_leave_requests")
-      .select("employee_user_id, leave_type_id, start_date, end_date, total_days, paid_days, unpaid_days, HRMS_leave_types(is_paid)")
-      .eq("company_id", me.company_id)
-      .eq("status", "approved")
-      .in("employee_user_id", userIds);
-
     const periodStartDate = new Date(periodStart + "T00:00:00Z");
     const periodEndExclusive = new Date(Date.UTC(year, month - 1, effectiveRunDay + 1, 0, 0, 0, 0));
 
-    const unpaidByUser = new Map<string, number>();
-    for (const l of leaves ?? []) {
-      if (!l.employee_user_id) continue;
-      const start = new Date(String(l.start_date) + "T00:00:00Z");
-      const end = new Date(String(l.end_date) + "T00:00:00Z");
-      const overlap = overlapDaysInclusive(start, end, periodStartDate, periodEndExclusive);
-      if (overlap <= 0) continue;
-      const lt = (l as any).HRMS_leave_types;
-      const isPaid = lt?.is_paid !== false;
-      const total = Number(l.total_days) || 1;
-      const unpaid = Number(l.unpaid_days) ?? 0;
-      let unpaidInOverlap: number;
-      if (!isPaid) unpaidInOverlap = overlap;
-      else unpaidInOverlap = total > 0 ? Math.round(overlap * (unpaid / total)) : 0;
-      unpaidByUser.set(l.employee_user_id, (unpaidByUser.get(l.employee_user_id) || 0) + unpaidInOverlap);
-    }
+    const { presentDaysByUser, paidLeaveDaysByUser, unpaidLeaveDaysByUser } = await computeAttendanceDrivenPayDays({
+      companyId: me.company_id,
+      userIds,
+      periodStartYmd: periodStart,
+      periodEndExclusive,
+      effectiveRunDay,
+      year,
+      month,
+    });
 
     const reimbByUser = await fetchApprovedReimbursementTotalsByUser(me.company_id, year, month);
 
@@ -521,16 +673,22 @@ export async function POST(request: NextRequest) {
       if (dol && dol < periodStartDate) continue;
       if (doj && doj > periodEndExclusive) continue;
 
-      let basePayDays = effectiveRunDay;
-      if (dol && dol < periodEndExclusive) {
-        basePayDays = Math.min(dol.getUTCDate(), effectiveRunDay);
-      } else if (doj && doj >= periodStartDate && doj < periodEndExclusive) {
-        const joinDay = doj.getUTCDate();
-        basePayDays = Math.max(0, effectiveRunDay - joinDay + 1);
-      }
+      const employmentStart = doj && doj > periodStartDate ? doj : periodStartDate;
+      const employmentEndInclusive =
+        dol && dol < new Date(periodEndExclusive.getTime() - 1) ? dol : new Date(periodEndExclusive.getTime() - 1);
+      const eligibleStartYmd = toYmdUtc(employmentStart);
+      const eligibleEndYmd = toYmdUtc(employmentEndInclusive);
+      const eligibleDays = overlapDaysInclusive(
+        toUtcMidnightFromYmd(eligibleStartYmd),
+        toUtcMidnightFromYmd(eligibleEndYmd),
+        periodStartDate,
+        periodEndExclusive
+      );
 
-      const unpaidLeaveDays = unpaidByUser.get(m.employee_user_id) || 0;
-      const payDays = Math.max(0, Math.round(basePayDays - unpaidLeaveDays));
+      const unpaidLeaveDays = unpaidLeaveDaysByUser.get(m.employee_user_id) || 0;
+      const paidLeaveDays = paidLeaveDaysByUser.get(m.employee_user_id) || 0;
+      const presentDays = presentDaysByUser.get(m.employee_user_id) || 0;
+      const payDays = clamp(Math.round(presentDays + paidLeaveDays), 0, Math.max(0, eligibleDays));
       if (payDays <= 0) continue;
 
       const grossMonthly = Number(m.gross_salary) || 0;
