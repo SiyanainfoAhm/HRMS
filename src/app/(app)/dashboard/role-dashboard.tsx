@@ -251,7 +251,7 @@ export function DashboardContent() {
         : teaBaseMs;
     const elapsedMs = punchInMs ? nowMs - punchInMs : 0;
     const activeMs = punchedInOpen ? Math.max(0, elapsedMs - lunchTotalMs - teaTotalMs) : 0;
-    const activeMeetsPresent = activeMs >= 6 * 60 * 60 * 1000;
+    const activeMeetsPresent = activeMs >= 8 * 60 * 60 * 1000;
     const lunchRunning = punchedInOpen && !!attLog?.lunch_break_started_at;
     const teaRunning = punchedInOpen && !!attLog?.tea_break_started_at;
 
@@ -408,7 +408,7 @@ export function DashboardContent() {
                             })()}
                           </p>
                           <p className="mt-2 text-xs text-slate-500">
-                            Payroll counts a day as present when active work time (after breaks) is at least 6 hours.
+                            Payroll counts a day as present when active work time (after breaks) is at least 8 hours.
                           </p>
                           <div className="mt-3">
                             <button
@@ -443,9 +443,9 @@ export function DashboardContent() {
                               </p>
                               <p className="mt-1 text-[11px] text-emerald-800/80">
                                 {activeMeetsPresent ? (
-                                  <span className="font-medium">≥ 6h — counts as present for payroll</span>
+                                  <span className="font-medium">≥ 8h — counts as present for payroll</span>
                                 ) : (
-                                  <span>Present when active time reaches 6h</span>
+                                  <span>Present when active time reaches 8h</span>
                                 )}
                               </p>
                             </div>

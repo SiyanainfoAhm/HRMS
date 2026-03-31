@@ -6,6 +6,9 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { overlapDaysInclusive } from "@/lib/leavePolicy";
 import * as XLSX from "xlsx-js-style";
 
+/** Minimum active work hours (after lunch/tea breaks) for a day to count as present in payroll. */
+const MIN_ACTIVE_HOURS_FOR_PRESENT = 8;
+
 function isManagerial(role: string): boolean {
   return role === "super_admin" || role === "admin" || role === "hr";
 }
@@ -180,7 +183,7 @@ async function computeAttendanceDrivenPayDays(args: {
 
     const activeMinutes = Math.max(0, durationMinutes - breakMin);
     const activeHours = activeMinutes / 60;
-    if (activeHours >= 6) {
+    if (activeHours >= MIN_ACTIVE_HOURS_FOR_PRESENT) {
       presentDaysByUser.set(uid, (presentDaysByUser.get(uid) || 0) + 1);
     }
   }
