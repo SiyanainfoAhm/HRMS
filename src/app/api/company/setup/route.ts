@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { COOKIE_NAME, getSessionFromCookie } from "@/lib/auth";
+import { COOKIE_NAME } from "@/lib/auth";
+import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
 
 export async function POST(request: NextRequest) {
@@ -13,7 +14,7 @@ export async function POST(request: NextRequest) {
     }
 
     const cookieStore = await cookies();
-    const session = getSessionFromCookie(cookieStore.get(COOKIE_NAME)?.value);
+    const session = await getValidatedSession(cookieStore.get(COOKIE_NAME)?.value);
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

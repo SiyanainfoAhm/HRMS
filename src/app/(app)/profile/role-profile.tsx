@@ -19,6 +19,13 @@ export function ProfileContent() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
+  const [passwordSaving, setPasswordSaving] = useState(false);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [passwordSuccess, setPasswordSuccess] = useState<string | null>(null);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+
   const [form, setForm] = useState({
     email: "",
     name: "",
@@ -293,6 +300,34 @@ export function ProfileContent() {
     }
   }
 
+  async function handleChangePassword(e: FormEvent) {
+    e.preventDefault();
+    setPasswordError(null);
+    setPasswordSuccess(null);
+    if (newPassword !== confirmPassword) {
+      setPasswordError("New password and confirmation do not match");
+      return;
+    }
+    setPasswordSaving(true);
+    try {
+      const res = await fetch("/api/auth/change-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ currentPassword, newPassword }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Failed to change password");
+      setPasswordSuccess("Password updated");
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+    } catch (e: unknown) {
+      setPasswordError(e instanceof Error ? e.message : "Failed to change password");
+    } finally {
+      setPasswordSaving(false);
+    }
+  }
+
   return (
     <>
       {designationAddPrompt && (
@@ -388,6 +423,7 @@ export function ProfileContent() {
       </div>
 
       {tab === "profile" && (
+        <>
         <form onSubmit={handleSave} className="card space-y-6">
           <div className="flex items-start justify-between gap-4">
             <div>
@@ -798,6 +834,55 @@ export function ProfileContent() {
             </div>
           )}
         </form>
+
+        <form onSubmit={handleChangePassword} className="card space-y-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className="mb-1 text-lg font-semibold text-slate-900">Change password</h2>
+              <p className="muted text-sm">
+                Enter your current password, then a new one (at least 8 characters). This applies to your next sign-in.
+              </p>
+            </div>
+            <button type="submit" className="btn btn-primary shrink-0" disabled={passwordSaving || loading}>
+              {passwordSaving ? "Updating…" : "Update password"}
+            </button>
+          </div>
+          {passwordError && <p className="text-sm text-red-600">{passwordError}</p>}
+          {passwordSuccess && <p className="text-sm text-emerald-700">{passwordSuccess}</p>}
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">Current password</label>
+              <input
+                type="password"
+                autoComplete="current-password"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">New password</label>
+              <input
+                type="password"
+                autoComplete="new-password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">Confirm new password</label>
+              <input
+                type="password"
+                autoComplete="new-password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+              />
+            </div>
+          </div>
+        </form>
+        </>
       )}
 
       {tab === "pay" && (

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { COOKIE_NAME, getSessionFromCookie } from "@/lib/auth";
+import { COOKIE_NAME } from "@/lib/auth";
+import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { overlapDaysInclusive } from "@/lib/leavePolicy";
@@ -651,7 +652,7 @@ async function computePreview(
 
 export async function GET(request: NextRequest) {
   const cookieStore = await cookies();
-  const session = getSessionFromCookie(cookieStore.get(COOKIE_NAME)?.value);
+  const session = await getValidatedSession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!isManagerial(session.role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
@@ -691,7 +692,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   const cookieStore = await cookies();
-  const session = getSessionFromCookie(cookieStore.get(COOKIE_NAME)?.value);
+  const session = await getValidatedSession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!isManagerial(session.role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 

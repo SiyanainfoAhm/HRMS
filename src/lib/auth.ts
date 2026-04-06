@@ -12,6 +12,8 @@ export type SessionUser = {
   email: string;
   name: string | null;
   role: "super_admin" | "admin" | "hr" | "manager" | "employee";
+  /** Incremented on password change; must match HRMS_users.auth_session_version. */
+  sv?: number;
 };
 
 export function signPayload(payload: string): string {

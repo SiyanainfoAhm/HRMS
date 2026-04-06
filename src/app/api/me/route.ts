@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { COOKIE_NAME, getSessionFromCookie } from "@/lib/auth";
+import { COOKIE_NAME } from "@/lib/auth";
+import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
 
 function isManagerial(role: string): boolean {
@@ -53,7 +54,7 @@ function mapUser(row: any) {
 
 export async function GET() {
   const cookieStore = await cookies();
-  const session = getSessionFromCookie(cookieStore.get(COOKIE_NAME)?.value);
+  const session = await getValidatedSession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { data, error } = await supabase.from("HRMS_users").select("*").eq("id", session.id).single();
@@ -63,7 +64,7 @@ export async function GET() {
 
 export async function PUT(request: NextRequest) {
   const cookieStore = await cookies();
-  const session = getSessionFromCookie(cookieStore.get(COOKIE_NAME)?.value);
+  const session = await getValidatedSession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = await request.json().catch(() => ({}));

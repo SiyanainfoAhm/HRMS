@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { COOKIE_NAME, getSessionFromCookie } from "@/lib/auth";
+import { COOKIE_NAME } from "@/lib/auth";
+import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
 
 function isApproverRole(role: string): boolean {
@@ -9,7 +10,7 @@ function isApproverRole(role: string): boolean {
 
 export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const cookieStore = await cookies();
-  const session = getSessionFromCookie(cookieStore.get(COOKIE_NAME)?.value);
+  const session = await getValidatedSession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!isApproverRole(session.role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 

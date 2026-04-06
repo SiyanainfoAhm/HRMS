@@ -276,10 +276,18 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const password_hash = await bcrypt.hash(password, 10);
 
     if (invite.user_id) {
+      const { data: verRow } = await supabase
+        .from("HRMS_users")
+        .select("auth_session_version")
+        .eq("id", invite.user_id)
+        .maybeSingle();
+      const nextSv = (typeof verRow?.auth_session_version === "number" ? verRow.auth_session_version : 0) + 1;
+
       const { error: updErr } = await supabase
         .from("HRMS_users")
         .update({
           password_hash,
+          auth_session_version: nextSv,
           name: typeof profile?.name === "string" ? profile.name.trim() || null : undefined,
           phone: typeof profile?.phone === "string" ? profile.phone.trim() || null : undefined,
           date_of_birth: typeof profile?.dateOfBirth === "string" ? profile.dateOfBirth || null : undefined,

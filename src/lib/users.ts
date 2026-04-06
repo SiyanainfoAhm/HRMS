@@ -9,6 +9,7 @@ export type User = {
   passwordHash: string;
   name: string | null;
   role: UserRole;
+  authSessionVersion: number;
   createdAt: string; // ISO string
   updatedAt: string; // ISO string
 };
@@ -44,6 +45,7 @@ function mapDbRowToUser(row: any): User {
     passwordHash: row.password_hash,
     name: row.name ?? null,
     role: row.role as UserRole,
+    authSessionVersion: Number(row.auth_session_version ?? 0),
     createdAt: new Date(row.created_at).toISOString(),
     updatedAt: new Date(row.updated_at).toISOString(),
   };
@@ -124,4 +126,34 @@ export async function createUser(data: {
 
 export async function verifyPassword(user: User, password: string): Promise<boolean> {
   return bcrypt.compare(password, user.passwordHash);
+}
+
+const MIN_PASSWORD_LENGTH = 8;
+
+/** Updates password after verifying the current one. Returns new auth session version (invalidates other devices). */
+export async function changePasswordForUser(
+  userId: string,
+  currentPassword: string,
+  newPassword: string
+): Promise<number> {
+  const trimmedNew = newPassword.trim();
+  if (trimmedNew.length < MIN_PASSWORD_LENGTH) {
+    throw new Error(`New password must be at least ${MIN_PASSWORD_LENGTH} characters`);
+  }
+  const user = await findUserById(userId);
+  if (!user) throw new Error("User not found");
+  const ok = await verifyPassword(user, currentPassword);
+  if (!ok) throw new Error("Current password is incorrect");
+  const password_hash = await bcrypt.hash(trimmedNew, 10);
+  const nextSv = user.authSessionVersion + 1;
+  const { error } = await supabase
+    .from("HRMS_users")
+    .update({
+      password_hash,
+      auth_session_version: nextSv,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", userId);
+  if (error) throw error;
+  return nextSv;
 }

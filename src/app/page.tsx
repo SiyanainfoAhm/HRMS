@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { COOKIE_NAME, getSessionFromCookie } from "@/lib/auth";
+import { COOKIE_NAME } from "@/lib/auth";
+import { getValidatedSession } from "@/lib/authValidate";
 
 export default async function LandingPage() {
   const cookieStore = await cookies();
-  const session = getSessionFromCookie(cookieStore.get(COOKIE_NAME)?.value);
+  const session = await getValidatedSession(cookieStore.get(COOKIE_NAME)?.value);
   if (session) redirect("/dashboard");
 
   return (

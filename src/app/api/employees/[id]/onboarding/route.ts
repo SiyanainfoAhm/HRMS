@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { COOKIE_NAME, getSessionFromCookie } from "@/lib/auth";
+import { COOKIE_NAME } from "@/lib/auth";
+import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
 
 function isManagerial(role: string): boolean {
@@ -12,7 +13,7 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
   if (!id) return NextResponse.json({ error: "Invalid id" }, { status: 400 });
 
   const cookieStore = await cookies();
-  const session = getSessionFromCookie(cookieStore.get(COOKIE_NAME)?.value);
+  const session = await getValidatedSession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!isManagerial(session.role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 

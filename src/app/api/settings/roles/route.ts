@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { COOKIE_NAME, getSessionFromCookie } from "@/lib/auth";
+import { COOKIE_NAME } from "@/lib/auth";
+import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
 
 function canManage(role: string): boolean {
@@ -22,7 +23,7 @@ const protectedRoleKeys = ["super_admin", "admin", "hr", "manager"] as const;
 
 export async function GET() {
   const cookieStore = await cookies();
-  const session = getSessionFromCookie(cookieStore.get(COOKIE_NAME)?.value);
+  const session = await getValidatedSession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const companyId = await getCompanyId(session.id);
   if (!companyId) return NextResponse.json({ roles: [] });
@@ -38,7 +39,7 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   const cookieStore = await cookies();
-  const session = getSessionFromCookie(cookieStore.get(COOKIE_NAME)?.value);
+  const session = await getValidatedSession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!canManage(session.role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   const companyId = await getCompanyId(session.id);
@@ -71,7 +72,7 @@ export async function POST(request: NextRequest) {
 
 export async function PUT(request: NextRequest) {
   const cookieStore = await cookies();
-  const session = getSessionFromCookie(cookieStore.get(COOKIE_NAME)?.value);
+  const session = await getValidatedSession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!canManage(session.role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   const companyId = await getCompanyId(session.id);
@@ -101,7 +102,7 @@ export async function PUT(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
   const cookieStore = await cookies();
-  const session = getSessionFromCookie(cookieStore.get(COOKIE_NAME)?.value);
+  const session = await getValidatedSession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!isSuperAdmin(session.role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   const companyId = await getCompanyId(session.id);
@@ -137,7 +138,7 @@ export async function PATCH(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   const cookieStore = await cookies();
-  const session = getSessionFromCookie(cookieStore.get(COOKIE_NAME)?.value);
+  const session = await getValidatedSession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!isSuperAdmin(session.role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   const companyId = await getCompanyId(session.id);

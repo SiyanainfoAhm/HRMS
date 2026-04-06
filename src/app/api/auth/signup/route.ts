@@ -24,6 +24,7 @@ export async function POST(request: NextRequest) {
       email: user.email,
       name: user.name,
       role: user.role,
+      sv: user.authSessionVersion,
     };
     const cookie = createSessionCookie(session);
     const res = NextResponse.json({ user: session });

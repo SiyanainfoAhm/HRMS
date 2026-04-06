@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { COOKIE_NAME, getSessionFromCookie } from "@/lib/auth";
+import { COOKIE_NAME } from "@/lib/auth";
+import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
 
 function canManageHolidays(role: string): boolean {
@@ -20,7 +21,7 @@ function normalizeHolidayEnd(start: string, endRaw: string | undefined): string 
 
 export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const cookieStore = await cookies();
-  const session = getSessionFromCookie(cookieStore.get(COOKIE_NAME)?.value);
+  const session = await getValidatedSession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!canManageHolidays(session.role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
@@ -130,7 +131,7 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
 
 export async function DELETE(_request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const cookieStore = await cookies();
-  const session = getSessionFromCookie(cookieStore.get(COOKIE_NAME)?.value);
+  const session = await getValidatedSession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!canManageHolidays(session.role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
