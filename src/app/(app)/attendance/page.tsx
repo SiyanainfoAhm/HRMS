@@ -9,7 +9,6 @@ type Row = {
   logId: string;
   workDate: string;
   employeeId: string;
-  employeeCode: string | null;
   employeeName: string | null;
   employeeEmail: string;
   checkInAt: string | null;
@@ -81,13 +80,10 @@ function AttendanceRow({
         <td className="whitespace-nowrap px-4 py-3 text-xs font-medium text-slate-600">{formatShortYmd(r.workDate)}</td>
       )}
       {showEmployeeCols && (
-        <>
-          <td className="px-4 py-3">
-            <div className="font-medium text-slate-900">{r.employeeName || "—"}</div>
-            <div className="text-xs text-slate-500">{r.employeeEmail}</div>
-          </td>
-          <td className="px-3 py-3 text-slate-600">{r.employeeCode || "—"}</td>
-        </>
+        <td className="px-4 py-3">
+          <div className="font-medium text-slate-900">{r.employeeName || "—"}</div>
+          <div className="text-xs text-slate-500">{r.employeeEmail}</div>
+        </td>
       )}
       <td className="px-3 py-3 tabular-nums text-slate-800">{formatTimeIST(r.checkInAt)}</td>
       <td className="px-3 py-3 tabular-nums text-slate-800">{formatTimeIST(r.lunchCheckOutAt)}</td>
@@ -185,7 +181,7 @@ export default function AttendancePage() {
     return [...map.entries()].sort((a, b) => b[0].localeCompare(a[0]));
   }, [rows, showDateCol]);
 
-  const baseCols = showEmployeeCols ? 12 : 10;
+  const baseCols = showEmployeeCols ? 11 : 10;
   const colCount = showDateCol ? baseCols + 1 : baseCols;
 
   const title = isManagerial ? "Company attendance" : "My attendance";
@@ -253,14 +249,9 @@ export default function AttendancePage() {
                         </th>
                       )}
                       {showEmployeeCols && (
-                        <>
-                          <th className="whitespace-nowrap px-4 py-3 text-xs font-semibold uppercase tracking-wide text-emerald-900/80">
-                            Employee
-                          </th>
-                          <th className="whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-emerald-900/80">
-                            Code
-                          </th>
-                        </>
+                        <th className="whitespace-nowrap px-4 py-3 text-xs font-semibold uppercase tracking-wide text-emerald-900/80">
+                          Employee
+                        </th>
                       )}
                       <th className="whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-emerald-900/80">
                         1. First in
