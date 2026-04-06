@@ -4,6 +4,7 @@ import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { DatePickerField } from "@/components/ui/DatePickerField";
 
 function payrollHintFromClaimDate(claimDate: string): string | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(claimDate)) return null;
@@ -422,29 +423,41 @@ export function ApprovalsContent() {
     }
   }
 
+  const REIMB_MAX_BYTES = 8 * 1024 * 1024;
+
   async function submitReimbursement(e: FormEvent) {
     e.preventDefault();
     setReimbSubmitting(true);
     setError(null);
     try {
-      let attachmentUrl = "";
-      if (reimbFile) {
-        const fd = new FormData();
-        fd.append("file", reimbFile);
-        const up = await fetch("/api/reimbursements/upload", { method: "POST", body: fd });
-        const upData = await up.json();
-        if (!up.ok) throw new Error(upData?.error || "Upload failed");
-        attachmentUrl = String(upData.url || "");
-      }
+      const cat = reimbCat.trim();
+      const amt = parseFloat(reimbAmount);
+      const desc = reimbDesc.trim();
+      if (!cat) throw new Error("Category is required");
+      if (!Number.isFinite(amt) || amt <= 0) throw new Error("Enter a valid amount greater than zero");
+      if (!reimbClaimDate) throw new Error("Expense / claim date is required");
+      if (!desc) throw new Error("Description is required");
+      if (!reimbFile) throw new Error("Attachment is required (PDF or image, max 8 MB)");
+      if (reimbFile.size <= 0) throw new Error("Choose a valid attachment file");
+      if (reimbFile.size > REIMB_MAX_BYTES) throw new Error("Attachment must be 8 MB or smaller");
+
+      const fd = new FormData();
+      fd.append("file", reimbFile);
+      const up = await fetch("/api/reimbursements/upload", { method: "POST", body: fd });
+      const upData = await up.json();
+      if (!up.ok) throw new Error(upData?.error || "Upload failed");
+      const attachmentUrl = String(upData.url || "");
+      if (!attachmentUrl) throw new Error("Upload did not return a file URL");
+
       const res = await fetch("/api/reimbursements", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          category: reimbCat.trim(),
-          amount: parseFloat(reimbAmount),
+          category: cat,
+          amount: amt,
           claimDate: reimbClaimDate,
-          description: reimbDesc.trim() || undefined,
-          attachmentUrl: attachmentUrl || undefined,
+          description: desc,
+          attachmentUrl,
         }),
       });
       const data = await res.json();
@@ -787,23 +800,11 @@ export function ApprovalsContent() {
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                       <div>
                         <label className="mb-1 block text-sm font-medium text-slate-700">Start date</label>
-                        <input
-                          type="date"
-                          required
-                          value={startDate}
-                          onChange={(e) => setStartDate(e.target.value)}
-                          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                        />
+                        <DatePickerField value={startDate} onChange={setStartDate} required className="w-full" />
                       </div>
                       <div>
                         <label className="mb-1 block text-sm font-medium text-slate-700">End date</label>
-                        <input
-                          type="date"
-                          required
-                          value={endDate}
-                          onChange={(e) => setEndDate(e.target.value)}
-                          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                        />
+                        <DatePickerField value={endDate} onChange={setEndDate} min={startDate || undefined} required className="w-full" />
                       </div>
                     </div>
                     {totalDays > 0 && (
@@ -1031,8 +1032,8 @@ export function ApprovalsContent() {
           <div className="card">
             <h2 className="mb-1 text-lg font-semibold text-slate-900">Request reimbursement</h2>
             <p className="muted">
-              Submit an expense claim with optional proof. Payroll period follows your expense date. Super Admin, Admin, or
-              HR must approve before it is paid in payroll.
+              Submit an expense claim with category, amount, date, description, and proof attachment (max 8 MB). Payroll
+              period follows your expense date. Super Admin, Admin, or HR must approve before it is paid in payroll.
             </p>
             <div className="mt-4 flex items-center justify-between gap-3">
               {error && tab === "reimbursement" && !reimbDialogOpen && <p className="text-sm text-red-600">{error}</p>}
@@ -1171,14 +1172,17 @@ export function ApprovalsContent() {
                 <div className="border-b border-slate-200 px-5 py-4">
                   <h3 className="text-base font-semibold text-slate-900">Request reimbursement</h3>
                   <p className="mt-1 text-sm text-slate-500">
-                    Enter the expense date and amount; payroll period is set from that date. Optional attachment (max 8 MB).
+                    All fields are required, including a proof attachment (max 8 MB). Payroll period is set from the
+                    expense date.
                   </p>
                 </div>
-                <form onSubmit={submitReimbursement} className="p-5">
+                <form noValidate onSubmit={submitReimbursement} className="p-5">
                   <div className="space-y-4">
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                       <div className="sm:col-span-2">
-                        <label className="mb-1 block text-sm font-medium text-slate-700">Category</label>
+                        <label className="mb-1 block text-sm font-medium text-slate-700">
+                          Category <span className="text-red-500">*</span>
+                        </label>
                         <input
                           required
                           value={reimbCat}
@@ -1188,7 +1192,9 @@ export function ApprovalsContent() {
                         />
                       </div>
                       <div>
-                        <label className="mb-1 block text-sm font-medium text-slate-700">Amount (INR)</label>
+                        <label className="mb-1 block text-sm font-medium text-slate-700">
+                          Amount (INR) <span className="text-red-500">*</span>
+                        </label>
                         <input
                           required
                           type="number"
@@ -1200,14 +1206,10 @@ export function ApprovalsContent() {
                         />
                       </div>
                       <div>
-                        <label className="mb-1 block text-sm font-medium text-slate-700">Expense / claim date</label>
-                        <input
-                          required
-                          type="date"
-                          value={reimbClaimDate}
-                          onChange={(e) => setReimbClaimDate(e.target.value)}
-                          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                        />
+                        <label className="mb-1 block text-sm font-medium text-slate-700">
+                          Expense / claim date <span className="text-red-500">*</span>
+                        </label>
+                        <DatePickerField value={reimbClaimDate} onChange={setReimbClaimDate} required className="w-full" />
                         {reimbPayrollHint && (
                           <p className="mt-1.5 text-xs text-slate-600">
                             Included in the <span className="font-medium text-slate-800">{reimbPayrollHint}</span> payroll
@@ -1216,18 +1218,26 @@ export function ApprovalsContent() {
                         )}
                       </div>
                       <div className="sm:col-span-2">
-                        <label className="mb-1 block text-sm font-medium text-slate-700">Description (optional)</label>
+                        <label className="mb-1 block text-sm font-medium text-slate-700">
+                          Description <span className="text-red-500">*</span>
+                        </label>
                         <textarea
+                          required
                           value={reimbDesc}
                           onChange={(e) => setReimbDesc(e.target.value)}
-                          rows={2}
+                          rows={3}
+                          placeholder="Briefly describe the expense"
                           className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                         />
                       </div>
                       <div className="sm:col-span-2">
-                        <label className="mb-1 block text-sm font-medium text-slate-700">Attachment (optional, max 8 MB)</label>
+                        <label className="mb-1 block text-sm font-medium text-slate-700">
+                          Attachment <span className="text-red-500">*</span>{" "}
+                          <span className="font-normal text-slate-500">(PDF or image, max 8 MB)</span>
+                        </label>
                         <input
                           type="file"
+                          required
                           accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/*"
                           onChange={(e) => setReimbFile(e.target.files?.[0] ?? null)}
                           className="w-full text-sm text-slate-600 file:mr-3 file:rounded file:border file:border-slate-300 file:bg-slate-50 file:px-3 file:py-1.5"

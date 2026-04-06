@@ -1,14 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import type { SessionUser } from "@/lib/auth";
-import { useRouter } from "next/navigation";
+
+export type CompanyBranding = { name: string; logoUrl: string | null };
 
 type NavItem = { href: string; label: string; icon: React.ReactNode };
 
-function Icon({ name }: { name: "dashboard" | "employees" | "holidays" | "approvals" | "payroll" | "profile" | "settings" }) {
+function Icon({
+  name,
+}: {
+  name: "dashboard" | "employees" | "attendance" | "holidays" | "approvals" | "payroll" | "profile" | "settings";
+}) {
   const cls = "h-5 w-5";
   switch (name) {
     case "dashboard":
@@ -24,6 +30,13 @@ function Icon({ name }: { name: "dashboard" | "employees" | "holidays" | "approv
             d="M16 11a4 4 0 1 0-3.999-4A4 4 0 0 0 16 11ZM8 12a3.5 3.5 0 1 0-3.5-3.5A3.5 3.5 0 0 0 8 12Zm8 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4ZM8 14c-.3 0-.65.02-1.03.05C4.7 14.3 2 15.42 2 18v2h5v-2.1c0-1.56.62-2.74 1.72-3.6C8.48 14.1 8.25 14 8 14Z"
             fill="currentColor"
           />
+        </svg>
+      );
+    case "attendance":
+      return (
+        <svg className={cls} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" />
+          <path d="M12 7v6l4 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
         </svg>
       );
     case "holidays":
@@ -91,7 +104,25 @@ function getInitials(name: string | null, email: string): string {
   return local.slice(0, 2).toUpperCase();
 }
 
-export function Sidebar({ user, collapsed, onToggle }: { user: SessionUser; collapsed: boolean; onToggle: () => void }) {
+function companyMark(name: string): string {
+  const t = name.trim();
+  if (!t) return "HR";
+  const parts = t.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  return t.slice(0, 2).toUpperCase();
+}
+
+export function Sidebar({
+  user,
+  companyBranding,
+  collapsed,
+  onToggle,
+}: {
+  user: SessionUser;
+  companyBranding: CompanyBranding | null;
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
   const pathname = usePathname();
   const { role } = useAuth();
   const router = useRouter();
@@ -99,7 +130,13 @@ export function Sidebar({ user, collapsed, onToggle }: { user: SessionUser; coll
   const nav: NavItem[] = [
     { href: "/dashboard", label: "Dashboard", icon: <Icon name="dashboard" /> },
     ...(role === "super_admin" || role === "admin" || role === "hr"
-      ? ([{ href: "/employees", label: "Employees", icon: <Icon name="employees" /> }] as const)
+      ? ([
+          { href: "/employees", label: "Employees", icon: <Icon name="employees" /> },
+          { href: "/attendance", label: "Attendance", icon: <Icon name="attendance" /> },
+        ] as const)
+      : []),
+    ...(role === "employee" || role === "manager"
+      ? ([{ href: "/attendance", label: "Attendance", icon: <Icon name="attendance" /> }] as const)
       : []),
     { href: "/holidays", label: "Holidays", icon: <Icon name="holidays" /> },
     ...(role === "super_admin" || role === "admin" || role === "hr"
@@ -111,6 +148,12 @@ export function Sidebar({ user, collapsed, onToggle }: { user: SessionUser; coll
   ];
 
   const initials = getInitials(user.name, user.email);
+  const brandName = companyBranding?.name?.trim() || "Company";
+  const logoUrl = companyBranding?.logoUrl ?? null;
+  const [logoFailed, setLogoFailed] = useState(false);
+  useEffect(() => {
+    setLogoFailed(false);
+  }, [logoUrl]);
 
   async function handleLogout() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -121,18 +164,41 @@ export function Sidebar({ user, collapsed, onToggle }: { user: SessionUser; coll
   return (
     <aside className={`${collapsed ? "w-[72px]" : "w-64"} shrink-0 border-r border-slate-200 bg-white`}>
       <div className="flex h-full flex-col p-3">
-        <div className={`mb-3 flex items-center gap-1 ${collapsed ? "flex-col justify-center" : "justify-between"} px-1`}>
+        <div
+          className={`mb-3 flex px-1 ${collapsed ? "flex-col items-center gap-2" : "items-center justify-between gap-2"}`}
+        >
           <Link
             href="/dashboard"
-            className={`flex items-center justify-center rounded-xl text-slate-700 transition-colors hover:bg-slate-100 ${
-              collapsed ? "h-10 w-10" : "h-10 w-10"
+            title={collapsed ? `${brandName} — Dashboard` : "Dashboard"}
+            aria-label={`${brandName} — Dashboard`}
+            className={`flex items-center rounded-xl text-slate-700 transition-colors hover:bg-slate-100 ${
+              collapsed ? "justify-center p-0.5" : "min-w-0 flex-1 gap-3 p-1"
             }`}
-            title="Home"
-            aria-label="Home"
           >
-            <span className="text-emerald-700">
-              <Icon name="dashboard" />
+            <span
+              className={`relative flex shrink-0 items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-white ${
+                collapsed ? "h-10 w-10" : "h-12 w-12"
+              }`}
+            >
+              {logoUrl && !logoFailed ? (
+                <img
+                  src={logoUrl}
+                  alt=""
+                  className="max-h-full max-w-full object-contain p-1"
+                  onError={() => setLogoFailed(true)}
+                />
+              ) : (
+                <span className={`font-bold text-emerald-700 ${collapsed ? "text-xs" : "text-sm"}`}>
+                  {companyMark(brandName)}
+                </span>
+              )}
             </span>
+            {!collapsed && (
+              <span className="min-w-0 text-left">
+                <span className="block truncate text-sm font-semibold text-slate-900">{brandName}</span>
+                <span className="block text-xs font-medium text-slate-500">HR portal</span>
+              </span>
+            )}
           </Link>
           {!collapsed ? (
             <button

@@ -77,6 +77,8 @@ export async function POST(request: NextRequest) {
   if (!category) return NextResponse.json({ error: "Category is required" }, { status: 400 });
   if (!Number.isFinite(amount) || amount <= 0) return NextResponse.json({ error: "Valid amount is required" }, { status: 400 });
   if (!claimDate) return NextResponse.json({ error: "Claim date is required" }, { status: 400 });
+  if (!description) return NextResponse.json({ error: "Description is required" }, { status: 400 });
+  if (!attachmentUrl) return NextResponse.json({ error: "Attachment is required" }, { status: 400 });
 
   const dateMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(claimDate);
   if (!dateMatch) return NextResponse.json({ error: "Claim date must be YYYY-MM-DD" }, { status: 400 });
@@ -119,8 +121,8 @@ export async function POST(request: NextRequest) {
         amount: Math.round(amount * 100) / 100,
         currency: "INR",
         claim_date: claimDate,
-        description: description || null,
-        attachment_url: attachmentUrl || null,
+        description,
+        attachment_url: attachmentUrl,
         status: "pending",
         payroll_year: payrollYear,
         payroll_month: payrollMonth,

@@ -3,21 +3,162 @@
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
-import { FormEvent, useEffect, useState, useRef } from "react";
+import { FormEvent, useEffect, useState, useRef, useMemo, Suspense } from "react";
 import { useToast } from "@/components/ToastProvider";
 import { SkeletonTable, SkeletonText } from "@/components/Skeleton";
-import { defaultSalaryBreakup } from "@/lib/payrollCalc";
+import { DatePickerField } from "@/components/ui/DatePickerField";
+import { computePayrollFromGross, defaultSalaryBreakup } from "@/lib/payrollCalc";
 
-export default function PayrollPage() {
+type MasterGridRow = {
+  employeeUserId: string;
+  employeeName: string | null;
+  employeeEmail: string;
+  gross: number;
+  ctc: number;
+  pfEmp: number;
+  pfEmpr: number;
+  esicEmp: number;
+  esicEmpr: number;
+  pt: number;
+  tds: number;
+  advanceBonus: number;
+  takeHome: number;
+  effectiveStartDate: string;
+  pfEligible: boolean;
+  esicEligible: boolean;
+  basic: number;
+  hra: number;
+  medical: number;
+  trans: number;
+  lta: number;
+  personal: number;
+};
+
+function breakupIfMatchesGross(row: Pick<MasterGridRow, "basic" | "hra" | "medical" | "trans" | "lta" | "personal" | "gross">) {
+  const s = row.basic + row.hra + row.medical + row.trans + row.lta + row.personal;
+  return Math.abs(s - row.gross) < 2
+    ? { basic: row.basic, hra: row.hra, medical: row.medical, trans: row.trans, lta: row.lta, personal: row.personal }
+    : undefined;
+}
+
+/** True if the six components match `defaultSalaryBreakup(gross)` within rounding tolerance. */
+function isDefaultSalaryBreakupForGross(
+  gross: number,
+  basic: number,
+  hra: number,
+  medical: number,
+  trans: number,
+  lta: number,
+  personal: number
+): boolean {
+  if (gross <= 0) return false;
+  const d = defaultSalaryBreakup(gross);
+  const tol = 2;
+  return (
+    Math.abs(basic - d.basic) <= tol &&
+    Math.abs(hra - d.hra) <= tol &&
+    Math.abs(medical - d.medical) <= tol &&
+    Math.abs(trans - d.trans) <= tol &&
+    Math.abs(lta - d.lta) <= tol &&
+    Math.abs(personal - d.personal) <= tol
+  );
+}
+
+function computeRowStatutory(
+  row: Pick<
+    MasterGridRow,
+    | "gross"
+    | "pt"
+    | "tds"
+    | "advanceBonus"
+    | "pfEligible"
+    | "esicEligible"
+    | "basic"
+    | "hra"
+    | "medical"
+    | "trans"
+    | "lta"
+    | "personal"
+  >
+) {
+  const br = breakupIfMatchesGross(row);
+  const calc = computePayrollFromGross(row.gross, row.pfEligible, row.esicEligible, row.pt, br);
+  const takeHome = Math.max(0, calc.takeHome - row.tds + row.advanceBonus);
+  return {
+    ctc: calc.ctc,
+    pfEmp: calc.pfEmp,
+    pfEmpr: calc.pfEmpr,
+    esicEmp: calc.esicEmp,
+    esicEmpr: calc.esicEmpr,
+    takeHome,
+    basic: calc.basic,
+    hra: calc.hra,
+    medical: calc.medical,
+    trans: calc.trans,
+    lta: calc.lta,
+    personal: calc.personal,
+  };
+}
+
+function buildMasterGridRow(apiRow: any, companyPt: number): MasterGridRow | null {
+  const m = apiRow.master;
+  if (!m) return null;
+  const gross = Number(m.grossSalary) || 0;
+  const pt = m.pt != null && Number(m.pt) >= 0 ? Number(m.pt) : companyPt;
+  const tds = Number(m.tds) || 0;
+  const advanceBonus = Number(m.advanceBonus) || 0;
+  let basic = Number(m.basic) || 0;
+  let hra = Number(m.hra) || 0;
+  let medical = Number(m.medical) || 0;
+  let trans = Number(m.trans) || 0;
+  let lta = Number(m.lta) || 0;
+  let personal = Number(m.personal) || 0;
+  if (basic + hra + medical + trans + lta + personal === 0 && gross > 0) {
+    const d = defaultSalaryBreakup(gross);
+    basic = d.basic;
+    hra = d.hra;
+    medical = d.medical;
+    trans = d.trans;
+    lta = d.lta;
+    personal = d.personal;
+  }
+  const base: Omit<MasterGridRow, "ctc" | "pfEmp" | "pfEmpr" | "esicEmp" | "esicEmpr" | "takeHome"> = {
+    employeeUserId: apiRow.employeeUserId,
+    employeeName: apiRow.employeeName,
+    employeeEmail: apiRow.employeeEmail,
+    gross,
+    pt,
+    tds,
+    advanceBonus,
+    effectiveStartDate: m.effectiveStartDate ? String(m.effectiveStartDate).slice(0, 10) : "",
+    pfEligible: !!m.pfEligible,
+    esicEligible: !!m.esicEligible,
+    basic,
+    hra,
+    medical,
+    trans,
+    lta,
+    personal,
+  };
+  const stat = computeRowStatutory(base);
+  return { ...base, ...stat };
+}
+
+function PayrollPageContent() {
   const { role } = useAuth();
   const { showToast } = useToast();
   const params = useSearchParams();
   const tab = params.get("tab") || "master";
 
   const canManage = role === "super_admin" || role === "admin" || role === "hr";
+  const isSuperAdmin = role === "super_admin";
 
   const [masters, setMasters] = useState<any[]>([]);
   const [mastersLoading, setMastersLoading] = useState(false);
+  const [companyPt, setCompanyPt] = useState(200);
+  const [masterGrid, setMasterGrid] = useState<MasterGridRow[]>([]);
+  const [masterRowSaving, setMasterRowSaving] = useState<string | null>(null);
+  const [masterFocusId, setMasterFocusId] = useState<string | null>(null);
   const [editMasterOpen, setEditMasterOpen] = useState<any>(null);
   const [editGross, setEditGross] = useState("");
   const [editBasic, setEditBasic] = useState("");
@@ -30,6 +171,9 @@ export default function PayrollPage() {
   const [editEsicEligible, setEditEsicEligible] = useState(false);
   const [editEffectiveDate, setEditEffectiveDate] = useState("");
   const [editReason, setEditReason] = useState("");
+  const [editPt, setEditPt] = useState("");
+  const [editTds, setEditTds] = useState("");
+  const [editAdvanceBonus, setEditAdvanceBonus] = useState("");
   const [editSaving, setEditSaving] = useState(false);
 
   const [runMonth, setRunMonth] = useState(() => String(new Date().getMonth() + 1).padStart(2, "0"));
@@ -42,6 +186,8 @@ export default function PayrollPage() {
     periodStart: string;
     periodEnd: string;
     daysInMonth: number;
+    workingDaysInFullMonth?: number;
+    workingDaysThroughRunDay?: number;
     effectiveRunDay: number;
     alreadyRun: boolean;
     existingPeriodId: string | null;
@@ -50,6 +196,9 @@ export default function PayrollPage() {
       employeeName: string | null;
       employeeEmail: string;
       payDays: number;
+      rawPayDays?: number;
+      attendanceQualifyingDays?: number;
+      payDaysSuppressedMinAttendance?: boolean;
       unpaidLeaveDays: number;
       grossPay: number;
       pfEmployee: number;
@@ -57,6 +206,7 @@ export default function PayrollPage() {
       esicEmployee: number;
       esicEmployer: number;
       profTax: number;
+      profTaxMonthly?: number;
       deductions: number;
       netPay: number;
       takeHome: number;
@@ -72,6 +222,9 @@ export default function PayrollPage() {
       employeeName: string | null;
       employeeEmail: string;
       payDays: number;
+      rawPayDays?: number;
+      attendanceQualifyingDays?: number;
+      payDaysSuppressedMinAttendance?: boolean;
       unpaidLeaveDays: number;
       grossMonthly?: number;
       grossPay: number;
@@ -80,6 +233,7 @@ export default function PayrollPage() {
       esicEmployee: number;
       esicEmployer: number;
       profTax: number;
+      profTaxMonthly?: number;
       deductions: number;
       netPay: number;
       incentive: number;
@@ -133,11 +287,14 @@ export default function PayrollPage() {
   const payslipRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (preview?.rows?.length && preview.daysInMonth) {
+    const denom = preview?.workingDaysInFullMonth ?? preview?.daysInMonth;
+    if (preview?.rows?.length && denom) {
       setEditableRows(
         preview.rows.map((r: any) => ({
           ...r,
-          grossMonthly: r.grossMonthly ?? Math.round((r.grossPay * preview.daysInMonth) / (r.payDays || 1)),
+          grossMonthly:
+            r.grossMonthly ??
+            Math.round((r.grossPay * denom) / (r.payDays || r.rawPayDays || 1)),
           incentive: r.incentive ?? 0,
           prBonus: r.prBonus ?? 0,
           reimbursement: r.reimbursement ?? 0,
@@ -148,7 +305,7 @@ export default function PayrollPage() {
     } else {
       setEditableRows([]);
     }
-  }, [preview?.rows, preview?.daysInMonth]);
+  }, [preview?.rows, preview?.daysInMonth, preview?.workingDaysInFullMonth]);
 
   useEffect(() => {
     if (tab !== "slips" || !canManage) return;
@@ -246,7 +403,8 @@ export default function PayrollPage() {
     field: string,
     value: number
   ) {
-    const daysInMonth = preview?.daysInMonth ?? 30;
+    const payDenom = preview?.workingDaysInFullMonth ?? preview?.daysInMonth ?? 30;
+    const payDaysMax = preview?.workingDaysThroughRunDay ?? preview?.daysInMonth ?? 31;
     setEditableRows((prev) =>
       prev.map((row) => {
         if (row.employeeUserId !== employeeUserId) return row;
@@ -259,10 +417,17 @@ export default function PayrollPage() {
           next.ctc = base + (next.incentive ?? 0) + (next.prBonus ?? 0);
         };
         if (field === "payDays") {
-          const newPayDays = Math.max(0, Math.min(daysInMonth, value));
-          const grossMonthly = row.grossMonthly ?? Math.round((row.grossPay * daysInMonth) / (row.payDays || 1));
+          const newPayDays = Math.max(0, Math.min(payDaysMax, value));
+          const grossMonthly =
+            row.grossMonthly ?? Math.round((row.grossPay * payDenom) / (row.payDays || row.rawPayDays || 1));
           next.payDays = newPayDays;
-          next.grossPay = newPayDays === 0 ? 0 : Math.round((grossMonthly * newPayDays) / daysInMonth);
+          if (newPayDays > 0) next.payDaysSuppressedMinAttendance = false;
+          next.grossPay = newPayDays === 0 ? 0 : Math.round((grossMonthly * newPayDays) / payDenom);
+          if (newPayDays === 0) {
+            next.profTax = 0;
+          } else if (row.payDays === 0 && row.profTax === 0) {
+            next.profTax = row.profTaxMonthly ?? companyPt;
+          }
           const ratio = row.payDays > 0 && newPayDays > 0 ? newPayDays / row.payDays : newPayDays === 0 ? 0 : 1;
           next.pfEmployee = Math.round(row.pfEmployee * ratio);
           next.pfEmployer = Math.round(row.pfEmployer * ratio);
@@ -319,6 +484,37 @@ export default function PayrollPage() {
     };
   }, [canManage]);
 
+  useEffect(() => {
+    if (!canManage) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/company/me");
+        const data = await res.json();
+        if (cancelled) return;
+        const pt = data?.company?.professional_tax_monthly;
+        setCompanyPt(pt != null && Number(pt) >= 0 ? Number(pt) : 200);
+      } catch {
+        if (!cancelled) setCompanyPt(200);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [canManage]);
+
+  useEffect(() => {
+    if (!masters.length) {
+      setMasterGrid([]);
+      return;
+    }
+    setMasterGrid(
+      masters
+        .map((row) => buildMasterGridRow(row, companyPt))
+        .filter((r): r is MasterGridRow => r != null)
+    );
+  }, [masters, companyPt]);
+
   const daysInSelectedMonth = new Date(
     parseInt(runYear, 10),
     parseInt(runMonth, 10),
@@ -374,6 +570,175 @@ export default function PayrollPage() {
     return () => { cancelled = true; };
   }, [canManage, tab]);
 
+  /** Master edit dialog is global; close it when navigating to Run / Slips so it cannot look “stuck” after tab switches or refresh confusion. */
+  useEffect(() => {
+    if (tab !== "master" && editMasterOpen) setEditMasterOpen(null);
+  }, [tab, editMasterOpen]);
+
+  const editMasterPreview = useMemo(() => {
+    if (!editMasterOpen) return null;
+    const gross = parseFloat(editGross) || 0;
+    const basic = parseFloat(editBasic) || 0;
+    const hra = parseFloat(editHra) || 0;
+    const medical = parseFloat(editMedical) || 0;
+    const trans = parseFloat(editTrans) || 0;
+    const lta = parseFloat(editLta) || 0;
+    const personal = parseFloat(editPersonal) || 0;
+    const componentsSum = basic + hra + medical + trans + lta + personal;
+    const salaryBreakup =
+      componentsSum > 0 ? { basic, hra, medical, trans, lta, personal } : undefined;
+    const ptParsed = parseFloat(editPt);
+    const ptMonthly = Number.isFinite(ptParsed) && ptParsed >= 0 ? ptParsed : companyPt;
+    const tds = parseFloat(editTds) || 0;
+    const advanceBonus = parseFloat(editAdvanceBonus) || 0;
+    const calc = computePayrollFromGross(gross, editPfEligible, editEsicEligible, ptMonthly, salaryBreakup);
+    const takeHome = Math.max(0, calc.takeHome - tds + advanceBonus);
+    return { ...calc, takeHome, ptMonthly, tds, advanceBonus };
+  }, [
+    editMasterOpen,
+    editGross,
+    editBasic,
+    editHra,
+    editMedical,
+    editTrans,
+    editLta,
+    editPersonal,
+    editPfEligible,
+    editEsicEligible,
+    editPt,
+    editTds,
+    editAdvanceBonus,
+    companyPt,
+  ]);
+
+  function patchMasterGridRow(employeeUserId: string, patch: Partial<MasterGridRow>) {
+    setMasterGrid((prev) =>
+      prev.map((r) => {
+        if (r.employeeUserId !== employeeUserId) return r;
+        const next = { ...r, ...patch };
+        const stat = computeRowStatutory(next);
+        return { ...next, ...stat };
+      })
+    );
+  }
+
+  function undoMasterGridRow(employeeUserId: string) {
+    const snap = masters.find((m) => m.employeeUserId === employeeUserId);
+    if (!snap) return;
+    const rebuilt = buildMasterGridRow(snap, companyPt);
+    if (!rebuilt) return;
+    setMasterGrid((prev) => prev.map((r) => (r.employeeUserId === employeeUserId ? rebuilt : r)));
+  }
+
+  /** Opens the same modal as the non–super-admin “Edit” action; `fields` can come from API or current grid row (includes unsaved inline edits). */
+  function openPayrollMasterEditDialog(
+    employeeUserId: string,
+    employeeName: string | null,
+    employeeEmail: string,
+    fields: {
+      gross: number;
+      basic: number;
+      hra: number;
+      medical: number;
+      trans: number;
+      lta: number;
+      personal: number;
+      pfEligible: boolean;
+      esicEligible: boolean;
+      effectiveStartDate: string;
+      pt: number;
+      tds: number;
+      advanceBonus: number;
+    }
+  ) {
+    const gross = fields.gross;
+    const componentsSum =
+      fields.basic + fields.hra + fields.medical + fields.trans + fields.lta + fields.personal;
+    /** If stored components don’t add up to gross, use the standard split for gross (Basic 50%, HRA 20%, etc.). */
+    const split =
+      gross > 0 &&
+      (componentsSum === 0 || Math.abs(componentsSum - gross) > 2)
+        ? defaultSalaryBreakup(gross)
+        : componentsSum > 0
+          ? {
+              basic: fields.basic,
+              hra: fields.hra,
+              medical: fields.medical,
+              trans: fields.trans,
+              lta: fields.lta,
+              personal: fields.personal,
+            }
+          : defaultSalaryBreakup(gross);
+    setEditMasterOpen({
+      employeeUserId,
+      employeeName,
+      employeeEmail,
+      master: { grossSalary: gross },
+    });
+    setEditGross(String(gross || ""));
+    setEditBasic(String(split.basic));
+    setEditHra(String(split.hra));
+    setEditMedical(String(split.medical));
+    setEditTrans(String(split.trans));
+    setEditLta(String(split.lta));
+    setEditPersonal(String(split.personal));
+    setEditPfEligible(fields.pfEligible);
+    setEditEsicEligible(fields.esicEligible);
+    setEditEffectiveDate(
+      fields.effectiveStartDate
+        ? String(fields.effectiveStartDate).slice(0, 10)
+        : new Date().toISOString().slice(0, 10)
+    );
+    const mpt = fields.pt;
+    setEditPt(mpt != null && Number(mpt) >= 0 ? String(mpt) : String(companyPt));
+    setEditTds(String(fields.tds ?? 0));
+    setEditAdvanceBonus(String(fields.advanceBonus ?? 0));
+    setEditReason("UpdateOnly");
+  }
+
+  async function saveMasterGridRow(employeeUserId: string) {
+    const row = masterGrid.find((r) => r.employeeUserId === employeeUserId);
+    if (!row) return;
+    if (!row.effectiveStartDate) {
+      showToast("error", "Set applicable month / effective start date before saving.");
+      return;
+    }
+    setMasterRowSaving(employeeUserId);
+    try {
+      const res = await fetch("/api/payroll/master", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          employeeUserId,
+          grossSalary: row.gross,
+          basic: row.basic,
+          hra: row.hra,
+          medical: row.medical,
+          trans: row.trans,
+          lta: row.lta,
+          personal: row.personal,
+          pfEligible: row.pfEligible,
+          esicEligible: row.esicEligible,
+          effectiveStartDate: row.effectiveStartDate,
+          reasonForChange: "Payroll master grid",
+          pt: row.pt,
+          tds: row.tds,
+          advanceBonus: row.advanceBonus,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Failed to update");
+      showToast("success", "Payroll master updated");
+      const refresh = await fetch("/api/payroll/master");
+      const refreshData = await refresh.json();
+      if (refresh.ok) setMasters(refreshData.masters || []);
+    } catch (e: any) {
+      showToast("error", e?.message || "Failed to update");
+    } finally {
+      setMasterRowSaving(null);
+    }
+  }
+
   async function handleSaveMaster(e: FormEvent) {
     e.preventDefault();
     if (!editMasterOpen) return;
@@ -386,6 +751,9 @@ export default function PayrollPage() {
       const trans = parseFloat(editTrans) || 0;
       const lta = parseFloat(editLta) || 0;
       const personal = parseFloat(editPersonal) || 0;
+      const pt = parseFloat(editPt);
+      const tds = parseFloat(editTds) || 0;
+      const advanceBonus = parseFloat(editAdvanceBonus) || 0;
       const res = await fetch("/api/payroll/master", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -402,6 +770,9 @@ export default function PayrollPage() {
           esicEligible: editEsicEligible,
           effectiveStartDate: editEffectiveDate,
           reasonForChange: editReason,
+          pt: Number.isFinite(pt) && pt >= 0 ? pt : undefined,
+          tds,
+          advanceBonus,
         }),
       });
       const data = await res.json();
@@ -509,25 +880,280 @@ export default function PayrollPage() {
         <div className="space-y-4">
           <div className="card">
             <h2 className="mb-1 text-lg font-semibold text-slate-900">Payroll Master</h2>
-            <p className="muted mb-3">
-              Current employees&apos; salary structure. Master record is created when converted to current. Only record with effective end date = null is used for monthly payroll.
-            </p>
+
             {mastersLoading ? (
-              <SkeletonTable rows={6} columns={8} />
+              <SkeletonTable rows={6} columns={12} />
             ) : masters.length === 0 ? (
               <p className="muted">No current employees with payroll master.</p>
+            ) : isSuperAdmin ? (
+              <div className="overflow-x-auto rounded-lg border border-slate-800/30 shadow-sm">
+                <table className="w-full min-w-[1080px] border-collapse text-left text-sm">
+                  <thead>
+                    <tr className="bg-[#0a1628] text-[11px] font-semibold uppercase tracking-wide text-white">
+                      <th rowSpan={2} className="border border-slate-700/90 px-2 py-2 align-middle whitespace-nowrap">
+                        Employee
+                      </th>
+                      <th rowSpan={2} className="border border-slate-700/90 px-2 py-2 text-center">
+                        Gross
+                      </th>
+                      <th rowSpan={2} className="border border-slate-700/90 px-1 py-2 text-center text-[10px] leading-tight">
+                        PF
+                        <br />
+                        elig
+                      </th>
+                      <th rowSpan={2} className="border border-slate-700/90 px-1 py-2 text-center text-[10px] leading-tight">
+                        ESIC
+                        <br />
+                        elig
+                      </th>
+                      <th rowSpan={2} className="border border-slate-700/90 px-2 py-2 text-center">
+                        CTC
+                      </th>
+                      <th colSpan={2} className="border border-slate-700/90 px-2 py-1.5 text-center">
+                        Employee contribution
+                      </th>
+                      <th colSpan={2} className="border border-slate-700/90 px-2 py-1.5 text-center">
+                        Employer contribution
+                      </th>
+                      <th rowSpan={2} className="border border-slate-700/90 px-2 py-2 text-center">
+                        Adv bonus
+                      </th>
+                      <th rowSpan={2} className="border border-slate-700/90 px-2 py-2 text-center">
+                        PT
+                      </th>
+                      <th rowSpan={2} className="border border-slate-700/90 px-2 py-2 text-center">
+                        TDS
+                      </th>
+                      <th rowSpan={2} className="border border-slate-700/90 px-2 py-2 text-center">
+                        Take home
+                      </th>
+                      <th rowSpan={2} className="border border-slate-700/90 px-2 py-2 text-center whitespace-nowrap">
+                        Applicable month
+                      </th>
+                      <th rowSpan={2} className="border border-slate-700/90 px-2 py-2 text-center">
+                        Action
+                      </th>
+                    </tr>
+                    <tr className="bg-[#0a1628] text-[11px] font-medium text-white">
+                      <th className="border border-slate-700/90 px-2 py-1.5 text-center">PF</th>
+                      <th className="border border-slate-700/90 px-2 py-1.5 text-center">ESIC</th>
+                      <th className="border border-slate-700/90 px-2 py-1.5 text-center">PF</th>
+                      <th className="border border-slate-700/90 px-2 py-1.5 text-center">ESIC</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {masterGrid.map((row) => {
+                      const inp =
+                        "w-full min-w-[4rem] max-w-[6.5rem] rounded border border-sky-400/80 bg-white px-1.5 py-1 text-right text-sm tabular-nums text-slate-900";
+                      const inpRo =
+                        "w-full min-w-[4rem] max-w-[6.5rem] rounded border border-slate-300/90 bg-slate-100/80 px-1.5 py-1 text-right text-sm tabular-nums text-slate-700";
+                      return (
+                        <tr
+                          key={row.employeeUserId}
+                          className={`border-t border-slate-200 bg-white hover:bg-slate-50/80 ${
+                            masterFocusId === row.employeeUserId ? "ring-2 ring-inset ring-violet-500/55" : ""
+                          }`}
+                          onClick={() => setMasterFocusId(row.employeeUserId)}
+                        >
+                          <td className="border border-slate-200 px-2 py-1.5 whitespace-nowrap">
+                            <span className="font-medium text-cyan-600">
+                              {row.employeeName || row.employeeEmail || "—"}
+                            </span>
+                          </td>
+                          <td className="border border-slate-200 px-1 py-1">
+                            <input
+                              type="number"
+                              min={0}
+                              step={100}
+                              className={inp}
+                              value={row.gross}
+                              onChange={(e) =>
+                                patchMasterGridRow(row.employeeUserId, {
+                                  gross: Math.max(0, parseFloat(e.target.value) || 0),
+                                })
+                              }
+                            />
+                          </td>
+                          <td className="border border-slate-200 px-1 py-1 text-center align-middle">
+                            <input
+                              type="checkbox"
+                              checked={row.pfEligible}
+                              onChange={(e) =>
+                                patchMasterGridRow(row.employeeUserId, { pfEligible: e.target.checked })
+                              }
+                              aria-label="PF eligible"
+                            />
+                          </td>
+                          <td className="border border-slate-200 px-1 py-1 text-center align-middle">
+                            <input
+                              type="checkbox"
+                              checked={row.esicEligible}
+                              onChange={(e) =>
+                                patchMasterGridRow(row.employeeUserId, { esicEligible: e.target.checked })
+                              }
+                              aria-label="ESIC eligible"
+                            />
+                          </td>
+                          <td className="border border-slate-200 px-1 py-1">
+                            <input type="text" readOnly className={inpRo} value={Math.round(row.ctc)} />
+                          </td>
+                          <td className="border border-slate-200 px-1 py-1">
+                            <input type="text" readOnly className={inpRo} value={Math.round(row.pfEmp)} />
+                          </td>
+                          <td className="border border-slate-200 px-1 py-1">
+                            <input type="text" readOnly className={inpRo} value={Math.round(row.esicEmp)} />
+                          </td>
+                          <td className="border border-slate-200 px-1 py-1">
+                            <input type="text" readOnly className={inpRo} value={Math.round(row.pfEmpr)} />
+                          </td>
+                          <td className="border border-slate-200 px-1 py-1">
+                            <input type="text" readOnly className={inpRo} value={Math.round(row.esicEmpr)} />
+                          </td>
+                          <td className="border border-slate-200 px-1 py-1">
+                            <input
+                              type="number"
+                              min={0}
+                              step={100}
+                              className={inp}
+                              value={row.advanceBonus}
+                              onChange={(e) =>
+                                patchMasterGridRow(row.employeeUserId, {
+                                  advanceBonus: Math.max(0, parseFloat(e.target.value) || 0),
+                                })
+                              }
+                            />
+                          </td>
+                          <td className="border border-slate-200 px-1 py-1">
+                            <input
+                              type="number"
+                              min={0}
+                              step={1}
+                              className={inp}
+                              value={row.pt}
+                              onChange={(e) =>
+                                patchMasterGridRow(row.employeeUserId, {
+                                  pt: Math.max(0, parseFloat(e.target.value) || 0),
+                                })
+                              }
+                            />
+                          </td>
+                          <td className="border border-slate-200 px-1 py-1">
+                            <input
+                              type="number"
+                              min={0}
+                              step={100}
+                              className={inp}
+                              value={row.tds}
+                              onChange={(e) =>
+                                patchMasterGridRow(row.employeeUserId, {
+                                  tds: Math.max(0, parseFloat(e.target.value) || 0),
+                                })
+                              }
+                            />
+                          </td>
+                          <td className="border border-slate-200 px-1 py-1">
+                            <input type="text" readOnly className={inpRo} value={Math.round(row.takeHome)} />
+                          </td>
+                          <td className="border border-slate-200 px-1 py-1">
+                            <input
+                              type="month"
+                              className="min-w-[8.5rem] rounded border border-sky-400/80 bg-white px-1 py-1 text-sm text-slate-900"
+                              value={
+                                row.effectiveStartDate && row.effectiveStartDate.length >= 7
+                                  ? row.effectiveStartDate.slice(0, 7)
+                                  : ""
+                              }
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                patchMasterGridRow(row.employeeUserId, {
+                                  effectiveStartDate: v ? `${v}-01` : "",
+                                });
+                              }}
+                            />
+                          </td>
+                          <td className="border border-slate-200 px-1 py-1">
+                            <div className="flex items-center justify-center gap-0.5">
+                              <button
+                                type="button"
+                                className="rounded p-1.5 text-sky-700 hover:bg-sky-50"
+                                title="Edit in dialog"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openPayrollMasterEditDialog(row.employeeUserId, row.employeeName, row.employeeEmail, {
+                                    gross: row.gross,
+                                    basic: row.basic,
+                                    hra: row.hra,
+                                    medical: row.medical,
+                                    trans: row.trans,
+                                    lta: row.lta,
+                                    personal: row.personal,
+                                    pfEligible: row.pfEligible,
+                                    esicEligible: row.esicEligible,
+                                    effectiveStartDate: row.effectiveStartDate,
+                                    pt: row.pt,
+                                    tds: row.tds,
+                                    advanceBonus: row.advanceBonus,
+                                  });
+                                }}
+                              >
+                                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                                  <path d="M12 20h9M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z" />
+                                </svg>
+                              </button>
+                              <button
+                                type="button"
+                                className="rounded p-1.5 text-sky-700 hover:bg-sky-50 disabled:opacity-50"
+                                title="Save row"
+                                disabled={masterRowSaving === row.employeeUserId}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void saveMasterGridRow(row.employeeUserId);
+                                }}
+                              >
+                                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                                  <path d="M20 6L9 17l-5-5" />
+                                </svg>
+                              </button>
+                              <button
+                                type="button"
+                                className="rounded p-1.5 text-sky-700 hover:bg-sky-50"
+                                title="Undo row changes"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  undoMasterGridRow(row.employeeUserId);
+                                }}
+                              >
+                                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                                  <path d="M3 7v6h6M3 13a9 9 0 109-9 9 9 0 00-9 9" />
+                                </svg>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+
+              </div>
             ) : (
               <div className="overflow-x-auto rounded-lg border border-slate-200">
-                <table className="w-full text-left text-sm">
+                <table className="w-full min-w-[960px] text-left text-sm">
                   <thead className="bg-slate-50 text-slate-600">
                     <tr>
                       <th className="px-3 py-2">Employee</th>
-                      <th className="px-3 py-2">Gross (mo)</th>
-                      <th className="px-3 py-2">CTC (mo)</th>
-                      <th className="px-3 py-2">Take home</th>
-                      <th className="px-3 py-2">PF</th>
-                      <th className="px-3 py-2">ESIC</th>
-                      <th className="px-3 py-2">Applicable Month</th>
+                      <th className="px-3 py-2 text-right">Gross</th>
+                      <th className="px-3 py-2 text-right">CTC</th>
+                      <th className="px-3 py-2 text-right">Emp PF</th>
+                      <th className="px-3 py-2 text-right">Emp ESIC</th>
+                      <th className="px-3 py-2 text-right">Er PF</th>
+                      <th className="px-3 py-2 text-right">Er ESIC</th>
+                      <th className="px-3 py-2 text-right">Adv bonus</th>
+                      <th className="px-3 py-2 text-right">PT</th>
+                      <th className="px-3 py-2 text-right">TDS</th>
+                      <th className="px-3 py-2 text-right">Take home</th>
+                      <th className="px-3 py-2">PF / ESIC</th>
+                      <th className="px-3 py-2">Applicable</th>
                       <th className="px-3 py-2">Action</th>
                     </tr>
                   </thead>
@@ -535,17 +1161,47 @@ export default function PayrollPage() {
                     {masters.map((row) => (
                       <tr key={row.employeeUserId} className="border-t border-slate-200">
                         <td className="px-3 py-2">{row.employeeName || row.employeeEmail || "—"}</td>
-                        <td className="px-3 py-2">
+                        <td className="px-3 py-2 text-right tabular-nums">
                           {row.master ? `₹${Number(row.master.grossSalary).toLocaleString("en-IN")}` : "—"}
                         </td>
-                        <td className="px-3 py-2">
+                        <td className="px-3 py-2 text-right tabular-nums">
                           {row.master ? `₹${Number(row.master.ctc).toLocaleString("en-IN")}` : "—"}
                         </td>
-                        <td className="px-3 py-2">
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          {row.master ? `₹${Number(row.master.pfEmployee ?? 0).toLocaleString("en-IN")}` : "—"}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          {row.master ? `₹${Number(row.master.esicEmployee ?? 0).toLocaleString("en-IN")}` : "—"}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          {row.master ? `₹${Number(row.master.pfEmployer ?? 0).toLocaleString("en-IN")}` : "—"}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          {row.master ? `₹${Number(row.master.esicEmployer ?? 0).toLocaleString("en-IN")}` : "—"}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          {row.master ? `₹${Number(row.master.advanceBonus ?? 0).toLocaleString("en-IN")}` : "—"}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          {row.master
+                            ? `₹${Number(row.master.pt != null ? row.master.pt : companyPt).toLocaleString("en-IN")}`
+                            : "—"}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          {row.master ? `₹${Number(row.master.tds ?? 0).toLocaleString("en-IN")}` : "—"}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums">
                           {row.master ? `₹${Number(row.master.takeHome).toLocaleString("en-IN")}` : "—"}
                         </td>
-                        <td className="px-3 py-2">{row.master?.pfEligible ? "Yes" : "No"}</td>
-                        <td className="px-3 py-2">{row.master?.esicEligible ? "Yes" : "No"}</td>
+                        <td className="px-3 py-2 text-xs">
+                          {row.master ? (
+                            <>
+                              PF {row.master.pfEligible ? "Y" : "N"} · ESIC {row.master.esicEligible ? "Y" : "N"}
+                            </>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
                         <td className="px-3 py-2">{row.master?.effectiveStartDate || "—"}</td>
                         <td className="px-3 py-2">
                           {row.master ? (
@@ -560,20 +1216,24 @@ export default function PayrollPage() {
                                 const tr = Number(row.master.trans) || 0;
                                 const lt = Number(row.master.lta) || 0;
                                 const per = Number(row.master.personal) || 0;
-                                const componentsSum = b + h + med + tr + lt + per;
-                                const split = componentsSum > 0 ? { basic: b, hra: h, medical: med, trans: tr, lta: lt, personal: per } : defaultSalaryBreakup(gross);
-                                setEditMasterOpen(row);
-                                setEditGross(String(gross || ""));
-                                setEditBasic(String(split.basic));
-                                setEditHra(String(split.hra));
-                                setEditMedical(String(split.medical));
-                                setEditTrans(String(split.trans));
-                                setEditLta(String(split.lta));
-                                setEditPersonal(String(split.personal));
-                                setEditPfEligible(row.master.pfEligible || false);
-                                setEditEsicEligible(row.master.esicEligible || false);
-                                setEditEffectiveDate(row.master.effectiveStartDate ? String(row.master.effectiveStartDate).slice(0, 10) : new Date().toISOString().slice(0, 10));
-                                setEditReason("UpdateOnly");
+                                const mpt = row.master.pt;
+                                openPayrollMasterEditDialog(row.employeeUserId, row.employeeName, row.employeeEmail, {
+                                  gross,
+                                  basic: b,
+                                  hra: h,
+                                  medical: med,
+                                  trans: tr,
+                                  lta: lt,
+                                  personal: per,
+                                  pfEligible: !!row.master.pfEligible,
+                                  esicEligible: !!row.master.esicEligible,
+                                  effectiveStartDate: row.master.effectiveStartDate
+                                    ? String(row.master.effectiveStartDate).slice(0, 10)
+                                    : "",
+                                  pt: mpt != null && Number(mpt) >= 0 ? Number(mpt) : companyPt,
+                                  tds: Number(row.master.tds) || 0,
+                                  advanceBonus: Number(row.master.advanceBonus) || 0,
+                                });
                               }}
                             >
                               Edit
@@ -593,17 +1253,23 @@ export default function PayrollPage() {
       )}
 
       {editMasterOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 overflow-y-auto">
           <button
             type="button"
-            className="absolute inset-0 bg-black/40"
+            className="fixed inset-0 bg-black/40"
             aria-label="Close"
             onClick={() => setEditMasterOpen(null)}
           />
-          <div className="relative z-10 w-full max-w-md rounded-xl border border-slate-200 bg-white shadow-xl p-5">
-            <h3 className="text-lg font-semibold text-slate-900">Edit Payroll Master</h3>
-            <p className="text-sm text-slate-500 mt-1">{editMasterOpen.employeeName || editMasterOpen.employeeEmail}</p>
-            <form onSubmit={handleSaveMaster} className="mt-4 space-y-4">
+          <div className="relative z-10 flex min-h-full items-center justify-center px-4 py-6 sm:px-6 sm:py-8">
+            <form
+              onSubmit={handleSaveMaster}
+              className="flex max-h-[min(92vh,calc(100dvh-2.5rem))] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl"
+            >
+              <div className="shrink-0 border-b border-slate-100 px-5 pb-3 pt-5 sm:px-6 sm:pt-6">
+                <h3 className="text-lg font-semibold text-slate-900">Edit Payroll Master</h3>
+                <p className="mt-1 text-sm text-slate-500">{editMasterOpen.employeeName || editMasterOpen.employeeEmail}</p>
+              </div>
+              <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-5 py-4 sm:px-6">
               <div>
                 <label className="mb-1 block text-sm font-medium text-slate-700">Gross salary (monthly) *</label>
                 <input
@@ -613,10 +1279,42 @@ export default function PayrollPage() {
                   value={editGross}
                   onChange={(e) => {
                     const v = e.target.value;
-                    setEditGross(v);
+                    const prevGross = parseFloat(editGross) || 0;
                     const g = parseFloat(v) || 0;
-                    const sum = (parseFloat(editBasic) || 0) + (parseFloat(editHra) || 0) + (parseFloat(editMedical) || 0) + (parseFloat(editTrans) || 0) + (parseFloat(editLta) || 0) + (parseFloat(editPersonal) || 0);
-                    if (g > 0 && sum === 0) {
+                    const basic = parseFloat(editBasic) || 0;
+                    const hra = parseFloat(editHra) || 0;
+                    const medical = parseFloat(editMedical) || 0;
+                    const trans = parseFloat(editTrans) || 0;
+                    const lta = parseFloat(editLta) || 0;
+                    const personal = parseFloat(editPersonal) || 0;
+                    const sum = basic + hra + medical + trans + lta + personal;
+                    setEditGross(v);
+                    if (g <= 0) return;
+                    const empty = sum === 0;
+                    const wasDefaultForPrev =
+                      prevGross > 0 &&
+                      isDefaultSalaryBreakupForGross(prevGross, basic, hra, medical, trans, lta, personal);
+                    if (empty || wasDefaultForPrev) {
+                      const s = defaultSalaryBreakup(g);
+                      setEditBasic(String(s.basic));
+                      setEditHra(String(s.hra));
+                      setEditMedical(String(s.medical));
+                      setEditTrans(String(s.trans));
+                      setEditLta(String(s.lta));
+                      setEditPersonal(String(s.personal));
+                    }
+                  }}
+                  onBlur={() => {
+                    const g = parseFloat(editGross) || 0;
+                    if (g <= 0) return;
+                    const sum =
+                      (parseFloat(editBasic) || 0) +
+                      (parseFloat(editHra) || 0) +
+                      (parseFloat(editMedical) || 0) +
+                      (parseFloat(editTrans) || 0) +
+                      (parseFloat(editLta) || 0) +
+                      (parseFloat(editPersonal) || 0);
+                    if (Math.abs(sum - g) > 2) {
                       const s = defaultSalaryBreakup(g);
                       setEditBasic(String(s.basic));
                       setEditHra(String(s.hra));
@@ -632,7 +1330,7 @@ export default function PayrollPage() {
               </div>
               <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
                 <p className="mb-2 text-xs font-medium text-slate-600">Salary breakdown (optional, for payslip)</p>
-                <div className="grid grid-cols-2 gap-2 text-sm">
+                <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
                   <div>
                     <label className="text-slate-600">Basic</label>
                     <input type="number" min="0" step="100" value={editBasic} onChange={(e) => setEditBasic(e.target.value)} className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm" />
@@ -658,8 +1356,45 @@ export default function PayrollPage() {
                     <input type="number" min="0" step="100" value={editPersonal} onChange={(e) => setEditPersonal(e.target.value)} className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm" />
                   </div>
                 </div>
-                <p className="mt-2 text-xs text-slate-500">Leave blank for auto-split. If filled, sum used as gross.</p>
+                <p className="mt-2 text-xs text-slate-500">
+                  Leave all blank for auto-split from gross. When gross changes, Basic/HRA and other heads update if you were on the standard split. If the six fields don’t add up to gross, tab out of gross to align them.
+                </p>
               </div>
+              {editMasterPreview && (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <p className="mb-2 text-xs font-medium text-slate-600">Preview (same as server on Save)</p>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 text-sm">
+                    <div>
+                      <span className="text-slate-500">CTC </span>
+                      <span className="font-medium tabular-nums text-slate-900">
+                        {editMasterPreview.ctc > 0
+                          ? `₹${Math.round(editMasterPreview.ctc).toLocaleString("en-IN")}`
+                          : "—"}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500">Take home </span>
+                      <span className="font-medium tabular-nums text-slate-900">
+                        {(parseFloat(editGross) || 0) > 0
+                          ? `₹${Math.round(editMasterPreview.takeHome).toLocaleString("en-IN")}`
+                          : "—"}
+                      </span>
+                    </div>
+                    <div className="text-xs text-slate-500 sm:col-span-1">
+                      {(parseFloat(editGross) || 0) > 0 && (
+                        <>
+                          PT ₹{Math.round(editMasterPreview.ptMonthly).toLocaleString("en-IN")}
+                          {editMasterPreview.pfEmp > 0 && ` · PF ₹${Math.round(editMasterPreview.pfEmp).toLocaleString("en-IN")}`}
+                          {editMasterPreview.esicEmp > 0 && ` · ESIC ₹${Math.round(editMasterPreview.esicEmp).toLocaleString("en-IN")}`}
+                          {editMasterPreview.tds > 0 && ` · TDS ₹${Math.round(editMasterPreview.tds).toLocaleString("en-IN")}`}
+                          {editMasterPreview.advanceBonus > 0 &&
+                            ` · Adv +₹${Math.round(editMasterPreview.advanceBonus).toLocaleString("en-IN")}`}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
               <div className="flex gap-4">
                 <label className="flex items-center gap-2 text-sm">
                   <input type="checkbox" checked={editPfEligible} onChange={(e) => setEditPfEligible(e.target.checked)} />
@@ -670,15 +1405,47 @@ export default function PayrollPage() {
                   ESIC eligible
                 </label>
               </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">PT (monthly)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={editPt}
+                    onChange={(e) => setEditPt(e.target.value)}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">TDS (monthly)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={100}
+                    value={editTds}
+                    onChange={(e) => setEditTds(e.target.value)}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Advance bonus</label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={100}
+                    value={editAdvanceBonus}
+                    onChange={(e) => setEditAdvanceBonus(e.target.value)}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  />
+                </div>
+              </div>
               <div>
                 <label className="mb-1 block text-sm font-medium text-slate-700">Effective start date *</label>
-                <input
-                  type="date"
-                  value={editEffectiveDate}
-                  onChange={(e) => setEditEffectiveDate(e.target.value)}
-                  required
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                />
+                <DatePickerField value={editEffectiveDate} onChange={setEditEffectiveDate} required className="w-full" />
+                <p className="mt-1 text-xs text-slate-500">
+                  Saving creates a new payroll master from this date. The employee&apos;s previous open row is closed with an end date the day before this start date. Reason for change is stored on the new row.
+                </p>
               </div>
               <div>
                 <label className="mb-1 block text-sm font-medium text-slate-700">Reason for change *</label>
@@ -697,13 +1464,16 @@ export default function PayrollPage() {
                   <option value="UpdateOnly">Update Only</option>
                 </select>
               </div>
-              <div className="flex justify-end gap-2">
-                <button type="button" className="btn btn-outline" onClick={() => setEditMasterOpen(null)} disabled={editSaving}>
-                  Cancel
-                </button>
-                <button type="submit" className="btn btn-primary" disabled={editSaving}>
-                  {editSaving ? "Saving..." : "Save"}
-                </button>
+              </div>
+              <div className="shrink-0 border-t border-slate-100 bg-slate-50/90 px-5 py-3 sm:px-6">
+                <div className="flex justify-end gap-2">
+                  <button type="button" className="btn btn-outline" onClick={() => setEditMasterOpen(null)} disabled={editSaving}>
+                    Cancel
+                  </button>
+                  <button type="submit" className="btn btn-primary" disabled={editSaving}>
+                    {editSaving ? "Saving..." : "Save"}
+                  </button>
+                </div>
               </div>
             </form>
           </div>
@@ -715,7 +1485,11 @@ export default function PayrollPage() {
           <div className="card">
             <h2 className="mb-1 text-lg font-semibold text-slate-900">Run monthly payroll</h2>
             <p className="muted mb-4">
-              Generate payroll once per month for all employees who have Payroll Master records.
+              Generate payroll once per month for employees who have an active Payroll Master (effective end date empty).
+              The master &quot;applicable month&quot; is when that salary structure starts; it does not limit which calendar month you run.
+              Pay days are based on Mon–Fri (UTC) working days with sufficient attendance on those days; company holidays from your holiday calendar (including multi-day ranges) are excluded from working days and from attendance-based presence.
+              The same working-day presence (not weekends or holidays) must reach at least 10 qualifying days in the run-through period (8-hour active rule after breaks) before pay days apply for salary proration. Below that, preview shows 0 pay days (you may override manually). Auto payroll skips payslips until the threshold is met when attendance data exists.
+              Salary is prorated against working days in the full calendar month. If there is no attendance yet and no unpaid leave in the window, pay days default to all working days in the run-through date range (still subject to the 10 qualifying days rule when attendance exists).
             </p>
             <form onSubmit={handleRunPayroll} className="space-y-4">
               <div className="flex flex-wrap items-end gap-4">
@@ -769,6 +1543,14 @@ export default function PayrollPage() {
                 </div>
               </div>
               {runError && <p className="text-sm text-red-600">{runError}</p>}
+              {preview && !previewLoading && preview.workingDaysInFullMonth != null && (
+                <p className="text-xs text-slate-600">
+                  Working days in full month: {preview.workingDaysInFullMonth}
+                  {preview.workingDaysThroughRunDay != null
+                    ? ` · Through selected run date: ${preview.workingDaysThroughRunDay} (max pay days for a full-time employee in this partial period)`
+                    : null}
+                </p>
+              )}
               {preview?.alreadyRun && (
                 <div className="flex flex-wrap items-center gap-3">
                   <p className="text-sm text-amber-700">Payroll already run for this period.</p>
@@ -831,7 +1613,7 @@ export default function PayrollPage() {
                               <input
                                 type="number"
                                 min={0}
-                                max={preview?.daysInMonth ?? 31}
+                                max={preview?.workingDaysThroughRunDay ?? preview?.daysInMonth ?? 31}
                                 value={r.payDays}
                                 onChange={(e) =>
                                   updateEditableRow(r.employeeUserId, "payDays", parseInt(e.target.value, 10) || 0)
@@ -840,6 +1622,14 @@ export default function PayrollPage() {
                               />
                               {r.unpaidLeaveDays > 0 && (
                                 <span className="ml-0.5 text-[10px] text-amber-700">(-{r.unpaidLeaveDays})</span>
+                              )}
+                              {r.payDaysSuppressedMinAttendance && (
+                                <span
+                                  className="mt-0.5 block text-[10px] leading-tight text-amber-800"
+                                  title="Need 10+ qualifying working days (Mon–Fri, excluding company holidays) in the period for pay days to apply."
+                                >
+                                  {r.attendanceQualifyingDays ?? "—"} qual.
+                                </span>
                               )}
                             </>
                           )}
@@ -1145,5 +1935,20 @@ export default function PayrollPage() {
         </div>
       )}
     </section>
+  );
+}
+
+export default function PayrollPage() {
+  return (
+    <Suspense
+      fallback={
+        <section className="space-y-6">
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Payroll</h1>
+          <SkeletonTable rows={8} columns={12} />
+        </section>
+      }
+    >
+      <PayrollPageContent />
+    </Suspense>
   );
 }

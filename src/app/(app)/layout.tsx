@@ -19,9 +19,28 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   if (!error && dbUser && !dbUser.company_id) {
     redirect("/setup/company");
   }
+
+  let companyBranding: { name: string; logoUrl: string | null } | null = null;
+  if (dbUser?.company_id) {
+    const { data: co } = await supabase
+      .from("HRMS_companies")
+      .select("name, logo_url")
+      .eq("id", dbUser.company_id)
+      .maybeSingle();
+    if (co) {
+      const nm = typeof co.name === "string" ? co.name.trim() : "";
+      companyBranding = {
+        name: nm || "Company",
+        logoUrl: co.logo_url && String(co.logo_url).trim() ? String(co.logo_url).trim() : null,
+      };
+    }
+  }
+
   return (
     <AuthProvider user={session}>
-      <AppShell user={session}>{children}</AppShell>
+      <AppShell user={session} companyBranding={companyBranding}>
+        {children}
+      </AppShell>
     </AuthProvider>
   );
 }

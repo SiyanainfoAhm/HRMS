@@ -30,6 +30,15 @@ body {
   @apply text-slate-500 text-sm;
 }
 
+/* DayPicker — emerald theme (attendance filter + DatePickerField) */
+.attendance-day-picker .rdp-root,
+.rdp-theme .rdp-root {
+  --rdp-accent-color: #047857;
+  --rdp-accent-background-color: #d1fae5;
+  --rdp-today-color: #047857;
+  --rdp-day_button-border-radius: 0.5rem;
+}
+
 /* Print: show only payslip, A4 portrait */
 @media print {
   body * {

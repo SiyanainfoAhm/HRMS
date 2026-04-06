@@ -39,6 +39,8 @@ type AttendanceLog = {
   tea_break_minutes: number | null;
   lunch_break_started_at?: string | null;
   tea_break_started_at?: string | null;
+  lunch_check_out_at?: string | null;
+  lunch_check_in_at?: string | null;
   status: string | null;
 };
 
@@ -67,7 +69,9 @@ export function DashboardContent() {
   const [user, setUser] = useState<{ gender: string | null } | null>(null);
   const [leaveBalances, setLeaveBalances] = useState<{ leaveTypeName: string; used: number; remaining: number | null; isPaid: boolean }[]>([]);
   const [payslips, setPayslips] = useState<{ periodFormatted: string; generatedAt: string; payDays: number | null }[]>([]);
-  const [upcomingHolidays, setUpcomingHolidays] = useState<{ name: string; holiday_date: string }[]>([]);
+  const [upcomingHolidays, setUpcomingHolidays] = useState<
+    { id: string; name: string; holiday_date: string; holiday_end_date: string | null }[]
+  >([]);
   const [loading, setLoading] = useState(true);
   const [attendance, setAttendance] = useState<{
     hasEmployee: boolean;
@@ -126,9 +130,18 @@ export function DashboardContent() {
           const d = await holidaysRes.json();
           const today = new Date().toISOString().slice(0, 10);
           const upcoming = (d.holidays ?? [])
-            .filter((h: any) => String(h.holiday_date) >= today)
+            .filter((h: any) => {
+              const last = String(h.holiday_end_date ?? h.holiday_date).slice(0, 10);
+              return last >= today;
+            })
+            .sort((a: any, b: any) => String(a.holiday_date).localeCompare(String(b.holiday_date)))
             .slice(0, 5)
-            .map((h: any) => ({ name: h.name ?? "", holiday_date: String(h.holiday_date) }));
+            .map((h: any) => ({
+              id: String(h.id ?? ""),
+              name: h.name ?? "",
+              holiday_date: String(h.holiday_date).slice(0, 10),
+              holiday_end_date: h.holiday_end_date ? String(h.holiday_end_date).slice(0, 10) : null,
+            }));
           setUpcomingHolidays(upcoming);
         }
         if (!cancelled && attRes.ok) {
@@ -382,12 +395,24 @@ export function DashboardContent() {
                     {attLog?.check_in_at && attLog?.check_out_at ? (
                       <div className="grid gap-3 sm:grid-cols-2">
                         <div className="rounded-lg border border-slate-100 bg-slate-50/80 px-4 py-3">
-                          <p className="text-xs font-medium text-slate-500">Punch in</p>
+                          <p className="text-xs font-medium text-slate-500">1. First check in</p>
                           <p className="text-lg font-semibold text-slate-900">{formatTimeIST(attLog.check_in_at)}</p>
                         </div>
                         <div className="rounded-lg border border-slate-100 bg-slate-50/80 px-4 py-3">
-                          <p className="text-xs font-medium text-slate-500">Punch out</p>
+                          <p className="text-xs font-medium text-slate-500">4. Final check out</p>
                           <p className="text-lg font-semibold text-slate-900">{formatTimeIST(attLog.check_out_at)}</p>
+                        </div>
+                        <div className="rounded-lg border border-slate-100 bg-slate-50/80 px-4 py-3">
+                          <p className="text-xs font-medium text-slate-500">2. Lunch check out</p>
+                          <p className="text-lg font-semibold text-slate-900">
+                            {formatTimeIST(attLog.lunch_check_out_at)}
+                          </p>
+                        </div>
+                        <div className="rounded-lg border border-slate-100 bg-slate-50/80 px-4 py-3">
+                          <p className="text-xs font-medium text-slate-500">3. Lunch check in</p>
+                          <p className="text-lg font-semibold text-slate-900">
+                            {formatTimeIST(attLog.lunch_check_in_at)}
+                          </p>
                         </div>
                         <div className="rounded-lg border border-slate-100 bg-slate-50/80 px-4 py-3 sm:col-span-2">
                           <p className="text-xs font-medium text-slate-500">Gross hours · Lunch · Tea (min)</p>
@@ -399,7 +424,7 @@ export function DashboardContent() {
                             {attLog.tea_break_minutes ?? 0}
                           </p>
                           <p className="mt-1 text-sm text-slate-800">
-                            <span className="text-xs font-medium text-slate-500">Active hours: </span>
+                            <span className="text-xs font-medium text-slate-500">Active work hours: </span>
                             {(() => {
                               const grossMin = Math.round((Number(attLog.total_hours) || 0) * 60);
                               const breaks = (Number(attLog.lunch_break_minutes) || 0) + (Number(attLog.tea_break_minutes) || 0);
@@ -408,7 +433,9 @@ export function DashboardContent() {
                             })()}
                           </p>
                           <p className="mt-2 text-xs text-slate-500">
-                            Payroll counts a day as present when active work time (after breaks) is at least 8 hours.
+                            Target ~9h on premises including lunch; payroll counts present when active work (after breaks) is
+                            at least 8 hours. If you skip lunch punches, 1 hour lunch is applied automatically when you check
+                            out.
                           </p>
                           <div className="mt-3">
                             <button
@@ -428,115 +455,132 @@ export function DashboardContent() {
                     ) : attLog?.check_in_at && !attLog?.check_out_at ? (
                       <div className="space-y-4">
                         <div className="rounded-lg border border-emerald-100 bg-emerald-50/60 px-4 py-4">
-                          <p className="text-xs font-medium text-emerald-800">Punched in at {formatTimeIST(attLog.check_in_at)}</p>
+                          <p className="text-xs font-medium text-emerald-800">
+                            Step 1 done — First check in at {formatTimeIST(attLog.check_in_at)}
+                          </p>
                           <div className="mt-3 grid gap-3 sm:grid-cols-2">
                             <div>
-                              <p className="text-xs font-medium text-emerald-700/90">Time since punch in</p>
+                              <p className="text-xs font-medium text-emerald-700/90">Time on premises (since first in)</p>
                               <p className="font-mono text-2xl font-semibold tabular-nums text-emerald-900">
                                 {formatDurationMs(elapsedMs)}
                               </p>
+                              <p className="mt-1 text-[11px] text-emerald-800/70">Typical full day ~9h including lunch</p>
                             </div>
                             <div>
-                              <p className="text-xs font-medium text-emerald-700/90">Active work time (after breaks)</p>
+                              <p className="text-xs font-medium text-emerald-700/90">Active work (after breaks)</p>
                               <p className="font-mono text-2xl font-semibold tabular-nums text-emerald-900">
                                 {formatDurationMs(activeMs)}
                               </p>
                               <p className="mt-1 text-[11px] text-emerald-800/80">
                                 {activeMeetsPresent ? (
-                                  <span className="font-medium">≥ 8h — counts as present for payroll</span>
+                                  <span className="font-medium">≥ 8h active — present for payroll</span>
                                 ) : (
-                                  <span>Present when active time reaches 8h</span>
+                                  <span>Need 8h active work for payroll present</span>
                                 )}
                               </p>
                             </div>
                           </div>
                         </div>
 
-                        <div className="grid gap-3 sm:grid-cols-2">
-                          <div
-                            className={`rounded-xl border-2 px-4 py-3 transition ${
-                              lunchRunning
-                                ? "border-amber-400 bg-amber-50/80"
-                                : "border-slate-200 bg-slate-50/80"
-                            }`}
-                          >
-                            <div className="flex items-start justify-between gap-2">
-                              <div>
-                                <p className="text-xs font-semibold text-slate-700">Lunch break</p>
-                                <p className="mt-1 font-mono text-lg font-semibold tabular-nums text-slate-900">
-                                  {formatDurationMs(lunchTotalMs)}
-                                </p>
-                                <p className="text-[11px] text-slate-500">
-                                  {lunchRunning ? "On break — tap to end" : "Tap to start timer"}
-                                </p>
-                              </div>
-                              <button
-                                type="button"
-                                disabled={punching}
-                                onClick={() => handleBreakToggle("lunch")}
-                                className={`shrink-0 rounded-lg px-3 py-2 text-xs font-semibold transition ${
-                                  lunchRunning
-                                    ? "bg-amber-600 text-white hover:bg-amber-700"
-                                    : "bg-white text-slate-800 ring-1 ring-slate-300 hover:bg-slate-100"
-                                }`}
-                              >
-                                {lunchRunning ? "End" : "Start"}
-                              </button>
-                            </div>
-                          </div>
+                        <ol className="list-decimal space-y-3 pl-5 text-sm text-slate-700">
+                          <li className="font-medium text-emerald-800">First check in — completed</li>
+                          <li>
+                            <span className="font-medium text-slate-800">Check out for lunch</span>
+                            <span className="block text-xs font-normal text-slate-500">
+                              Records lunch start; end lunch before final check out.
+                            </span>
+                            <button
+                              type="button"
+                              disabled={punching || lunchRunning}
+                              onClick={() => handleBreakToggle("lunch")}
+                              className="mt-2 w-full rounded-xl border-2 border-amber-200 bg-amber-50/80 px-4 py-3 text-center text-sm font-semibold text-amber-900 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto sm:px-6"
+                            >
+                              {punching ? "Saving…" : "2. Check out for lunch"}
+                            </button>
+                          </li>
+                          <li>
+                            <span className="font-medium text-slate-800">Check in after lunch</span>
+                            <span className="block text-xs font-normal text-slate-500">Return from lunch before leaving for the day.</span>
+                            <button
+                              type="button"
+                              disabled={punching || !lunchRunning}
+                              onClick={() => handleBreakToggle("lunch")}
+                              className="mt-2 w-full rounded-xl border-2 border-emerald-200 bg-emerald-50/80 px-4 py-3 text-center text-sm font-semibold text-emerald-900 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto sm:px-6"
+                            >
+                              {punching ? "Saving…" : "3. Check in after lunch"}
+                            </button>
+                          </li>
+                          <li>
+                            <span className="font-medium text-slate-800">Final check out</span>
+                            <span className="block text-xs font-normal text-slate-500">
+                              Ends the day; close lunch first if still on break.
+                            </span>
+                          </li>
+                        </ol>
 
+                        <details className="rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2 text-sm">
+                          <summary className="cursor-pointer font-medium text-slate-700">Optional: tea break</summary>
                           <div
-                            className={`rounded-xl border-2 px-4 py-3 transition ${
-                              teaRunning
-                                ? "border-sky-400 bg-sky-50/80"
-                                : "border-slate-200 bg-slate-50/80"
+                            className={`mt-3 rounded-xl border-2 px-4 py-3 ${
+                              teaRunning ? "border-sky-400 bg-sky-50/80" : "border-slate-200 bg-white"
                             }`}
                           >
                             <div className="flex items-start justify-between gap-2">
                               <div>
-                                <p className="text-xs font-semibold text-slate-700">Tea break</p>
-                                <p className="mt-1 font-mono text-lg font-semibold tabular-nums text-slate-900">
+                                <p className="text-xs font-semibold text-slate-700">Tea</p>
+                                <p className="mt-1 font-mono text-lg tabular-nums text-slate-900">
                                   {formatDurationMs(teaTotalMs)}
                                 </p>
                                 <p className="text-[11px] text-slate-500">
-                                  {teaRunning ? "On break — tap to end" : "Tap to start timer"}
+                                  {teaRunning ? "On tea — tap to end" : "Separate from lunch flow"}
                                 </p>
                               </div>
                               <button
                                 type="button"
                                 disabled={punching}
                                 onClick={() => handleBreakToggle("tea")}
-                                className={`shrink-0 rounded-lg px-3 py-2 text-xs font-semibold transition ${
+                                className={`shrink-0 rounded-lg px-3 py-2 text-xs font-semibold ${
                                   teaRunning
                                     ? "bg-sky-600 text-white hover:bg-sky-700"
                                     : "bg-white text-slate-800 ring-1 ring-slate-300 hover:bg-slate-100"
                                 }`}
                               >
-                                {teaRunning ? "End" : "Start"}
+                                {teaRunning ? "End tea" : "Start tea"}
                               </button>
                             </div>
                           </div>
-                        </div>
+                        </details>
 
                         <button
                           type="button"
-                          disabled={punching}
+                          disabled={punching || lunchRunning || teaRunning}
                           onClick={() => handleAttendancePunch("out")}
-                          className="w-full rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-center text-base font-semibold text-slate-800 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
+                          title={
+                            lunchRunning || teaRunning
+                              ? "End lunch or tea before final check out"
+                              : undefined
+                          }
+                          className="w-full rounded-xl border-2 border-slate-800 bg-slate-900 px-4 py-3 text-center text-base font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
                         >
-                          {punching ? "Saving…" : "Punch out"}
+                          {punching ? "Saving…" : "4. Final check out (total hours)"}
                         </button>
                       </div>
                     ) : (
-                      <button
-                        type="button"
-                        disabled={punching}
-                        onClick={() => handleAttendancePunch("in")}
-                        className="w-full rounded-xl px-4 py-4 text-center text-base font-semibold text-white shadow-md transition hover:opacity-95 disabled:opacity-50"
-                        style={{ backgroundColor: TEAL }}
-                      >
-                        {punching ? "Saving…" : "Punch in"}
-                      </button>
+                      <div className="space-y-2">
+                        <p className="text-xs text-slate-500">
+                          Start with first check in, then lunch out → lunch in → final check out (~9h on site including lunch,
+                          8h active for present).
+                        </p>
+                        <button
+                          type="button"
+                          disabled={punching}
+                          onClick={() => handleAttendancePunch("in")}
+                          className="w-full rounded-xl px-4 py-4 text-center text-base font-semibold text-white shadow-md transition hover:opacity-95 disabled:opacity-50"
+                          style={{ backgroundColor: TEAL }}
+                        >
+                          {punching ? "Saving…" : "1. First check in"}
+                        </button>
+                      </div>
                     )}
                   </div>
                 )}
@@ -581,11 +625,23 @@ export function DashboardContent() {
               </div>
               {upcomingHolidays.length > 0 ? (
                 <ul className="space-y-3">
-                  {upcomingHolidays.map((h, idx) => {
-                    const d = new Date(h.holiday_date + "T12:00:00Z");
-                    const fmt = d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+                  {upcomingHolidays.map((h) => {
+                    const fmtYmd = (ymd: string) => {
+                      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd);
+                      if (!m) return ymd;
+                      const dt = new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10));
+                      return dt.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+                    };
+                    const end = h.holiday_end_date;
+                    const fmt =
+                      end && end !== h.holiday_date
+                        ? `${fmtYmd(h.holiday_date)} – ${fmtYmd(end)}`
+                        : fmtYmd(h.holiday_date);
                     return (
-                      <li key={idx} className="flex items-center justify-between border-b border-slate-100 pb-2 last:border-0 last:pb-0">
+                      <li
+                        key={h.id || h.holiday_date + (end ?? "")}
+                        className="flex items-center justify-between border-b border-slate-100 pb-2 last:border-0 last:pb-0"
+                      >
                         <span className="text-sm font-medium text-slate-900">{h.name}</span>
                         <span className="text-sm text-slate-600">{fmt}</span>
                       </li>
@@ -623,7 +679,19 @@ export function DashboardContent() {
         {(role === "super_admin" || role === "admin" || role === "hr" || role === "manager") && (
           <div className="card">
             <h2 className="mb-1 text-lg font-semibold text-slate-900">Attendance overview</h2>
-            <p className="muted">View attendance insight and time tracking for your company / department / team.</p>
+            <p className="muted">
+              Employees punch: first in → lunch out → lunch in → final out. Super Admin / Admin / HR can review everyone&apos;s
+              punches by date.
+            </p>
+            {(role === "super_admin" || role === "admin" || role === "hr") && (
+              <Link
+                href="/attendance"
+                className="mt-3 inline-flex rounded-lg px-4 py-2 text-sm font-medium text-white transition hover:opacity-90"
+                style={{ backgroundColor: TEAL }}
+              >
+                Company attendance
+              </Link>
+            )}
           </div>
         )}
 

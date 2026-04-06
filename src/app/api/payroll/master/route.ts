@@ -7,6 +7,10 @@ function isManagerial(role: string): boolean {
   return role === "super_admin" || role === "admin" || role === "hr";
 }
 
+function isSuperAdmin(role: string): boolean {
+  return role === "super_admin";
+}
+
 export async function GET() {
   const cookieStore = await cookies();
   const session = getSessionFromCookie(cookieStore.get(COOKIE_NAME)?.value);
@@ -57,6 +61,8 @@ export async function GET() {
           esicEmployee: m.esic_employee,
           esicEmployer: m.esic_employer,
           pt: m.pt,
+          tds: m.tds ?? 0,
+          advanceBonus: m.advance_bonus ?? 0,
           takeHome: m.take_home,
           effectiveStartDate: m.effective_start_date,
           basic: m.basic ?? 0,
@@ -84,7 +90,14 @@ export async function PATCH(request: NextRequest) {
   const pfEligible = body?.pfEligible === true;
   const esicEligible = body?.esicEligible === true;
   const effectiveStartDate = typeof body?.effectiveStartDate === "string" ? body.effectiveStartDate : "";
-  const reasonForChange = typeof body?.reasonForChange === "string" ? body.reasonForChange.trim() : "";
+  let reasonForChange = typeof body?.reasonForChange === "string" ? body.reasonForChange.trim() : "";
+  if (!reasonForChange && isSuperAdmin(session.role)) {
+    reasonForChange = "Payroll master update";
+  }
+
+  const ptOverride = body?.pt != null ? Math.max(0, Number(body.pt)) : null;
+  const tdsVal = body?.tds != null ? Math.max(0, Number(body.tds)) : 0;
+  const advanceBonusVal = body?.advanceBonus != null ? Math.max(0, Number(body.advanceBonus)) : 0;
 
   // Optional salary component breakdown (Basic, HRA, Medical, Trans, LTA, Personal)
   const basic = body?.basic != null ? Number(body.basic) : 0;
@@ -96,8 +109,11 @@ export async function PATCH(request: NextRequest) {
   const componentsSum = basic + hra + medical + trans + lta + personal;
   if (componentsSum > 0) grossSalary = componentsSum;
 
-  if (!userId || !effectiveStartDate || !reasonForChange) {
-    return NextResponse.json({ error: "employeeUserId, effectiveStartDate and reasonForChange are required" }, { status: 400 });
+  if (!userId || !effectiveStartDate) {
+    return NextResponse.json({ error: "employeeUserId and effectiveStartDate are required" }, { status: 400 });
+  }
+  if (!reasonForChange) {
+    return NextResponse.json({ error: "reasonForChange is required" }, { status: 400 });
   }
 
   const { data: me, error: meErr } = await supabase
@@ -122,7 +138,8 @@ export async function PATCH(request: NextRequest) {
     .select("professional_tax_monthly")
     .eq("id", me.company_id)
     .single();
-  const ptMonthly = company?.professional_tax_monthly != null ? Number(company.professional_tax_monthly) : 200;
+  const companyPt = company?.professional_tax_monthly != null ? Number(company.professional_tax_monthly) : 200;
+  const ptMonthly = ptOverride != null && Number.isFinite(ptOverride) ? ptOverride : companyPt;
 
   const salaryBreakup = componentsSum > 0
     ? { basic, hra, medical, trans, lta, personal }
@@ -134,7 +151,8 @@ export async function PATCH(request: NextRequest) {
     ptMonthly,
     salaryBreakup
   );
-  const { pfEmp, pfEmpr, esicEmp, esicEmpr, ctc, takeHome, basic: calcBasic, hra: calcHra, medical: calcMedical, trans: calcTrans, lta: calcLta, personal: calcPersonal } = calc;
+  const { pfEmp, pfEmpr, esicEmp, esicEmpr, ctc, takeHome: baseTakeHome, basic: calcBasic, hra: calcHra, medical: calcMedical, trans: calcTrans, lta: calcLta, personal: calcPersonal } = calc;
+  const takeHome = Math.max(0, baseTakeHome - tdsVal + advanceBonusVal);
 
   const { data: oldMaster } = await supabase
     .from("HRMS_payroll_master")
@@ -175,7 +193,9 @@ export async function PATCH(request: NextRequest) {
       esic_employee: esicEmp,
       esic_employer: esicEmpr,
       pt: ptMonthly,
-      take_home: Math.max(0, takeHome),
+      tds: tdsVal,
+      advance_bonus: advanceBonusVal,
+      take_home: takeHome,
       effective_start_date: effectiveStartDate,
       effective_end_date: null,
       reason_for_change: reasonForChange,

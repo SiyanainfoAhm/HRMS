@@ -4,6 +4,7 @@ import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
 import { useEffect, useMemo, useState, useRef, FormEvent } from "react";
+import { DatePickerField } from "@/components/ui/DatePickerField";
 
 export function ProfileContent() {
   const { role } = useAuth();
@@ -593,20 +594,18 @@ export function ProfileContent() {
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-slate-700">Date of birth</label>
-                  <input
-                    type="date"
+                  <DatePickerField
                     value={form.dateOfBirth}
-                    onChange={(e) => setForm((p) => ({ ...p, dateOfBirth: e.target.value }))}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    onChange={(v) => setForm((p) => ({ ...p, dateOfBirth: v }))}
+                    className="w-full"
                   />
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-slate-700">Date of joining</label>
-                  <input
-                    type="date"
+                  <DatePickerField
                     value={form.dateOfJoining}
-                    onChange={(e) => setForm((p) => ({ ...p, dateOfJoining: e.target.value }))}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    onChange={(v) => setForm((p) => ({ ...p, dateOfJoining: v }))}
+                    className="w-full"
                   />
                 </div>
                 <div>

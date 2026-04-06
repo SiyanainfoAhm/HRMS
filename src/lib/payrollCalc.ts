@@ -1,35 +1,59 @@
 /**
- * Payroll calculation formulas (aligned with statutory rules)
- * PF: 12% of (Gross - HRA), capped at 1,800 when base > 15,000
- * ESIC Employee: 0.75% of Gross (when gross < 21,000)
- * ESIC Employer: 3.25% of Gross (when gross < 21,000)
+ * Payroll calculation formulas (aligned with common Indian statutory practice)
+ *
+ * PF (EPF employee / employer contribution — same formula used for both here):
+ *   PF wage ≈ Gross − HRA (Basic+DA proxy from default split).
+ *   If PF wage ≤ ₹15,000: 12% of PF wage (no cap).
+ *   If PF wage > ₹15,000: employee contribution capped at ₹1,800/month (12% of ₹15,000).
+ *
+ * ESIC: Applies when gross monthly ≤ ₹21,000 (inclusive). Rates on gross:
+ *   Employee 0.75%, Employer 3.25% (e.g. ₹20,000 → ₹150 + ₹650).
+ *
  * Salary breakup defaults: Basic 50%, HRA 20%, Medical 5%, Trans 5%, LTA 10%, Personal 10%
  *
- * CTC = Gross + Employee PF + Employer PF + Employee ESIC + Employer ESIC
- * Take home = Gross - Employee PF - Employer PF - Employee ESIC - Employer ESIC - PT
+ * CTC = Gross + Employer PF + Employer ESIC
+ * Take home (approx.) = Gross − Employee PF − Employee ESIC − PT
  */
 
 const PF_CAP = 1800;
-const PF_BASE_CAP = 15000;
+const PF_WAGE_CAP = 15000;
 const PF_RATE = 0.12;
 const ESIC_EMPLOYEE_RATE = 0.0075;
 const ESIC_EMPLOYER_RATE = 0.0325;
-const ESIC_GROSS_LIMIT = 21000;
+/** ESIC applies when gross is at most this (inclusive). */
+export const ESIC_GROSS_MAX_INCLUSIVE = 21000;
+
+export function computePfWage(gross: number, hra: number): number {
+  return Math.max(0, gross - hra);
+}
 
 export function computePf(gross: number, hra: number, pfEligible: boolean): number {
   if (!pfEligible) return 0;
-  const base = Math.max(0, gross - hra);
-  if (base > PF_BASE_CAP) return PF_CAP;
+  const base = computePfWage(gross, hra);
+  if (base > PF_WAGE_CAP) return PF_CAP;
   return Math.round(base * PF_RATE);
 }
 
+/** True when EPF typically mandatory: PF wage (gross − HRA) ≤ ₹15,000. */
+export function isPfStatutorilyMandatory(gross: number, hra: number): boolean {
+  const g = Number(gross) || 0;
+  if (g <= 0) return false;
+  return computePfWage(g, hra) <= PF_WAGE_CAP;
+}
+
+/** True when gross is within ESIC ceiling (inclusive). */
+export function isWithinEsicGrossCeiling(gross: number): boolean {
+  const g = Number(gross) || 0;
+  return g > 0 && g <= ESIC_GROSS_MAX_INCLUSIVE;
+}
+
 export function computeEsicEmployee(gross: number, esicEligible: boolean): number {
-  if (!esicEligible || gross >= ESIC_GROSS_LIMIT) return 0;
+  if (!esicEligible || !isWithinEsicGrossCeiling(gross)) return 0;
   return Math.round(gross * ESIC_EMPLOYEE_RATE);
 }
 
 export function computeEsicEmployer(gross: number, esicEligible: boolean): number {
-  if (!esicEligible || gross >= ESIC_GROSS_LIMIT) return 0;
+  if (!esicEligible || !isWithinEsicGrossCeiling(gross)) return 0;
   return Math.round(gross * ESIC_EMPLOYER_RATE);
 }
 
@@ -73,8 +97,8 @@ export function computePayrollFromGross(
   const pfEmpr = computePf(gross, components.hra, pfEligible);
   const esicEmp = computeEsicEmployee(gross, esicEligible);
   const esicEmpr = computeEsicEmployer(gross, esicEligible);
-  const ctc = gross + pfEmp + pfEmpr + esicEmp + esicEmpr;
-  const takeHome = gross - pfEmp - pfEmpr - esicEmp - esicEmpr - ptMonthly;
+  const ctc = gross + pfEmpr + esicEmpr;
+  const takeHome = gross - pfEmp - esicEmp - ptMonthly;
 
   return {
     ...components,

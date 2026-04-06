@@ -18,9 +18,12 @@ create table if not exists "HRMS_companies" (
   phone text,
   professional_tax_annual numeric(12,2) not null default 200,
   professional_tax_monthly numeric(12,2) not null default 200,
+  logo_url text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table if exists "HRMS_companies" add column if not exists logo_url text;
 
 -- App auth: users with hashed passwords (use with your app login/signup)
 create table if not exists "HRMS_users" (
@@ -237,6 +240,9 @@ create table if not exists "HRMS_attendance_logs" (
   unique (employee_id, work_date)
 );
 
+alter table if exists "HRMS_attendance_logs" add column if not exists lunch_check_out_at timestamptz;
+alter table if exists "HRMS_attendance_logs" add column if not exists lunch_check_in_at timestamptz;
+
 create table if not exists "HRMS_leave_types" (
   id uuid primary key default gen_random_uuid(),
   company_id uuid not null references "HRMS_companies"(id) on delete cascade,
@@ -312,11 +318,14 @@ create table if not exists "HRMS_holidays" (
   company_id uuid not null references "HRMS_companies"(id) on delete cascade,
   name text not null,
   holiday_date date not null,
+  holiday_end_date date,
   is_optional boolean not null default false,
   location text,
   created_at timestamptz not null default now(),
   unique (company_id, holiday_date, name)
 );
+
+alter table if exists "HRMS_holidays" add column if not exists holiday_end_date date;
 
 create table if not exists "HRMS_payroll_periods" (
   id uuid primary key default gen_random_uuid(),
@@ -416,12 +425,18 @@ create table if not exists "HRMS_payroll_master" (
   esic_employer numeric(12,2) not null default 0,
   pt numeric(12,2) not null default 0,
   take_home numeric(12,2) not null default 0,
+  tds numeric(12,2) not null default 0,
+  advance_bonus numeric(12,2) not null default 0,
   effective_start_date date not null,
   effective_end_date date,
   reason_for_change text,
   created_at timestamptz not null default now(),
   created_by uuid references "HRMS_users"(id) on delete set null
 );
+
+alter table if exists "HRMS_payroll_master" add column if not exists tds numeric(12,2) not null default 0;
+alter table if exists "HRMS_payroll_master" add column if not exists advance_bonus numeric(12,2) not null default 0;
+
 create index if not exists hrms_payroll_master_user_effective_idx on "HRMS_payroll_master"(employee_user_id, effective_end_date);
 
 alter table if exists "HRMS_users" add column if not exists gross_salary numeric(12,2);

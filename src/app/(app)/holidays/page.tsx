@@ -3,46 +3,112 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { SkeletonTable } from "@/components/Skeleton";
+import { DatePickerField } from "@/components/ui/DatePickerField";
 
 type Holiday = {
   id: string;
   name: string;
   holiday_date: string;
+  holiday_end_date: string | null;
   is_optional: boolean;
   location: string | null;
 };
 
+const TAB_ALL = "ALL";
+const TAB_EMPTY = "EMPTY";
+
+function formatHolidayDayAndDate(ymd: string): string {
+  const raw = String(ymd).slice(0, 10);
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+  if (!m) return raw;
+  const y = parseInt(m[1], 10);
+  const mo = parseInt(m[2], 10) - 1;
+  const d = parseInt(m[3], 10);
+  const dt = new Date(y, mo, d);
+  return dt.toLocaleDateString("en-IN", {
+    weekday: "long",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function formatHolidayDayDateRange(h: Holiday): string {
+  const start = String(h.holiday_date).slice(0, 10);
+  const endRaw = h.holiday_end_date ? String(h.holiday_end_date).slice(0, 10) : "";
+  if (!endRaw || endRaw === start) return formatHolidayDayAndDate(start);
+  return `${formatHolidayDayAndDate(start)} → ${formatHolidayDayAndDate(endRaw)}`;
+}
+
 export default function HolidaysPage() {
   const { role } = useAuth();
-  const canManage = useMemo(() => role === "super_admin" || role === "admin" || role === "hr", [role]);
+  const canManage = role === "super_admin";
 
   const [holidays, setHolidays] = useState<Holiday[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const [activeLocationTab, setActiveLocationTab] = useState<string>(TAB_ALL);
+
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [editingHoliday, setEditingHoliday] = useState<Holiday | null>(null);
   const [name, setName] = useState("");
   const [holidayDate, setHolidayDate] = useState("");
+  const [holidayEndDate, setHolidayEndDate] = useState("");
   const [location, setLocation] = useState("");
   const [isOptional, setIsOptional] = useState(false);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const locationTabs = useMemo(() => {
+    const locs = new Set<string>();
+    let hasEmpty = false;
+    for (const h of holidays) {
+      const t = (h.location || "").trim();
+      if (!t) hasEmpty = true;
+      else locs.add(t);
+    }
+    const sorted = [...locs].sort((a, b) => a.localeCompare(b));
+    const tabs: { key: string; label: string }[] = [{ key: TAB_ALL, label: "All locations" }];
+    if (hasEmpty) tabs.push({ key: TAB_EMPTY, label: "All offices" });
+    for (const loc of sorted) tabs.push({ key: loc, label: loc });
+    return tabs;
+  }, [holidays]);
+
+  const filteredHolidays = useMemo(() => {
+    let list: Holiday[];
+    if (activeLocationTab === TAB_ALL) list = [...holidays];
+    else if (activeLocationTab === TAB_EMPTY) list = holidays.filter((h) => !(h.location || "").trim());
+    else list = holidays.filter((h) => (h.location || "").trim() === activeLocationTab);
+    return list.sort((a, b) => String(a.holiday_date).localeCompare(String(b.holiday_date)));
+  }, [holidays, activeLocationTab]);
+
+  useEffect(() => {
+    const keys = new Set(locationTabs.map((t) => t.key));
+    if (!keys.has(activeLocationTab)) setActiveLocationTab(TAB_ALL);
+  }, [locationTabs, activeLocationTab]);
+
+  async function loadHolidays() {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/holidays");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Failed to load holidays");
+      setHolidays(data.holidays || []);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to load holidays");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const res = await fetch("/api/holidays");
-        const data = await res.json();
-        if (!res.ok) throw new Error(data?.error || "Failed to load holidays");
-        if (!cancelled) setHolidays(data.holidays || []);
-      } catch (e: any) {
-        if (!cancelled) setError(e?.message || "Failed to load holidays");
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+      if (cancelled) return;
+      await loadHolidays();
     })();
     return () => {
       cancelled = true;
@@ -59,36 +125,100 @@ export default function HolidaysPage() {
 
   function resetForm() {
     setFormError(null);
+    setEditingHoliday(null);
     setName("");
     setHolidayDate("");
+    setHolidayEndDate("");
     setLocation("");
     setIsOptional(false);
   }
 
-  async function addHoliday(e: FormEvent) {
+  function openAddDialog() {
+    resetForm();
+    setIsDialogOpen(true);
+  }
+
+  function openEditDialog(h: Holiday) {
+    setFormError(null);
+    setEditingHoliday(h);
+    setName(h.name);
+    setHolidayDate(String(h.holiday_date).slice(0, 10));
+    const end = h.holiday_end_date ? String(h.holiday_end_date).slice(0, 10) : "";
+    const start = String(h.holiday_date).slice(0, 10);
+    setHolidayEndDate(end && end !== start ? end : "");
+    setLocation((h.location || "").trim());
+    setIsOptional(Boolean(h.is_optional));
+    setIsDialogOpen(true);
+  }
+
+  async function submitHoliday(e: FormEvent) {
     e.preventDefault();
     setFormError(null);
+    const endTrim = holidayEndDate.trim();
+    if (endTrim && endTrim < holidayDate) {
+      setFormError("End date must be on or after the start date.");
+      return;
+    }
     setSaving(true);
     try {
-      const res = await fetch("/api/holidays", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: name.trim(),
-          holidayDate,
-          location: location.trim() || undefined,
-          isOptional,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || "Failed to add holiday");
-      setHolidays((prev) => [...prev, data.holiday]);
-      resetForm();
-      setIsDialogOpen(false);
-    } catch (e: any) {
-      setFormError(e?.message || "Failed to add holiday");
+      const endPayload =
+        endTrim && endTrim !== holidayDate ? endTrim : null;
+      if (editingHoliday) {
+        const res = await fetch(`/api/holidays/${editingHoliday.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: name.trim(),
+            holidayDate,
+            holidayEndDate: endPayload,
+            location: location.trim() || null,
+            isOptional,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.error || "Failed to update holiday");
+        const updated = data.holiday as Holiday;
+        setHolidays((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
+        resetForm();
+        setIsDialogOpen(false);
+      } else {
+        const res = await fetch("/api/holidays", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: name.trim(),
+            holidayDate,
+            ...(endPayload ? { holidayEndDate: endPayload } : {}),
+            location: location.trim() || undefined,
+            isOptional,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.error || "Failed to add holiday");
+        setHolidays((prev) => [...prev, data.holiday]);
+        resetForm();
+        setIsDialogOpen(false);
+      }
+    } catch (e: unknown) {
+      setFormError(e instanceof Error ? e.message : "Failed to save");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function deleteHoliday(h: Holiday) {
+    if (!window.confirm(`Delete holiday “${h.name}” (${formatHolidayDayDateRange(h)})?`)) return;
+    setDeletingId(h.id);
+    setError(null);
+    try {
+      const res = await fetch(`/api/holidays/${h.id}`, { method: "DELETE" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || "Failed to delete holiday");
+      setHolidays((prev) => prev.filter((x) => x.id !== h.id));
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to delete");
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -96,21 +226,36 @@ export default function HolidaysPage() {
     <section className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Holidays</h1>
-        <p className="muted">Company holiday calendar.</p>
+        <p className="muted">
+          Company holiday calendar. Use start and end date for multi-day holidays (e.g. Pooja, Diwali). Filter by
+          location; each row shows the day of week with dates.
+        </p>
       </div>
 
       {canManage && (
         <div className="flex justify-end">
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={() => {
-              resetForm();
-              setIsDialogOpen(true);
-            }}
-          >
+          <button type="button" className="btn btn-primary" onClick={openAddDialog}>
             Add holiday
           </button>
+        </div>
+      )}
+
+      {!loading && holidays.length > 0 && (
+        <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-3">
+          {locationTabs.map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              onClick={() => setActiveLocationTab(tab.key)}
+              className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${
+                activeLocationTab === tab.key
+                  ? "bg-emerald-600 text-white"
+                  : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
       )}
 
@@ -120,7 +265,10 @@ export default function HolidaysPage() {
             type="button"
             className="absolute inset-0 bg-black/40"
             aria-label="Close dialog"
-            onClick={() => setIsDialogOpen(false)}
+            onClick={() => {
+              resetForm();
+              setIsDialogOpen(false);
+            }}
           />
           <div
             role="dialog"
@@ -129,16 +277,27 @@ export default function HolidaysPage() {
           >
             <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
               <div>
-                <h2 className="text-lg font-semibold text-slate-900">Add holiday</h2>
-                <p className="text-sm text-slate-500">Create a holiday for your company.</p>
+                <h2 className="text-lg font-semibold text-slate-900">
+                  {editingHoliday ? "Edit holiday" : "Add holiday"}
+                </h2>
+                <p className="text-sm text-slate-500">
+                  {editingHoliday ? "Update this holiday entry." : "Create a holiday for your company."}
+                </p>
               </div>
-              <button type="button" className="btn btn-outline" onClick={() => setIsDialogOpen(false)}>
+              <button
+                type="button"
+                className="btn btn-outline"
+                onClick={() => {
+                  resetForm();
+                  setIsDialogOpen(false);
+                }}
+              >
                 Close
               </button>
             </div>
 
-            <form onSubmit={addHoliday} className="p-5">
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <form onSubmit={submitHoliday} className="p-5">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
                 <div className="md:col-span-2">
                   <label className="mb-1 block text-sm font-medium text-slate-700">Holiday name</label>
                   <input
@@ -150,31 +309,32 @@ export default function HolidaysPage() {
                   />
                 </div>
                 <div className="md:col-span-1">
-                  <label className="mb-1 block text-sm font-medium text-slate-700">Date</label>
-                  <input
-                    type="date"
-                    required
-                    value={holidayDate}
-                    onChange={(e) => setHolidayDate(e.target.value)}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                  />
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Start date</label>
+                  <DatePickerField value={holidayDate} onChange={setHolidayDate} required className="w-full" />
                 </div>
-                <div className="md:col-span-3">
+                <div className="md:col-span-1">
+                  <label className="mb-1 block text-sm font-medium text-slate-700">End date (optional)</label>
+                  <DatePickerField
+                    value={holidayEndDate}
+                    onChange={setHolidayEndDate}
+                    min={holidayDate || undefined}
+                    className="w-full"
+                  />
+                  <p className="mt-1 text-xs text-slate-500">Leave empty or same as start for a single day.</p>
+                </div>
+                <div className="md:col-span-4">
                   <label className="mb-1 block text-sm font-medium text-slate-700">Location (optional)</label>
                   <input
                     type="text"
                     value={location}
                     onChange={(e) => setLocation(e.target.value)}
+                    placeholder="e.g. Ahmedabad, or leave empty for all offices"
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                   />
                 </div>
-                <div className="md:col-span-3 flex items-center justify-between gap-3">
+                <div className="md:col-span-4 flex items-center justify-between gap-3">
                   <label className="flex items-center gap-2 text-sm text-slate-700">
-                    <input
-                      type="checkbox"
-                      checked={isOptional}
-                      onChange={(e) => setIsOptional(e.target.checked)}
-                    />
+                    <input type="checkbox" checked={isOptional} onChange={(e) => setIsOptional(e.target.checked)} />
                     Optional holiday
                   </label>
                   <div className="flex flex-col items-end">
@@ -192,7 +352,7 @@ export default function HolidaysPage() {
                         Cancel
                       </button>
                       <button type="submit" className="btn btn-primary" disabled={saving}>
-                        {saving ? "Adding..." : "Add holiday"}
+                        {saving ? "Saving…" : editingHoliday ? "Save changes" : "Add holiday"}
                       </button>
                     </div>
                   </div>
@@ -205,29 +365,54 @@ export default function HolidaysPage() {
 
       <div className="card">
         {loading ? (
-          <SkeletonTable rows={6} columns={4} />
+          <SkeletonTable rows={6} columns={5} />
         ) : error ? (
           <p className="text-sm text-red-600">{error}</p>
         ) : holidays.length === 0 ? (
           <p className="muted">No holidays configured.</p>
+        ) : filteredHolidays.length === 0 ? (
+          <p className="muted">No holidays for this location.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead className="text-slate-600">
                 <tr>
-                  <th className="px-3 py-2">Date</th>
+                  <th className="px-3 py-2">Day &amp; date</th>
                   <th className="px-3 py-2">Name</th>
                   <th className="px-3 py-2">Location</th>
                   <th className="px-3 py-2">Optional</th>
+                  {canManage && <th className="px-3 py-2 text-right">Actions</th>}
                 </tr>
               </thead>
               <tbody>
-                {holidays.map((h) => (
+                {filteredHolidays.map((h) => (
                   <tr key={h.id} className="border-t border-slate-200">
-                    <td className="px-3 py-2">{new Date(h.holiday_date).toLocaleDateString()}</td>
+                    <td className="px-3 py-2 font-medium text-slate-900">{formatHolidayDayDateRange(h)}</td>
                     <td className="px-3 py-2">{h.name}</td>
-                    <td className="px-3 py-2">{h.location || "-"}</td>
+                    <td className="px-3 py-2">{h.location?.trim() ? h.location : "—"}</td>
                     <td className="px-3 py-2">{h.is_optional ? "Yes" : "No"}</td>
+                    {canManage && (
+                      <td className="px-3 py-2 text-right">
+                        <div className="flex justify-end gap-2">
+                          <button
+                            type="button"
+                            className="btn btn-outline !py-1 !text-xs"
+                            onClick={() => openEditDialog(h)}
+                            disabled={deletingId === h.id}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-outline !border-red-200 !py-1 !text-xs text-red-700 hover:bg-red-50"
+                            onClick={() => deleteHoliday(h)}
+                            disabled={deletingId === h.id}
+                          >
+                            {deletingId === h.id ? "Deleting…" : "Delete"}
+                          </button>
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -238,4 +423,3 @@ export default function HolidaysPage() {
     </section>
   );
 }
-

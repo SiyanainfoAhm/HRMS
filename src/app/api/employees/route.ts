@@ -3,6 +3,13 @@ import { cookies } from "next/headers";
 import { COOKIE_NAME, getSessionFromCookie } from "@/lib/auth";
 import { supabase } from "@/lib/supabaseClient";
 import { computePayrollFromGross } from "@/lib/payrollCalc";
+import {
+  normalizeDigits,
+  validateEmailField,
+  validateIndianMobileDigits,
+  validateAadhaarDigits,
+  validatePanNormalized,
+} from "@/lib/employeeValidators";
 import bcrypt from "bcryptjs";
 
 function isManagerial(role: string): boolean {
@@ -227,8 +234,6 @@ export async function POST(request: NextRequest) {
   const departmentId = typeof body?.departmentId === "string" ? body.departmentId.trim() || null : null;
   const divisionId = typeof body?.divisionId === "string" ? body.divisionId.trim() || null : null;
   const shiftId = typeof body?.shiftId === "string" ? body.shiftId.trim() || null : null;
-  const aadhaar = typeof body?.aadhaar === "string" ? body.aadhaar.trim() || null : null;
-  const pan = typeof body?.pan === "string" ? body.pan.trim() || null : null;
   const uanNumber = typeof body?.uanNumber === "string" ? body.uanNumber.trim() || null : null;
   const pfNumber = typeof body?.pfNumber === "string" ? body.pfNumber.trim() || null : null;
   const esicNumber = typeof body?.esicNumber === "string" ? body.esicNumber.trim() || null : null;
@@ -236,7 +241,24 @@ export async function POST(request: NextRequest) {
     ? body.requestedDocumentIds.filter((x: any) => typeof x === "string")
     : null;
 
-  if (!email) return NextResponse.json({ error: "Email is required" }, { status: 400 });
+  const emailFieldErr = validateEmailField(email);
+  if (emailFieldErr) return NextResponse.json({ error: emailFieldErr }, { status: 400 });
+
+  const phoneDigits = normalizeDigits(phone);
+  const phoneErr = validateIndianMobileDigits(phoneDigits);
+  if (phoneErr) return NextResponse.json({ error: phoneErr }, { status: 400 });
+
+  const aadhaarDigits = normalizeDigits(typeof body?.aadhaar === "string" ? body.aadhaar : "");
+  const aadhaarErr = validateAadhaarDigits(aadhaarDigits);
+  if (aadhaarErr) return NextResponse.json({ error: aadhaarErr }, { status: 400 });
+
+  const panNormalized = (typeof body?.pan === "string" ? body.pan : "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+  const panErr = validatePanNormalized(panNormalized);
+  if (panErr) return NextResponse.json({ error: panErr }, { status: 400 });
+
   if (!designation?.trim()) return NextResponse.json({ error: "Designation is required" }, { status: 400 });
   if (!departmentId) return NextResponse.json({ error: "Department is required" }, { status: 400 });
   if (!divisionId) return NextResponse.json({ error: "Division is required" }, { status: 400 });
@@ -286,7 +308,7 @@ export async function POST(request: NextRequest) {
         // Always start in preboarding. They become "current" only after completing invite + mandatory documents.
         employment_status: requestedStatus === "past" ? "past" : "preboarding",
         employee_code: finalEmployeeCode || null,
-        phone: phone || null,
+        phone: phoneDigits,
         date_of_joining: dateOfJoining || null,
         ctc: gross > 0 ? calculatedCtc : null,
         gross_salary: grossSalary != null && grossSalary >= 0 ? grossSalary : null,
@@ -298,8 +320,8 @@ export async function POST(request: NextRequest) {
         department_id: departmentId ?? null,
         division_id: divisionId ?? null,
         shift_id: shiftId ?? null,
-        aadhaar: aadhaar,
-        pan: pan,
+        aadhaar: aadhaarDigits,
+        pan: panNormalized,
         uan_number: uanNumber,
         pf_number: pfNumber,
         esic_number: esicNumber,
@@ -372,7 +394,7 @@ export async function POST(request: NextRequest) {
           first_name: firstName,
           last_name: lastName,
           email,
-          phone: phone || null,
+          phone: phoneDigits,
           date_of_joining: dateOfJoining || null,
           emergency_contact_name: emergencyContactName || null,
           emergency_contact_phone: emergencyContactPhone || null,

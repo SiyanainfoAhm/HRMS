@@ -3,8 +3,24 @@
 import { useEffect, useState, FormEvent } from "react";
 import { useToast } from "@/components/ToastProvider";
 import { SkeletonTable } from "@/components/Skeleton";
+import { DatePickerField } from "@/components/ui/DatePickerField";
 import { useAuth } from "@/contexts/AuthContext";
-import { computePayrollFromGross } from "@/lib/payrollCalc";
+import {
+  computePayrollFromGross,
+  defaultSalaryBreakup,
+  isPfStatutorilyMandatory,
+  isWithinEsicGrossCeiling,
+} from "@/lib/payrollCalc";
+import {
+  normalizeDigits,
+  normalizePanInput,
+  validateEmailField,
+  validateIndianMobileDigits,
+  validateIndianMobileInteractive,
+  validateAadhaarDigits,
+  validateAadhaarInteractive,
+  validatePanNormalized,
+} from "@/lib/employeeValidators";
 
 type Employee = {
   id: string;
@@ -42,6 +58,9 @@ export default function EmployeesPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [emailError, setEmailError] = useState<string | null>(null);
+  const [phoneError, setPhoneError] = useState<string | null>(null);
+  const [aadhaarError, setAadhaarError] = useState<string | null>(null);
+  const [panError, setPanError] = useState<string | null>(null);
   const [formRole, setFormRole] = useState<Employee["role"]>("employee");
   const [employmentStatus, setEmploymentStatus] = useState<Employee["employmentStatus"]>("preboarding");
   const [phone, setPhone] = useState("");
@@ -179,6 +198,20 @@ export default function EmployeesPage() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [isDialogOpen]);
 
+  /** When gross changes, align PF/ESIC flags with statutory thresholds (PF wage ≤ ₹15k, gross ≤ ₹21k for ESIC). */
+  useEffect(() => {
+    if (!isDialogOpen) return;
+    const g = parseFloat(grossSalary) || 0;
+    if (g <= 0) {
+      setPfEligible(false);
+      setEsicEligible(false);
+      return;
+    }
+    const { hra } = defaultSalaryBreakup(g);
+    setPfEligible(isPfStatutorilyMandatory(g, hra));
+    setEsicEligible(isWithinEsicGrossCeiling(g));
+  }, [grossSalary, isDialogOpen]);
+
   useEffect(() => {
     if (!isDialogOpen) return;
     let cancelled = false;
@@ -209,6 +242,9 @@ export default function EmployeesPage() {
   function resetForm() {
     setFormError(null);
     setEmailError(null);
+    setPhoneError(null);
+    setAadhaarError(null);
+    setPanError(null);
     setName("");
     setEmail("");
     setFormRole("employee");
@@ -252,24 +288,30 @@ export default function EmployeesPage() {
 
   const gross = parseFloat(grossSalary) || 0;
   const ptMonthly = companyPtMonthly;
-  const { ctc: calculatedCtc, takeHome: calculatedTakeHome } = computePayrollFromGross(gross, pfEligible, esicEligible, ptMonthly);
-
-  function validateEmail(v: string): string | null {
-    const value = v.trim();
-    if (!value) return "Email is required";
-    // Simple RFC-like check (good UX, not overly strict)
-    const ok = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
-    return ok ? null : "Enter a valid email (e.g. name@company.com)";
-  }
+  const {
+    ctc: calculatedCtc,
+    takeHome: calculatedTakeHome,
+    pfEmp: calcPfEmp,
+    esicEmp: calcEsicEmp,
+  } = computePayrollFromGross(gross, pfEligible, esicEligible, ptMonthly);
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
     setFormError(null);
     setFormLoading(true);
     try {
-      const eErr = validateEmail(email);
+      const eErr = validateEmailField(email);
       setEmailError(eErr);
-      if (eErr) {
+      const phoneDigits = normalizeDigits(phone);
+      const phErr = validateIndianMobileDigits(phoneDigits);
+      setPhoneError(phErr);
+      const aDigits = normalizeDigits(aadhaar);
+      const ahErr = validateAadhaarDigits(aDigits);
+      setAadhaarError(ahErr);
+      const panNorm = normalizePanInput(pan);
+      const pnErr = validatePanNormalized(panNorm);
+      setPanError(pnErr);
+      if (eErr || phErr || ahErr || pnErr) {
         setFormLoading(false);
         return;
       }
@@ -278,10 +320,10 @@ export default function EmployeesPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: name.trim() || undefined,
-          email: email.trim(),
+          email: email.trim().toLowerCase(),
           role: formRole,
           employmentStatus,
-          phone: phone.trim() || undefined,
+          phone: phoneDigits,
           dateOfJoining: dateOfJoining || undefined,
           currentAddressLine1: currentAddressLine1.trim() || undefined,
           currentAddressLine2: currentAddressLine2.trim() || undefined,
@@ -309,8 +351,8 @@ export default function EmployeesPage() {
           departmentId: departmentId || undefined,
           divisionId: divisionId || undefined,
           shiftId: shiftId || undefined,
-          aadhaar: aadhaar || undefined,
-          pan: pan || undefined,
+          aadhaar: aDigits,
+          pan: panNorm,
           uanNumber: uanNumber || undefined,
           pfNumber: pfNumber || undefined,
           esicNumber: esicNumber || undefined,
@@ -608,7 +650,12 @@ export default function EmployeesPage() {
               </button>
             </div>
 
-            <form onSubmit={handleCreate} className="flex-1 overflow-y-auto p-5" style={{ minHeight: "70vh", maxHeight: "calc(95vh - 80px)" }}>
+            <form
+              noValidate
+              onSubmit={handleCreate}
+              className="flex-1 overflow-y-auto p-5"
+              style={{ minHeight: "70vh", maxHeight: "calc(95vh - 80px)" }}
+            >
               <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
                 <div className="md:col-span-1">
                   <label className="mb-1 block text-sm font-medium text-slate-700">Name</label>
@@ -620,17 +667,23 @@ export default function EmployeesPage() {
                   />
                 </div>
                 <div className="md:col-span-1">
-                  <label className="mb-1 block text-sm font-medium text-slate-700">Email</label>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    Email <span className="text-red-500">*</span>
+                  </label>
                   <input
                     type="email"
-                    required
+                    autoComplete="email"
                     value={email}
                     onChange={(e) => {
                       const v = e.target.value;
                       setEmail(v);
-                      setEmailError(validateEmail(v));
+                      setEmailError(validateEmailField(v));
                     }}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    className={`w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-1 ${
+                      emailError
+                        ? "border-red-500 focus:border-red-500 focus:ring-red-500"
+                        : "border-slate-300 focus:border-emerald-500 focus:ring-emerald-500"
+                    }`}
                   />
                   {emailError && <p className="mt-1 text-xs text-red-600">{emailError}</p>}
                 </div>
@@ -657,24 +710,36 @@ export default function EmployeesPage() {
                   <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
                     {calculatedTakeHome > 0 ? calculatedTakeHome.toLocaleString("en-IN") : "—"}
                   </div>
+                  {gross > 0 && (
+                    <p className="mt-1 text-xs text-slate-500">
+                      Deductions: PT ₹{ptMonthly.toLocaleString("en-IN")}
+                      {calcPfEmp > 0 && ` · PF ₹${calcPfEmp.toLocaleString("en-IN")}`}
+                      {calcEsicEmp > 0 && ` · ESIC ₹${calcEsicEmp.toLocaleString("en-IN")}`}
+                    </p>
+                  )}
                 </div>
-                <div className="md:col-span-1 flex items-end gap-4 pb-2">
-                  <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
-                    <input
-                      type="checkbox"
-                      checked={pfEligible}
-                      onChange={(e) => setPfEligible(e.target.checked)}
-                    />
-                    PF eligible
-                  </label>
-                  <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
-                    <input
-                      type="checkbox"
-                      checked={esicEligible}
-                      onChange={(e) => setEsicEligible(e.target.checked)}
-                    />
-                    ESIC eligible
-                  </label>
+                <div className="md:col-span-1 flex flex-col justify-end gap-1 pb-2">
+                  <div className="flex flex-wrap items-center gap-4">
+                    <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={pfEligible}
+                        onChange={(e) => setPfEligible(e.target.checked)}
+                      />
+                      PF eligible
+                    </label>
+                    <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={esicEligible}
+                        onChange={(e) => setEsicEligible(e.target.checked)}
+                      />
+                      ESIC eligible
+                    </label>
+                  </div>
+                  <p className="text-xs text-slate-500">
+                    When you change gross, these update to match thresholds: PF when wage (gross − HRA) ≤ ₹15k; ESIC when gross ≤ ₹21k.
+                  </p>
                 </div>
                 <div className="md:col-span-1">
                   <label className="mb-1 block text-sm font-medium text-slate-700">Role</label>
@@ -703,16 +768,34 @@ export default function EmployeesPage() {
                 </div>
 
                 <div className="md:col-span-1">
-                  <label className="mb-1 block text-sm font-medium text-slate-700">Phone</label>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    Phone <span className="text-red-500">*</span>
+                  </label>
                   <input
-                    type="tel"
+                    type="text"
                     inputMode="numeric"
                     maxLength={10}
+                    autoComplete="tel"
                     value={phone}
-                    onChange={(e) => setPhone(e.target.value.replace(/\D/g, "").slice(0, 10))}
-                    placeholder="10 digits only"
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    onChange={(e) => {
+                      const d = e.target.value.replace(/\D/g, "").slice(0, 10);
+                      setPhone(d);
+                      if (d.length === 10) setPhoneError(validateIndianMobileDigits(d));
+                      else setPhoneError(null);
+                    }}
+                    onBlur={() => setPhoneError(validateIndianMobileInteractive(normalizeDigits(phone)))}
+                    placeholder="10-digit mobile (starts 6–9)"
+                    aria-invalid={Boolean(phoneError)}
+                    className={`w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-1 ${
+                      phoneError
+                        ? "border-red-500 focus:border-red-500 focus:ring-red-500"
+                        : "border-slate-300 focus:border-emerald-500 focus:ring-emerald-500"
+                    }`}
                   />
+                  {phoneError && <p className="mt-1 text-xs text-red-600">{phoneError}</p>}
+                  {!phoneError && phone.length > 0 && phone.length < 10 && (
+                    <p className="mt-1 text-xs text-slate-500">{phone.length}/10 digits</p>
+                  )}
                 </div>
                 <div className="md:col-span-1">
                   <label className="mb-1 block text-sm font-medium text-slate-700">Gender</label>
@@ -729,12 +812,7 @@ export default function EmployeesPage() {
                 </div>
                 <div className="md:col-span-1">
                   <label className="mb-1 block text-sm font-medium text-slate-700">Date of joining</label>
-                  <input
-                    type="date"
-                    value={dateOfJoining}
-                    onChange={(e) => setDateOfJoining(e.target.value)}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                  />
+                  <DatePickerField value={dateOfJoining} onChange={setDateOfJoining} className="w-full" />
                 </div>
                 <div className="md:col-span-1">
                   <label className="mb-1 block text-sm font-medium text-slate-700">Designation <span className="text-red-500">*</span></label>
@@ -814,40 +892,73 @@ export default function EmployeesPage() {
                   </select>
                 </div>
                 <div className="md:col-span-1">
-                  <label className="mb-1 block text-sm font-medium text-slate-700">Aadhaar</label>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    Aadhaar <span className="text-red-500">*</span>
+                  </label>
                   <input
                     type="text"
+                    inputMode="numeric"
+                    maxLength={12}
                     value={aadhaar}
-                    onChange={(e) => setAadhaar(e.target.value)}
-                    placeholder="12-digit"
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    onChange={(e) => {
+                      const d = e.target.value.replace(/\D/g, "").slice(0, 12);
+                      setAadhaar(d);
+                      if (d.length === 12) setAadhaarError(validateAadhaarDigits(d));
+                      else setAadhaarError(null);
+                    }}
+                    onBlur={() => setAadhaarError(validateAadhaarInteractive(normalizeDigits(aadhaar)))}
+                    placeholder="12 digits"
+                    aria-invalid={Boolean(aadhaarError)}
+                    className={`w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-1 ${
+                      aadhaarError
+                        ? "border-red-500 focus:border-red-500 focus:ring-red-500"
+                        : "border-slate-300 focus:border-emerald-500 focus:ring-emerald-500"
+                    }`}
                   />
+                  {aadhaarError && <p className="mt-1 text-xs text-red-600">{aadhaarError}</p>}
+                  {!aadhaarError && aadhaar.length > 0 && aadhaar.length < 12 && (
+                    <p className="mt-1 text-xs text-slate-500">{aadhaar.length}/12 digits</p>
+                  )}
                 </div>
                 <div className="md:col-span-1">
-                  <label className="mb-1 block text-sm font-medium text-slate-700">PAN</label>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    PAN <span className="text-red-500">*</span>
+                  </label>
                   <input
                     type="text"
+                    required
+                    maxLength={10}
                     value={pan}
-                    onChange={(e) => setPan(e.target.value)}
-                    placeholder="e.g. ABCD1234E"
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    onChange={(e) => {
+                      setPan(normalizePanInput(e.target.value));
+                      setPanError(null);
+                    }}
+                    placeholder="e.g. ABCDE1234F"
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm uppercase focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                   />
+                  {panError && <p className="mt-1 text-xs text-red-600">{panError}</p>}
                 </div>
                 <div className="md:col-span-1">
-                  <label className="mb-1 block text-sm font-medium text-slate-700">UAN</label>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    UAN <span className="text-slate-400 font-normal">(optional)</span>
+                  </label>
                   <input
                     type="text"
                     value={uanNumber}
                     onChange={(e) => setUanNumber(e.target.value)}
+                    placeholder="If already allotted"
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                   />
                 </div>
                 <div className="md:col-span-1">
-                  <label className="mb-1 block text-sm font-medium text-slate-700">PF number</label>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    PF number <span className="text-slate-400 font-normal">(optional)</span>
+                  </label>
                   <input
                     type="text"
                     value={pfNumber}
                     onChange={(e) => setPfNumber(e.target.value)}
+                    placeholder="If already allotted"
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                   />
                 </div>
@@ -1399,12 +1510,7 @@ export default function EmployeesPage() {
                 <label className="mb-1 block text-sm font-medium text-slate-700">
                   {convertConfirmStatus === "current" ? "Date of joining" : "Last working date"}
                 </label>
-                <input
-                  type="date"
-                  value={convertDate}
-                  onChange={(e) => setConvertDate(e.target.value)}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                />
+                <DatePickerField value={convertDate} onChange={setConvertDate} required className="w-full" />
               </div>
 
               <div className="flex justify-end gap-2">

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { ToastProvider, useToast } from "@/components/ToastProvider";
+import { DatePickerField } from "@/components/ui/DatePickerField";
 
 type Doc = {
   id: string;
@@ -493,13 +494,7 @@ function InvitePageInner() {
           </div>
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700">Date of birth</label>
-            <input
-              type="date"
-              required
-              value={dateOfBirth}
-              onChange={(e) => setDateOfBirth(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-            />
+            <DatePickerField value={dateOfBirth} onChange={setDateOfBirth} required className="w-full" />
           </div>
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700">Aadhaar</label>
