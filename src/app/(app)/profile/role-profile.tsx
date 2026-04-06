@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
 import { useEffect, useMemo, useState, useRef, FormEvent } from "react";
 import { DatePickerField } from "@/components/ui/DatePickerField";
+import { PasswordField } from "@/components/PasswordField";
 
 export function ProfileContent() {
   const { role } = useAuth();
@@ -850,36 +851,24 @@ export function ProfileContent() {
           {passwordError && <p className="text-sm text-red-600">{passwordError}</p>}
           {passwordSuccess && <p className="text-sm text-emerald-700">{passwordSuccess}</p>}
           <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Current password</label>
-              <input
-                type="password"
-                autoComplete="current-password"
-                value={currentPassword}
-                onChange={(e) => setCurrentPassword(e.target.value)}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">New password</label>
-              <input
-                type="password"
-                autoComplete="new-password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Confirm new password</label>
-              <input
-                type="password"
-                autoComplete="new-password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-              />
-            </div>
+            <PasswordField
+              label="Current password"
+              autoComplete="current-password"
+              value={currentPassword}
+              onChange={setCurrentPassword}
+            />
+            <PasswordField
+              label="New password"
+              autoComplete="new-password"
+              value={newPassword}
+              onChange={setNewPassword}
+            />
+            <PasswordField
+              label="Confirm new password"
+              autoComplete="new-password"
+              value={confirmPassword}
+              onChange={setConfirmPassword}
+            />
           </div>
         </form>
         </>

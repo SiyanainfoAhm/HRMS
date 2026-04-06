@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { ToastProvider, useToast } from "@/components/ToastProvider";
 import { DatePickerField } from "@/components/ui/DatePickerField";
+import { PasswordField } from "@/components/PasswordField";
 
 type Doc = {
   id: string;
@@ -681,13 +682,13 @@ function InvitePageInner() {
             <p className="text-sm text-slate-500 mt-1">Set your password and complete onboarding.</p>
             <div className="mt-3 flex flex-col gap-3 md:flex-row md:items-end">
               <div className="flex-1">
-                <label className="mb-1 block text-sm font-medium text-slate-700">Password</label>
-                <input
-                  type="password"
+                <PasswordField
+                  label="Password"
                   required
+                  minLength={8}
+                  autoComplete="new-password"
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  onChange={setPassword}
                   placeholder="Minimum 8 characters"
                 />
               </div>
