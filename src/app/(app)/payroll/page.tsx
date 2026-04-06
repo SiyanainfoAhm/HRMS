@@ -151,7 +151,6 @@ function PayrollPageContent() {
   const tab = params.get("tab") || "master";
 
   const canManage = role === "super_admin" || role === "admin" || role === "hr";
-  const isSuperAdmin = role === "super_admin";
 
   const [masters, setMasters] = useState<any[]>([]);
   const [mastersLoading, setMastersLoading] = useState(false);
@@ -630,7 +629,7 @@ function PayrollPageContent() {
     setMasterGrid((prev) => prev.map((r) => (r.employeeUserId === employeeUserId ? rebuilt : r)));
   }
 
-  /** Opens the same modal as the non–super-admin “Edit” action; `fields` can come from API or current grid row (includes unsaved inline edits). */
+  /** Opens the salary breakup modal; `fields` can come from API or current grid row (includes unsaved inline edits). */
   function openPayrollMasterEditDialog(
     employeeUserId: string,
     employeeName: string | null,
@@ -885,7 +884,7 @@ function PayrollPageContent() {
               <SkeletonTable rows={6} columns={12} />
             ) : masters.length === 0 ? (
               <p className="muted">No current employees with payroll master.</p>
-            ) : isSuperAdmin ? (
+            ) : (
               <div className="overflow-x-auto rounded-lg border border-slate-800/30 shadow-sm">
                 <table className="w-full min-w-[1090px] border-collapse text-left text-sm">
                   <thead>
@@ -1137,117 +1136,6 @@ function PayrollPageContent() {
                   </tbody>
                 </table>
 
-              </div>
-            ) : (
-              <div className="overflow-x-auto rounded-lg border border-slate-200">
-                <table className="w-full min-w-[960px] text-left text-sm">
-                  <thead className="bg-slate-50 text-slate-600">
-                    <tr>
-                      <th className="px-3 py-2">Employee</th>
-                      <th className="min-w-[6.5rem] px-3 py-2 text-right">Gross</th>
-                      <th className="px-3 py-2 text-right">CTC</th>
-                      <th className="px-3 py-2 text-right">Emp PF</th>
-                      <th className="px-3 py-2 text-right">Emp ESIC</th>
-                      <th className="px-3 py-2 text-right">Er PF</th>
-                      <th className="px-3 py-2 text-right">Er ESIC</th>
-                      <th className="px-3 py-2 text-right">Adv bonus</th>
-                      <th className="px-3 py-2 text-right">PT</th>
-                      <th className="px-3 py-2 text-right">TDS</th>
-                      <th className="px-3 py-2 text-right">Take home</th>
-                      <th className="px-3 py-2">PF / ESIC</th>
-                      <th className="px-3 py-2">Applicable</th>
-                      <th className="px-3 py-2">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {masters.map((row) => (
-                      <tr key={row.employeeUserId} className="border-t border-slate-200">
-                        <td className="px-3 py-2">{row.employeeName || row.employeeEmail || "—"}</td>
-                        <td className="px-3 py-2 text-right tabular-nums">
-                          {row.master ? `₹${Number(row.master.grossSalary).toLocaleString("en-IN")}` : "—"}
-                        </td>
-                        <td className="px-3 py-2 text-right tabular-nums">
-                          {row.master ? `₹${Number(row.master.ctc).toLocaleString("en-IN")}` : "—"}
-                        </td>
-                        <td className="px-3 py-2 text-right tabular-nums">
-                          {row.master ? `₹${Number(row.master.pfEmployee ?? 0).toLocaleString("en-IN")}` : "—"}
-                        </td>
-                        <td className="px-3 py-2 text-right tabular-nums">
-                          {row.master ? `₹${Number(row.master.esicEmployee ?? 0).toLocaleString("en-IN")}` : "—"}
-                        </td>
-                        <td className="px-3 py-2 text-right tabular-nums">
-                          {row.master ? `₹${Number(row.master.pfEmployer ?? 0).toLocaleString("en-IN")}` : "—"}
-                        </td>
-                        <td className="px-3 py-2 text-right tabular-nums">
-                          {row.master ? `₹${Number(row.master.esicEmployer ?? 0).toLocaleString("en-IN")}` : "—"}
-                        </td>
-                        <td className="px-3 py-2 text-right tabular-nums">
-                          {row.master ? `₹${Number(row.master.advanceBonus ?? 0).toLocaleString("en-IN")}` : "—"}
-                        </td>
-                        <td className="px-3 py-2 text-right tabular-nums">
-                          {row.master
-                            ? `₹${Number(row.master.pt != null ? row.master.pt : companyPt).toLocaleString("en-IN")}`
-                            : "—"}
-                        </td>
-                        <td className="px-3 py-2 text-right tabular-nums">
-                          {row.master ? `₹${Number(row.master.tds ?? 0).toLocaleString("en-IN")}` : "—"}
-                        </td>
-                        <td className="px-3 py-2 text-right tabular-nums">
-                          {row.master ? `₹${Number(row.master.takeHome).toLocaleString("en-IN")}` : "—"}
-                        </td>
-                        <td className="px-3 py-2 text-xs">
-                          {row.master ? (
-                            <>
-                              PF {row.master.pfEligible ? "Y" : "N"} · ESIC {row.master.esicEligible ? "Y" : "N"}
-                            </>
-                          ) : (
-                            "—"
-                          )}
-                        </td>
-                        <td className="px-3 py-2">{row.master?.effectiveStartDate || "—"}</td>
-                        <td className="px-3 py-2">
-                          {row.master ? (
-                            <button
-                              type="button"
-                              className="btn btn-outline !py-1 !text-xs"
-                              onClick={() => {
-                                const gross = Number(row.master.grossSalary) || 0;
-                                const b = Number(row.master.basic) || 0;
-                                const h = Number(row.master.hra) || 0;
-                                const med = Number(row.master.medical) || 0;
-                                const tr = Number(row.master.trans) || 0;
-                                const lt = Number(row.master.lta) || 0;
-                                const per = Number(row.master.personal) || 0;
-                                const mpt = row.master.pt;
-                                openPayrollMasterEditDialog(row.employeeUserId, row.employeeName, row.employeeEmail, {
-                                  gross,
-                                  basic: b,
-                                  hra: h,
-                                  medical: med,
-                                  trans: tr,
-                                  lta: lt,
-                                  personal: per,
-                                  pfEligible: !!row.master.pfEligible,
-                                  esicEligible: !!row.master.esicEligible,
-                                  effectiveStartDate: row.master.effectiveStartDate
-                                    ? String(row.master.effectiveStartDate).slice(0, 10)
-                                    : "",
-                                  pt: mpt != null && Number(mpt) >= 0 ? Number(mpt) : companyPt,
-                                  tds: Number(row.master.tds) || 0,
-                                  advanceBonus: Number(row.master.advanceBonus) || 0,
-                                });
-                              }}
-                            >
-                              Edit
-                            </button>
-                          ) : (
-                            "—"
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
               </div>
             )}
           </div>

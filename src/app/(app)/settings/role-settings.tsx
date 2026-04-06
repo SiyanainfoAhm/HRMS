@@ -470,6 +470,7 @@ export function SettingsContent() {
   }, [isCompanyDialogOpen]);
 
   function openCompanyDialog() {
+    if (!isSuperAdmin) return;
     setFormError(null);
     const commonIndustries = [
       "IT / Software",
@@ -505,6 +506,7 @@ export function SettingsContent() {
 
   async function saveCompany(e: FormEvent) {
     e.preventDefault();
+    if (!isSuperAdmin) return;
     setSaving(true);
     setFormError(null);
     try {
@@ -535,7 +537,8 @@ export function SettingsContent() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Settings</h1>
         <p className="muted">
-          Company configuration is primarily for Super Admin, Admin and HR users.
+          Company profile (name, address, professional tax, logo) can be changed by Super Admin only. Shifts, org structure,
+          roles, and designations can be managed by Admin and HR.
         </p>
       </div>
 
@@ -588,7 +591,7 @@ export function SettingsContent() {
                   <h2 className="mb-1 text-lg font-semibold text-slate-900">Company profile</h2>
                   <p className="muted">Update company name, address, industry and contact details.</p>
                 </div>
-                {canManage && (
+                {isSuperAdmin && (
                   <button type="button" className="btn btn-primary" onClick={openCompanyDialog} disabled={loading}>
                     Edit
                   </button>

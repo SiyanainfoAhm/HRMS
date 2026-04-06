@@ -3,8 +3,9 @@ import { cookies } from "next/headers";
 import { COOKIE_NAME, getSessionFromCookie } from "@/lib/auth";
 import { supabase } from "@/lib/supabaseClient";
 
-function canManage(role: string): boolean {
-  return role === "super_admin" || role === "admin" || role === "hr";
+/** Company profile (PUT) is Super Admin only; Admin/HR use other settings APIs. */
+function canEditCompanyProfile(role: string): boolean {
+  return role === "super_admin";
 }
 
 export async function GET() {
@@ -29,7 +30,9 @@ export async function PUT(request: NextRequest) {
   const cookieStore = await cookies();
   const session = getSessionFromCookie(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!canManage(session.role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!canEditCompanyProfile(session.role)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const body = await request.json().catch(() => ({}));
   const payload: Record<string, any> = {
