@@ -16,7 +16,24 @@ function diffDaysInclusive(start: string, end: string): number {
   return Math.floor((e - s) / (24 * 60 * 60 * 1000)) + 1;
 }
 
-export async function GET() {
+function mapLeaveRow(r: any) {
+  return {
+    id: r.id as string,
+    leaveTypeId: r.leave_type_id as string,
+    leaveTypeName: r.HRMS_leave_types?.name ?? "",
+    startDate: String(r.start_date),
+    endDate: String(r.end_date),
+    totalDays: r.total_days,
+    reason: r.reason as string | null,
+    status: r.status as string,
+    createdAt: new Date(r.created_at).toISOString(),
+    approvedAt: r.approved_at ? new Date(r.approved_at).toISOString() : null,
+    rejectedAt: r.rejected_at ? new Date(r.rejected_at).toISOString() : null,
+    rejectionReason: r.rejection_reason as string | null,
+  };
+}
+
+export async function GET(request: NextRequest) {
   const cookieStore = await cookies();
   const session = await getValidatedSession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -27,11 +44,17 @@ export async function GET() {
     .eq("id", session.id)
     .maybeSingle();
   if (meErr) return NextResponse.json({ error: meErr.message }, { status: 400 });
-  if (!me?.company_id) return NextResponse.json({ requests: [] });
+  if (!me?.company_id) return NextResponse.json({ requests: [], total: 0 });
+
+  const { searchParams } = new URL(request.url);
+  const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10) || 1);
+  const rawSize = parseInt(searchParams.get("pageSize") || "0", 10);
+  const paginated = rawSize > 0;
+  const pageSize = Math.min(100, Math.max(1, rawSize));
 
   let query = supabase
     .from("HRMS_leave_requests")
-    .select("*, HRMS_leave_types(name)")
+    .select("*, HRMS_leave_types(name)", paginated ? { count: "exact" } : {})
     .eq("company_id", me.company_id)
     .order("created_at", { ascending: false });
 
@@ -39,24 +62,24 @@ export async function GET() {
     query = query.eq("employee_user_id", session.id);
   }
 
+  if (paginated) {
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+    const { data, error, count } = await query.range(from, to);
+    if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+    return NextResponse.json({
+      requests: (data ?? []).map(mapLeaveRow),
+      total: count ?? 0,
+      page,
+      pageSize,
+    });
+  }
+
   const { data, error } = await query;
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
 
   return NextResponse.json({
-    requests: (data ?? []).map((r: any) => ({
-      id: r.id as string,
-      leaveTypeId: r.leave_type_id as string,
-      leaveTypeName: r.HRMS_leave_types?.name ?? "",
-      startDate: String(r.start_date),
-      endDate: String(r.end_date),
-      totalDays: r.total_days,
-      reason: r.reason as string | null,
-      status: r.status as string,
-      createdAt: new Date(r.created_at).toISOString(),
-      approvedAt: r.approved_at ? new Date(r.approved_at).toISOString() : null,
-      rejectedAt: r.rejected_at ? new Date(r.rejected_at).toISOString() : null,
-      rejectionReason: r.rejection_reason as string | null,
-    })),
+    requests: (data ?? []).map(mapLeaveRow),
   });
 }
 

@@ -390,7 +390,7 @@ export function ProfileContent() {
 
     <section className="space-y-4">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Profile</h1>
+        <h1 className="page-title">Profile</h1>
         <p className="muted">
           {isSuperAdmin
             ? "You are the master admin. Manage companies and edit company details—employee fields do not apply to you."
@@ -398,7 +398,7 @@ export function ProfileContent() {
         </p>
       </div>
 
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <Link
           href="/profile?tab=profile"
           className={`btn ${tab === "profile" ? "btn-primary" : "btn-outline"}`}

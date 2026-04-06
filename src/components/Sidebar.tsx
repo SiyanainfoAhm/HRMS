@@ -117,11 +117,16 @@ export function Sidebar({
   companyBranding,
   collapsed,
   onToggle,
+  mobileOpen = false,
+  onMobileClose,
 }: {
   user: SessionUser;
   companyBranding: CompanyBranding | null;
   collapsed: boolean;
   onToggle: () => void;
+  /** When false on small screens, drawer is off-screen */
+  mobileOpen?: boolean;
+  onMobileClose?: () => void;
 }) {
   const pathname = usePathname();
   const { role } = useAuth();
@@ -161,9 +166,17 @@ export function Sidebar({
     router.refresh();
   }
 
+  const closeMobile = () => onMobileClose?.();
+
   return (
-    <aside className={`${collapsed ? "w-[72px]" : "w-64"} shrink-0 border-r border-slate-200 bg-white`}>
-      <div className="flex h-full flex-col p-3">
+    <aside
+      className={`flex h-full shrink-0 flex-col border-r border-slate-200 bg-white transition-transform duration-200 ease-out md:relative md:z-auto md:translate-x-0 ${
+        collapsed ? "md:w-[72px]" : "md:w-64"
+      } fixed inset-y-0 left-0 z-50 w-[min(18rem,calc(100vw-2rem))] max-w-[90vw] ${
+        mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
+      }`}
+    >
+      <div className="flex h-full flex-col overflow-y-auto overflow-x-hidden p-3">
         <div
           className={`mb-3 flex px-1 ${collapsed ? "flex-col items-center gap-2" : "items-center justify-between gap-2"}`}
         >
@@ -171,6 +184,7 @@ export function Sidebar({
             href="/dashboard"
             title={collapsed ? `${brandName} — Dashboard` : "Dashboard"}
             aria-label={`${brandName} — Dashboard`}
+            onClick={closeMobile}
             className={`flex items-center rounded-xl text-slate-700 transition-colors hover:bg-slate-100 ${
               collapsed ? "justify-center p-0.5" : "min-w-0 flex-1 gap-3 p-1"
             }`}
@@ -203,7 +217,7 @@ export function Sidebar({
           {!collapsed ? (
             <button
               type="button"
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+              className="hidden h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 md:flex"
               onClick={onToggle}
               aria-label="Collapse sidebar"
               title="Collapse"
@@ -213,7 +227,7 @@ export function Sidebar({
           ) : (
             <button
               type="button"
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+              className="hidden h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 md:flex"
               onClick={onToggle}
               aria-label="Expand sidebar"
               title="Expand"
@@ -231,7 +245,8 @@ export function Sidebar({
                 key={item.href}
                 href={item.href}
                 title={collapsed ? item.label : undefined}
-                className={`flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-colors ${
+                onClick={closeMobile}
+                className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors md:py-2 ${
                   isActive
                     ? "bg-emerald-50 text-emerald-800"
                     : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"

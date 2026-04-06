@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { type NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { COOKIE_NAME } from "@/lib/auth";
 import { getValidatedSession } from "@/lib/authValidate";
@@ -8,7 +8,10 @@ function isApproverRole(role: string): boolean {
   return role === "super_admin" || role === "admin" || role === "hr";
 }
 
-export async function GET() {
+const REIMB_SELECT =
+  "id, company_id, employee_id, employee_user_id, department_id, category, amount, currency, claim_date, description, attachment_url, status, approver_id, approver_user_id, approved_at, rejected_at, paid_at, payroll_year, payroll_month, rejection_reason, included_in_payroll_period_id, created_at";
+
+export async function GET(request: NextRequest) {
   const cookieStore = await cookies();
   const session = await getValidatedSession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -19,13 +22,17 @@ export async function GET() {
     .eq("id", session.id)
     .maybeSingle();
   if (meErr) return NextResponse.json({ error: meErr.message }, { status: 400 });
-  if (!me?.company_id) return NextResponse.json({ claims: [] });
+  if (!me?.company_id) return NextResponse.json({ claims: [], total: 0 });
+
+  const { searchParams } = new URL(request.url);
+  const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10) || 1);
+  const rawSize = parseInt(searchParams.get("pageSize") || "0", 10);
+  const paginated = rawSize > 0;
+  const pageSize = Math.min(100, Math.max(1, rawSize));
 
   let q = supabase
     .from("HRMS_reimbursements")
-    .select(
-      "id, company_id, employee_id, employee_user_id, department_id, category, amount, currency, claim_date, description, attachment_url, status, approver_id, approver_user_id, approved_at, rejected_at, paid_at, payroll_year, payroll_month, rejection_reason, included_in_payroll_period_id, created_at"
-    )
+    .select(REIMB_SELECT, paginated ? { count: "exact" } : {})
     .eq("company_id", me.company_id)
     .order("created_at", { ascending: false });
 
@@ -33,7 +40,9 @@ export async function GET() {
     q = q.eq("employee_user_id", session.id);
   }
 
-  const { data: rows, error } = await q;
+  const { data: rows, error, count } = paginated
+    ? await q.range((page - 1) * pageSize, (page - 1) * pageSize + pageSize - 1)
+    : await q;
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
 
   const userIds = new Set<string>();
@@ -60,6 +69,9 @@ export async function GET() {
     approverEmail: r.approver_user_id ? names.get(r.approver_user_id)?.email ?? null : null,
   }));
 
+  if (paginated) {
+    return NextResponse.json({ claims, total: count ?? 0, page, pageSize });
+  }
   return NextResponse.json({ claims });
 }
 

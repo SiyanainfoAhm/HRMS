@@ -2,7 +2,9 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { PaginationBar } from "@/components/PaginationBar";
 import { SkeletonTable } from "@/components/Skeleton";
+import { useResponsivePageSize } from "@/hooks/useResponsivePageSize";
 import { DatePickerField } from "@/components/ui/DatePickerField";
 
 type Holiday = {
@@ -16,7 +18,6 @@ type Holiday = {
 
 const TAB_ALL = "ALL";
 const TAB_EMPTY = "EMPTY";
-
 function formatHolidayDayAndDate(ymd: string): string {
   const raw = String(ymd).slice(0, 10);
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
@@ -61,6 +62,8 @@ export default function HolidaysPage() {
   const [formError, setFormError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<Holiday | null>(null);
+  const [holidayListPage, setHolidayListPage] = useState(1);
+  const holidayPageSize = useResponsivePageSize();
 
   const locationTabs = useMemo(() => {
     const locs = new Set<string>();
@@ -84,6 +87,24 @@ export default function HolidaysPage() {
     else list = holidays.filter((h) => (h.location || "").trim() === activeLocationTab);
     return list.sort((a, b) => String(a.holiday_date).localeCompare(String(b.holiday_date)));
   }, [holidays, activeLocationTab]);
+
+  useEffect(() => {
+    setHolidayListPage(1);
+  }, [activeLocationTab]);
+
+  useEffect(() => {
+    const tp = Math.max(1, Math.ceil(filteredHolidays.length / holidayPageSize));
+    setHolidayListPage((p) => Math.min(p, tp));
+  }, [filteredHolidays.length, holidayPageSize]);
+
+  const pagedHolidays = useMemo(() => {
+    const start = (holidayListPage - 1) * holidayPageSize;
+    return filteredHolidays.slice(start, start + holidayPageSize);
+  }, [filteredHolidays, holidayListPage, holidayPageSize]);
+
+  useEffect(() => {
+    setHolidayListPage(1);
+  }, [holidayPageSize]);
 
   useEffect(() => {
     const keys = new Set(locationTabs.map((t) => t.key));
@@ -236,7 +257,7 @@ export default function HolidaysPage() {
   return (
     <section className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Holidays</h1>
+        <h1 className="page-title">Holidays</h1>
         <p className="muted">
           Company holiday calendar. Use start and end date for multi-day holidays (e.g. Pooja, Diwali). Filter by
           location; each row shows the day of week with dates.
@@ -286,7 +307,7 @@ export default function HolidaysPage() {
             aria-modal="true"
             className="relative z-10 w-full max-w-2xl rounded-xl border border-slate-200 bg-white shadow-xl"
           >
-            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-5 py-4">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">
                   {editingHoliday ? "Edit holiday" : "Add holiday"}
@@ -343,7 +364,7 @@ export default function HolidaysPage() {
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                   />
                 </div>
-                <div className="md:col-span-4 flex items-center justify-between gap-3">
+                <div className="md:col-span-4 flex flex-wrap items-center justify-between gap-3">
                   <label className="flex items-center gap-2 text-sm text-slate-700">
                     <input type="checkbox" checked={isOptional} onChange={(e) => setIsOptional(e.target.checked)} />
                     Optional holiday
@@ -430,51 +451,111 @@ export default function HolidaysPage() {
         ) : filteredHolidays.length === 0 ? (
           <p className="muted">No holidays for this location.</p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead className="text-slate-600">
-                <tr>
-                  <th className="px-3 py-2">Day &amp; date</th>
-                  <th className="px-3 py-2">Name</th>
-                  <th className="px-3 py-2">Location</th>
-                  <th className="px-3 py-2">Optional</th>
-                  {canManage && <th className="px-3 py-2 text-right">Actions</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {filteredHolidays.map((h) => (
-                  <tr key={h.id} className="border-t border-slate-200">
-                    <td className="px-3 py-2 font-medium text-slate-900">{formatHolidayDayDateRange(h)}</td>
-                    <td className="px-3 py-2">{h.name}</td>
-                    <td className="px-3 py-2">{h.location?.trim() ? h.location : "—"}</td>
-                    <td className="px-3 py-2">{h.is_optional ? "Yes" : "No"}</td>
-                    {canManage && (
-                      <td className="px-3 py-2 text-right">
-                        <div className="flex justify-end gap-2">
-                          <button
-                            type="button"
-                            className="btn btn-outline !py-1 !text-xs"
-                            onClick={() => openEditDialog(h)}
-                            disabled={deletingId === h.id}
-                          >
-                            Edit
-                          </button>
-                          <button
-                            type="button"
-                            className="btn btn-outline !border-red-200 !py-1 !text-xs text-red-700 hover:bg-red-50"
-                            onClick={() => setDeleteConfirm(h)}
-                            disabled={deletingId === h.id}
-                          >
-                            {deletingId === h.id ? "Deleting…" : "Delete"}
-                          </button>
-                        </div>
-                      </td>
-                    )}
+          <>
+            {filteredHolidays.length > holidayPageSize && (
+              <div className="mb-4 md:hidden">
+                <PaginationBar
+                  page={holidayListPage}
+                  total={filteredHolidays.length}
+                  pageSize={holidayPageSize}
+                  onPageChange={setHolidayListPage}
+                />
+              </div>
+            )}
+            <div className="hidden overflow-x-auto md:block">
+              <table className="w-full text-left text-sm">
+                <thead className="text-slate-600">
+                  <tr>
+                    <th className="px-3 py-2">Day &amp; date</th>
+                    <th className="px-3 py-2">Name</th>
+                    <th className="px-3 py-2">Location</th>
+                    <th className="px-3 py-2">Optional</th>
+                    {canManage && <th className="px-3 py-2 text-right">Actions</th>}
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {pagedHolidays.map((h) => (
+                    <tr key={h.id} className="border-t border-slate-200">
+                      <td className="px-3 py-2 font-medium text-slate-900">{formatHolidayDayDateRange(h)}</td>
+                      <td className="px-3 py-2">{h.name}</td>
+                      <td className="px-3 py-2">{h.location?.trim() ? h.location : "—"}</td>
+                      <td className="px-3 py-2">{h.is_optional ? "Yes" : "No"}</td>
+                      {canManage && (
+                        <td className="px-3 py-2 text-right">
+                          <div className="flex justify-end gap-2">
+                            <button
+                              type="button"
+                              className="btn btn-outline !py-1 !text-xs"
+                              onClick={() => openEditDialog(h)}
+                              disabled={deletingId === h.id}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-outline !border-red-200 !py-1 !text-xs text-red-700 hover:bg-red-50"
+                              onClick={() => setDeleteConfirm(h)}
+                              disabled={deletingId === h.id}
+                            >
+                              {deletingId === h.id ? "Deleting…" : "Delete"}
+                            </button>
+                          </div>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="space-y-3 md:hidden">
+              {pagedHolidays.map((h) => (
+                <div key={h.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <p className="font-semibold text-slate-900">{h.name}</p>
+                  <p className="mt-1 text-sm text-slate-700">{formatHolidayDayDateRange(h)}</p>
+                  <dl className="mt-3 space-y-1 text-sm">
+                    <div className="flex justify-between gap-2">
+                      <dt className="text-slate-500">Location</dt>
+                      <dd>{h.location?.trim() ? h.location : "—"}</dd>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <dt className="text-slate-500">Optional</dt>
+                      <dd>{h.is_optional ? "Yes" : "No"}</dd>
+                    </div>
+                  </dl>
+                  {canManage && (
+                    <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-100 pt-3">
+                      <button
+                        type="button"
+                        className="btn btn-outline text-xs"
+                        onClick={() => openEditDialog(h)}
+                        disabled={deletingId === h.id}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-outline text-xs !border-red-200 text-red-700 hover:bg-red-50"
+                        onClick={() => setDeleteConfirm(h)}
+                        disabled={deletingId === h.id}
+                      >
+                        {deletingId === h.id ? "Deleting…" : "Delete"}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+            {filteredHolidays.length > holidayPageSize && (
+              <div className="mt-4 hidden border-t border-slate-200 pt-4 md:block">
+                <PaginationBar
+                  page={holidayListPage}
+                  total={filteredHolidays.length}
+                  pageSize={holidayPageSize}
+                  onPageChange={setHolidayListPage}
+                />
+              </div>
+            )}
+          </>
         )}
       </div>
     </section>

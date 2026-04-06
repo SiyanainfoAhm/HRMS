@@ -535,7 +535,7 @@ export function SettingsContent() {
   return (
     <section className="space-y-4">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Settings</h1>
+        <h1 className="page-title">Settings</h1>
         <p className="muted">
           Company profile (name, address, professional tax, logo) can be changed by Super Admin only. Shifts, org structure,
           roles, and designations can be managed by Admin and HR.
@@ -1171,7 +1171,7 @@ export function SettingsContent() {
             aria-modal="true"
             className="relative z-10 w-full max-w-3xl rounded-xl border border-slate-200 bg-white shadow-xl"
           >
-            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-5 py-4">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">Company profile</h2>
                 <p className="text-sm text-slate-500">Update your company details.</p>
@@ -1330,7 +1330,7 @@ export function SettingsContent() {
                   <p className="mt-1 text-xs text-slate-500">Fixed per month, not prorated.</p>
                 </div>
 
-                <div className="md:col-span-3 flex items-center justify-between">
+                <div className="md:col-span-3 flex flex-wrap items-center justify-between gap-2">
                   {formError && <p className="text-sm text-red-600">{formError}</p>}
                   <div className="flex gap-2">
                     <button type="button" className="btn btn-outline" onClick={() => setIsCompanyDialogOpen(false)} disabled={saving}>
@@ -1376,7 +1376,7 @@ export function SettingsContent() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <button type="button" className="absolute inset-0 bg-black/40" onClick={() => setIsShiftsDialogOpen(false)} />
           <div className="relative z-10 w-full max-w-4xl rounded-xl border border-slate-200 bg-white shadow-xl">
-            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-5 py-4">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">Shift management</h2>
                 <p className="text-sm text-slate-500">Add and edit shifts for this company.</p>
@@ -1468,7 +1468,7 @@ export function SettingsContent() {
                     </select>
                   </div>
                 </div>
-                <div className="md:col-span-4 flex items-center justify-between">
+                <div className="md:col-span-4 flex flex-wrap items-center justify-between gap-2">
                   <label className="flex items-center gap-2 text-sm text-slate-700">
                     <input
                       type="checkbox"
@@ -1511,7 +1511,7 @@ export function SettingsContent() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <button type="button" className="absolute inset-0 bg-black/40" onClick={() => setIsOrgDialogOpen(false)} />
           <div className="relative z-10 w-full max-w-5xl rounded-xl border border-slate-200 bg-white shadow-xl">
-            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-5 py-4">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">Divisions & Departments</h2>
                 <p className="text-sm text-slate-500">
@@ -1526,7 +1526,7 @@ export function SettingsContent() {
               {moduleError && <p className="text-sm text-red-600">{moduleError}</p>}
               {orgDialogMode === "division" ? (
                 <form onSubmit={saveDivision} className="card space-y-3">
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <h3 className="text-sm font-semibold text-slate-900">{divisionForm.id ? "Edit division" : "Add division"}</h3>
                     <button type="button" className="btn btn-outline" onClick={() => setIsOrgDialogOpen(false)} disabled={moduleSaving}>
                       Cancel
@@ -1553,7 +1553,7 @@ export function SettingsContent() {
                 </form>
               ) : (
                 <form onSubmit={saveDepartment} className="card space-y-3">
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <h3 className="text-sm font-semibold text-slate-900">{departmentForm.id ? "Edit department" : "Add department"}</h3>
                     <button type="button" className="btn btn-outline" onClick={() => setIsOrgDialogOpen(false)} disabled={moduleSaving}>
                       Cancel
@@ -1600,7 +1600,7 @@ export function SettingsContent() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <button type="button" className="absolute inset-0 bg-black/40" onClick={() => setIsDesignationsDialogOpen(false)} />
           <div className="relative z-10 w-full max-w-4xl rounded-xl border border-slate-200 bg-white shadow-xl">
-            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-5 py-4">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">Designations</h2>
                 <p className="text-sm text-slate-500">Add and edit designations for this company.</p>
@@ -1654,7 +1654,7 @@ export function SettingsContent() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <button type="button" className="absolute inset-0 bg-black/40" onClick={() => setIsRolesDialogOpen(false)} />
           <div className="relative z-10 w-full max-w-4xl rounded-xl border border-slate-200 bg-white shadow-xl">
-            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-5 py-4">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">Role management</h2>
                 <p className="text-sm text-slate-500">Add and edit roles for this company.</p>

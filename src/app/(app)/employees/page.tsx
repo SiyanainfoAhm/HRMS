@@ -2,7 +2,9 @@
 
 import { useEffect, useState, FormEvent } from "react";
 import { useToast } from "@/components/ToastProvider";
+import { PaginationBar } from "@/components/PaginationBar";
 import { SkeletonTable } from "@/components/Skeleton";
+import { useResponsivePageSize } from "@/hooks/useResponsivePageSize";
 import { DatePickerField } from "@/components/ui/DatePickerField";
 import { useAuth } from "@/contexts/AuthContext";
 import {
@@ -48,7 +50,7 @@ export default function EmployeesPage() {
   const [employeePage, setEmployeePage] = useState(1);
   const [employeeTotal, setEmployeeTotal] = useState(0);
   const [listRefresh, setListRefresh] = useState(0);
-  const PAGE_SIZE = 25;
+  const pageSize = useResponsivePageSize();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -149,7 +151,7 @@ export default function EmployeesPage() {
       try {
         const params = new URLSearchParams({
           page: String(employeePage),
-          pageSize: String(PAGE_SIZE),
+          pageSize: String(pageSize),
           employmentStatus: activeTab,
         });
         const res = await fetch(`/api/employees?${params}`);
@@ -159,7 +161,7 @@ export default function EmployeesPage() {
           const total = typeof data.total === "number" ? data.total : 0;
           const rows = data.employees ?? [];
           if (rows.length === 0 && total > 0 && employeePage > 1) {
-            setEmployeePage(Math.max(1, Math.ceil(total / PAGE_SIZE)));
+            setEmployeePage(Math.max(1, Math.ceil(total / pageSize)));
           } else {
             setEmployees(rows);
             setEmployeeTotal(total);
@@ -174,7 +176,11 @@ export default function EmployeesPage() {
     return () => {
       cancelled = true;
     };
-  }, [employeePage, activeTab, listRefresh]);
+  }, [employeePage, activeTab, listRefresh, pageSize]);
+
+  useEffect(() => {
+    setEmployeePage(1);
+  }, [pageSize]);
 
   useEffect(() => {
     let cancelled = false;
@@ -527,7 +533,7 @@ export default function EmployeesPage() {
   return (
     <section className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Employees</h1>
+        <h1 className="page-title">Employees</h1>
         <p className="muted">Manage employees for your company.</p>
       </div>
 
@@ -660,7 +666,7 @@ export default function EmployeesPage() {
             aria-modal="true"
             className="relative z-10 flex w-full max-w-6xl max-h-[95vh] flex-col rounded-xl border border-slate-200 bg-white shadow-xl"
           >
-            <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-5 py-4">
+            <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-5 py-4">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">Add employee</h2>
                 <p className="text-sm text-slate-500">Create an employee in your company directory.</p>
@@ -1095,7 +1101,7 @@ export default function EmployeesPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <button type="button" className="absolute inset-0 bg-black/40" aria-label="Close dialog" onClick={() => setDocsDialogOpen(false)} />
           <div role="dialog" aria-modal="true" className="relative z-10 w-full max-w-4xl rounded-xl border border-slate-200 bg-white shadow-xl">
-            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-5 py-4">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">Company documents</h2>
                 <p className="text-sm text-slate-500">Define mandatory onboarding documents (upload or digital signature).</p>
@@ -1197,7 +1203,18 @@ export default function EmployeesPage() {
           <p className="muted">No employees yet.</p>
         ) : (
           <>
-          <div className="overflow-x-auto">
+          {employeeTotal > pageSize && (
+            <div className="mb-4 md:hidden">
+              <PaginationBar
+                page={employeePage}
+                total={employeeTotal}
+                pageSize={pageSize}
+                loading={loading}
+                onPageChange={setEmployeePage}
+              />
+            </div>
+          )}
+          <div className="hidden overflow-x-auto md:block">
             <table className="w-full min-w-[920px] table-fixed border-collapse text-left text-[11px] leading-tight text-slate-800">
               <thead className="text-slate-600">
                 <tr>
@@ -1316,36 +1333,107 @@ export default function EmployeesPage() {
               </tbody>
             </table>
           </div>
-          {employeeTotal > 0 && (
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 pt-3 text-[11px] text-slate-600">
-              <span>
-                Showing{" "}
-                {employeeTotal === 0
-                  ? "0"
-                  : `${(employeePage - 1) * PAGE_SIZE + 1}–${Math.min(employeePage * PAGE_SIZE, employeeTotal)}`}{" "}
-                of {employeeTotal}
-              </span>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  className="btn btn-outline !min-h-0 !px-2 !py-1 !text-[11px]"
-                  disabled={employeePage <= 1 || loading}
-                  onClick={() => setEmployeePage((p) => Math.max(1, p - 1))}
-                >
-                  Previous
-                </button>
-                <span className="tabular-nums">
-                  Page {employeePage} of {Math.max(1, Math.ceil(employeeTotal / PAGE_SIZE))}
-                </span>
-                <button
-                  type="button"
-                  className="btn btn-outline !min-h-0 !px-2 !py-1 !text-[11px]"
-                  disabled={loading || employeePage * PAGE_SIZE >= employeeTotal}
-                  onClick={() => setEmployeePage((p) => p + 1)}
-                >
-                  Next
-                </button>
+
+          <div className="space-y-3 md:hidden">
+            {employees.map((e) => (
+              <div key={e.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                <p className="font-semibold text-slate-900">{e.name || "—"}</p>
+                <dl className="mt-3 space-y-2 text-sm text-slate-800">
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-slate-500">Designation</dt>
+                    <dd className="text-right">{e.designation || "—"}</dd>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-slate-500">Department</dt>
+                    <dd className="text-right">{e.departmentName || "—"}</dd>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-slate-500">Shift</dt>
+                    <dd className="text-right">{e.shiftName || "—"}</dd>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-slate-500">CTC</dt>
+                    <dd className="text-right tabular-nums">{e.ctc != null ? Number(e.ctc).toLocaleString("en-IN") : "—"}</dd>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-slate-500">Email</dt>
+                    <dd className="break-all text-right text-xs">{e.email}</dd>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-slate-500">Phone</dt>
+                    <dd className="text-right tabular-nums">{e.phone || "—"}</dd>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-slate-500">DOJ</dt>
+                    <dd className="text-right">{e.dateOfJoining || "—"}</dd>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-slate-500">Last working</dt>
+                    <dd className="text-right">{(e as { dateOfLeaving?: string }).dateOfLeaving || "—"}</dd>
+                  </div>
+                </dl>
+                {activeTab === "preboarding" && (
+                  <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-100 pt-3">
+                    <button
+                      type="button"
+                      className="btn btn-outline text-xs"
+                      onClick={() => openDetails(e.id)}
+                    >
+                      View
+                    </button>
+                    <button type="button" className="btn btn-outline text-xs" onClick={() => resendInvite(e)}>
+                      Resend docs
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-primary text-xs"
+                      onClick={() => {
+                        setConvertTarget(e);
+                        setConvertConfirmStatus("current");
+                        setConvertDate(e.dateOfJoining || new Date().toISOString().slice(0, 10));
+                        setConvertDialogOpen(true);
+                      }}
+                    >
+                      Convert to current
+                    </button>
+                  </div>
+                )}
+                {activeTab === "current" && (
+                  <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-100 pt-3">
+                    <button
+                      type="button"
+                      className="btn btn-outline text-xs"
+                      onClick={() => openDetails(e.id)}
+                    >
+                      View
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-outline text-xs"
+                      onClick={() => {
+                        setConvertTarget(e);
+                        setConvertConfirmStatus("past");
+                        setConvertDate(new Date().toISOString().slice(0, 10));
+                        setConvertDialogOpen(true);
+                      }}
+                    >
+                      Convert to past
+                    </button>
+                  </div>
+                )}
               </div>
+            ))}
+          </div>
+
+          {employeeTotal > 0 && (
+            <div className="mt-3 hidden border-t border-slate-200 pt-3 md:block">
+              <PaginationBar
+                page={employeePage}
+                total={employeeTotal}
+                pageSize={pageSize}
+                loading={loading}
+                onPageChange={setEmployeePage}
+              />
             </div>
           )}
           </>
@@ -1356,7 +1444,7 @@ export default function EmployeesPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <button type="button" className="absolute inset-0 bg-black/40" aria-label="Close dialog" onClick={() => setDetailsDialogOpen(false)} />
           <div role="dialog" aria-modal="true" className="relative z-10 w-full max-w-4xl rounded-xl border border-slate-200 bg-white shadow-xl">
-            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-5 py-4">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">Preboarding details</h2>
                 <p className="text-sm text-slate-500">Employee info + submitted documents</p>

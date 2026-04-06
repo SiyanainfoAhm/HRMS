@@ -42,7 +42,7 @@ export default function CompanySetupPage() {
     <div className="flex min-h-screen flex-col items-center justify-center px-4">
       <div className="w-full max-w-md space-y-6">
         <div className="text-center">
-          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Set up your company</h1>
+          <h1 className="page-title">Set up your company</h1>
           <p className="mt-1 text-sm text-slate-500">Create your company to continue</p>
         </div>
         <form onSubmit={handleSubmit} className="card space-y-4">

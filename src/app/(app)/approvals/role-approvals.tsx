@@ -4,7 +4,9 @@ import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { PaginationBar } from "@/components/PaginationBar";
 import { DatePickerField } from "@/components/ui/DatePickerField";
+import { useResponsivePageSize } from "@/hooks/useResponsivePageSize";
 
 function payrollHintFromClaimDate(claimDate: string): string | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(claimDate)) return null;
@@ -99,6 +101,12 @@ export function ApprovalsContent() {
   const [reimbRejectDialog, setReimbRejectDialog] = useState<null | { id: string; reason: string }>(null);
   const [reimbDialogOpen, setReimbDialogOpen] = useState(false);
 
+  const listPageSize = useResponsivePageSize();
+  const [leaveListPage, setLeaveListPage] = useState(1);
+  const [reimbListPage, setReimbListPage] = useState(1);
+  const [leaveRequestsTotal, setLeaveRequestsTotal] = useState(0);
+  const [reimbClaimsTotal, setReimbClaimsTotal] = useState(0);
+
   function diffDaysInclusive(start: string, end: string): number {
     if (!start || !end) return 0;
     const s = new Date(start + "T00:00:00Z").getTime();
@@ -118,7 +126,14 @@ export function ApprovalsContent() {
       setLoading(true);
       setError(null);
       try {
-        const [typesRes, reqRes] = await Promise.all([fetch("/api/leave/types"), fetch("/api/leave/requests")]);
+        const params = new URLSearchParams({
+          page: String(leaveListPage),
+          pageSize: String(listPageSize),
+        });
+        const [typesRes, reqRes] = await Promise.all([
+          fetch("/api/leave/types"),
+          fetch(`/api/leave/requests?${params}`),
+        ]);
         const typesData = await typesRes.json();
         const reqData = await reqRes.json();
         if (!typesRes.ok) throw new Error(typesData?.error || "Failed to load leave types");
@@ -127,6 +142,7 @@ export function ApprovalsContent() {
         setTypeRows(typesData.types || []);
         setTypes((typesData.types || []).map((t: any) => ({ id: t.id, name: t.name })));
         setRequests(reqData.requests || []);
+        setLeaveRequestsTotal(typeof reqData.total === "number" ? reqData.total : (reqData.requests?.length ?? 0));
         if (!leaveTypeId && (typesData.types || []).length) setLeaveTypeId(typesData.types[0].id);
       } catch (e: any) {
         if (!cancelled) setError(e?.message || "Failed to load leave data");
@@ -138,7 +154,7 @@ export function ApprovalsContent() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab]);
+  }, [tab, leaveListPage, listPageSize]);
 
   useEffect(() => {
     if (tab !== "reimbursement") return;
@@ -147,10 +163,16 @@ export function ApprovalsContent() {
       setReimbLoading(true);
       setError(null);
       try {
-        const res = await fetch("/api/reimbursements");
+        const params = new URLSearchParams({
+          page: String(reimbListPage),
+          pageSize: String(listPageSize),
+        });
+        const res = await fetch(`/api/reimbursements?${params}`);
         const data = await res.json();
         if (!res.ok) throw new Error(data?.error || "Failed to load reimbursement claims");
-        if (!cancelled) setReimbClaims(data.claims || []);
+        if (cancelled) return;
+        setReimbClaims(data.claims || []);
+        setReimbClaimsTotal(typeof data.total === "number" ? data.total : (data.claims?.length ?? 0));
       } catch (e: any) {
         if (!cancelled) setError(e?.message || "Failed to load reimbursements");
       } finally {
@@ -160,7 +182,7 @@ export function ApprovalsContent() {
     return () => {
       cancelled = true;
     };
-  }, [tab]);
+  }, [tab, reimbListPage, listPageSize]);
 
   useEffect(() => {
     if (!leaveDialogOpen || !canApprove) return;
@@ -225,8 +247,35 @@ export function ApprovalsContent() {
     };
   }, [leaveDialogOpen, totalDays, leaveTypeId, startDate, selectedEmployeeId, canApprove, selectedLeaveType]);
 
+  useEffect(() => {
+    setLeaveListPage(1);
+    setReimbListPage(1);
+  }, [tab]);
+
+  useEffect(() => {
+    setLeaveListPage(1);
+    setReimbListPage(1);
+  }, [listPageSize]);
+
+  useEffect(() => {
+    const tp = Math.max(1, Math.ceil(leaveRequestsTotal / listPageSize));
+    setLeaveListPage((p) => Math.min(p, tp));
+  }, [leaveRequestsTotal, listPageSize]);
+
+  useEffect(() => {
+    const tp = Math.max(1, Math.ceil(reimbClaimsTotal / listPageSize));
+    setReimbListPage((p) => Math.min(p, tp));
+  }, [reimbClaimsTotal, listPageSize]);
+
   async function refreshLeaveData() {
-    const [typesRes, reqRes] = await Promise.all([fetch("/api/leave/types"), fetch("/api/leave/requests")]);
+    const params = new URLSearchParams({
+      page: String(leaveListPage),
+      pageSize: String(listPageSize),
+    });
+    const [typesRes, reqRes] = await Promise.all([
+      fetch("/api/leave/types"),
+      fetch(`/api/leave/requests?${params}`),
+    ]);
     const typesData = await typesRes.json();
     const reqData = await reqRes.json();
     if (!typesRes.ok) throw new Error(typesData?.error || "Failed to load leave types");
@@ -234,6 +283,7 @@ export function ApprovalsContent() {
     setTypeRows(typesData.types || []);
     setTypes((typesData.types || []).map((t: any) => ({ id: t.id, name: t.name })));
     setRequests(reqData.requests || []);
+    setLeaveRequestsTotal(typeof reqData.total === "number" ? reqData.total : (reqData.requests?.length ?? 0));
   }
 
   async function submitLeave(e: FormEvent) {
@@ -254,11 +304,13 @@ export function ApprovalsContent() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to submit request");
-      // refresh list
-      const reqRes = await fetch("/api/leave/requests");
+      setLeaveListPage(1);
+      const reqParams = new URLSearchParams({ page: "1", pageSize: String(listPageSize) });
+      const reqRes = await fetch(`/api/leave/requests?${reqParams}`);
       const reqData = await reqRes.json();
       if (!reqRes.ok) throw new Error(reqData?.error || "Failed to refresh requests");
       setRequests(reqData.requests || []);
+      setLeaveRequestsTotal(typeof reqData.total === "number" ? reqData.total : (reqData.requests?.length ?? 0));
       setStartDate("");
       setEndDate("");
       setReason("");
@@ -383,10 +435,15 @@ export function ApprovalsContent() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to update request");
-      const reqRes = await fetch("/api/leave/requests");
+      const reqParams = new URLSearchParams({
+        page: String(leaveListPage),
+        pageSize: String(listPageSize),
+      });
+      const reqRes = await fetch(`/api/leave/requests?${reqParams}`);
       const reqData = await reqRes.json();
       if (!reqRes.ok) throw new Error(reqData?.error || "Failed to refresh requests");
       setRequests(reqData.requests || []);
+      setLeaveRequestsTotal(typeof reqData.total === "number" ? reqData.total : (reqData.requests?.length ?? 0));
       showToast("success", "Updated successfully");
     } catch (e: any) {
       setError(e?.message || "Failed to update request");
@@ -409,10 +466,15 @@ export function ApprovalsContent() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to reject request");
-      const reqRes = await fetch("/api/leave/requests");
+      const reqParams = new URLSearchParams({
+        page: String(leaveListPage),
+        pageSize: String(listPageSize),
+      });
+      const reqRes = await fetch(`/api/leave/requests?${reqParams}`);
       const reqData = await reqRes.json();
       if (!reqRes.ok) throw new Error(reqData?.error || "Failed to refresh requests");
       setRequests(reqData.requests || []);
+      setLeaveRequestsTotal(typeof reqData.total === "number" ? reqData.total : (reqData.requests?.length ?? 0));
       setRejectDialog(null);
       showToast("success", "Rejected");
     } catch (e: any) {
@@ -462,10 +524,13 @@ export function ApprovalsContent() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to submit claim");
-      const list = await fetch("/api/reimbursements");
+      setReimbListPage(1);
+      const listParams = new URLSearchParams({ page: "1", pageSize: String(listPageSize) });
+      const list = await fetch(`/api/reimbursements?${listParams}`);
       const listData = await list.json();
       if (!list.ok) throw new Error(listData?.error || "Failed to refresh");
       setReimbClaims(listData.claims || []);
+      setReimbClaimsTotal(typeof listData.total === "number" ? listData.total : (listData.claims?.length ?? 0));
       setReimbCat("");
       setReimbAmount("");
       setReimbClaimDate("");
@@ -495,10 +560,15 @@ export function ApprovalsContent() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to approve");
-      const list = await fetch("/api/reimbursements");
+      const listParams = new URLSearchParams({
+        page: String(reimbListPage),
+        pageSize: String(listPageSize),
+      });
+      const list = await fetch(`/api/reimbursements?${listParams}`);
       const listData = await list.json();
       if (!list.ok) throw new Error(listData?.error || "Failed to refresh");
       setReimbClaims(listData.claims || []);
+      setReimbClaimsTotal(typeof listData.total === "number" ? listData.total : (listData.claims?.length ?? 0));
       showToast("success", "Claim approved");
     } catch (err: any) {
       showToast("error", err?.message || "Failed");
@@ -519,10 +589,15 @@ export function ApprovalsContent() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to reject");
-      const list = await fetch("/api/reimbursements");
+      const listParams = new URLSearchParams({
+        page: String(reimbListPage),
+        pageSize: String(listPageSize),
+      });
+      const list = await fetch(`/api/reimbursements?${listParams}`);
       const listData = await list.json();
       if (!list.ok) throw new Error(listData?.error || "Failed to refresh");
       setReimbClaims(listData.claims || []);
+      setReimbClaimsTotal(typeof listData.total === "number" ? listData.total : (listData.claims?.length ?? 0));
       setReimbRejectDialog(null);
       showToast("success", "Claim rejected");
     } catch (err: any) {
@@ -535,7 +610,7 @@ export function ApprovalsContent() {
   return (
     <section className="space-y-4">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Approvals</h1>
+        <h1 className="page-title">Approvals</h1>
         <p className="muted">
           {role === "employee"
             ? "Submit leave and reimbursement requests."
@@ -543,7 +618,7 @@ export function ApprovalsContent() {
         </p>
       </div>
 
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <Link
           href="/approvals?tab=leave"
           className={`btn ${tab === "leave" ? "btn-primary" : "btn-outline"}`}
@@ -568,7 +643,7 @@ export function ApprovalsContent() {
                 : "Submit a leave request. Super Admin/Admin/HR can approve/reject."}
             </p>
 
-            <div className="mt-4 flex items-center justify-between gap-3">
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
               {error && <p className="text-sm text-red-600">{error}</p>}
               <button
                 type="button"
@@ -587,7 +662,7 @@ export function ApprovalsContent() {
 
           {canApprove && (
             <div className="card">
-              <div className="flex items-start justify-between gap-4">
+              <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
                   <h2 className="mb-1 text-lg font-semibold text-slate-900">Leave types & policy (company-wise)</h2>
                   <p className="muted">
@@ -639,58 +714,112 @@ export function ApprovalsContent() {
             <h2 className="mb-1 text-lg font-semibold text-slate-900">Leave requests</h2>
             {loading ? (
               <p className="muted">Loading...</p>
-            ) : requests.length === 0 ? (
+            ) : leaveRequestsTotal === 0 ? (
               <p className="muted">No leave requests yet.</p>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead className="text-slate-600">
-                    <tr>
-                      <th className="px-3 py-2">Type</th>
-                      <th className="px-3 py-2">Dates</th>
-                      <th className="px-3 py-2">Days</th>
-                      <th className="px-3 py-2">Status</th>
-                      <th className="px-3 py-2">Reason</th>
-                      {canApprove && <th className="px-3 py-2">Action</th>}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {requests.map((r) => (
-                      <tr key={r.id} className="border-t border-slate-200">
-                        <td className="px-3 py-2">{r.leaveTypeName || "-"}</td>
-                        <td className="px-3 py-2">
-                          {r.startDate} → {r.endDate}
-                        </td>
-                        <td className="px-3 py-2">{r.totalDays}</td>
-                        <td className="px-3 py-2">{r.status}</td>
-                        <td className="px-3 py-2">{r.reason || "-"}</td>
-                        {canApprove && (
-                          <td className="px-3 py-2">
-                            <div className="flex gap-2">
-                              <button
-                                type="button"
-                                className="btn btn-primary"
-                                disabled={actionLoadingId === r.id || r.status !== "pending"}
-                                onClick={() => act(r.id, "approve")}
-                              >
-                                Approve
-                              </button>
-                              <button
-                                type="button"
-                                className="btn btn-outline"
-                                disabled={actionLoadingId === r.id || r.status !== "pending"}
-                                onClick={() => act(r.id, "reject")}
-                              >
-                                Reject
-                              </button>
-                            </div>
-                          </td>
-                        )}
+              <>
+                {leaveRequestsTotal > listPageSize && (
+                  <div className="mb-4 md:hidden">
+                    <PaginationBar
+                      page={leaveListPage}
+                      total={leaveRequestsTotal}
+                      pageSize={listPageSize}
+                      onPageChange={setLeaveListPage}
+                    />
+                  </div>
+                )}
+                <div className="hidden overflow-x-auto md:block">
+                  <table className="w-full text-left text-sm">
+                    <thead className="text-slate-600">
+                      <tr>
+                        <th className="px-3 py-2">Type</th>
+                        <th className="px-3 py-2">Dates</th>
+                        <th className="px-3 py-2">Days</th>
+                        <th className="px-3 py-2">Status</th>
+                        <th className="px-3 py-2">Reason</th>
+                        {canApprove && <th className="px-3 py-2">Action</th>}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {requests.map((r) => (
+                        <tr key={r.id} className="border-t border-slate-200">
+                          <td className="px-3 py-2">{r.leaveTypeName || "-"}</td>
+                          <td className="px-3 py-2">
+                            {r.startDate} → {r.endDate}
+                          </td>
+                          <td className="px-3 py-2">{r.totalDays}</td>
+                          <td className="px-3 py-2">{r.status}</td>
+                          <td className="px-3 py-2">{r.reason || "-"}</td>
+                          {canApprove && (
+                            <td className="px-3 py-2">
+                              <div className="flex gap-2">
+                                <button
+                                  type="button"
+                                  className="btn btn-primary"
+                                  disabled={actionLoadingId === r.id || r.status !== "pending"}
+                                  onClick={() => act(r.id, "approve")}
+                                >
+                                  Approve
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn btn-outline"
+                                  disabled={actionLoadingId === r.id || r.status !== "pending"}
+                                  onClick={() => act(r.id, "reject")}
+                                >
+                                  Reject
+                                </button>
+                              </div>
+                            </td>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="space-y-3 md:hidden">
+                  {requests.map((r) => (
+                    <div key={r.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                      <p className="font-semibold text-slate-900">{r.leaveTypeName || "—"}</p>
+                      <p className="mt-1 text-sm text-slate-700">
+                        {r.startDate} → {r.endDate} · {r.totalDays} day(s)
+                      </p>
+                      <p className="mt-2 text-sm capitalize text-slate-600">Status: {r.status}</p>
+                      {r.reason && r.reason !== "-" && <p className="mt-2 text-sm text-slate-600">Reason: {r.reason}</p>}
+                      {canApprove && (
+                        <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-100 pt-3">
+                          <button
+                            type="button"
+                            className="btn btn-primary text-sm"
+                            disabled={actionLoadingId === r.id || r.status !== "pending"}
+                            onClick={() => act(r.id, "approve")}
+                          >
+                            Approve
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-outline text-sm"
+                            disabled={actionLoadingId === r.id || r.status !== "pending"}
+                            onClick={() => act(r.id, "reject")}
+                          >
+                            Reject
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                {leaveRequestsTotal > listPageSize && (
+                  <div className="mt-4 hidden border-t border-slate-200 pt-4 md:block">
+                    <PaginationBar
+                      page={leaveListPage}
+                      total={leaveRequestsTotal}
+                      pageSize={listPageSize}
+                      onPageChange={setLeaveListPage}
+                    />
+                  </div>
+                )}
+              </>
             )}
           </div>
 
@@ -825,7 +954,7 @@ export function ApprovalsContent() {
 
                   </div>
 
-                  <div className="mt-4 flex items-center justify-between gap-3">
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
                     {error && <p className="text-sm text-red-600">{error}</p>}
                     <div className="flex gap-2">
                       <button type="button" className="btn btn-outline" onClick={() => setLeaveDialogOpen(false)} disabled={submitting || loading}>
@@ -928,7 +1057,7 @@ export function ApprovalsContent() {
                     )}
                   </div>
 
-                  <div className="flex items-center justify-between gap-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
                     {error && <p className="text-sm text-red-600">{error}</p>}
                     <div className="flex gap-2">
                       <button type="button" className="btn btn-outline" onClick={() => setManageTypesOpen(false)} disabled={creatingType}>
@@ -1009,7 +1138,7 @@ export function ApprovalsContent() {
                     )}
                   </div>
 
-                  <div className="flex items-center justify-between gap-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
                     {error && <p className="text-sm text-red-600">{error}</p>}
                     <div className="flex gap-2">
                       <button type="button" className="btn btn-outline" onClick={() => setEditPolicyFor(null)} disabled={savingPolicy}>
@@ -1035,7 +1164,7 @@ export function ApprovalsContent() {
               Submit an expense claim with category, amount, date, description, and proof attachment (max 8 MB). Payroll
               period follows your expense date. Super Admin, Admin, or HR must approve before it is paid in payroll.
             </p>
-            <div className="mt-4 flex items-center justify-between gap-3">
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
               {error && tab === "reimbursement" && !reimbDialogOpen && <p className="text-sm text-red-600">{error}</p>}
               <button
                 type="button"
@@ -1055,104 +1184,208 @@ export function ApprovalsContent() {
             <h2 className="mb-1 text-lg font-semibold text-slate-900">Claims</h2>
             {reimbLoading ? (
               <p className="muted">Loading…</p>
-            ) : reimbClaims.length === 0 ? (
+            ) : reimbClaimsTotal === 0 ? (
               <p className="muted">No reimbursement claims yet.</p>
             ) : (
-              <div className="mt-3 overflow-x-auto">
-                <table className="w-full min-w-[960px] text-left text-sm">
-                  <thead className="text-slate-600">
-                    <tr>
-                      <th className="px-2 py-2">Employee</th>
-                      <th className="px-2 py-2">Category</th>
-                      <th className="px-2 py-2">Amount</th>
-                      <th className="px-2 py-2">Claim date</th>
-                      <th className="px-2 py-2">Payroll period</th>
-                      <th className="px-2 py-2">Status</th>
-                      <th className="px-2 py-2">Approved by</th>
-                      <th className="px-2 py-2">Attachment</th>
-                      {canApprove && <th className="px-2 py-2">Action</th>}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {reimbClaims.map((c: any) => (
-                      <tr key={c.id} className="border-t border-slate-200">
-                        <td className="px-2 py-2">
-                          <div>{c.employeeName || "—"}</div>
-                          <div className="text-xs text-slate-500">{c.employeeEmail || ""}</div>
-                        </td>
-                        <td className="px-2 py-2">{c.category}</td>
-                        <td className="px-2 py-2">₹{Number(c.amount ?? 0).toLocaleString("en-IN")}</td>
-                        <td className="px-2 py-2">{c.claim_date}</td>
-                        <td className="px-2 py-2">
-                          {payrollPeriodLabel(c.claim_date, c.payroll_year, c.payroll_month)}
-                        </td>
-                        <td className="px-2 py-2 capitalize">
-                          {c.status === "paid" ? "Paid (payroll)" : c.status}
-                        </td>
-                        <td className="px-2 py-2">
-                          {c.status === "approved" || c.status === "rejected" || c.status === "paid" ? (
-                            <div>
-                              <div>{c.approverName || "—"}</div>
-                              {c.status === "paid" && c.paid_at ? (
-                                <div className="text-xs text-slate-500">{`Paid ${new Date(c.paid_at).toLocaleString()}`}</div>
-                              ) : c.status === "approved" && c.approved_at ? (
-                                <div className="text-xs text-slate-500">{`Approved ${new Date(c.approved_at).toLocaleString()}`}</div>
-                              ) : c.status === "rejected" && c.rejected_at ? (
-                                <div className="text-xs text-slate-500">{`Rejected ${new Date(c.rejected_at).toLocaleString()}`}</div>
-                              ) : null}
-                              {c.status === "rejected" && c.rejection_reason && (
-                                <div className="text-xs text-red-600">{c.rejection_reason}</div>
-                              )}
-                            </div>
-                          ) : (
-                            "—"
-                          )}
-                        </td>
-                        <td className="px-2 py-2">
-                          {c.attachment_url ? (
-                            <a
-                              href={c.attachment_url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-emerald-700 underline"
-                            >
-                              View
-                            </a>
-                          ) : (
-                            "—"
-                          )}
-                        </td>
-                        {canApprove && (
+              <>
+                {reimbClaimsTotal > listPageSize && (
+                  <div className="mb-4 md:hidden">
+                    <PaginationBar
+                      page={reimbListPage}
+                      total={reimbClaimsTotal}
+                      pageSize={listPageSize}
+                      onPageChange={setReimbListPage}
+                    />
+                  </div>
+                )}
+                <div className="mt-3 hidden overflow-x-auto md:block">
+                  <table className="w-full min-w-[960px] text-left text-sm">
+                    <thead className="text-slate-600">
+                      <tr>
+                        <th className="px-2 py-2">Employee</th>
+                        <th className="px-2 py-2">Category</th>
+                        <th className="px-2 py-2">Amount</th>
+                        <th className="px-2 py-2">Claim date</th>
+                        <th className="px-2 py-2">Payroll period</th>
+                        <th className="px-2 py-2">Status</th>
+                        <th className="px-2 py-2">Approved by</th>
+                        <th className="px-2 py-2">Attachment</th>
+                        {canApprove && <th className="px-2 py-2">Action</th>}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {reimbClaims.map((c: any) => (
+                        <tr key={c.id} className="border-t border-slate-200">
                           <td className="px-2 py-2">
-                            {c.status === "pending" ? (
-                              <div className="flex flex-wrap gap-2">
-                                <button
-                                  type="button"
-                                  className="btn btn-primary text-xs"
-                                  disabled={reimbActionId === c.id}
-                                  onClick={() => actReimbursement(c.id, "approve")}
-                                >
-                                  Approve
-                                </button>
-                                <button
-                                  type="button"
-                                  className="btn btn-outline text-xs"
-                                  disabled={reimbActionId === c.id}
-                                  onClick={() => actReimbursement(c.id, "reject")}
-                                >
-                                  Reject
-                                </button>
+                            <div>{c.employeeName || "—"}</div>
+                            <div className="text-xs text-slate-500">{c.employeeEmail || ""}</div>
+                          </td>
+                          <td className="px-2 py-2">{c.category}</td>
+                          <td className="px-2 py-2">₹{Number(c.amount ?? 0).toLocaleString("en-IN")}</td>
+                          <td className="px-2 py-2">{c.claim_date}</td>
+                          <td className="px-2 py-2">
+                            {payrollPeriodLabel(c.claim_date, c.payroll_year, c.payroll_month)}
+                          </td>
+                          <td className="px-2 py-2 capitalize">
+                            {c.status === "paid" ? "Paid (payroll)" : c.status}
+                          </td>
+                          <td className="px-2 py-2">
+                            {c.status === "approved" || c.status === "rejected" || c.status === "paid" ? (
+                              <div>
+                                <div>{c.approverName || "—"}</div>
+                                {c.status === "paid" && c.paid_at ? (
+                                  <div className="text-xs text-slate-500">{`Paid ${new Date(c.paid_at).toLocaleString()}`}</div>
+                                ) : c.status === "approved" && c.approved_at ? (
+                                  <div className="text-xs text-slate-500">{`Approved ${new Date(c.approved_at).toLocaleString()}`}</div>
+                                ) : c.status === "rejected" && c.rejected_at ? (
+                                  <div className="text-xs text-slate-500">{`Rejected ${new Date(c.rejected_at).toLocaleString()}`}</div>
+                                ) : null}
+                                {c.status === "rejected" && c.rejection_reason && (
+                                  <div className="text-xs text-red-600">{c.rejection_reason}</div>
+                                )}
                               </div>
                             ) : (
-                              <span className="text-slate-400">—</span>
+                              "—"
                             )}
                           </td>
+                          <td className="px-2 py-2">
+                            {c.attachment_url ? (
+                              <a
+                                href={c.attachment_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-emerald-700 underline"
+                              >
+                                View
+                              </a>
+                            ) : (
+                              "—"
+                            )}
+                          </td>
+                          {canApprove && (
+                            <td className="px-2 py-2">
+                              {c.status === "pending" ? (
+                                <div className="flex flex-wrap gap-2">
+                                  <button
+                                    type="button"
+                                    className="btn btn-primary text-xs"
+                                    disabled={reimbActionId === c.id}
+                                    onClick={() => actReimbursement(c.id, "approve")}
+                                  >
+                                    Approve
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="btn btn-outline text-xs"
+                                    disabled={reimbActionId === c.id}
+                                    onClick={() => actReimbursement(c.id, "reject")}
+                                  >
+                                    Reject
+                                  </button>
+                                </div>
+                              ) : (
+                                <span className="text-slate-400">—</span>
+                              )}
+                            </td>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="mt-3 space-y-3 md:hidden">
+                  {reimbClaims.map((c: any) => (
+                    <div key={c.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                      <p className="font-semibold text-slate-900">{c.employeeName || "—"}</p>
+                      <p className="text-xs text-slate-500 break-all">{c.employeeEmail || ""}</p>
+                      <dl className="mt-3 space-y-2 text-sm">
+                        <div className="flex justify-between gap-2">
+                          <dt className="text-slate-500">Category</dt>
+                          <dd>{c.category}</dd>
+                        </div>
+                        <div className="flex justify-between gap-2">
+                          <dt className="text-slate-500">Amount</dt>
+                          <dd className="tabular-nums font-medium">₹{Number(c.amount ?? 0).toLocaleString("en-IN")}</dd>
+                        </div>
+                        <div className="flex justify-between gap-2">
+                          <dt className="text-slate-500">Claim date</dt>
+                          <dd>{c.claim_date}</dd>
+                        </div>
+                        <div className="flex justify-between gap-2">
+                          <dt className="text-slate-500">Payroll period</dt>
+                          <dd>{payrollPeriodLabel(c.claim_date, c.payroll_year, c.payroll_month)}</dd>
+                        </div>
+                        <div className="flex justify-between gap-2">
+                          <dt className="text-slate-500">Status</dt>
+                          <dd className="capitalize">{c.status === "paid" ? "Paid (payroll)" : c.status}</dd>
+                        </div>
+                      </dl>
+                      {c.status === "approved" || c.status === "rejected" || c.status === "paid" ? (
+                        <div className="mt-3 text-sm text-slate-700">
+                          <span className="text-slate-500">Approver: </span>
+                          {c.approverName || "—"}
+                          {c.status === "paid" && c.paid_at && (
+                            <span className="mt-1 block text-xs text-slate-500">{`Paid ${new Date(c.paid_at).toLocaleString()}`}</span>
+                          )}
+                          {c.status === "approved" && c.approved_at && (
+                            <span className="mt-1 block text-xs text-slate-500">{`Approved ${new Date(c.approved_at).toLocaleString()}`}</span>
+                          )}
+                          {c.status === "rejected" && c.rejected_at && (
+                            <span className="mt-1 block text-xs text-slate-500">{`Rejected ${new Date(c.rejected_at).toLocaleString()}`}</span>
+                          )}
+                          {c.status === "rejected" && c.rejection_reason && (
+                            <span className="mt-1 block text-xs text-red-600">{c.rejection_reason}</span>
+                          )}
+                        </div>
+                      ) : null}
+                      <div className="mt-3">
+                        {c.attachment_url ? (
+                          <a
+                            href={c.attachment_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-sm font-medium text-emerald-700 underline"
+                          >
+                            View attachment
+                          </a>
+                        ) : (
+                          <span className="text-sm text-slate-400">No attachment</span>
                         )}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                      </div>
+                      {canApprove && c.status === "pending" && (
+                        <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-100 pt-3">
+                          <button
+                            type="button"
+                            className="btn btn-primary text-sm"
+                            disabled={reimbActionId === c.id}
+                            onClick={() => actReimbursement(c.id, "approve")}
+                          >
+                            Approve
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-outline text-sm"
+                            disabled={reimbActionId === c.id}
+                            onClick={() => actReimbursement(c.id, "reject")}
+                          >
+                            Reject
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                {reimbClaimsTotal > listPageSize && (
+                  <div className="mt-4 hidden border-t border-slate-200 pt-4 md:block">
+                    <PaginationBar
+                      page={reimbListPage}
+                      total={reimbClaimsTotal}
+                      pageSize={listPageSize}
+                      onPageChange={setReimbListPage}
+                    />
+                  </div>
+                )}
+              </>
             )}
           </div>
 

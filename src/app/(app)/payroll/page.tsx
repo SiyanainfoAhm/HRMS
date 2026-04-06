@@ -841,7 +841,7 @@ function PayrollPageContent() {
   if (!canManage) {
     return (
       <section className="space-y-6">
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Payroll</h1>
+        <h1 className="page-title">Payroll</h1>
         <p className="muted">You don&apos;t have access to payroll management.</p>
       </section>
     );
@@ -850,11 +850,11 @@ function PayrollPageContent() {
   return (
     <section className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Payroll</h1>
+        <h1 className="page-title">Payroll</h1>
         <p className="muted">Payroll Master and monthly payroll run.</p>
       </div>
 
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <Link
           href="/payroll?tab=master"
           className={`btn ${tab === "master" ? "btn-primary" : "btn-outline"}`}
@@ -1419,7 +1419,7 @@ function PayrollPageContent() {
                     className="w-20 rounded-lg border border-slate-300 px-3 py-2 text-sm"
                   />
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   {preview?.periodName && (
                     <span className="text-lg font-semibold text-slate-800">{preview.periodName}</span>
                   )}
@@ -1466,7 +1466,8 @@ function PayrollPageContent() {
                       ? "Payroll generated for this period. Values are read-only."
                       : "Edit values before generating. Changing pay days will recalculate gross, PF, ESIC and deductions."}
                   </p>
-                <table className="w-full table-fixed text-left text-xs">
+                <div className="-mx-1 overflow-x-auto sm:mx-0">
+                <table className="w-full min-w-[720px] table-fixed text-left text-xs">
                   <thead className="bg-slate-50 text-slate-600">
                     <tr>
                       <th className="w-[100px] px-1.5 py-1">Employee</th>
@@ -1543,7 +1544,8 @@ function PayrollPageContent() {
                     })}
                   </tbody>
                 </table>
-              </div>
+                </div>
+                </div>
             ) : !preview?.alreadyRun ? (
               <p className="muted py-6">No employees in payroll for the selected month and year. Ensure employees have Payroll Master records.</p>
             ) : null}
@@ -1842,7 +1844,7 @@ export default function PayrollPage() {
     <Suspense
       fallback={
         <section className="space-y-6">
-          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Payroll</h1>
+          <h1 className="page-title">Payroll</h1>
           <SkeletonTable rows={8} columns={12} />
         </section>
       }

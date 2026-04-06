@@ -318,7 +318,7 @@ function InvitePageInner() {
     return (
       <section className="mx-auto max-w-5xl space-y-4 p-4 md:p-8">
         <div className="card text-center py-12">
-          <h1 className="text-2xl font-semibold text-slate-900">Thank you!</h1>
+          <h1 className="page-title">Thank you!</h1>
           <p className="mt-3 text-slate-600">Your onboarding is complete. An admin will activate your account shortly.</p>
           <p className="mt-2 text-sm text-slate-500">You can log in with your email and password.</p>
         </div>
@@ -329,7 +329,7 @@ function InvitePageInner() {
   return (
     <section className="mx-auto max-w-5xl space-y-4 p-4 md:p-8">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Employee onboarding</h1>
+        <h1 className="page-title">Employee onboarding</h1>
         <p className="muted">Complete the mandatory documents to activate your account.</p>
       </div>
 

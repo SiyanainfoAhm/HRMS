@@ -17,7 +17,7 @@ export default async function LandingPage() {
         </div>
       </header>
       <section className="mx-auto max-w-6xl space-y-6 px-4 py-8">
-      <h1 className="text-2xl font-semibold tracking-tight">Welcome to HRMS</h1>
+      <h1 className="page-title">Welcome to HRMS</h1>
       <p className="muted">
         This is the central access point for Super Admin, Admin/HR, Managers and Employees to
         manage attendance, leaves, holidays and payroll.

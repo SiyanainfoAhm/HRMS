@@ -2,7 +2,9 @@
 
 import { useAuth } from "@/contexts/AuthContext";
 import { AttendanceDateFilter, type AttendancePreset } from "@/components/AttendanceDateFilter";
+import { PaginationBar } from "@/components/PaginationBar";
 import { SkeletonTable } from "@/components/Skeleton";
+import { useResponsivePageSize } from "@/hooks/useResponsivePageSize";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 
 type Row = {
@@ -124,6 +126,95 @@ function AttendanceRow({
   );
 }
 
+function AttendanceMobileCard({
+  r,
+  showEmployeeCols,
+  showDateLine,
+}: {
+  r: Row;
+  showEmployeeCols: boolean;
+  showDateLine: boolean;
+}) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      {showDateLine && (
+        <p className="text-xs font-semibold uppercase tracking-wide text-emerald-900/80">{formatShortYmd(r.workDate)}</p>
+      )}
+      {showEmployeeCols && (
+        <div className={showDateLine ? "mt-2" : ""}>
+          <p className="font-medium text-slate-900">{r.employeeName || "—"}</p>
+          <p className="text-xs text-slate-500 break-all">{r.employeeEmail}</p>
+        </div>
+      )}
+      <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
+        <div>
+          <dt className="text-xs text-slate-500">1. First in</dt>
+          <dd className="tabular-nums font-medium text-slate-800">{formatTimeIST(r.checkInAt)}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-slate-500">2. Lunch out</dt>
+          <dd className="tabular-nums font-medium text-slate-800">{formatTimeIST(r.lunchCheckOutAt)}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-slate-500">3. Lunch in</dt>
+          <dd className="tabular-nums font-medium text-slate-800">{formatTimeIST(r.lunchCheckInAt)}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-slate-500">4. Final out</dt>
+          <dd className="tabular-nums font-medium text-slate-800">{formatTimeIST(r.checkOutAt)}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-slate-500">Gross</dt>
+          <dd className="font-medium text-slate-800">{fmtHoursMin(r.grossMinutes)}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-slate-500">Active</dt>
+          <dd className="font-medium text-slate-800">{fmtHoursMin(r.activeMinutes)}</dd>
+        </div>
+        <div className="col-span-2">
+          <dt className="text-xs text-slate-500">Lunch / Tea (min)</dt>
+          <dd className="text-slate-800">
+            {r.lunchBreakMinutes} / {r.teaBreakMinutes}
+          </dd>
+        </div>
+        <div className="col-span-2">
+          <dt className="text-xs text-slate-500">Lunch note</dt>
+          <dd className="text-xs text-slate-600">{r.mandatoryLunchAssumed ? "1h default (no lunch punch)" : "—"}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-slate-500">≥8h</dt>
+          <dd>
+            {r.checkOutAt ? (
+              r.meetsEightHourWork ? (
+                <span className="inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
+                  Yes
+                </span>
+              ) : (
+                <span className="inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900">No</span>
+              )
+            ) : (
+              <span className="text-slate-400">—</span>
+            )}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-xs text-slate-500">Open break</dt>
+          <dd className="text-xs">
+            {r.lunchBreakOpen || r.teaBreakOpen ? (
+              <span className="text-amber-800">
+                {r.lunchBreakOpen ? "Lunch " : ""}
+                {r.teaBreakOpen ? "Tea" : ""}
+              </span>
+            ) : (
+              "—"
+            )}
+          </dd>
+        </div>
+      </dl>
+    </div>
+  );
+}
+
 export default function AttendancePage() {
   const { role } = useAuth();
   const isManagerial = role === "super_admin" || role === "admin" || role === "hr";
@@ -139,6 +230,8 @@ export default function AttendancePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [hasEmployee, setHasEmployee] = useState(true);
+  const [mobilePage, setMobilePage] = useState(1);
+  const mobilePageSize = useResponsivePageSize();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -181,6 +274,25 @@ export default function AttendancePage() {
     return [...map.entries()].sort((a, b) => b[0].localeCompare(a[0]));
   }, [rows, showDateCol]);
 
+  const orderedRows = useMemo(() => {
+    if (!showDateCol) return rows;
+    if (!grouped) return rows;
+    return grouped.flatMap(([, dayRows]) => dayRows);
+  }, [rows, showDateCol, grouped]);
+
+  const pagedMobileRows = useMemo(() => {
+    const start = (mobilePage - 1) * mobilePageSize;
+    return orderedRows.slice(start, start + mobilePageSize);
+  }, [orderedRows, mobilePage, mobilePageSize]);
+
+  useEffect(() => {
+    setMobilePage(1);
+  }, [startDate, endDate]);
+
+  useEffect(() => {
+    setMobilePage(1);
+  }, [mobilePageSize]);
+
   const baseCols = showEmployeeCols ? 11 : 10;
   const colCount = showDateCol ? baseCols + 1 : baseCols;
 
@@ -192,7 +304,7 @@ export default function AttendancePage() {
   return (
     <section className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">{title}</h1>
+        <h1 className="page-title">{title}</h1>
         <p className="muted mt-1 max-w-3xl">{description}</p>
       </div>
 
@@ -228,6 +340,18 @@ export default function AttendancePage() {
 
           {error && <p className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
 
+          {orderedRows.length > mobilePageSize && !loading && (
+            <div className="mb-4 md:hidden">
+              <PaginationBar
+                page={mobilePage}
+                total={orderedRows.length}
+                pageSize={mobilePageSize}
+                loading={loading}
+                onPageChange={setMobilePage}
+              />
+            </div>
+          )}
+
           {loading ? (
             <SkeletonTable rows={6} columns={colCount} />
           ) : rows.length === 0 ? (
@@ -238,7 +362,8 @@ export default function AttendancePage() {
               </p>
             </div>
           ) : (
-            <div className="overflow-hidden rounded-xl border border-slate-200/90 bg-white shadow-sm">
+            <>
+            <div className="hidden overflow-hidden rounded-xl border border-slate-200/90 bg-white shadow-sm md:block">
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[720px] text-left text-sm">
                   <thead>
@@ -310,6 +435,26 @@ export default function AttendancePage() {
                 </table>
               </div>
             </div>
+
+            <div className="space-y-3 md:hidden">
+              {pagedMobileRows.map((r, i) => (
+                <Fragment key={r.logId}>
+                  {showDateCol &&
+                    (i === 0 ||
+                      String(pagedMobileRows[i - 1]?.workDate).slice(0, 10) !== String(r.workDate).slice(0, 10)) && (
+                    <p className="px-1 py-1 text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      {formatDayHeading(String(r.workDate).slice(0, 10))}
+                    </p>
+                  )}
+                  <AttendanceMobileCard
+                    r={r}
+                    showEmployeeCols={showEmployeeCols}
+                    showDateLine={!showDateCol}
+                  />
+                </Fragment>
+              ))}
+            </div>
+            </>
           )}
         </div>
       )}

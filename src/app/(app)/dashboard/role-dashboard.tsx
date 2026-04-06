@@ -272,10 +272,10 @@ export function DashboardContent() {
       <section className="min-h-[60vh]">
         {/* Top greeting banner */}
         <div
-          className="mb-6 rounded-xl px-6 py-4 text-center text-white"
+          className="mb-6 rounded-xl px-4 py-4 text-center text-white sm:px-6"
           style={{ backgroundColor: TEAL }}
         >
-          <h1 className="text-xl font-semibold">
+          <h1 className="text-lg font-semibold sm:text-xl">
             {greeting} {displayName}
           </h1>
         </div>
@@ -283,7 +283,7 @@ export function DashboardContent() {
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           {/* Left: Profile + Leave summary */}
           <div className="lg:col-span-1">
-            <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
               <div className="mb-6 flex items-center gap-4">
                 <Image
                   src={AvatarUrl({ userId: id, gender: user?.gender ?? null })}
@@ -616,8 +616,8 @@ export function DashboardContent() {
               </div>
             </div>
 
-            <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-              <div className="mb-3 flex items-center justify-between">
+            <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                 <h3 className="text-sm font-semibold text-slate-700">Upcoming holidays</h3>
                 <Link href="/holidays" className="text-xs font-medium" style={{ color: TEAL }}>
                   View all
@@ -662,12 +662,12 @@ export function DashboardContent() {
   return (
     <section className="space-y-4">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Dashboard</h1>
+        <h1 className="page-title">Dashboard</h1>
         <p className="muted">You are viewing the {role.replace("_", " ")} workflow.</p>
       </div>
 
       <div
-        className="mb-6 rounded-xl px-6 py-4 text-white"
+        className="mb-6 rounded-xl px-4 py-4 text-white sm:px-6"
         style={{ backgroundColor: TEAL }}
       >
         <h2 className="text-lg font-semibold">
