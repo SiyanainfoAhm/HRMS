@@ -60,6 +60,7 @@ export default function HolidaysPage() {
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<Holiday | null>(null);
 
   const locationTabs = useMemo(() => {
     const locs = new Set<string>();
@@ -122,6 +123,14 @@ export default function HolidaysPage() {
     if (isDialogOpen) window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [isDialogOpen]);
+
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape" && !deletingId) setDeleteConfirm(null);
+    }
+    if (deleteConfirm) window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [deleteConfirm, deletingId]);
 
   function resetForm() {
     setFormError(null);
@@ -206,8 +215,9 @@ export default function HolidaysPage() {
     }
   }
 
-  async function deleteHoliday(h: Holiday) {
-    if (!window.confirm(`Delete holiday “${h.name}” (${formatHolidayDayDateRange(h)})?`)) return;
+  async function executeDeleteHoliday() {
+    if (!deleteConfirm) return;
+    const h = deleteConfirm;
     setDeletingId(h.id);
     setError(null);
     try {
@@ -215,6 +225,7 @@ export default function HolidaysPage() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error || "Failed to delete holiday");
       setHolidays((prev) => prev.filter((x) => x.id !== h.id));
+      setDeleteConfirm(null);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to delete");
     } finally {
@@ -363,6 +374,52 @@ export default function HolidaysPage() {
         </div>
       )}
 
+      {deleteConfirm && canManage && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/40"
+            aria-label="Close dialog"
+            onClick={() => !deletingId && setDeleteConfirm(null)}
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-holiday-title"
+            className="relative z-10 w-full max-w-md rounded-xl border border-slate-200 bg-white shadow-xl"
+          >
+            <div className="border-b border-slate-200 px-5 py-4">
+              <h3 id="delete-holiday-title" className="text-base font-semibold text-slate-900">
+                Delete holiday
+              </h3>
+              <p className="mt-2 text-sm text-slate-600">
+                Delete holiday <span className="font-medium text-slate-900">&ldquo;{deleteConfirm.name}&rdquo;</span>
+                <span className="text-slate-500"> ({formatHolidayDayDateRange(deleteConfirm)})</span>?
+              </p>
+              <p className="mt-2 text-xs text-slate-500">This cannot be undone.</p>
+            </div>
+            <div className="flex justify-end gap-2 px-5 py-4">
+              <button
+                type="button"
+                className="btn btn-outline"
+                onClick={() => setDeleteConfirm(null)}
+                disabled={!!deletingId}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-outline !border-red-200 text-red-700 hover:bg-red-50"
+                onClick={() => void executeDeleteHoliday()}
+                disabled={!!deletingId}
+              >
+                {deletingId ? "Deleting…" : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="card">
         {loading ? (
           <SkeletonTable rows={6} columns={5} />
@@ -405,7 +462,7 @@ export default function HolidaysPage() {
                           <button
                             type="button"
                             className="btn btn-outline !border-red-200 !py-1 !text-xs text-red-700 hover:bg-red-50"
-                            onClick={() => deleteHoliday(h)}
+                            onClick={() => setDeleteConfirm(h)}
                             disabled={deletingId === h.id}
                           >
                             {deletingId === h.id ? "Deleting…" : "Delete"}
