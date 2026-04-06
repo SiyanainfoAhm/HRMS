@@ -614,7 +614,32 @@ export function SettingsContent() {
                   <p>
                     <span className="text-slate-500">Phone:</span> {company?.phone || "—"}
                   </p>
-                  <p>
+                  <div className="mt-3">
+                    <p className="text-slate-500">Address</p>
+                    {(() => {
+                      const a1 = typeof company?.address_line1 === "string" ? company.address_line1.trim() : "";
+                      const a2 = typeof company?.address_line2 === "string" ? company.address_line2.trim() : "";
+                      const city = typeof company?.city === "string" ? company.city.trim() : "";
+                      const state = typeof company?.state === "string" ? company.state.trim() : "";
+                      const pc = typeof company?.postal_code === "string" ? company.postal_code.trim() : "";
+                      const country = typeof company?.country === "string" ? company.country.trim() : "";
+                      const cityLine = [city, state].filter(Boolean).join(", ");
+                      const cityPostal = [cityLine || null, pc || null].filter(Boolean).join(" ");
+                      const hasAny = a1 || a2 || city || state || pc || country;
+                      if (!hasAny) {
+                        return <p className="mt-0.5 text-slate-700">—</p>;
+                      }
+                      return (
+                        <div className="mt-0.5 space-y-0.5 text-slate-800">
+                          {a1 ? <p>{a1}</p> : null}
+                          {a2 ? <p>{a2}</p> : null}
+                          {cityPostal ? <p>{cityPostal}</p> : null}
+                          {country ? <p>{country}</p> : null}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                  <p className="mt-3">
                     <span className="text-slate-500">PT annual (₹):</span>{" "}
                     {company?.professional_tax_annual != null
                       ? Number(company.professional_tax_annual).toLocaleString("en-IN")
