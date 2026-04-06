@@ -24,7 +24,11 @@ export async function GET() {
       .eq("company_id", me.company_id)
       .eq("employee_user_id", session.id)
       .order("generated_at", { ascending: false }),
-    supabase.from("HRMS_companies").select("name, address_line1, address_line2, city, state, country, postal_code").eq("id", me.company_id).single(),
+    supabase
+      .from("HRMS_companies")
+      .select("name, logo_url, address_line1, address_line2, city, state, country, postal_code")
+      .eq("id", me.company_id)
+      .single(),
     supabase.from("HRMS_users").select("name, employee_code, designation, date_of_joining, aadhaar, pan, uan_number, pf_number, esic_number").eq("id", session.id).single(),
   ]);
 
@@ -57,8 +61,11 @@ export async function GET() {
 
   const user = userRes.data;
 
+  const rawLogo = (company as { logo_url?: string | null } | null)?.logo_url;
+  const logoUrl = typeof rawLogo === "string" && rawLogo.trim() ? rawLogo.trim() : null;
+
   return NextResponse.json({
-    company: company ? { name: company.name, address: companyAddress } : null,
+    company: company ? { name: company.name, address: companyAddress, logoUrl } : null,
     user: user ? {
       name: user.name ?? "",
       employeeCode: user.employee_code ?? "",

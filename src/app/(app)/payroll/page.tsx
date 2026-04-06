@@ -250,7 +250,7 @@ function PayrollPageContent() {
   const [employeesLoading, setEmployeesLoading] = useState(false);
   const [selectedEmployeeId, setSelectedEmployeeId] = useState("");
   const [slipsData, setSlipsData] = useState<{
-    company: { name: string; address: string } | null;
+    company: { name: string; address: string; logoUrl: string | null } | null;
     user: { name: string; employeeCode: string; designation: string; dateOfJoining: string; aadhaar: string; pan: string; uanNumber: string; pfNumber: string; esicNumber: string } | null;
     payslips: {
       id: string;
@@ -1681,6 +1681,15 @@ function PayrollPageContent() {
                     <tbody>
                       <tr>
                         <td colSpan={2} className="border border-black px-4 py-4 text-center">
+                          {company?.logoUrl ? (
+                            <div className="payslip-logo-banner mb-3 flex justify-center border-b border-black/15 pb-3 print:mb-2 print:pb-2">
+                              <img
+                                src={company.logoUrl}
+                                alt=""
+                                className="h-16 max-h-[72px] w-auto max-w-[min(100%,280px)] object-contain object-center"
+                              />
+                            </div>
+                          ) : null}
                           <div className="text-base font-bold text-slate-900">{company?.name || "Company"}</div>
                           {company?.address && (
                             <div className="mt-0.5 text-sm text-slate-600">{company.address}</div>

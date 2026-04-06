@@ -88,6 +88,10 @@ body {
     border-color: #000 !important;
   }
   .payslip-print-area .payslip-header-table { font-size: 14px !important; }
+  .payslip-print-area .payslip-logo-banner img {
+    max-height: 72px;
+    object-fit: contain;
+  }
   .payslip-print-area .payslip-header-table td {
     padding: 12px 16px !important;
     border-color: #000 !important;

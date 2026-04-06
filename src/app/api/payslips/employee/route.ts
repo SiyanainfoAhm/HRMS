@@ -62,7 +62,11 @@ export async function GET(request: NextRequest) {
     return y && m && day ? `${day.padStart(2, "0")} ${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][parseInt(m, 10) - 1]} ${y}` : "";
   };
 
-  const companyRes = await supabase.from("HRMS_companies").select("name, address_line1, address_line2, city, state, country, postal_code").eq("id", me.company_id).single();
+  const companyRes = await supabase
+    .from("HRMS_companies")
+    .select("name, logo_url, address_line1, address_line2, city, state, country, postal_code")
+    .eq("id", me.company_id)
+    .single();
   const company = companyRes.data;
   const addrParts = [
     company?.address_line1,
@@ -71,6 +75,9 @@ export async function GET(request: NextRequest) {
     company?.country,
   ].filter(Boolean);
   const companyAddress = addrParts.join(", ") || "";
+
+  const rawLogo = (company as { logo_url?: string | null } | null)?.logo_url;
+  const logoUrl = typeof rawLogo === "string" && rawLogo.trim() ? rawLogo.trim() : null;
 
   const userRes = await supabase.from("HRMS_users").select("name, employee_code, designation, date_of_joining, aadhaar, pan, uan_number, pf_number, esic_number").eq("id", employeeUserId).single();
   const user = userRes.data;
@@ -126,7 +133,7 @@ export async function GET(request: NextRequest) {
   });
 
   return NextResponse.json({
-    company: company ? { name: company.name, address: companyAddress } : null,
+    company: company ? { name: company.name, address: companyAddress, logoUrl } : null,
     user: user
       ? {
           name: user.name ?? "",
