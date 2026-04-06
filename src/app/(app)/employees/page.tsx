@@ -61,6 +61,11 @@ export default function EmployeesPage() {
   const [phoneError, setPhoneError] = useState<string | null>(null);
   const [aadhaarError, setAadhaarError] = useState<string | null>(null);
   const [panError, setPanError] = useState<string | null>(null);
+  const [nameError, setNameError] = useState<string | null>(null);
+  const [designationError, setDesignationError] = useState<string | null>(null);
+  const [departmentError, setDepartmentError] = useState<string | null>(null);
+  const [divisionError, setDivisionError] = useState<string | null>(null);
+  const [shiftError, setShiftError] = useState<string | null>(null);
   const [formRole, setFormRole] = useState<Employee["role"]>("employee");
   const [employmentStatus, setEmploymentStatus] = useState<Employee["employmentStatus"]>("preboarding");
   const [phone, setPhone] = useState("");
@@ -245,6 +250,11 @@ export default function EmployeesPage() {
     setPhoneError(null);
     setAadhaarError(null);
     setPanError(null);
+    setNameError(null);
+    setDesignationError(null);
+    setDepartmentError(null);
+    setDivisionError(null);
+    setShiftError(null);
     setName("");
     setEmail("");
     setFormRole("employee");
@@ -311,7 +321,17 @@ export default function EmployeesPage() {
       const panNorm = normalizePanInput(pan);
       const pnErr = validatePanNormalized(panNorm);
       setPanError(pnErr);
-      if (eErr || phErr || ahErr || pnErr) {
+      const nameErr = !name.trim() ? "Name is required" : null;
+      setNameError(nameErr);
+      const designationErr = !designation.trim() ? "Designation is required" : null;
+      setDesignationError(designationErr);
+      const departmentErr = !departmentId ? "Please select a department" : null;
+      setDepartmentError(departmentErr);
+      const divisionErr = !divisionId ? "Please select a division" : null;
+      setDivisionError(divisionErr);
+      const shiftErr = !shiftId ? "Please select a shift" : null;
+      setShiftError(shiftErr);
+      if (eErr || phErr || ahErr || pnErr || nameErr || designationErr || departmentErr || divisionErr || shiftErr) {
         setFormLoading(false);
         return;
       }
@@ -319,7 +339,7 @@ export default function EmployeesPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name: name.trim() || undefined,
+          name: name.trim(),
           email: email.trim().toLowerCase(),
           role: formRole,
           employmentStatus,
@@ -658,13 +678,23 @@ export default function EmployeesPage() {
             >
               <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
                 <div className="md:col-span-1">
-                  <label className="mb-1 block text-sm font-medium text-slate-700">Name</label>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Name <span className="text-red-500">*</span></label>
                   <input
                     type="text"
                     value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    onChange={(e) => {
+                      setName(e.target.value);
+                      setNameError(null);
+                    }}
+                    autoComplete="name"
+                    aria-invalid={Boolean(nameError)}
+                    className={`w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-1 ${
+                      nameError
+                        ? "border-red-500 focus:border-red-500 focus:ring-red-500"
+                        : "border-slate-300 focus:border-emerald-500 focus:ring-emerald-500"
+                    }`}
                   />
+                  {nameError && <p className="mt-1 text-xs text-red-600">{nameError}</p>}
                 </div>
                 <div className="md:col-span-1">
                   <label className="mb-1 block text-sm font-medium text-slate-700">
@@ -819,12 +849,12 @@ export default function EmployeesPage() {
                   <div className="relative">
                     <input
                       type="text"
-                      required
                       list="designation-list"
                       value={designation}
                       onChange={(e) => {
                         const v = e.target.value;
                         setDesignation(v);
+                        setDesignationError(null);
                         setDesignationAddPrompt(null);
                         const match = designations.find((d) => d.title.toLowerCase() === v.trim().toLowerCase());
                         setDesignationId(match ? match.id : "");
@@ -837,7 +867,12 @@ export default function EmployeesPage() {
                         else setDesignationAddPrompt(null);
                       }}
                       placeholder="Search or type new"
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                      aria-invalid={Boolean(designationError)}
+                      className={`w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-1 ${
+                        designationError
+                          ? "border-red-500 focus:border-red-500 focus:ring-red-500"
+                          : "border-slate-300 focus:border-emerald-500 focus:ring-emerald-500"
+                      }`}
                     />
                     <datalist id="designation-list">
                       {designations.map((d) => (
@@ -845,14 +880,22 @@ export default function EmployeesPage() {
                       ))}
                     </datalist>
                   </div>
+                  {designationError && <p className="mt-1 text-xs text-red-600">{designationError}</p>}
                 </div>
                 <div className="md:col-span-1">
                   <label className="mb-1 block text-sm font-medium text-slate-700">Department <span className="text-red-500">*</span></label>
                   <select
-                    required
                     value={departmentId}
-                    onChange={(e) => setDepartmentId(e.target.value)}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    onChange={(e) => {
+                      setDepartmentId(e.target.value);
+                      setDepartmentError(null);
+                    }}
+                    aria-invalid={Boolean(departmentError)}
+                    className={`w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-1 ${
+                      departmentError
+                        ? "border-red-500 focus:border-red-500 focus:ring-red-500"
+                        : "border-slate-300 focus:border-emerald-500 focus:ring-emerald-500"
+                    }`}
                   >
                     <option value="">Select department</option>
                     {departments.map((d) => (
@@ -862,34 +905,51 @@ export default function EmployeesPage() {
                       </option>
                     ))}
                   </select>
+                  {departmentError && <p className="mt-1 text-xs text-red-600">{departmentError}</p>}
                 </div>
                 <div className="md:col-span-1">
                   <label className="mb-1 block text-sm font-medium text-slate-700">Division <span className="text-red-500">*</span></label>
                   <select
-                    required
                     value={divisionId}
-                    onChange={(e) => setDivisionId(e.target.value)}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    onChange={(e) => {
+                      setDivisionId(e.target.value);
+                      setDivisionError(null);
+                    }}
+                    aria-invalid={Boolean(divisionError)}
+                    className={`w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-1 ${
+                      divisionError
+                        ? "border-red-500 focus:border-red-500 focus:ring-red-500"
+                        : "border-slate-300 focus:border-emerald-500 focus:ring-emerald-500"
+                    }`}
                   >
                     <option value="">Select division</option>
                     {divisions.map((d) => (
                       <option key={d.id} value={d.id}>{d.name}</option>
                     ))}
                   </select>
+                  {divisionError && <p className="mt-1 text-xs text-red-600">{divisionError}</p>}
                 </div>
                 <div className="md:col-span-1">
                   <label className="mb-1 block text-sm font-medium text-slate-700">Shift <span className="text-red-500">*</span></label>
                   <select
-                    required
                     value={shiftId}
-                    onChange={(e) => setShiftId(e.target.value)}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    onChange={(e) => {
+                      setShiftId(e.target.value);
+                      setShiftError(null);
+                    }}
+                    aria-invalid={Boolean(shiftError)}
+                    className={`w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-1 ${
+                      shiftError
+                        ? "border-red-500 focus:border-red-500 focus:ring-red-500"
+                        : "border-slate-300 focus:border-emerald-500 focus:ring-emerald-500"
+                    }`}
                   >
                     <option value="">Select shift</option>
                     {shifts.map((s) => (
                       <option key={s.id} value={s.id}>{s.name}</option>
                     ))}
                   </select>
+                  {shiftError && <p className="mt-1 text-xs text-red-600">{shiftError}</p>}
                 </div>
                 <div className="md:col-span-1">
                   <label className="mb-1 block text-sm font-medium text-slate-700">

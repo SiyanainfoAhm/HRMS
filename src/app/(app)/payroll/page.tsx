@@ -887,13 +887,13 @@ function PayrollPageContent() {
               <p className="muted">No current employees with payroll master.</p>
             ) : isSuperAdmin ? (
               <div className="overflow-x-auto rounded-lg border border-slate-800/30 shadow-sm">
-                <table className="w-full min-w-[1080px] border-collapse text-left text-sm">
+                <table className="w-full min-w-[1090px] border-collapse text-left text-sm">
                   <thead>
                     <tr className="bg-[#0a1628] text-[11px] font-semibold uppercase tracking-wide text-white">
                       <th rowSpan={2} className="border border-slate-700/90 px-2 py-2 align-middle whitespace-nowrap">
                         Employee
                       </th>
-                      <th rowSpan={2} className="border border-slate-700/90 px-2 py-2 text-center">
+                      <th rowSpan={2} className="min-w-[5rem] border border-slate-700/90 px-2 py-2 text-center">
                         Gross
                       </th>
                       <th rowSpan={2} className="border border-slate-700/90 px-1 py-2 text-center text-[10px] leading-tight">
@@ -943,6 +943,8 @@ function PayrollPageContent() {
                   </thead>
                   <tbody>
                     {masterGrid.map((row) => {
+                      const inpGross =
+                        "w-full min-w-[4rem] max-w-[6.5rem] rounded border border-sky-400/80 bg-white px-1.5 py-1 text-right text-sm tabular-nums text-slate-900";
                       const inp =
                         "w-full min-w-[4rem] max-w-[6.5rem] rounded border border-sky-400/80 bg-white px-1.5 py-1 text-right text-sm tabular-nums text-slate-900";
                       const inpRo =
@@ -965,7 +967,7 @@ function PayrollPageContent() {
                               type="number"
                               min={0}
                               step={100}
-                              className={inp}
+                              className={inpGross}
                               value={row.gross}
                               onChange={(e) =>
                                 patchMasterGridRow(row.employeeUserId, {
@@ -1142,7 +1144,7 @@ function PayrollPageContent() {
                   <thead className="bg-slate-50 text-slate-600">
                     <tr>
                       <th className="px-3 py-2">Employee</th>
-                      <th className="px-3 py-2 text-right">Gross</th>
+                      <th className="min-w-[6.5rem] px-3 py-2 text-right">Gross</th>
                       <th className="px-3 py-2 text-right">CTC</th>
                       <th className="px-3 py-2 text-right">Emp PF</th>
                       <th className="px-3 py-2 text-right">Emp ESIC</th>
