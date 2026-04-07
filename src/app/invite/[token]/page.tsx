@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { ToastProvider, useToast } from "@/components/ToastProvider";
 import { DatePickerField } from "@/components/ui/DatePickerField";
 import { PasswordField } from "@/components/PasswordField";
+import { GoogleAuthButton } from "@/components/GoogleAuthButton";
 
 type Doc = {
   id: string;
@@ -36,6 +37,8 @@ function InvitePageInner() {
   const [submissions, setSubmissions] = useState<Submission[]>([]);
 
   const [password, setPassword] = useState("");
+  const [authProvider, setAuthProvider] = useState<"password" | "google">("password");
+  const [showSetPassword, setShowSetPassword] = useState(true);
   const [completing, setCompleting] = useState(false);
   const [name, setName] = useState("");
   const [countryCode, setCountryCode] = useState("+91");
@@ -122,6 +125,9 @@ function InvitePageInner() {
       const u = data.user;
       if (u && !hasPopulatedFromUserRef.current) {
         hasPopulatedFromUserRef.current = true;
+        const ap = (String((u as any).authProvider || "password") as any) === "google" ? "google" : "password";
+        setAuthProvider(ap);
+        setShowSetPassword(ap !== "google");
         setName(String(u.name ?? "").trim());
         const rawPhone = String(u.phone ?? "").trim();
         const digits = rawPhone.replace(/\D+/g, "");
@@ -320,7 +326,7 @@ function InvitePageInner() {
         <div className="card text-center py-12">
           <h1 className="page-title">Thank you!</h1>
           <p className="mt-3 text-slate-600">Your onboarding is complete. An admin will activate your account shortly.</p>
-          <p className="mt-2 text-sm text-slate-500">You can log in with your email and password.</p>
+          <p className="mt-2 text-sm text-slate-500">You can log in with your email and password (or Google sign-in if enabled for your account).</p>
         </div>
       </section>
     );
@@ -679,18 +685,46 @@ function InvitePageInner() {
 
           <div className="card">
             <h2 className="text-base font-semibold text-slate-900">Activate account</h2>
-            <p className="text-sm text-slate-500 mt-1">Set your password and complete onboarding.</p>
+            {authProvider === "google" ? (
+              <p className="text-sm text-slate-500 mt-1">
+                You can complete onboarding using Google sign-in. Setting a password is optional.
+              </p>
+            ) : (
+              <p className="text-sm text-slate-500 mt-1">Set your password and complete onboarding.</p>
+            )}
+
+            {authProvider === "google" && (
+              <div className="mt-3">
+                <GoogleAuthButton mode="login" onSuccessRedirect={`/invite/${token}`} />
+              </div>
+            )}
+
+            {authProvider === "google" && (
+              <div className="mt-3">
+                <label className="flex items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={showSetPassword}
+                    onChange={(e) => setShowSetPassword(e.target.checked)}
+                  />
+                  Also set a password (optional)
+                </label>
+              </div>
+            )}
+
             <div className="mt-3 flex flex-col gap-3 md:flex-row md:items-end">
               <div className="flex-1">
-                <PasswordField
-                  label="Password"
-                  required
-                  minLength={8}
-                  autoComplete="new-password"
-                  value={password}
-                  onChange={setPassword}
-                  placeholder="Minimum 8 characters"
-                />
+                {(authProvider !== "google" || showSetPassword) && (
+                  <PasswordField
+                    label="Password"
+                    required={authProvider !== "google"}
+                    minLength={8}
+                    autoComplete="new-password"
+                    value={password}
+                    onChange={setPassword}
+                    placeholder="Minimum 8 characters"
+                  />
+                )}
               </div>
               <button type="button" className="btn btn-primary" onClick={complete} disabled={completing}>
                 {completing ? "Activating..." : "Complete onboarding"}

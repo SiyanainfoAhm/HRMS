@@ -14,6 +14,7 @@ function mapUser(row: any) {
     email: row.email as string,
     name: (row.name ?? null) as string | null,
     role: row.role as "super_admin" | "admin" | "hr" | "manager" | "employee",
+    authProvider: (row.auth_provider ?? "password") as "password" | "google",
     companyId: (row.company_id ?? null) as string | null,
     employeeCode: (row.employee_code ?? "") as string,
     phone: (row.phone ?? "") as string,

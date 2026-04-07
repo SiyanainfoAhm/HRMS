@@ -26,6 +26,7 @@ export function ProfileContent() {
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [authProvider, setAuthProvider] = useState<"password" | "google">("password");
 
   const [form, setForm] = useState({
     email: "",
@@ -162,6 +163,7 @@ export function ProfileContent() {
         if (!res.ok) throw new Error(data?.error || "Failed to load profile");
         if (cancelled) return;
         const u = data.user;
+        setAuthProvider(u?.authProvider === "google" ? "google" : "password");
         setForm({
           email: u?.email ?? "",
           name: u?.name ?? "",
@@ -836,41 +838,43 @@ export function ProfileContent() {
           )}
         </form>
 
-        <form onSubmit={handleChangePassword} className="card space-y-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <h2 className="mb-1 text-lg font-semibold text-slate-900">Change password</h2>
-              <p className="muted text-sm">
-                Enter your current password, then a new one (at least 8 characters). This applies to your next sign-in.
-              </p>
+        {authProvider !== "google" && (
+          <form onSubmit={handleChangePassword} className="card space-y-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h2 className="mb-1 text-lg font-semibold text-slate-900">Change password</h2>
+                <p className="muted text-sm">
+                  Enter your current password, then a new one (at least 8 characters). This applies to your next sign-in.
+                </p>
+              </div>
+              <button type="submit" className="btn btn-primary shrink-0" disabled={passwordSaving || loading}>
+                {passwordSaving ? "Updating…" : "Update password"}
+              </button>
             </div>
-            <button type="submit" className="btn btn-primary shrink-0" disabled={passwordSaving || loading}>
-              {passwordSaving ? "Updating…" : "Update password"}
-            </button>
-          </div>
-          {passwordError && <p className="text-sm text-red-600">{passwordError}</p>}
-          {passwordSuccess && <p className="text-sm text-emerald-700">{passwordSuccess}</p>}
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            <PasswordField
-              label="Current password"
-              autoComplete="current-password"
-              value={currentPassword}
-              onChange={setCurrentPassword}
-            />
-            <PasswordField
-              label="New password"
-              autoComplete="new-password"
-              value={newPassword}
-              onChange={setNewPassword}
-            />
-            <PasswordField
-              label="Confirm new password"
-              autoComplete="new-password"
-              value={confirmPassword}
-              onChange={setConfirmPassword}
-            />
-          </div>
-        </form>
+            {passwordError && <p className="text-sm text-red-600">{passwordError}</p>}
+            {passwordSuccess && <p className="text-sm text-emerald-700">{passwordSuccess}</p>}
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <PasswordField
+                label="Current password"
+                autoComplete="current-password"
+                value={currentPassword}
+                onChange={setCurrentPassword}
+              />
+              <PasswordField
+                label="New password"
+                autoComplete="new-password"
+                value={newPassword}
+                onChange={setNewPassword}
+              />
+              <PasswordField
+                label="Confirm new password"
+                autoComplete="new-password"
+                value={confirmPassword}
+                onChange={setConfirmPassword}
+              />
+            </div>
+          </form>
+        )}
         </>
       )}
 

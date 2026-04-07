@@ -17,6 +17,19 @@ function isManagerial(role: string): boolean {
   return role === "super_admin" || role === "admin" || role === "hr";
 }
 
+function todayYmd(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function isYmd(s: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(s);
+}
+
+function ymdOrNull(input: unknown): string | null {
+  const s = typeof input === "string" ? input.slice(0, 10) : "";
+  return isYmd(s) ? s : null;
+}
+
 function mapRow(row: any, lookups?: {
   designationById: Map<string, { title: string }>;
   departmentById: Map<string, { name: string }>;
@@ -58,6 +71,84 @@ function mapRow(row: any, lookups?: {
     shiftId: row.shift_id ?? null,
     shiftName: shiftName || null,
   };
+}
+
+const PREBOARDING_DOC_DONE = new Set(["submitted", "signed", "approved"]);
+
+/** Latest pending invite per user; mandatory requested docs all have a done submission on that invite. */
+async function preboardingDocsCompleteByUserId(
+  companyId: string,
+  userIds: string[],
+  supabaseClient: typeof supabase,
+): Promise<Map<string, boolean>> {
+  const result = new Map<string, boolean>();
+  for (const id of userIds) result.set(id, false);
+  if (!userIds.length) return result;
+
+  const { data: invites, error: invErr } = await supabaseClient
+    .from("HRMS_employee_invites")
+    .select("id, user_id, requested_document_ids, created_at")
+    .eq("company_id", companyId)
+    .eq("status", "pending")
+    .in("user_id", userIds)
+    .order("created_at", { ascending: false });
+  if (invErr || !invites?.length) return result;
+
+  const latestPendingByUser = new Map<string, { id: string; requested_document_ids: unknown }>();
+  for (const inv of invites) {
+    const uid = inv.user_id as string;
+    if (!latestPendingByUser.has(uid)) {
+      latestPendingByUser.set(uid, { id: inv.id as string, requested_document_ids: inv.requested_document_ids });
+    }
+  }
+
+  const inviteIds = [...latestPendingByUser.values()].map((v) => v.id);
+  const { data: subs } = await supabaseClient
+    .from("HRMS_employee_document_submissions")
+    .select("invite_id, document_id, status")
+    .in("invite_id", inviteIds);
+
+  const { data: allDocs, error: docErr } = await supabaseClient
+    .from("HRMS_company_documents")
+    .select("id, is_mandatory")
+    .eq("company_id", companyId);
+  if (docErr) return result;
+
+  const subsByInvite = new Map<string, { document_id: string; status: string }[]>();
+  for (const s of subs ?? []) {
+    const iid = s.invite_id as string;
+    if (!subsByInvite.has(iid)) subsByInvite.set(iid, []);
+    subsByInvite.get(iid)!.push({ document_id: s.document_id as string, status: String(s.status) });
+  }
+
+  for (const uid of userIds) {
+    const inv = latestPendingByUser.get(uid);
+    if (!inv) continue;
+
+    const requestedIds = Array.isArray(inv.requested_document_ids)
+      ? (inv.requested_document_ids as unknown[]).filter((x): x is string => typeof x === "string")
+      : null;
+
+    let docScope = (allDocs ?? []) as { id: string; is_mandatory: boolean }[];
+    if (requestedIds?.length) {
+      const allow = new Set(requestedIds);
+      docScope = docScope.filter((d) => allow.has(d.id));
+    }
+
+    const mandatoryIds = docScope.filter((d) => d.is_mandatory).map((d) => d.id);
+    if (mandatoryIds.length === 0) {
+      result.set(uid, true);
+      continue;
+    }
+
+    const inviteSubs = subsByInvite.get(inv.id) ?? [];
+    const done = new Set(
+      inviteSubs.filter((s) => PREBOARDING_DOC_DONE.has(s.status)).map((s) => s.document_id),
+    );
+    result.set(uid, mandatoryIds.every((mid) => done.has(mid)));
+  }
+
+  return result;
 }
 
 function randomEmployeeCode(): string {
@@ -111,8 +202,13 @@ export async function GET(request: NextRequest) {
       .order("created_at", { ascending: false });
     if (paginated) {
       const statusFilter = searchParams.get("employmentStatus");
-      if (statusFilter === "preboarding" || statusFilter === "current" || statusFilter === "past") {
+      if (statusFilter === "preboarding" || statusFilter === "current") {
         q = q.eq("employment_status", statusFilter);
+      } else if (statusFilter === "past") {
+        // Past tab includes:
+        // - past employees
+        // - "on notice" employees (current + future date_of_leaving)
+        q = q.or("employment_status.eq.past,and(employment_status.eq.current,date_of_leaving.not.is.null)");
       }
     }
     return q;
@@ -134,6 +230,37 @@ export async function GET(request: NextRequest) {
     count = res.count ?? null;
     if (error) return NextResponse.json({ error: error.message }, { status: 400 });
     const rows = data ?? [];
+
+    // If requesting past tab, auto-offboard any "on notice" employees whose last working date is today or earlier.
+    const employmentStatusParam = searchParams.get("employmentStatus");
+    if (employmentStatusParam === "past" && rows.length) {
+      const today = todayYmd();
+      const toOffboard = rows
+        .filter((r: any) => r.employment_status === "current")
+        .map((r: any) => ({ id: r.id as string, dol: ymdOrNull(r.date_of_leaving) }))
+        .filter((x) => x.dol && x.dol <= today)
+        .map((x) => x.id);
+      if (toOffboard.length) {
+        try {
+          await supabase
+            .from("HRMS_users")
+            .update({ employment_status: "past", updated_at: new Date().toISOString() })
+            .eq("company_id", companyId)
+            .in("id", toOffboard);
+          await supabase
+            .from("HRMS_employees")
+            .update({ is_active: false, updated_at: new Date().toISOString() })
+            .eq("company_id", companyId)
+            .in("user_id", toOffboard);
+          for (const r of rows) {
+            if (toOffboard.includes(r.id)) r.employment_status = "past";
+          }
+        } catch {
+          // best-effort
+        }
+      }
+    }
+
     const designationIds = [...new Set(rows.map((r: any) => r.designation_id).filter(Boolean))];
     const departmentIds = [...new Set(rows.map((r: any) => r.department_id).filter(Boolean))];
     const divisionIds = [...new Set(rows.map((r: any) => r.division_id).filter(Boolean))];
@@ -152,8 +279,23 @@ export async function GET(request: NextRequest) {
     const shiftById = new Map((shiftsRes.data ?? []).map((d: any) => [d.id, { name: d.name }]));
     const lookups = { designationById, departmentById, divisionById, shiftById };
 
+    let preboardingComplete: Map<string, boolean> | null = null;
+    if (employmentStatusParam === "preboarding" && rows.length) {
+      preboardingComplete = await preboardingDocsCompleteByUserId(
+        companyId,
+        rows.map((r: any) => r.id as string),
+        supabase,
+      );
+    }
+
     return NextResponse.json({
-      employees: rows.map((r: any) => mapRow(r, lookups)),
+      employees: rows.map((r: any) => {
+        const base = mapRow(r, lookups);
+        if (preboardingComplete) {
+          return { ...base, preboardingDocsComplete: preboardingComplete.get(r.id) ?? false };
+        }
+        return base;
+      }),
       total: count ?? 0,
       page,
       pageSize,
@@ -432,7 +574,7 @@ export async function PATCH(request: NextRequest) {
   const dateOfJoining = typeof body?.dateOfJoining === "string" ? body.dateOfJoining.trim() : "";
   const lastWorkingDate = typeof body?.lastWorkingDate === "string" ? body.lastWorkingDate.trim() : "";
   if (!userId) return NextResponse.json({ error: "userId is required" }, { status: 400 });
-  if (action !== "convert_to_current" && action !== "convert_to_past")
+  if (action !== "convert_to_current" && action !== "convert_to_past" && action !== "revoke_notice")
     return NextResponse.json({ error: "Invalid action" }, { status: 400 });
 
   const { data: me, error: meErr } = await supabase
@@ -549,21 +691,40 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-  // convert_to_past
-  const dol = lastWorkingDate || new Date().toISOString().slice(0, 10);
+  if (action === "revoke_notice") {
+    const { error: revErr } = await supabase
+      .from("HRMS_users")
+      .update({ employment_status: "current", date_of_leaving: null, updated_at: new Date().toISOString() })
+      .eq("company_id", me.company_id)
+      .eq("id", userId);
+    if (revErr) return NextResponse.json({ error: revErr.message }, { status: 400 });
+
+    await supabase
+      .from("HRMS_employees")
+      .update({ is_active: true, date_of_leaving: null, updated_at: new Date().toISOString() })
+      .eq("company_id", me.company_id)
+      .eq("user_id", userId);
+
+    return NextResponse.json({ ok: true });
+  }
+
+  // convert_to_past (notice-aware)
+  const dol = lastWorkingDate || todayYmd();
+  const today = todayYmd();
+  const nextStatus = dol <= today ? "past" : "current";
   const { error: pastErr } = await supabase
     .from("HRMS_users")
-    .update({ employment_status: "past", date_of_leaving: dol, updated_at: new Date().toISOString() })
+    .update({ employment_status: nextStatus, date_of_leaving: dol, updated_at: new Date().toISOString() })
     .eq("company_id", me.company_id)
     .eq("id", userId);
   if (pastErr) return NextResponse.json({ error: pastErr.message }, { status: 400 });
 
   await supabase
     .from("HRMS_employees")
-    .update({ is_active: false, date_of_leaving: dol, updated_at: new Date().toISOString() })
+    .update({ is_active: nextStatus !== "past", date_of_leaving: dol, updated_at: new Date().toISOString() })
     .eq("company_id", me.company_id)
     .eq("user_id", userId);
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, status: nextStatus });
 }
 

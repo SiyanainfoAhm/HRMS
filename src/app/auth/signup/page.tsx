@@ -4,6 +4,7 @@ import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { PasswordField } from "@/components/PasswordField";
+import { GoogleAuthButton } from "@/components/GoogleAuthButton";
 
 export default function SignupPage() {
   const router = useRouter();
@@ -92,6 +93,15 @@ export default function SignupPage() {
           <button type="submit" className="btn btn-primary w-full" disabled={loading}>
             {loading ? "Creating account..." : "Sign up"}
           </button>
+
+          <GoogleAuthButton
+            mode="signup"
+            onSuccessRedirect="/dashboard"
+            onPrefill={({ email, name }) => {
+              if (email) setEmail(email);
+              if (name) setName(name);
+            }}
+          />
 
           <p className="text-center text-sm text-slate-500">
             Already have an account?{" "}

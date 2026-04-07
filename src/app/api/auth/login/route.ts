@@ -14,6 +14,9 @@ export async function POST(request: NextRequest) {
     if (!user) {
       return NextResponse.json({ error: "Invalid email or password" }, { status: 401 });
     }
+    if ((user as any).authProvider && (user as any).authProvider !== "password") {
+      return NextResponse.json({ error: "This account uses Google sign-in. Please continue with Google." }, { status: 400 });
+    }
 
     const ok = await verifyPassword(user, password);
     if (!ok) {

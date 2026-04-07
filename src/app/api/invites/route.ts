@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { COOKIE_NAME } from "@/lib/auth";
 import { getValidatedSession } from "@/lib/authValidate";
+import { getRequestAppBaseUrl, sendInviteEmail } from "@/lib/inviteEmail";
 import { supabase } from "@/lib/supabaseClient";
 
 function isManagerial(role: string): boolean {
@@ -43,6 +44,7 @@ export async function POST(request: NextRequest) {
   const requestedDocumentIds = Array.isArray(body?.requestedDocumentIds)
     ? body.requestedDocumentIds.filter((x: any) => typeof x === "string")
     : null;
+  const sendEmailRequested = Boolean(body?.sendEmail);
   if (!email) return NextResponse.json({ error: "Email is required" }, { status: 400 });
 
   const { data: me, error: meErr } = await supabase
@@ -82,6 +84,27 @@ export async function POST(request: NextRequest) {
     .single();
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
 
-  return NextResponse.json({ invite: data });
+  let emailSent = false;
+  let emailError: string | undefined;
+  if (sendEmailRequested && data?.token) {
+    const baseUrl = getRequestAppBaseUrl(request);
+    const inviteUrl = `${baseUrl}/invite/${data.token}`;
+    const [{ data: companyRow }, { data: userRow }] = await Promise.all([
+      supabase.from("HRMS_companies").select("name").eq("id", me.company_id).maybeSingle(),
+      userId ? supabase.from("HRMS_users").select("name").eq("id", userId).maybeSingle() : Promise.resolve({ data: null }),
+    ]);
+    const mail = await sendInviteEmail({
+      to: email,
+      inviteUrl,
+      recipientName: userRow?.name ?? null,
+      companyName: companyRow?.name ?? null,
+      userId: userId ?? undefined,
+      companyId: me.company_id,
+    });
+    emailSent = mail.ok;
+    if (!mail.ok) emailError = mail.error;
+  }
+
+  return NextResponse.json({ invite: data, emailSent, emailError });
 }
 

@@ -70,7 +70,7 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ token:
   if (invite.user_id) {
     const { data: userRow } = await supabase
       .from("HRMS_users")
-      .select("name, email, phone, date_of_birth, date_of_joining, designation, current_address_line1, current_address_line2, current_city, current_state, current_country, current_postal_code, permanent_address_line1, permanent_address_line2, permanent_city, permanent_state, permanent_country, permanent_postal_code, bank_account_number, bank_ifsc, aadhaar, pan")
+      .select("name, email, phone, auth_provider, date_of_birth, date_of_joining, designation, current_address_line1, current_address_line2, current_city, current_state, current_country, current_postal_code, permanent_address_line1, permanent_address_line2, permanent_city, permanent_state, permanent_country, permanent_postal_code, bank_account_number, bank_ifsc, aadhaar, pan")
       .eq("id", invite.user_id)
       .maybeSingle();
     if (userRow) {
@@ -78,6 +78,7 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ token:
         name: userRow.name ?? "",
         email: userRow.email ?? invite.email ?? "",
         phone: userRow.phone ?? "",
+        authProvider: userRow.auth_provider ?? "password",
         dateOfBirth: userRow.date_of_birth ? String(userRow.date_of_birth) : "",
         dateOfJoining: userRow.date_of_joining ? String(userRow.date_of_joining) : "",
         designation: userRow.designation ?? "",
@@ -233,7 +234,24 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   if (action === "complete") {
     const password = typeof body?.password === "string" ? body.password.trim() : "";
     const profile = typeof body?.profile === "object" && body.profile ? body.profile : {};
-    if (!password || password.length < 8) return NextResponse.json({ error: "Password must be at least 8 characters" }, { status: 400 });
+    if (!invite.user_id) return NextResponse.json({ error: "Invite is not linked to a user" }, { status: 400 });
+
+    const { data: authRow, error: authErr } = await supabase
+      .from("HRMS_users")
+      .select("auth_provider, auth_session_version")
+      .eq("id", invite.user_id)
+      .maybeSingle();
+    if (authErr) return NextResponse.json({ error: authErr.message }, { status: 400 });
+    const authProvider = (authRow?.auth_provider ?? "password") as string;
+    const needsPassword = authProvider !== "google";
+
+    if (needsPassword) {
+      if (!password || password.length < 8) {
+        return NextResponse.json({ error: "Password must be at least 8 characters" }, { status: 400 });
+      }
+    } else if (password && password.length > 0 && password.length < 8) {
+      return NextResponse.json({ error: "Password must be at least 8 characters" }, { status: 400 });
+    }
 
     const requiredFields: { key: string; label: string }[] = [
       { key: "name", label: "Full name" },
@@ -273,21 +291,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       if (missing.length) return NextResponse.json({ error: "Please complete all mandatory documents first." }, { status: 400 });
     }
 
-    const password_hash = await bcrypt.hash(password, 10);
+    const shouldSetPassword = Boolean(password) && password.length >= 8;
+    const password_hash = shouldSetPassword ? await bcrypt.hash(password, 10) : null;
+    const nextSv =
+      shouldSetPassword
+        ? (typeof authRow?.auth_session_version === "number" ? authRow.auth_session_version : 0) + 1
+        : undefined;
 
-    if (invite.user_id) {
-      const { data: verRow } = await supabase
-        .from("HRMS_users")
-        .select("auth_session_version")
-        .eq("id", invite.user_id)
-        .maybeSingle();
-      const nextSv = (typeof verRow?.auth_session_version === "number" ? verRow.auth_session_version : 0) + 1;
-
-      const { error: updErr } = await supabase
-        .from("HRMS_users")
-        .update({
-          password_hash,
-          auth_session_version: nextSv,
+    {
+      const updatePayload: any = {
           name: typeof profile?.name === "string" ? profile.name.trim() || null : undefined,
           phone: typeof profile?.phone === "string" ? profile.phone.trim() || null : undefined,
           date_of_birth: typeof profile?.dateOfBirth === "string" ? profile.dateOfBirth || null : undefined,
@@ -308,7 +320,16 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           aadhaar: typeof profile?.aadhaar === "string" ? profile.aadhaar.trim() || null : undefined,
           pan: typeof profile?.pan === "string" ? profile.pan.trim() || null : undefined,
           updated_at: new Date().toISOString(),
-        })
+      };
+      if (shouldSetPassword) {
+        updatePayload.password_hash = password_hash;
+        updatePayload.auth_provider = "password";
+        updatePayload.auth_session_version = nextSv;
+      }
+
+      const { error: updErr } = await supabase
+        .from("HRMS_users")
+        .update(updatePayload)
         .eq("id", invite.user_id);
       if (updErr) return NextResponse.json({ error: updErr.message }, { status: 400 });
     }

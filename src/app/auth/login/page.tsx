@@ -4,6 +4,7 @@ import { FormEvent, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { PasswordField } from "@/components/PasswordField";
+import { GoogleAuthButton } from "@/components/GoogleAuthButton";
 
 function LoginForm() {
   const router = useRouter();
@@ -69,6 +70,8 @@ function LoginForm() {
           <button type="submit" className="btn btn-primary w-full" disabled={loading}>
             {loading ? "Signing in..." : "Sign in"}
           </button>
+
+          <GoogleAuthButton mode="login" onSuccessRedirect="/dashboard" />
 
           <p className="text-center text-sm text-slate-500">
             Don&apos;t have an account?{" "}

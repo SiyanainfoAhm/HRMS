@@ -74,6 +74,16 @@ body {
   --rdp-day_button-border-radius: 0.5rem;
 }
 
+.rdp-theme .rdp-dropdown_root {
+  font-size: 0.8125rem;
+}
+
+/* DatePickerField — month/year grid panels (no native selects) */
+.date-picker-panel .picker-view-grid button:focus-visible {
+  outline: 2px solid #047857;
+  outline-offset: 2px;
+}
+
 /* Print: show only payslip, A4 portrait */
 @media print {
   body * {

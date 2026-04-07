@@ -2,13 +2,15 @@ import bcrypt from "bcryptjs";
 import { supabase } from "@/lib/supabaseClient";
 
 export type UserRole = "super_admin" | "admin" | "hr" | "manager" | "employee";
+export type AuthProvider = "password" | "google";
 
 export type User = {
   id: string;
   email: string;
-  passwordHash: string;
+  passwordHash: string | null;
   name: string | null;
   role: UserRole;
+  authProvider?: AuthProvider;
   authSessionVersion: number;
   createdAt: string; // ISO string
   updatedAt: string; // ISO string
@@ -42,9 +44,10 @@ function mapDbRowToUser(row: any): User {
   return {
     id: row.id,
     email: row.email,
-    passwordHash: row.password_hash,
+    passwordHash: row.password_hash ?? null,
     name: row.name ?? null,
     role: row.role as UserRole,
+    authProvider: (row.auth_provider as AuthProvider) ?? "password",
     authSessionVersion: Number(row.auth_session_version ?? 0),
     createdAt: new Date(row.created_at).toISOString(),
     updatedAt: new Date(row.updated_at).toISOString(),
@@ -101,6 +104,7 @@ export async function createUser(data: {
   const insertPayload = {
     email: normalizedEmail,
     password_hash: passwordHash,
+    auth_provider: "password",
     name: data.name ?? null,
     role: finalRole,
     employee_code: employeeCode,
@@ -125,6 +129,7 @@ export async function createUser(data: {
 }
 
 export async function verifyPassword(user: User, password: string): Promise<boolean> {
+  if (!user.passwordHash) return false;
   return bcrypt.compare(password, user.passwordHash);
 }
 

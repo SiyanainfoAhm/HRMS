@@ -40,6 +40,8 @@ type Employee = {
   departmentName?: string | null;
   divisionName?: string | null;
   shiftName?: string | null;
+  /** Preboarding list only: mandatory requested docs done for latest pending invite */
+  preboardingDocsComplete?: boolean;
 };
 
 export default function EmployeesPage() {
@@ -134,6 +136,7 @@ export default function EmployeesPage() {
   const [resendTarget, setResendTarget] = useState<Employee | null>(null);
   const [resendDocIds, setResendDocIds] = useState<string[]>([]);
   const [resending, setResending] = useState(false);
+  const [detailsSendEmailLoading, setDetailsSendEmailLoading] = useState(false);
 
   const [convertDialogOpen, setConvertDialogOpen] = useState(false);
   const [convertTarget, setConvertTarget] = useState<Employee | null>(null);
@@ -463,6 +466,55 @@ export default function EmployeesPage() {
       setDetailsError(e?.message || "Failed to load details");
     } finally {
       setDetailsLoading(false);
+    }
+  }
+
+  function closeDetails() {
+    setDetailsDialogOpen(false);
+    if (activeTab === "preboarding") setListRefresh((n) => n + 1);
+  }
+
+  function isInviteSendable(inv: { status?: string; expires_at?: string | null } | null | undefined): boolean {
+    if (!inv || inv.status !== "pending") return false;
+    if (inv.expires_at && new Date(inv.expires_at) <= new Date()) return false;
+    return true;
+  }
+
+  function ymdToday(): string {
+    return new Date().toISOString().slice(0, 10);
+  }
+
+  function getPastStatus(emp: Employee): "Notice" | "Past" {
+    const dol = (emp as any).dateOfLeaving || (emp as any).date_of_leaving || "";
+    const dolYmd = typeof dol === "string" ? dol.slice(0, 10) : "";
+    if (!dolYmd) return "Past";
+    return dolYmd > ymdToday() ? "Notice" : "Past";
+  }
+
+  function isOnNotice(emp: Employee): boolean {
+    if (emp.employmentStatus !== "current") return false;
+    const dol = (emp as any).dateOfLeaving || "";
+    const dolYmd = typeof dol === "string" ? dol.slice(0, 10) : "";
+    return Boolean(dolYmd) && dolYmd > ymdToday();
+  }
+
+  async function revokeNotice(emp: Employee) {
+    try {
+      setError(null);
+      setConverting(true);
+      const res = await fetch("/api/employees", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "revoke_notice", userId: emp.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Failed to revoke notice");
+      setListRefresh((n) => n + 1);
+      showToast("success", "Notice revoked");
+    } catch (e: any) {
+      showToast("error", e?.message || "Failed to revoke notice");
+    } finally {
+      setConverting(false);
     }
   }
 
@@ -1226,12 +1278,20 @@ export default function EmployeesPage() {
                   <th className="w-[18%] px-1.5 py-1.5 font-medium whitespace-nowrap">Email</th>
                   <th className="w-[10%] px-1.5 py-1.5 font-medium whitespace-nowrap">Phone</th>
                   <th className="w-[8%] px-1.5 py-1.5 font-medium whitespace-nowrap">DOJ</th>
-                  <th className="w-[8%] px-1.5 py-1.5 font-medium whitespace-nowrap">Last working</th>
+                  {activeTab === "past" && (
+                    <th className="w-[8%] px-1.5 py-1.5 font-medium whitespace-nowrap">Last working</th>
+                  )}
+                  {activeTab === "past" && (
+                    <th className="w-[8%] px-1.5 py-1.5 font-medium whitespace-nowrap">Status</th>
+                  )}
                   {activeTab === "preboarding" && (
                     <th className="w-[13%] px-1.5 py-1.5 font-medium whitespace-nowrap">Actions</th>
                   )}
                   {activeTab === "current" && (
                     <th className="w-[10%] px-1.5 py-1.5 font-medium whitespace-nowrap">Actions</th>
+                  )}
+                  {activeTab === "past" && (
+                    <th className="w-[8%] px-1.5 py-1.5 font-medium whitespace-nowrap">Actions</th>
                   )}
                 </tr>
               </thead>
@@ -1265,7 +1325,14 @@ export default function EmployeesPage() {
                     </td>
                     <td className="whitespace-nowrap px-1.5 py-1">{e.phone || "—"}</td>
                     <td className="whitespace-nowrap px-1.5 py-1">{e.dateOfJoining || "—"}</td>
-                    <td className="whitespace-nowrap px-1.5 py-1">{(e as any).dateOfLeaving || "—"}</td>
+                    {activeTab === "past" && (
+                      <td className="whitespace-nowrap px-1.5 py-1">{(e as any).dateOfLeaving || "—"}</td>
+                    )}
+                    {activeTab === "past" && (
+                      <td className="whitespace-nowrap px-1.5 py-1">
+                        {getPastStatus(e)}
+                      </td>
+                    )}
                     {activeTab === "preboarding" && (
                       <td className="px-1.5 py-1">
                         <div className="flex flex-nowrap items-center gap-1">
@@ -1273,17 +1340,20 @@ export default function EmployeesPage() {
                             type="button"
                             className="btn btn-outline !min-h-0 shrink-0 !px-1.5 !py-0.5 !text-[11px] leading-none"
                             onClick={() => openDetails(e.id)}
-                            title="View"
+                            title={
+                              e.preboardingDocsComplete
+                                ? "All mandatory documents submitted — open details"
+                                : "View preboarding"
+                            }
                           >
-                            👁
-                          </button>
-                          <button
-                            type="button"
-                            className="btn btn-outline !min-h-0 shrink-0 !px-1.5 !py-0.5 !text-[11px] leading-none"
-                            onClick={() => resendInvite(e)}
-                            title="Send documents again"
-                          >
-                            📩
+                            {e.preboardingDocsComplete ? (
+                              <span
+                                className="inline-block size-3.5 shrink-0 rounded-md bg-emerald-600 shadow-sm ring-1 ring-emerald-800/35"
+                                aria-hidden
+                              />
+                            ) : (
+                              <span aria-hidden>👁</span>
+                            )}
                           </button>
                           <button
                             type="button"
@@ -1328,6 +1398,25 @@ export default function EmployeesPage() {
                         </div>
                       </td>
                     )}
+                    {activeTab === "past" && (
+                      <td className="px-1.5 py-1">
+                        <div className="flex flex-nowrap items-center gap-1">
+                          {isOnNotice(e) ? (
+                            <button
+                              type="button"
+                              className="btn btn-outline !min-h-0 shrink-0 !px-1.5 !py-0.5 !text-[11px] leading-none"
+                              onClick={() => revokeNotice(e)}
+                              disabled={converting}
+                              title="Revoke notice"
+                            >
+                              ↩
+                            </button>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -1367,22 +1456,38 @@ export default function EmployeesPage() {
                     <dt className="text-slate-500">DOJ</dt>
                     <dd className="text-right">{e.dateOfJoining || "—"}</dd>
                   </div>
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-slate-500">Last working</dt>
-                    <dd className="text-right">{(e as { dateOfLeaving?: string }).dateOfLeaving || "—"}</dd>
-                  </div>
+                  {activeTab === "past" && (
+                    <div className="flex justify-between gap-3">
+                      <dt className="text-slate-500">Last working</dt>
+                      <dd className="text-right">{(e as { dateOfLeaving?: string }).dateOfLeaving || "—"}</dd>
+                    </div>
+                  )}
+                  {activeTab === "past" && (
+                    <div className="flex justify-between gap-3">
+                      <dt className="text-slate-500">Status</dt>
+                      <dd className="text-right">{getPastStatus(e)}</dd>
+                    </div>
+                  )}
                 </dl>
                 {activeTab === "preboarding" && (
                   <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-100 pt-3">
                     <button
                       type="button"
-                      className="btn btn-outline text-xs"
+                      className="btn btn-outline inline-flex items-center gap-1.5 text-xs"
                       onClick={() => openDetails(e.id)}
+                      title={
+                        e.preboardingDocsComplete
+                          ? "All mandatory documents submitted — open details"
+                          : "View preboarding"
+                      }
                     >
+                      {e.preboardingDocsComplete ? (
+                        <span
+                          className="inline-block size-3 rounded-md bg-emerald-600 ring-1 ring-emerald-800/35"
+                          aria-hidden
+                        />
+                      ) : null}
                       View
-                    </button>
-                    <button type="button" className="btn btn-outline text-xs" onClick={() => resendInvite(e)}>
-                      Resend docs
                     </button>
                     <button
                       type="button"
@@ -1421,6 +1526,22 @@ export default function EmployeesPage() {
                     </button>
                   </div>
                 )}
+                {activeTab === "past" && (
+                  <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-100 pt-3">
+                    {isOnNotice(e) ? (
+                      <button
+                        type="button"
+                        className="btn btn-outline text-xs"
+                        onClick={() => revokeNotice(e)}
+                        disabled={converting}
+                      >
+                        Revoke notice
+                      </button>
+                    ) : (
+                      <span className="text-xs text-slate-500">—</span>
+                    )}
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -1442,14 +1563,14 @@ export default function EmployeesPage() {
 
       {detailsDialogOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <button type="button" className="absolute inset-0 bg-black/40" aria-label="Close dialog" onClick={() => setDetailsDialogOpen(false)} />
+          <button type="button" className="absolute inset-0 bg-black/40" aria-label="Close dialog" onClick={closeDetails} />
           <div role="dialog" aria-modal="true" className="relative z-10 w-full max-w-4xl rounded-xl border border-slate-200 bg-white shadow-xl">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-5 py-4">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">Preboarding details</h2>
                 <p className="text-sm text-slate-500">Employee info + submitted documents</p>
               </div>
-              <button type="button" className="btn btn-outline" onClick={() => setDetailsDialogOpen(false)}>
+              <button type="button" className="btn btn-outline" onClick={closeDetails}>
                 Close
               </button>
             </div>
@@ -1494,6 +1615,43 @@ export default function EmployeesPage() {
                         </div>
                         <div>
                           <span className="text-slate-500">Expires:</span> {detailsData?.invite?.expires_at ? new Date(detailsData.invite.expires_at).toLocaleString() : "-"}
+                        </div>
+                        <div className="pt-2">
+                          <button
+                            type="button"
+                            className="btn btn-primary text-sm"
+                            disabled={
+                              detailsSendEmailLoading ||
+                              !detailsData?.employee?.id ||
+                              !isInviteSendable(detailsData?.invite)
+                            }
+                            onClick={async () => {
+                              const uid = detailsData?.employee?.id;
+                              if (!uid) return;
+                              setDetailsSendEmailLoading(true);
+                              try {
+                                const res = await fetch("/api/invites/hrms-send-invite", {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ userId: uid }),
+                                });
+                                const data = await res.json();
+                                if (!res.ok) throw new Error(data?.error || "Failed to send email");
+                                showToast("success", "Invite email sent");
+                              } catch (e: any) {
+                                showToast("error", e?.message || "Failed to send email");
+                              } finally {
+                                setDetailsSendEmailLoading(false);
+                              }
+                            }}
+                          >
+                            {detailsSendEmailLoading ? "Sending…" : "Send invite email"}
+                          </button>
+                          {!isInviteSendable(detailsData?.invite) && (
+                            <p className="mt-1.5 text-xs text-slate-500">
+                              This employee has no active invite link (or it expired).
+                            </p>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -1602,17 +1760,28 @@ export default function EmployeesPage() {
                           email: resendTarget.email,
                           userId: resendTarget.id,
                           requestedDocumentIds: resendDocIds,
+                          sendEmail: true,
                         }),
                       });
                       const data = await res.json();
                       if (!res.ok) throw new Error(data?.error || "Failed to resend invite");
                       const link = `${window.location.origin}/invite/${data.invite.token}`;
-                      try {
-                        await navigator.clipboard.writeText(link);
-                        showToast("success", "Invite link copied to clipboard (valid 48 hours)");
-                      } catch {
-                        // ignore clipboard errors
-                        showToast("success", "Invite link generated (valid 48 hours)");
+                      if (data.emailSent) {
+                        showToast("success", "New invite link emailed (valid 48 hours)");
+                      } else if (data.emailError) {
+                        try {
+                          await navigator.clipboard.writeText(link);
+                          showToast("success", `Link copied — email not sent (${data.emailError})`);
+                        } catch {
+                          showToast("error", `Invite created but email failed: ${data.emailError}`);
+                        }
+                      } else {
+                        try {
+                          await navigator.clipboard.writeText(link);
+                          showToast("success", "Invite link copied to clipboard (valid 48 hours)");
+                        } catch {
+                          showToast("success", "Invite link generated (valid 48 hours)");
+                        }
                       }
                       setResendDialogOpen(false);
                     } catch (e: any) {
