@@ -48,6 +48,7 @@ export default function EmployeesPage() {
   const { showToast } = useToast();
   const { role } = useAuth();
   const canEditCtc = role === "super_admin" || role === "admin" || role === "hr";
+  const isSuperAdmin = role === "super_admin";
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [employeePage, setEmployeePage] = useState(1);
   const [employeeTotal, setEmployeeTotal] = useState(0);
@@ -143,6 +144,9 @@ export default function EmployeesPage() {
   const [convertConfirmStatus, setConvertConfirmStatus] = useState<"current" | "past">("current");
   const [convertDate, setConvertDate] = useState("");
   const [converting, setConverting] = useState(false);
+
+  const [deleteTarget, setDeleteTarget] = useState<Employee | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const [companyPtMonthly, setCompanyPtMonthly] = useState<number>(200);
 
@@ -527,6 +531,22 @@ export default function EmployeesPage() {
     const mandatory = (docs || []).filter((d: any) => d.is_mandatory).map((d: any) => d.id);
     setResendDocIds(mandatory.length ? mandatory : []);
     setResendDialogOpen(true);
+  }
+
+  async function deleteEmployee(emp: Employee) {
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/employees?userId=${encodeURIComponent(emp.id)}`, { method: "DELETE" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || "Failed to delete employee");
+      showToast("success", "Employee deleted");
+      setDeleteTarget(null);
+      setListRefresh((n) => n + 1);
+    } catch (e: unknown) {
+      showToast("error", e instanceof Error ? e.message : "Failed to delete");
+    } finally {
+      setDeleting(false);
+    }
   }
 
   async function convertEmployee(emp: Employee, status: "current" | "past", date: string) {
@@ -1368,6 +1388,16 @@ export default function EmployeesPage() {
                           >
                             ✅
                           </button>
+                          {isSuperAdmin && (
+                            <button
+                              type="button"
+                              className="btn btn-outline !min-h-0 shrink-0 !border-red-300 !px-1.5 !py-0.5 !text-[11px] leading-none text-red-700"
+                              onClick={() => setDeleteTarget(e)}
+                              title="Delete employee"
+                            >
+                              🗑
+                            </button>
+                          )}
                         </div>
                       </td>
                     )}
@@ -1395,6 +1425,16 @@ export default function EmployeesPage() {
                           >
                             📴
                           </button>
+                          {isSuperAdmin && (
+                            <button
+                              type="button"
+                              className="btn btn-outline !min-h-0 shrink-0 !border-red-300 !px-1.5 !py-0.5 !text-[11px] leading-none text-red-700"
+                              onClick={() => setDeleteTarget(e)}
+                              title="Delete employee"
+                            >
+                              🗑
+                            </button>
+                          )}
                         </div>
                       </td>
                     )}
@@ -1413,6 +1453,16 @@ export default function EmployeesPage() {
                             </button>
                           ) : (
                             <span className="text-slate-400">—</span>
+                          )}
+                          {isSuperAdmin && (
+                            <button
+                              type="button"
+                              className="btn btn-outline !min-h-0 shrink-0 !border-red-300 !px-1.5 !py-0.5 !text-[11px] leading-none text-red-700"
+                              onClick={() => setDeleteTarget(e)}
+                              title="Delete employee"
+                            >
+                              🗑
+                            </button>
                           )}
                         </div>
                       </td>
@@ -1501,6 +1551,15 @@ export default function EmployeesPage() {
                     >
                       Convert to current
                     </button>
+                    {isSuperAdmin && (
+                      <button
+                        type="button"
+                        className="btn btn-outline border-red-300 text-xs text-red-700"
+                        onClick={() => setDeleteTarget(e)}
+                      >
+                        Delete
+                      </button>
+                    )}
                   </div>
                 )}
                 {activeTab === "current" && (
@@ -1524,6 +1583,15 @@ export default function EmployeesPage() {
                     >
                       Convert to past
                     </button>
+                    {isSuperAdmin && (
+                      <button
+                        type="button"
+                        className="btn btn-outline border-red-300 text-xs text-red-700"
+                        onClick={() => setDeleteTarget(e)}
+                      >
+                        Delete
+                      </button>
+                    )}
                   </div>
                 )}
                 {activeTab === "past" && (
@@ -1539,6 +1607,15 @@ export default function EmployeesPage() {
                       </button>
                     ) : (
                       <span className="text-xs text-slate-500">—</span>
+                    )}
+                    {isSuperAdmin && (
+                      <button
+                        type="button"
+                        className="btn btn-outline border-red-300 text-xs text-red-700"
+                        onClick={() => setDeleteTarget(e)}
+                      >
+                        Delete
+                      </button>
                     )}
                   </div>
                 )}
@@ -1795,6 +1872,37 @@ export default function EmployeesPage() {
                   {resending ? "Sending..." : "Send link"}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/40"
+            aria-label="Close dialog"
+            onClick={() => !deleting && setDeleteTarget(null)}
+          />
+          <div role="dialog" aria-modal="true" className="relative z-10 w-full max-w-md rounded-xl border border-slate-200 bg-white p-5 shadow-xl">
+            <h2 className="text-lg font-semibold text-slate-900">Delete employee</h2>
+            <p className="mt-2 text-sm text-slate-600">
+              Permanently remove <span className="font-medium">{deleteTarget.name || deleteTarget.email}</span> from the company?
+              This cannot be undone.
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button type="button" className="btn btn-outline" onClick={() => setDeleteTarget(null)} disabled={deleting}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn border border-red-600 bg-red-600 text-white hover:bg-red-700"
+                disabled={deleting}
+                onClick={() => void deleteEmployee(deleteTarget)}
+              >
+                {deleting ? "Deleting…" : "Delete"}
+              </button>
             </div>
           </div>
         </div>

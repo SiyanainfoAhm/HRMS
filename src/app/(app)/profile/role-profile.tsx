@@ -110,6 +110,22 @@ export function ProfileContent() {
   const [designationAddPrompt, setDesignationAddPrompt] = useState<string | null>(null);
   const [addingDesignation, setAddingDesignation] = useState(false);
 
+  type MyDocRow = {
+    submission_id: string;
+    document_id: string;
+    document_name: string;
+    kind: string;
+    status: string;
+    file_url: string | null;
+    signature_name: string | null;
+    signed_at: string | null;
+    submitted_at: string | null;
+    review_note: string | null;
+  };
+  const [myDocuments, setMyDocuments] = useState<MyDocRow[]>([]);
+  const [docsLoading, setDocsLoading] = useState(false);
+  const [docsError, setDocsError] = useState<string | null>(null);
+
   async function handleDownloadPdf(userName?: string, month?: string, year?: string) {
     const el = payslipRef.current;
     if (!el) return;
@@ -212,6 +228,28 @@ export function ProfileContent() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (tab !== "documents") return;
+    let cancelled = false;
+    (async () => {
+      setDocsLoading(true);
+      setDocsError(null);
+      try {
+        const res = await fetch("/api/me/documents");
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.error || "Failed to load documents");
+        if (!cancelled) setMyDocuments(data.items ?? []);
+      } catch (e: unknown) {
+        if (!cancelled) setDocsError(e instanceof Error ? e.message : "Failed to load documents");
+      } finally {
+        if (!cancelled) setDocsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tab]);
 
   useEffect(() => {
     if (tab !== "profile" || isSuperAdmin) return;
@@ -1145,12 +1183,52 @@ export function ProfileContent() {
       )}
 
       {tab === "documents" && (
-        <div className="card">
-          <h2 className="mb-1 text-lg font-semibold text-slate-900">Documents</h2>
-          <p className="muted">
-            Store uploaded documents and reference them from an extra table; this page gives
-            employees a way to view their own records.
-          </p>
+        <div className="card space-y-4">
+          <div>
+            <h2 className="mb-1 text-lg font-semibold text-slate-900">Documents</h2>
+            <p className="muted text-sm">Files you uploaded or signed during onboarding.</p>
+          </div>
+          {docsLoading && <p className="muted">Loading…</p>}
+          {docsError && <p className="text-sm text-red-600">{docsError}</p>}
+          {!docsLoading && !docsError && myDocuments.length === 0 && (
+            <p className="muted">No documents on file yet.</p>
+          )}
+          {!docsLoading && myDocuments.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200 text-left">
+                    <th className="py-2 pr-4 font-medium">Document</th>
+                    <th className="py-2 pr-4 font-medium">Type</th>
+                    <th className="py-2 pr-4 font-medium">Status</th>
+                    <th className="py-2 pr-4 font-medium">File / signature</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {myDocuments.map((row) => (
+                    <tr key={row.submission_id} className="border-b border-slate-100">
+                      <td className="py-2 pr-4 align-top">{row.document_name}</td>
+                      <td className="py-2 pr-4 align-top">
+                        {row.kind === "digital_signature" ? "E-sign" : "Upload"}
+                      </td>
+                      <td className="py-2 pr-4 align-top">{row.status}</td>
+                      <td className="py-2 pr-4 align-top">
+                        {row.file_url ? (
+                          <a href={row.file_url} target="_blank" rel="noreferrer" className="text-emerald-700 underline">
+                            Open file
+                          </a>
+                        ) : row.signature_name ? (
+                          <span className="text-slate-600">Signed as {row.signature_name}</span>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
     </section>

@@ -728,3 +728,43 @@ export async function PATCH(request: NextRequest) {
   return NextResponse.json({ ok: true, status: nextStatus });
 }
 
+/** Super admin only: permanently remove an employee user (same company, any employment stage). */
+export async function DELETE(request: NextRequest) {
+  const cookieStore = await cookies();
+  const session = await getValidatedSession(cookieStore.get(COOKIE_NAME)?.value);
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (session.role !== "super_admin") {
+    return NextResponse.json({ error: "Only super admins can delete employees" }, { status: 403 });
+  }
+
+  const { searchParams } = new URL(request.url);
+  const userId = (searchParams.get("userId") || "").trim();
+  if (!userId) return NextResponse.json({ error: "userId is required" }, { status: 400 });
+  if (userId === session.id) {
+    return NextResponse.json({ error: "Cannot delete your own account" }, { status: 400 });
+  }
+
+  const { data: me, error: meErr } = await supabase.from("HRMS_users").select("company_id").eq("id", session.id).maybeSingle();
+  if (meErr) return NextResponse.json({ error: meErr.message }, { status: 400 });
+  if (!me?.company_id) return NextResponse.json({ error: "User not linked to company" }, { status: 400 });
+
+  const { data: target, error: tErr } = await supabase
+    .from("HRMS_users")
+    .select("id, company_id, role")
+    .eq("id", userId)
+    .maybeSingle();
+  if (tErr) return NextResponse.json({ error: tErr.message }, { status: 400 });
+  if (!target) return NextResponse.json({ error: "Employee not found" }, { status: 404 });
+  if (target.company_id !== me.company_id) {
+    return NextResponse.json({ error: "Employee is not in your company" }, { status: 403 });
+  }
+  if (target.role === "super_admin") {
+    return NextResponse.json({ error: "Cannot delete a super admin" }, { status: 400 });
+  }
+
+  const { error: delErr } = await supabase.from("HRMS_users").delete().eq("id", userId);
+  if (delErr) return NextResponse.json({ error: delErr.message }, { status: 400 });
+
+  return NextResponse.json({ ok: true });
+}
+

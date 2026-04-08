@@ -16,3 +16,25 @@ yarn-error.log*
 
 .vercel/
 
+# Flutter
+**/.dart_tool/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/.packages
+**/build/
+**/.idea/
+**/.vscode/
+**/ios/Flutter/.last_build_id
+**/ios/Flutter/Flutter.podspec
+**/ios/Pods/
+**/ios/.symlinks/
+**/ios/Podfile.lock
+**/android/.gradle/
+**/android/local.properties
+**/android/key.properties
+**/android/app/google-services.json
+**/ios/Runner/GoogleService-Info.plist
+
+# Flutter runtime config (keep secrets out of git)
+apps/hrms_mobile/assets/config.json
+
