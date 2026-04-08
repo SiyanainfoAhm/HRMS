@@ -6,6 +6,7 @@ import { PaginationBar } from "@/components/PaginationBar";
 import { SkeletonTable } from "@/components/Skeleton";
 import { useResponsivePageSize } from "@/hooks/useResponsivePageSize";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { fmtDmy } from "@/lib/dateFormat";
 
 type Row = {
   logId: string;
@@ -52,20 +53,12 @@ function fmtHoursMin(min: number | null): string {
 }
 
 function formatDayHeading(ymd: string): string {
-  return new Date(`${ymd}T12:00:00+05:30`).toLocaleDateString("en-IN", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  });
+  // Keep it consistent dd-mm-yyyy (no locale variations)
+  return fmtDmy(ymd);
 }
 
 function formatShortYmd(ymd: string): string {
-  return new Date(`${ymd}T12:00:00+05:30`).toLocaleDateString("en-IN", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
+  return fmtDmy(ymd);
 }
 
 function AttendanceRow({

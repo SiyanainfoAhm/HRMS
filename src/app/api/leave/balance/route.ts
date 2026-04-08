@@ -5,6 +5,10 @@ import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
 import { computeEntitled, computeUsedDaysForYear, leaveYearStart, type LeavePolicy } from "@/lib/leavePolicy";
 
+function todayIstYmd(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+}
+
 function isApprover(role: string): boolean {
   return role === "super_admin" || role === "admin" || role === "hr";
 }
@@ -38,7 +42,8 @@ export async function GET(request: NextRequest) {
   if (targetErr) return NextResponse.json({ error: targetErr.message }, { status: 400 });
   if (!targetUser || targetUser.company_id !== me.company_id) return NextResponse.json({ balances: [] });
 
-  const asOf = asOfParam ? new Date(asOfParam + "T00:00:00Z") : new Date();
+  const asOfYmd = asOfParam || todayIstYmd();
+  const asOf = new Date(asOfYmd + "T00:00:00Z");
   const joinDate = targetUser.date_of_joining ? new Date(String(targetUser.date_of_joining) + "T00:00:00Z") : null;
 
   let policiesQuery = supabase

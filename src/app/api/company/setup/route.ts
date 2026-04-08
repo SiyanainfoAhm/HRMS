@@ -90,6 +90,80 @@ export async function POST(request: NextRequest) {
       // best-effort
     }
 
+    // Seed default leave policies so customers don't need to configure basics.
+    // - Paid Leave: monthly accrual (1/month) with annual cap 12, prorate on join = true
+    // - Sick Leave: annual quota 3, prorate on join = true
+    // - Unpaid Leave: no accrual (unlimited / handled by requests)
+    try {
+      const { data: types } = await supabase
+        .from("HRMS_leave_types")
+        .select("id, name, code")
+        .eq("company_id", company.id);
+
+      const byCode = new Map<string, { id: string; name: string; code: string }>();
+      for (const t of (types ?? []) as any[]) {
+        const codeKey = String(t.code || "").toUpperCase();
+        if (codeKey) byCode.set(codeKey, { id: String(t.id), name: String(t.name || ""), code: codeKey });
+      }
+
+      const paid = byCode.get("PAID");
+      const sick = byCode.get("SICK");
+      const unpaid = byCode.get("UNPAID");
+
+      const policies: any[] = [];
+      if (paid) {
+        policies.push({
+          company_id: company.id,
+          leave_type_id: paid.id,
+          accrual_method: "monthly",
+          monthly_accrual_rate: 1,
+          annual_quota: 12,
+          prorate_on_join: true,
+          reset_month: 1,
+          reset_day: 1,
+          allow_carryover: false,
+          carryover_limit: null,
+          updated_at: new Date().toISOString(),
+        });
+      }
+      if (sick) {
+        policies.push({
+          company_id: company.id,
+          leave_type_id: sick.id,
+          accrual_method: "annual",
+          monthly_accrual_rate: null,
+          annual_quota: 3,
+          prorate_on_join: true,
+          reset_month: 1,
+          reset_day: 1,
+          allow_carryover: false,
+          carryover_limit: null,
+          updated_at: new Date().toISOString(),
+        });
+      }
+      if (unpaid) {
+        policies.push({
+          company_id: company.id,
+          leave_type_id: unpaid.id,
+          accrual_method: "none",
+          monthly_accrual_rate: null,
+          annual_quota: null,
+          prorate_on_join: true,
+          reset_month: 1,
+          reset_day: 1,
+          allow_carryover: false,
+          carryover_limit: null,
+          updated_at: new Date().toISOString(),
+        });
+      }
+
+      if (policies.length) {
+        await supabase.from("HRMS_leave_policies").upsert(policies, { onConflict: "company_id,leave_type_id" });
+      }
+    } catch {
+      // best-effort
+    }
+
     return NextResponse.json({ company });
   } catch (e: any) {
     const msg = typeof e?.message === "string" ? e.message : "Failed to setup company";

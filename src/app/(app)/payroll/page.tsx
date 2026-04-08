@@ -286,7 +286,7 @@ function PayrollPageContent() {
   const payslipRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const denom = preview?.workingDaysInFullMonth ?? preview?.daysInMonth;
+    const denom = preview?.daysInMonth ?? preview?.workingDaysInFullMonth;
     if (preview?.rows?.length && denom) {
       setEditableRows(
         preview.rows.map((r: any) => ({
@@ -402,8 +402,8 @@ function PayrollPageContent() {
     field: string,
     value: number
   ) {
-    const payDenom = preview?.workingDaysInFullMonth ?? preview?.daysInMonth ?? 30;
-    const payDaysMax = preview?.workingDaysThroughRunDay ?? preview?.daysInMonth ?? 31;
+    const payDenom = preview?.daysInMonth ?? preview?.workingDaysInFullMonth ?? 30;
+    const payDaysMax = preview?.effectiveRunDay ?? preview?.workingDaysThroughRunDay ?? preview?.daysInMonth ?? 31;
     setEditableRows((prev) =>
       prev.map((row) => {
         if (row.employeeUserId !== employeeUserId) return row;
@@ -520,8 +520,25 @@ function PayrollPageContent() {
     0
   ).getDate();
 
+  const lastMonthYearRef = useRef<string>("");
+
   useEffect(() => {
     const day = parseInt(runDay, 10) || 1;
+    const key = `${runYear}-${runMonth}`;
+    const monthChanged = lastMonthYearRef.current && lastMonthYearRef.current !== key;
+    lastMonthYearRef.current = key;
+
+    const nowIst = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }); // yyyy-mm-dd
+    const currentKey = `${nowIst.slice(0, 4)}-${nowIst.slice(5, 7)}`;
+    const todayDayIst = String(parseInt(nowIst.slice(8, 10), 10) || 1);
+
+    // When user switches month/year:
+    // - if selecting the current IST month, default to today
+    // - otherwise default to the last day of that month (31/30/28/29).
+    if (monthChanged) {
+      setRunDay(key === currentKey ? todayDayIst : String(daysInSelectedMonth));
+      return;
+    }
     if (day > daysInSelectedMonth) {
       setRunDay(String(daysInSelectedMonth));
     }
@@ -1433,12 +1450,10 @@ function PayrollPageContent() {
                 </div>
               </div>
               {runError && <p className="text-sm text-red-600">{runError}</p>}
-              {preview && !previewLoading && preview.workingDaysInFullMonth != null && (
+              {preview && !previewLoading && (
                 <p className="text-xs text-slate-600">
-                  Working days in full month: {preview.workingDaysInFullMonth}
-                  {preview.workingDaysThroughRunDay != null
-                    ? ` · Through selected run date: ${preview.workingDaysThroughRunDay} (max pay days for a full-time employee in this partial period)`
-                    : null}
+                  Days in full month: {preview.daysInMonth}
+                  {preview.effectiveRunDay != null ? ` · Through selected run date: ${preview.effectiveRunDay}` : null}
                 </p>
               )}
               {preview?.alreadyRun && (
@@ -1504,7 +1519,7 @@ function PayrollPageContent() {
                               <input
                                 type="number"
                                 min={0}
-                                max={preview?.workingDaysThroughRunDay ?? preview?.daysInMonth ?? 31}
+                                max={preview?.effectiveRunDay ?? preview?.daysInMonth ?? 31}
                                 value={r.payDays}
                                 onChange={(e) =>
                                   updateEditableRow(r.employeeUserId, "payDays", parseInt(e.target.value, 10) || 0)
@@ -1514,14 +1529,7 @@ function PayrollPageContent() {
                               {r.unpaidLeaveDays > 0 && (
                                 <span className="ml-0.5 text-[10px] text-amber-700">(-{r.unpaidLeaveDays})</span>
                               )}
-                              {r.payDaysSuppressedMinAttendance && (
-                                <span
-                                  className="mt-0.5 block text-[10px] leading-tight text-amber-800"
-                                  title="Need 10+ qualifying working days (Mon–Fri, excluding company holidays) in the period for pay days to apply."
-                                >
-                                  {r.attendanceQualifyingDays ?? "—"} qual.
-                                </span>
-                              )}
+                              {r.payDaysSuppressedMinAttendance ? null : null}
                             </>
                           )}
                         </td>

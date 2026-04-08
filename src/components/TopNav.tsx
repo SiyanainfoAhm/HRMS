@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { useState } from "react";
 import type { SessionUser } from "@/lib/auth";
 
 function getInitials(name: string | null, email: string): string {
@@ -29,8 +30,30 @@ export function TopNav({
   sidebarCollapsed: boolean;
 }) {
   const router = useRouter();
+  const [confirmState, setConfirmState] = useState<null | { title: string; message: string; confirmText?: string }>(null);
+  const confirmResolveRef = useState<{ fn: ((v: boolean) => void) | null }>({ fn: null })[0];
+
+  function confirmAction(args: { title: string; message: string; confirmText?: string }): Promise<boolean> {
+    setConfirmState(args);
+    return new Promise((resolve) => {
+      confirmResolveRef.fn = resolve;
+    });
+  }
+
+  function closeConfirm(v: boolean) {
+    setConfirmState(null);
+    const fn = confirmResolveRef.fn;
+    confirmResolveRef.fn = null;
+    fn?.(v);
+  }
 
   async function handleLogout() {
+    const ok = await confirmAction({
+      title: "Logout now?",
+      message: "You will be signed out of HRMS on this device.",
+      confirmText: "Logout",
+    });
+    if (!ok) return;
     await fetch("/api/auth/logout", { method: "POST" });
     onLogout();
     router.push("/");
@@ -38,7 +61,31 @@ export function TopNav({
   }
 
   return (
-    <header className="flex h-14 shrink-0 items-center justify-between border-b border-slate-200 bg-white px-4">
+    <>
+      {confirmState && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/40"
+            aria-label="Close dialog"
+            onClick={() => closeConfirm(false)}
+          />
+          <div className="relative w-full max-w-md rounded-2xl bg-white p-5 shadow-xl">
+            <h2 className="text-lg font-semibold text-slate-900">{confirmState.title}</h2>
+            <p className="mt-1 text-sm text-slate-600">{confirmState.message}</p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" className="btn btn-outline" onClick={() => closeConfirm(false)}>
+                Cancel
+              </button>
+              <button type="button" className="btn btn-primary" onClick={() => closeConfirm(true)}>
+                {confirmState.confirmText ?? "Confirm"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <header className="flex h-14 shrink-0 items-center justify-between border-b border-slate-200 bg-white px-4">
       <div className="flex items-center gap-2">
         <button
           type="button"
@@ -61,6 +108,7 @@ export function TopNav({
           Logout
         </button>
       </div>
-    </header>
+      </header>
+    </>
   );
 }

@@ -7,6 +7,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { PaginationBar } from "@/components/PaginationBar";
 import { DatePickerField } from "@/components/ui/DatePickerField";
 import { useResponsivePageSize } from "@/hooks/useResponsivePageSize";
+import { fmtDmy } from "@/lib/dateFormat";
 
 function payrollHintFromClaimDate(claimDate: string): string | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(claimDate)) return null;
@@ -717,7 +718,10 @@ export function ApprovalsContent() {
             ) : leaveRequestsTotal === 0 ? (
               <p className="muted">No leave requests yet.</p>
             ) : (
-              <>
+              (() => {
+                const hasPendingActions = canApprove && requests.some((r: any) => r?.status === "pending");
+                return (
+                  <>
                 {leaveRequestsTotal > listPageSize && (
                   <div className="mb-4 md:hidden">
                     <PaginationBar
@@ -737,7 +741,7 @@ export function ApprovalsContent() {
                         <th className="px-3 py-2">Days</th>
                         <th className="px-3 py-2">Status</th>
                         <th className="px-3 py-2">Reason</th>
-                        {canApprove && <th className="px-3 py-2">Action</th>}
+                        {hasPendingActions && <th className="px-3 py-2">Action</th>}
                       </tr>
                     </thead>
                     <tbody>
@@ -745,18 +749,18 @@ export function ApprovalsContent() {
                         <tr key={r.id} className="border-t border-slate-200">
                           <td className="px-3 py-2">{r.leaveTypeName || "-"}</td>
                           <td className="px-3 py-2">
-                            {r.startDate} → {r.endDate}
+                            {fmtDmy(r.startDate)} → {fmtDmy(r.endDate)}
                           </td>
                           <td className="px-3 py-2">{r.totalDays}</td>
                           <td className="px-3 py-2">{r.status}</td>
                           <td className="px-3 py-2">{r.reason || "-"}</td>
-                          {canApprove && (
+                          {hasPendingActions && r.status === "pending" && (
                             <td className="px-3 py-2">
                               <div className="flex gap-2">
                                 <button
                                   type="button"
                                   className="btn btn-primary"
-                                  disabled={actionLoadingId === r.id || r.status !== "pending"}
+                                disabled={actionLoadingId === r.id}
                                   onClick={() => act(r.id, "approve")}
                                 >
                                   Approve
@@ -764,7 +768,7 @@ export function ApprovalsContent() {
                                 <button
                                   type="button"
                                   className="btn btn-outline"
-                                  disabled={actionLoadingId === r.id || r.status !== "pending"}
+                                disabled={actionLoadingId === r.id}
                                   onClick={() => act(r.id, "reject")}
                                 >
                                   Reject
@@ -782,16 +786,16 @@ export function ApprovalsContent() {
                     <div key={r.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
                       <p className="font-semibold text-slate-900">{r.leaveTypeName || "—"}</p>
                       <p className="mt-1 text-sm text-slate-700">
-                        {r.startDate} → {r.endDate} · {r.totalDays} day(s)
+                        {fmtDmy(r.startDate)} → {fmtDmy(r.endDate)} · {r.totalDays} day(s)
                       </p>
                       <p className="mt-2 text-sm capitalize text-slate-600">Status: {r.status}</p>
                       {r.reason && r.reason !== "-" && <p className="mt-2 text-sm text-slate-600">Reason: {r.reason}</p>}
-                      {canApprove && (
+                      {hasPendingActions && r.status === "pending" && (
                         <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-100 pt-3">
                           <button
                             type="button"
                             className="btn btn-primary text-sm"
-                            disabled={actionLoadingId === r.id || r.status !== "pending"}
+                            disabled={actionLoadingId === r.id}
                             onClick={() => act(r.id, "approve")}
                           >
                             Approve
@@ -799,7 +803,7 @@ export function ApprovalsContent() {
                           <button
                             type="button"
                             className="btn btn-outline text-sm"
-                            disabled={actionLoadingId === r.id || r.status !== "pending"}
+                            disabled={actionLoadingId === r.id}
                             onClick={() => act(r.id, "reject")}
                           >
                             Reject
@@ -819,7 +823,9 @@ export function ApprovalsContent() {
                     />
                   </div>
                 )}
-              </>
+                  </>
+                );
+              })()
             )}
           </div>
 

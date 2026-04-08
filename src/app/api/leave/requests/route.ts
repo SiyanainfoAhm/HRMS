@@ -109,6 +109,7 @@ export async function POST(request: NextRequest) {
   if (!me?.company_id) return NextResponse.json({ error: "User not linked to company" }, { status: 400 });
 
   // Resolve employee: approvers must select a current employee; others add for self
+  let targetEmployeeUserId: string;
   let targetEmployeeId: string;
   let targetJoinDate: string | null = null;
   if (isApprover(session.role)) {
@@ -121,12 +122,23 @@ export async function POST(request: NextRequest) {
     if (empErr) return NextResponse.json({ error: empErr.message }, { status: 400 });
     if (!emp || emp.company_id !== me.company_id) return NextResponse.json({ error: "Invalid employee" }, { status: 400 });
     if (emp.employment_status !== "current") return NextResponse.json({ error: "Only current employees can have leave added" }, { status: 400 });
-    targetEmployeeId = emp.id as string;
+    targetEmployeeUserId = emp.id as string;
     targetJoinDate = emp.date_of_joining ? String(emp.date_of_joining) : null;
   } else {
-    targetEmployeeId = session.id;
+    targetEmployeeUserId = session.id;
     targetJoinDate = me.date_of_joining ? String(me.date_of_joining) : null;
   }
+
+  // Resolve HRMS_employees.id (required by DB constraint).
+  const { data: empRow, error: empRowErr } = await supabase
+    .from("HRMS_employees")
+    .select("id")
+    .eq("company_id", me.company_id)
+    .eq("user_id", targetEmployeeUserId)
+    .maybeSingle();
+  if (empRowErr) return NextResponse.json({ error: empRowErr.message }, { status: 400 });
+  if (!empRow?.id) return NextResponse.json({ error: "Employee record not found for this user" }, { status: 400 });
+  targetEmployeeId = String(empRow.id);
 
   // Ensure leave type belongs to the same company, and apply visibility rules
   const { data: lt, error: ltErr } = await supabase
@@ -171,7 +183,7 @@ export async function POST(request: NextRequest) {
         .from("HRMS_leave_requests")
         .select("leave_type_id, start_date, end_date, total_days")
         .eq("company_id", me.company_id)
-        .eq("employee_user_id", targetEmployeeId)
+        .eq("employee_user_id", targetEmployeeUserId)
         .eq("status", "approved");
       if (usedErr) return NextResponse.json({ error: usedErr.message }, { status: 400 });
 
@@ -189,7 +201,8 @@ export async function POST(request: NextRequest) {
     .insert([
       {
         company_id: me.company_id,
-        employee_user_id: targetEmployeeId,
+        employee_id: targetEmployeeId,
+        employee_user_id: targetEmployeeUserId,
         leave_type_id: leaveTypeId,
         start_date: startDate,
         end_date: endDate,

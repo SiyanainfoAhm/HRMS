@@ -6,6 +6,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useEffect, useMemo, useState, useRef, FormEvent } from "react";
 import { DatePickerField } from "@/components/ui/DatePickerField";
 import { PasswordField } from "@/components/PasswordField";
+import { supabase } from "@/lib/supabaseClient";
+import { fmtDmy } from "@/lib/dateFormat";
 
 export function ProfileContent() {
   const { role } = useAuth();
@@ -13,7 +15,7 @@ export function ProfileContent() {
   const tab = params.get("tab") || "profile";
   const router = useRouter();
 
-  const canEditEmployment = useMemo(() => role === "admin" || role === "hr", [role]);
+  const canEditEmployment = useMemo(() => role === "super_admin" || role === "admin" || role === "hr", [role]);
   const canEditOrgFields = useMemo(() => role === "super_admin" || role === "admin" || role === "hr", [role]);
   const isSuperAdmin = role === "super_admin";
 
@@ -98,6 +100,7 @@ export function ProfileContent() {
       tds: number;
     }[];
   } | null>(null);
+  const [myPayrollMaster, setMyPayrollMaster] = useState<{ tds?: number | null } | null>(null);
   const [payslipsLoading, setPayslipsLoading] = useState(false);
   const [payslipsError, setPayslipsError] = useState<string | null>(null);
   const [selectedMonth, setSelectedMonth] = useState("");
@@ -127,6 +130,43 @@ export function ProfileContent() {
   const [myDocuments, setMyDocuments] = useState<MyDocRow[]>([]);
   const [docsLoading, setDocsLoading] = useState(false);
   const [docsError, setDocsError] = useState<string | null>(null);
+  const [meId, setMeId] = useState<string>("");
+  const [docBusyId, setDocBusyId] = useState<string | null>(null);
+
+  const bucket = process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET || "photomedia";
+
+  function sanitizeSegment(s: string): string {
+    return (s || "")
+      .trim()
+      .replace(/[\/\\]+/g, "-")
+      .replace(/[^\w\s.\-]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .replace(/\s/g, "_")
+      .slice(0, 64);
+  }
+
+  async function uploadToStorage(docName: string, kind: "upload" | "digital_signature", file: Blob, fileNameHint: string) {
+    const userId = meId || "me";
+    const employeeName = sanitizeSegment(form.name) || "Employee";
+    const employeeFolder = `${employeeName}${userId}`;
+    const category = kind === "digital_signature" ? "esign" : "upload";
+    const docFolder = sanitizeSegment(docName) || "Document";
+    const safeFile = sanitizeSegment(fileNameHint) || "file";
+    const path = `HRMS/${employeeFolder}/${category}/${docFolder}/${Date.now()}_${safeFile}`;
+    const { error: upErr } = await supabase.storage.from(bucket).upload(path, file, { upsert: true });
+    if (upErr) throw new Error(upErr.message);
+    const { data } = supabase.storage.from(bucket).getPublicUrl(path);
+    if (!data?.publicUrl) throw new Error("Failed to get public URL");
+    return data.publicUrl;
+  }
+
+  async function refreshMyDocuments() {
+    const res = await fetch("/api/me/documents");
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || "Failed to load documents");
+    setMyDocuments(data.items ?? []);
+  }
 
   async function handleDownloadPdf(userName?: string, month?: string, year?: string) {
     const el = payslipRef.current;
@@ -181,6 +221,7 @@ export function ProfileContent() {
         if (!res.ok) throw new Error(data?.error || "Failed to load profile");
         if (cancelled) return;
         const u = data.user;
+        setMeId(String(u?.id ?? ""));
         setAuthProvider(u?.authProvider === "google" ? "google" : "password");
         setForm({
           email: u?.email ?? "",
@@ -232,16 +273,30 @@ export function ProfileContent() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/me/payroll-master");
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.error || "Failed to load payroll master");
+        if (!cancelled) setMyPayrollMaster(data?.payrollMaster ?? null);
+      } catch {
+        // ignore
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     if (tab !== "documents") return;
     let cancelled = false;
     (async () => {
       setDocsLoading(true);
       setDocsError(null);
       try {
-        const res = await fetch("/api/me/documents");
-        const data = await res.json();
-        if (!res.ok) throw new Error(data?.error || "Failed to load documents");
-        if (!cancelled) setMyDocuments(data.items ?? []);
+        await refreshMyDocuments();
       } catch (e: unknown) {
         if (!cancelled) setDocsError(e instanceof Error ? e.message : "Failed to load documents");
       } finally {
@@ -545,8 +600,13 @@ export function ProfileContent() {
                     type="text"
                     value={form.employeeCode}
                     onChange={(e) => setForm((p) => ({ ...p, employeeCode: e.target.value }))}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    readOnly={!canEditOrgFields}
+                    disabled={!canEditOrgFields}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-50 disabled:text-slate-600"
                   />
+                  {!canEditOrgFields && (
+                    <p className="mt-1 text-xs text-slate-500">View only. Super admin/Admin/HR can edit in Employees.</p>
+                  )}
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-slate-700">Designation</label>
@@ -955,6 +1015,10 @@ export function ProfileContent() {
               <p className="muted">Loading...</p>
             ) : (
               <>
+                <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                  <span className="text-slate-600">TDS (monthly from master):</span>{" "}
+                  <span className="font-semibold">{myPayrollMaster?.tds != null ? Number(myPayrollMaster.tds).toLocaleString("en-IN") : "0"}</span>
+                </div>
                 <div className="mb-4 flex flex-wrap items-center gap-3">
                   <select
                     value={selectedMonth}
@@ -1007,18 +1071,8 @@ export function ProfileContent() {
                     return <p className="muted">No payslip for the selected period.</p>;
                   }
 
-                  const salaryDate = new Date(slip.generatedAt).toLocaleDateString("en-IN", {
-                    day: "numeric",
-                    month: "long",
-                    year: "numeric",
-                  });
-                  const dojFormatted = user?.dateOfJoining
-                    ? new Date(user.dateOfJoining + "T12:00:00").toLocaleDateString("en-IN", {
-                        day: "numeric",
-                        month: "short",
-                        year: "numeric",
-                      })
-                    : "—";
+                  const salaryDate = fmtDmy(slip.generatedAt);
+                  const dojFormatted = user?.dateOfJoining ? fmtDmy(user.dateOfJoining) : "—";
 
                   const n = (x: number) => (x ?? 0).toLocaleString("en-IN");
                   const totalPerf = slip.incentive + slip.prBonus + slip.reimbursement;
@@ -1227,6 +1281,7 @@ export function ProfileContent() {
                     <th className="py-2 pr-4 font-medium">Type</th>
                     <th className="py-2 pr-4 font-medium">Status</th>
                     <th className="py-2 pr-4 font-medium">File / signature</th>
+                    <th className="py-2 pr-4 font-medium">Update</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1246,6 +1301,94 @@ export function ProfileContent() {
                           <span className="text-slate-600">Signed as {row.signature_name}</span>
                         ) : (
                           "—"
+                        )}
+                      </td>
+                      <td className="py-2 pr-4 align-top">
+                        {row.kind === "upload" ? (
+                          <input
+                            type="file"
+                            disabled={docBusyId === row.document_id}
+                            className="block w-[220px] text-sm text-slate-700 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-slate-700 disabled:opacity-50"
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0];
+                              if (!file) return;
+                              try {
+                                setDocBusyId(row.document_id);
+                                const publicUrl = await uploadToStorage(row.document_name, "upload", file, file.name);
+                                const res = await fetch("/api/me/documents", {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ action: "submit_document", documentId: row.document_id, fileUrl: publicUrl }),
+                                });
+                                const data = await res.json();
+                                if (!res.ok) throw new Error(data?.error || "Failed to submit document");
+                                await refreshMyDocuments();
+                              } catch (err: any) {
+                                setDocsError(err?.message || "Failed to upload document");
+                              } finally {
+                                setDocBusyId(null);
+                                (e.target as HTMLInputElement).value = "";
+                              }
+                            }}
+                          />
+                        ) : (
+                          <form
+                            className="flex items-center gap-2"
+                            onSubmit={async (e) => {
+                              e.preventDefault();
+                              const fd = new FormData(e.currentTarget);
+                              const signatureName = String(fd.get("signatureName") || "").trim();
+                              if (!signatureName) return;
+                              try {
+                                setDocBusyId(row.document_id);
+                                const receiptText = `Document: ${row.document_name}\nSigned by: ${signatureName}\nSigned at: ${new Date().toISOString()}\n`;
+                                const blob = new Blob([receiptText], { type: "text/plain" });
+                                let receiptUrl = "";
+                                try {
+                                  receiptUrl = await uploadToStorage(
+                                    row.document_name,
+                                    "digital_signature",
+                                    blob,
+                                    `${row.document_name}_SIGNATURE_RECEIPT.txt`
+                                  );
+                                } catch {
+                                  receiptUrl = "";
+                                }
+                                const res = await fetch("/api/me/documents", {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({
+                                    action: "submit_document",
+                                    documentId: row.document_id,
+                                    signatureName,
+                                    fileUrl: receiptUrl || undefined,
+                                  }),
+                                });
+                                const data = await res.json();
+                                if (!res.ok) throw new Error(data?.error || "Failed to sign document");
+                                await refreshMyDocuments();
+                                (e.currentTarget as HTMLFormElement).reset();
+                              } catch (err: any) {
+                                setDocsError(err?.message || "Failed to sign document");
+                              } finally {
+                                setDocBusyId(null);
+                              }
+                            }}
+                          >
+                            <input
+                              name="signatureName"
+                              placeholder="Your name"
+                              disabled={docBusyId === row.document_id}
+                              className="w-[140px] rounded border border-slate-300 px-2 py-1 text-sm disabled:bg-slate-50"
+                            />
+                            <button
+                              type="submit"
+                              disabled={docBusyId === row.document_id}
+                              className="btn btn-outline !py-1.5 !text-sm"
+                            >
+                              {docBusyId === row.document_id ? "Signing..." : "Sign"}
+                            </button>
+                          </form>
                         )}
                       </td>
                     </tr>

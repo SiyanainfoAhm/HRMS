@@ -64,7 +64,10 @@ export function computeEntitled(policy: LeavePolicy, joinDate: Date | null, asOf
   if (method === "none") return null;
 
   const yearStart = leaveYearStart(asOf, policy.reset_month, policy.reset_day);
-  const eligibleStart = joinDate ? (joinDate.getTime() > yearStart.getTime() ? joinDate : yearStart) : yearStart;
+  const eligibleStart =
+    policy.prorate_on_join && joinDate
+      ? (joinDate.getTime() > yearStart.getTime() ? joinDate : yearStart)
+      : yearStart;
   if (asOf.getTime() < eligibleStart.getTime()) return 0;
 
   if (method === "monthly") {

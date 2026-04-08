@@ -96,7 +96,8 @@ export async function PUT(request: NextRequest) {
 
   const payload: Record<string, any> = {
     name: typeof body?.name === "string" ? body.name.trim() || null : undefined,
-    employee_code: typeof body?.employeeCode === "string" ? body.employeeCode.trim() || null : undefined,
+    employee_code:
+      isManagerial(session.role) && typeof body?.employeeCode === "string" ? body.employeeCode.trim() || null : undefined,
     phone: typeof body?.phone === "string" ? body.phone.trim() || null : undefined,
     date_of_birth: typeof body?.dateOfBirth === "string" ? body.dateOfBirth.trim() || null : undefined,
     date_of_joining:

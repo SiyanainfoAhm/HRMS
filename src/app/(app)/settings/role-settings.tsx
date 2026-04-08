@@ -295,7 +295,8 @@ export function SettingsContent() {
         end: { hour: 6, minute: 0, period: "PM" },
         isNightShift: false,
       });
-      showToast("success", "Shift saved");
+      setIsShiftsDialogOpen(false);
+      if (isSuperAdmin) showToast("success", "Settings updated successfully");
     } catch (e: any) {
       setModuleError(e?.message || "Failed to save shift");
       showToast("error", e?.message || "Failed to save shift");
@@ -318,8 +319,11 @@ export function SettingsContent() {
       if (!res.ok) throw new Error(data?.error || "Failed to save division");
       await refreshOrg();
       setDivisionForm({ id: "", name: "", description: "" });
+      setIsOrgDialogOpen(false);
+      if (isSuperAdmin) showToast("success", "Settings updated successfully");
     } catch (e: any) {
       setModuleError(e?.message || "Failed to save division");
+      showToast("error", e?.message || "Failed to save division");
     } finally {
       setModuleSaving(false);
     }
@@ -339,8 +343,11 @@ export function SettingsContent() {
       if (!res.ok) throw new Error(data?.error || "Failed to save department");
       await refreshOrg();
       setDepartmentForm({ id: "", name: "", description: "", divisionId: "" });
+      setIsOrgDialogOpen(false);
+      if (isSuperAdmin) showToast("success", "Settings updated successfully");
     } catch (e: any) {
       setModuleError(e?.message || "Failed to save department");
+      showToast("error", e?.message || "Failed to save department");
     } finally {
       setModuleSaving(false);
     }
@@ -360,8 +367,11 @@ export function SettingsContent() {
       if (!res.ok) throw new Error(data?.error || "Failed to save designation");
       await refreshDesignations();
       setDesignationForm({ id: "", title: "", level: "" });
+      setIsDesignationsDialogOpen(false);
+      if (isSuperAdmin) showToast("success", "Settings updated successfully");
     } catch (e: any) {
       setModuleError(e?.message || "Failed to save designation");
+      showToast("error", e?.message || "Failed to save designation");
     } finally {
       setModuleSaving(false);
     }
@@ -381,8 +391,11 @@ export function SettingsContent() {
       if (!res.ok) throw new Error(data?.error || "Failed to save role");
       await refreshRoles();
       setRoleForm({ id: "", roleKey: "employee", name: "", description: "", isDefault: false });
+      setIsRolesDialogOpen(false);
+      if (isSuperAdmin) showToast("success", "Settings updated successfully");
     } catch (e: any) {
       setModuleError(e?.message || "Failed to save role");
+      showToast("error", e?.message || "Failed to save role");
     } finally {
       setModuleSaving(false);
     }
@@ -525,8 +538,10 @@ export function SettingsContent() {
       if (!res.ok) throw new Error(data?.error || "Failed to save company profile");
       setCompany(data.company);
       setIsCompanyDialogOpen(false);
+      showToast("success", "Settings updated successfully");
     } catch (e: any) {
       setFormError(e?.message || "Failed to save company profile");
+      showToast("error", e?.message || "Failed to save company profile");
     } finally {
       setSaving(false);
     }
@@ -1400,11 +1415,11 @@ export function SettingsContent() {
                 </div>
                 <div className="md:col-span-1">
                   <label className="mb-1 block text-sm font-medium text-slate-700">Start</label>
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="flex flex-wrap gap-2">
                     <select
                       value={shiftForm.start.hour}
                       onChange={(e) => setShiftForm((p) => ({ ...p, start: { ...p.start, hour: Number(e.target.value) } }))}
-                      className="w-full rounded-lg border border-slate-300 px-2 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                      className="w-[76px] rounded-lg border border-slate-300 px-2 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                     >
                       {Array.from({ length: 12 }, (_, i) => i + 1).map((h) => (
                         <option key={h} value={h}>
@@ -1415,7 +1430,7 @@ export function SettingsContent() {
                     <select
                       value={shiftForm.start.minute}
                       onChange={(e) => setShiftForm((p) => ({ ...p, start: { ...p.start, minute: Number(e.target.value) } }))}
-                      className="w-full rounded-lg border border-slate-300 px-2 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                      className="w-[76px] rounded-lg border border-slate-300 px-2 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                     >
                       {Array.from({ length: 12 }, (_, i) => i * 5).map((m) => (
                         <option key={m} value={m}>
@@ -1426,7 +1441,7 @@ export function SettingsContent() {
                     <select
                       value={shiftForm.start.period}
                       onChange={(e) => setShiftForm((p) => ({ ...p, start: { ...p.start, period: e.target.value as any } }))}
-                      className="w-full rounded-lg border border-slate-300 px-2 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                      className="w-[92px] rounded-lg border border-slate-300 px-2 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                     >
                       <option value="AM">AM</option>
                       <option value="PM">PM</option>
@@ -1435,11 +1450,11 @@ export function SettingsContent() {
                 </div>
                 <div className="md:col-span-1">
                   <label className="mb-1 block text-sm font-medium text-slate-700">End</label>
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="flex flex-wrap gap-2">
                     <select
                       value={shiftForm.end.hour}
                       onChange={(e) => setShiftForm((p) => ({ ...p, end: { ...p.end, hour: Number(e.target.value) } }))}
-                      className="w-full rounded-lg border border-slate-300 px-2 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                      className="w-[76px] rounded-lg border border-slate-300 px-2 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                     >
                       {Array.from({ length: 12 }, (_, i) => i + 1).map((h) => (
                         <option key={h} value={h}>
@@ -1450,7 +1465,7 @@ export function SettingsContent() {
                     <select
                       value={shiftForm.end.minute}
                       onChange={(e) => setShiftForm((p) => ({ ...p, end: { ...p.end, minute: Number(e.target.value) } }))}
-                      className="w-full rounded-lg border border-slate-300 px-2 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                      className="w-[76px] rounded-lg border border-slate-300 px-2 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                     >
                       {Array.from({ length: 12 }, (_, i) => i * 5).map((m) => (
                         <option key={m} value={m}>
@@ -1461,7 +1476,7 @@ export function SettingsContent() {
                     <select
                       value={shiftForm.end.period}
                       onChange={(e) => setShiftForm((p) => ({ ...p, end: { ...p.end, period: e.target.value as any } }))}
-                      className="w-full rounded-lg border border-slate-300 px-2 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                      className="w-[92px] rounded-lg border border-slate-300 px-2 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                     >
                       <option value="AM">AM</option>
                       <option value="PM">PM</option>

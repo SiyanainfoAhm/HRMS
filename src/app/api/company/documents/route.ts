@@ -69,3 +69,82 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({ document: data });
 }
 
+export async function PATCH(request: NextRequest) {
+  const cookieStore = await cookies();
+  const session = await getValidatedSession(cookieStore.get(COOKIE_NAME)?.value);
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!isManagerial(session.role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+  const body = await request.json().catch(() => ({}));
+  const id = typeof body?.id === "string" ? body.id : "";
+  if (!id) return NextResponse.json({ error: "Invalid id" }, { status: 400 });
+
+  const name = typeof body?.name === "string" ? body.name.trim() : undefined;
+  const kind = typeof body?.kind === "string" ? body.kind : undefined;
+  const isMandatory =
+    body?.isMandatory === undefined ? undefined : Boolean(body.isMandatory);
+  const contentText =
+    typeof body?.contentText === "string" ? body.contentText.trim() : undefined;
+
+  if (kind !== undefined && kind !== "upload" && kind !== "digital_signature") {
+    return NextResponse.json({ error: "Invalid kind" }, { status: 400 });
+  }
+  if (name !== undefined && !name) return NextResponse.json({ error: "Name is required" }, { status: 400 });
+
+  const { data: me, error: meErr } = await supabase
+    .from("HRMS_users")
+    .select("company_id")
+    .eq("id", session.id)
+    .maybeSingle();
+  if (meErr) return NextResponse.json({ error: meErr.message }, { status: 400 });
+  if (!me?.company_id) return NextResponse.json({ error: "User not linked to company" }, { status: 400 });
+
+  const patch: Record<string, any> = {};
+  if (name !== undefined) patch.name = name;
+  if (kind !== undefined) patch.kind = kind;
+  if (isMandatory !== undefined) patch.is_mandatory = isMandatory;
+  if (contentText !== undefined) patch.content_text = contentText;
+  if (kind === "upload") patch.content_text = null;
+
+  const { data, error } = await supabase
+    .from("HRMS_company_documents")
+    .update(patch)
+    .eq("company_id", me.company_id)
+    .eq("id", id)
+    .select("*")
+    .maybeSingle();
+  if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+  if (!data) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  return NextResponse.json({ document: data });
+}
+
+export async function DELETE(request: NextRequest) {
+  const cookieStore = await cookies();
+  const session = await getValidatedSession(cookieStore.get(COOKIE_NAME)?.value);
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!isManagerial(session.role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+  const url = new URL(request.url);
+  const id = url.searchParams.get("id") || "";
+  if (!id) return NextResponse.json({ error: "Invalid id" }, { status: 400 });
+
+  const { data: me, error: meErr } = await supabase
+    .from("HRMS_users")
+    .select("company_id")
+    .eq("id", session.id)
+    .maybeSingle();
+  if (meErr) return NextResponse.json({ error: meErr.message }, { status: 400 });
+  if (!me?.company_id) return NextResponse.json({ error: "User not linked to company" }, { status: 400 });
+
+  // Note: if there are FK constraints from submissions, Supabase will return an error.
+  const { error } = await supabase
+    .from("HRMS_company_documents")
+    .delete()
+    .eq("company_id", me.company_id)
+    .eq("id", id);
+  if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+
+  return NextResponse.json({ ok: true });
+}
+

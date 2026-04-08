@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState, FormEvent } from "react";
+import { useEffect, useMemo, useState, FormEvent } from "react";
 import { useToast } from "@/components/ToastProvider";
 import { PaginationBar } from "@/components/PaginationBar";
 import { SkeletonTable } from "@/components/Skeleton";
 import { useResponsivePageSize } from "@/hooks/useResponsivePageSize";
 import { DatePickerField } from "@/components/ui/DatePickerField";
 import { useAuth } from "@/contexts/AuthContext";
+import { fmtDmy } from "@/lib/dateFormat";
 import {
   computePayrollFromGross,
   defaultSalaryBreakup,
@@ -59,6 +60,7 @@ export default function EmployeesPage() {
 
   const [formLoading, setFormLoading] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [prefillLoading, setPrefillLoading] = useState(false);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -83,16 +85,19 @@ export default function EmployeesPage() {
   const [designationAddPrompt, setDesignationAddPrompt] = useState<string | null>(null);
   const [addingDesignation, setAddingDesignation] = useState(false);
   const [designations, setDesignations] = useState<{ id: string; title: string }[]>([]);
+  const [designationOpen, setDesignationOpen] = useState(false);
   const [departments, setDepartments] = useState<{ id: string; name: string; division_id?: string }[]>([]);
   const [divisions, setDivisions] = useState<{ id: string; name: string }[]>([]);
   const [shifts, setShifts] = useState<{ id: string; name: string }[]>([]);
   const [aadhaar, setAadhaar] = useState("");
   const [pan, setPan] = useState("");
+  const [dateOfBirth, setDateOfBirth] = useState("");
   const [uanNumber, setUanNumber] = useState("");
   const [pfNumber, setPfNumber] = useState("");
   const [esicNumber, setEsicNumber] = useState("");
   const [dateOfJoining, setDateOfJoining] = useState("");
   const [grossSalary, setGrossSalary] = useState("");
+  const [tdsMonthly, setTdsMonthly] = useState("");
   const [pfEligible, setPfEligible] = useState(false);
   const [esicEligible, setEsicEligible] = useState(false);
   const [currentAddressLine1, setCurrentAddressLine1] = useState("");
@@ -113,6 +118,7 @@ export default function EmployeesPage() {
   const [bankAccountNumber, setBankAccountNumber] = useState("");
   const [bankIfsc, setBankIfsc] = useState("");
   const [password, setPassword] = useState("");
+  const [editUserId, setEditUserId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Employee["employmentStatus"]>("preboarding");
   const [docs, setDocs] = useState<any[]>([]);
   const [docsLoading, setDocsLoading] = useState(false);
@@ -123,6 +129,14 @@ export default function EmployeesPage() {
   const [newDocMandatory, setNewDocMandatory] = useState(true);
   const [newDocContent, setNewDocContent] = useState("");
   const [creatingDoc, setCreatingDoc] = useState(false);
+  const [editDocId, setEditDocId] = useState<string | null>(null);
+  const [editDocName, setEditDocName] = useState("");
+  const [editDocKind, setEditDocKind] = useState<"upload" | "digital_signature">("upload");
+  const [editDocMandatory, setEditDocMandatory] = useState(true);
+  const [editDocContent, setEditDocContent] = useState("");
+  const [savingDoc, setSavingDoc] = useState(false);
+  const [deleteDocId, setDeleteDocId] = useState<string | null>(null);
+  const [deletingDoc, setDeletingDoc] = useState(false);
 
   const [companyDocs, setCompanyDocs] = useState<any[]>([]);
   const [docsForInviteLoading, setDocsForInviteLoading] = useState(false);
@@ -188,6 +202,14 @@ export default function EmployeesPage() {
   useEffect(() => {
     setEmployeePage(1);
   }, [pageSize]);
+
+  const filteredDesignations = useMemo<{ id: string; title: string }[]>(() => {
+    const q = designation.trim().toLowerCase();
+    if (!q) return designations.slice(0, 50);
+    return designations
+      .filter((d) => d.title.toLowerCase().includes(q))
+      .slice(0, 50);
+  }, [designations, designation]);
 
   useEffect(() => {
     let cancelled = false;
@@ -282,11 +304,13 @@ export default function EmployeesPage() {
     setDesignationAddPrompt(null);
     setAadhaar("");
     setPan("");
+    setDateOfBirth("");
     setUanNumber("");
     setPfNumber("");
     setEsicNumber("");
     setDateOfJoining("");
     setGrossSalary("");
+    setTdsMonthly("");
     setPfEligible(false);
     setEsicEligible(false);
     setCurrentAddressLine1("");
@@ -307,6 +331,67 @@ export default function EmployeesPage() {
     setBankAccountNumber("");
     setBankIfsc("");
     setPassword("");
+    setEditUserId(null);
+  }
+
+  async function openEdit(userId: string) {
+    setFormError(null);
+    setEditUserId(userId);
+    setIsDialogOpen(true);
+    setPrefillLoading(true);
+    try {
+      const res = await fetch(`/api/employees?userId=${encodeURIComponent(userId)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Failed to load employee");
+      const u = data.employee || {};
+      setName(String(u.name ?? ""));
+      setEmail(String(u.email ?? ""));
+      setFormRole((u.role as any) || "employee");
+      setEmploymentStatus((u.employmentStatus as any) || "preboarding");
+      setEmployeePage(1);
+      setPhone(String(u.phone ?? ""));
+      setGender((u.gender as any) || "");
+      setDateOfBirth(String(u.dateOfBirth ?? ""));
+      setDateOfJoining(String(u.dateOfJoining ?? ""));
+      setDesignation(String(u.designation ?? ""));
+      setDesignationId(String(u.designationId ?? ""));
+      setDepartmentId(String(u.departmentId ?? ""));
+      setDivisionId(String(u.divisionId ?? ""));
+      setShiftId(String(u.shiftId ?? ""));
+      setAadhaar(String(u.aadhaar ?? ""));
+      setPan(String(u.pan ?? ""));
+      setUanNumber(String(u.uanNumber ?? ""));
+      setPfNumber(String(u.pfNumber ?? ""));
+      setEsicNumber(String(u.esicNumber ?? ""));
+      setCurrentAddressLine1(String(u.currentAddressLine1 ?? ""));
+      setCurrentAddressLine2(String(u.currentAddressLine2 ?? ""));
+      setCurrentCity(String(u.currentCity ?? ""));
+      setCurrentState(String(u.currentState ?? ""));
+      setCurrentCountry(String(u.currentCountry ?? ""));
+      setCurrentPostalCode(String(u.currentPostalCode ?? ""));
+      setPermanentAddressLine1(String(u.permanentAddressLine1 ?? ""));
+      setPermanentAddressLine2(String(u.permanentAddressLine2 ?? ""));
+      setPermanentCity(String(u.permanentCity ?? ""));
+      setPermanentState(String(u.permanentState ?? ""));
+      setPermanentCountry(String(u.permanentCountry ?? ""));
+      setPermanentPostalCode(String(u.permanentPostalCode ?? ""));
+      setEmergencyContactName(String(u.emergencyContactName ?? ""));
+      setEmergencyContactPhone(String(u.emergencyContactPhone ?? ""));
+      setBankName(String(u.bankName ?? ""));
+      setBankAccountNumber(String(u.bankAccountNumber ?? ""));
+      setBankIfsc(String(u.bankIfsc ?? ""));
+      setGrossSalary(u.grossSalary != null ? String(u.grossSalary) : "");
+      setTdsMonthly(u.tds != null ? String(u.tds) : "");
+      setPfEligible(Boolean(u.pfEligible));
+      setEsicEligible(Boolean(u.esicEligible));
+      setPassword("");
+      loadCompanyDocsForInvite();
+    } catch (e: any) {
+      setFormError(e?.message || "Failed to load employee");
+      showToast("error", e?.message || "Failed to load employee");
+    } finally {
+      setPrefillLoading(false);
+    }
   }
 
   const gross = parseFloat(grossSalary) || 0;
@@ -357,6 +442,7 @@ export default function EmployeesPage() {
           role: formRole,
           employmentStatus,
           phone: phoneDigits,
+          dateOfBirth: dateOfBirth || undefined,
           dateOfJoining: dateOfJoining || undefined,
           currentAddressLine1: currentAddressLine1.trim() || undefined,
           currentAddressLine2: currentAddressLine2.trim() || undefined,
@@ -376,6 +462,7 @@ export default function EmployeesPage() {
           bankAccountNumber: bankAccountNumber.trim() || undefined,
           bankIfsc: bankIfsc.trim() || undefined,
           grossSalary: grossSalary.trim() ? parseFloat(grossSalary.trim()) : undefined,
+          tds: tdsMonthly.trim() ? parseFloat(tdsMonthly.trim()) : undefined,
           pfEligible,
           esicEligible,
           gender: gender || undefined,
@@ -417,6 +504,98 @@ export default function EmployeesPage() {
       setIsDialogOpen(false);
     } catch {
       setFormError("Failed to add employee");
+    } finally {
+      setFormLoading(false);
+    }
+  }
+
+  async function handleUpdate(e: FormEvent) {
+    e.preventDefault();
+    if (!editUserId) return;
+    setFormError(null);
+    setFormLoading(true);
+    try {
+      const eErr = validateEmailField(email.trim().toLowerCase());
+      setEmailError(eErr);
+      const phoneDigits = normalizeDigits(phone);
+      const phErr = phoneDigits ? validateIndianMobileDigits(phoneDigits) : null;
+      setPhoneError(phErr);
+      const aDigits = normalizeDigits(aadhaar);
+      const ahErr = validateAadhaarDigits(aDigits);
+      setAadhaarError(ahErr);
+      const panNorm = normalizePanInput(pan);
+      const pnErr = validatePanNormalized(panNorm);
+      setPanError(pnErr);
+      const nameErr = !name.trim() ? "Name is required" : null;
+      setNameError(nameErr);
+      const designationErr = !designation.trim() ? "Designation is required" : null;
+      setDesignationError(designationErr);
+      const departmentErr = !departmentId ? "Please select a department" : null;
+      setDepartmentError(departmentErr);
+      const divisionErr = !divisionId ? "Please select a division" : null;
+      setDivisionError(divisionErr);
+      const shiftErr = !shiftId ? "Please select a shift" : null;
+      setShiftError(shiftErr);
+      if (eErr || phErr || ahErr || pnErr || nameErr || designationErr || departmentErr || divisionErr || shiftErr) {
+        setFormLoading(false);
+        return;
+      }
+
+      const res = await fetch("/api/employees", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: editUserId,
+          name: name.trim(),
+          email: email.trim().toLowerCase(),
+          role: formRole,
+          employmentStatus,
+          phone: phoneDigits,
+          dateOfBirth: dateOfBirth || undefined,
+          dateOfJoining: dateOfJoining || undefined,
+          currentAddressLine1: currentAddressLine1.trim() || undefined,
+          currentAddressLine2: currentAddressLine2.trim() || undefined,
+          currentCity: currentCity.trim() || undefined,
+          currentState: currentState.trim() || undefined,
+          currentCountry: currentCountry.trim() || undefined,
+          currentPostalCode: currentPostalCode.trim() || undefined,
+          permanentAddressLine1: permanentAddressLine1.trim() || undefined,
+          permanentAddressLine2: permanentAddressLine2.trim() || undefined,
+          permanentCity: permanentCity.trim() || undefined,
+          permanentState: permanentState.trim() || undefined,
+          permanentCountry: permanentCountry.trim() || undefined,
+          permanentPostalCode: permanentPostalCode.trim() || undefined,
+          emergencyContactName: emergencyContactName.trim() || undefined,
+          emergencyContactPhone: emergencyContactPhone.trim() || undefined,
+          bankName: bankName.trim() || undefined,
+          bankAccountNumber: bankAccountNumber.trim() || undefined,
+          bankIfsc: bankIfsc.trim() || undefined,
+          grossSalary: grossSalary.trim() ? parseFloat(grossSalary.trim()) : undefined,
+          tds: tdsMonthly.trim() ? parseFloat(tdsMonthly.trim()) : undefined,
+          pfEligible,
+          esicEligible,
+          gender: gender || undefined,
+          designation: designation || undefined,
+          designationId: designationId || undefined,
+          departmentId: departmentId || undefined,
+          divisionId: divisionId || undefined,
+          shiftId: shiftId || undefined,
+          aadhaar: aDigits,
+          pan: panNorm,
+          uanNumber: uanNumber || undefined,
+          pfNumber: pfNumber || undefined,
+          esicNumber: esicNumber || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Failed to update employee");
+      showToast("success", "Employee updated");
+      setListRefresh((n) => n + 1);
+      setIsDialogOpen(false);
+      resetForm();
+    } catch (e: any) {
+      setFormError(e?.message || "Failed to update employee");
+      showToast("error", e?.message || "Failed to update employee");
     } finally {
       setFormLoading(false);
     }
@@ -602,6 +781,71 @@ export default function EmployeesPage() {
     }
   }
 
+  function startEditDoc(d: any) {
+    setDocsError(null);
+    setEditDocId(d.id);
+    setEditDocName(d.name || "");
+    setEditDocKind((d.kind === "digital_signature" ? "digital_signature" : "upload") as any);
+    setEditDocMandatory(Boolean(d.is_mandatory));
+    setEditDocContent(d.content_text || "");
+  }
+
+  function cancelEditDoc() {
+    setEditDocId(null);
+    setEditDocName("");
+    setEditDocKind("upload");
+    setEditDocMandatory(true);
+    setEditDocContent("");
+  }
+
+  async function saveEditedDoc() {
+    if (!editDocId) return;
+    setSavingDoc(true);
+    setDocsError(null);
+    try {
+      const res = await fetch("/api/company/documents", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: editDocId,
+          name: editDocName.trim(),
+          kind: editDocKind,
+          isMandatory: Boolean(editDocMandatory),
+          contentText: editDocKind === "digital_signature" ? editDocContent : "",
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Failed to update document");
+      cancelEditDoc();
+      await loadDocuments();
+      await loadCompanyDocsForInvite();
+      showToast("success", "Document updated");
+    } catch (e: any) {
+      setDocsError(e?.message || "Failed to update document");
+    } finally {
+      setSavingDoc(false);
+    }
+  }
+
+  async function deleteCompanyDoc(id: string) {
+    setDeletingDoc(true);
+    setDocsError(null);
+    try {
+      const res = await fetch(`/api/company/documents?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((data as any)?.error || "Failed to delete document");
+      setDeleteDocId(null);
+      if (editDocId === id) cancelEditDoc();
+      await loadDocuments();
+      await loadCompanyDocsForInvite();
+      showToast("success", "Document deleted");
+    } catch (e: any) {
+      setDocsError(e?.message || "Failed to delete document");
+    } finally {
+      setDeletingDoc(false);
+    }
+  }
+
   return (
     <section className="space-y-6">
       <div>
@@ -740,8 +984,10 @@ export default function EmployeesPage() {
           >
             <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-5 py-4">
               <div>
-                <h2 className="text-lg font-semibold text-slate-900">Add employee</h2>
-                <p className="text-sm text-slate-500">Create an employee in your company directory.</p>
+                <h2 className="text-lg font-semibold text-slate-900">{editUserId ? "Edit employee" : "Add employee"}</h2>
+                <p className="text-sm text-slate-500">
+                  {editUserId ? "Update employee details in your company directory." : "Create an employee in your company directory."}
+                </p>
               </div>
               <button type="button" className="btn btn-outline" onClick={() => setIsDialogOpen(false)}>
                 Close
@@ -750,10 +996,18 @@ export default function EmployeesPage() {
 
             <form
               noValidate
-              onSubmit={handleCreate}
+              onSubmit={editUserId ? handleUpdate : handleCreate}
               className="flex-1 overflow-y-auto p-5"
               style={{ minHeight: "70vh", maxHeight: "calc(95vh - 80px)" }}
             >
+              {prefillLoading ? (
+                <div className="flex min-h-[60vh] items-center justify-center">
+                  <div className="flex flex-col items-center gap-2">
+                    <div className="h-9 w-9 animate-spin rounded-full border-2 border-slate-200 border-t-emerald-600" aria-hidden />
+                    <p className="text-sm text-slate-600">Loading employee details…</p>
+                  </div>
+                </div>
+              ) : (
               <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
                 <div className="md:col-span-1">
                   <label className="mb-1 block text-sm font-medium text-slate-700">Name <span className="text-red-500">*</span></label>
@@ -804,6 +1058,18 @@ export default function EmployeesPage() {
                     value={grossSalary}
                     onChange={(e) => setGrossSalary(e.target.value)}
                     placeholder="e.g. 25000"
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  />
+                </div>
+                <div className="md:col-span-1">
+                  <label className="mb-1 block text-sm font-medium text-slate-700">TDS (monthly)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={tdsMonthly}
+                    onChange={(e) => setTdsMonthly(e.target.value)}
+                    placeholder="e.g. 500"
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                   />
                 </div>
@@ -923,40 +1189,86 @@ export default function EmployeesPage() {
                   <DatePickerField value={dateOfJoining} onChange={setDateOfJoining} className="w-full" />
                 </div>
                 <div className="md:col-span-1">
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Date of birth</label>
+                  <DatePickerField value={dateOfBirth} onChange={setDateOfBirth} className="w-full" />
+                </div>
+                <div className="md:col-span-1">
                   <label className="mb-1 block text-sm font-medium text-slate-700">Designation <span className="text-red-500">*</span></label>
                   <div className="relative">
-                    <input
-                      type="text"
-                      list="designation-list"
-                      value={designation}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setDesignation(v);
-                        setDesignationError(null);
-                        setDesignationAddPrompt(null);
-                        const match = designations.find((d) => d.title.toLowerCase() === v.trim().toLowerCase());
-                        setDesignationId(match ? match.id : "");
-                      }}
-                      onBlur={() => {
-                        const v = designation.trim();
-                        if (!v) return;
-                        const match = designations.find((d) => d.title.toLowerCase() === v.toLowerCase());
-                        if (!match) setDesignationAddPrompt(v);
-                        else setDesignationAddPrompt(null);
-                      }}
-                      placeholder="Search or type new"
-                      aria-invalid={Boolean(designationError)}
-                      className={`w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-1 ${
-                        designationError
-                          ? "border-red-500 focus:border-red-500 focus:ring-red-500"
-                          : "border-slate-300 focus:border-emerald-500 focus:ring-emerald-500"
-                      }`}
-                    />
-                    <datalist id="designation-list">
-                      {designations.map((d) => (
-                        <option key={d.id} value={d.title} />
-                      ))}
-                    </datalist>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={designation}
+                        onFocus={() => setDesignationOpen(true)}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setDesignation(v);
+                          setDesignationOpen(true);
+                          setDesignationError(null);
+                          setDesignationAddPrompt(null);
+                          const match = designations.find((d) => d.title.toLowerCase() === v.trim().toLowerCase());
+                          setDesignationId(match ? match.id : "");
+                        }}
+                        onBlur={() => {
+                          // Close dropdown first, then consider showing the "add" prompt if not matched.
+                          setDesignationOpen(false);
+                          const v = designation.trim();
+                          if (!v) return;
+                          const match = designations.find((d) => d.title.toLowerCase() === v.toLowerCase());
+                          if (!match) setDesignationAddPrompt(v);
+                          else setDesignationAddPrompt(null);
+                        }}
+                        placeholder="Select designation"
+                        aria-invalid={Boolean(designationError)}
+                        className={`w-full appearance-none rounded-lg border px-3 py-2 pr-9 text-sm focus:outline-none focus:ring-1 ${
+                          designationError
+                            ? "border-red-500 focus:border-red-500 focus:ring-red-500"
+                            : "border-slate-300 focus:border-emerald-500 focus:ring-emerald-500"
+                        }`}
+                      />
+                      <button
+                        type="button"
+                        className="absolute inset-y-0 right-0 flex w-9 items-center justify-center text-slate-500"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => setDesignationOpen((v) => !v)}
+                        aria-label="Toggle designation list"
+                        title="Show designations"
+                      >
+                        <span className="text-sm">▾</span>
+                      </button>
+                    </div>
+
+                    {designationOpen && (
+                      <div className="absolute z-20 mt-1 w-full overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg">
+                        {filteredDesignations.length === 0 ? (
+                          <div className="px-3 py-2 text-sm text-slate-600">
+                            No matches. Type to add a new designation.
+                          </div>
+                        ) : (
+                          <div className="max-h-56 overflow-auto py-1">
+                            {filteredDesignations.map((d) => (
+                              <button
+                                key={d.id}
+                                type="button"
+                                className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-slate-50"
+                                onMouseDown={(e) => {
+                                  // prevent input blur before we set state
+                                  e.preventDefault();
+                                  setDesignation(d.title);
+                                  setDesignationId(d.id);
+                                  setDesignationOpen(false);
+                                  setDesignationAddPrompt(null);
+                                  setDesignationError(null);
+                                }}
+                              >
+                                <span className="truncate">{d.title}</span>
+                                {designationId === d.id && <span className="text-emerald-700">✓</span>}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                   {designationError && <p className="mt-1 text-xs text-red-600">{designationError}</p>}
                 </div>
@@ -1159,11 +1471,12 @@ export default function EmployeesPage() {
                       Cancel
                     </button>
                     <button type="submit" className="btn btn-primary" disabled={formLoading}>
-                      {formLoading ? "Adding..." : "Add employee"}
+                      {formLoading ? (editUserId ? "Saving..." : "Adding...") : editUserId ? "Save changes" : "Add employee"}
                     </button>
                   </div>
                 </div>
               </div>
+              )}
             </form>
           </div>
         </div>
@@ -1246,21 +1559,142 @@ export default function EmployeesPage() {
                           <th className="px-3 py-2">Name</th>
                           <th className="px-3 py-2">Type</th>
                           <th className="px-3 py-2">Mandatory</th>
+                          <th className="px-3 py-2 text-right">Actions</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {docs.map((d) => (
-                          <tr key={d.id} className="border-t border-slate-200">
-                            <td className="px-3 py-2">{d.name}</td>
-                            <td className="px-3 py-2">{d.kind}</td>
-                            <td className="px-3 py-2">{d.is_mandatory ? "Yes" : "No"}</td>
-                          </tr>
-                        ))}
+                        {docs.map((d) => {
+                          const isEditing = editDocId === d.id;
+                          return (
+                            <tr key={d.id} className="border-t border-slate-200 align-top">
+                              <td className="px-3 py-2">
+                                {isEditing ? (
+                                  <input
+                                    type="text"
+                                    value={editDocName}
+                                    onChange={(e) => setEditDocName(e.target.value)}
+                                    className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
+                                  />
+                                ) : (
+                                  d.name
+                                )}
+                              </td>
+                              <td className="px-3 py-2">
+                                {isEditing ? (
+                                  <select
+                                    value={editDocKind}
+                                    onChange={(e) => setEditDocKind(e.target.value as any)}
+                                    className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
+                                  >
+                                    <option value="upload">upload</option>
+                                    <option value="digital_signature">digital_signature</option>
+                                  </select>
+                                ) : (
+                                  d.kind
+                                )}
+                              </td>
+                              <td className="px-3 py-2">
+                                {isEditing ? (
+                                  <label className="inline-flex items-center gap-2">
+                                    <input
+                                      type="checkbox"
+                                      checked={editDocMandatory}
+                                      onChange={(e) => setEditDocMandatory(e.target.checked)}
+                                    />
+                                    <span>{editDocMandatory ? "Yes" : "No"}</span>
+                                  </label>
+                                ) : (
+                                  d.is_mandatory ? "Yes" : "No"
+                                )}
+                              </td>
+                              <td className="px-3 py-2 text-right">
+                                {isEditing ? (
+                                  <div className="flex justify-end gap-2">
+                                    <button
+                                      type="button"
+                                      className="btn btn-outline !min-h-0 !px-2 !py-1 text-xs"
+                                      onClick={cancelEditDoc}
+                                      disabled={savingDoc}
+                                    >
+                                      Cancel
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="btn btn-primary !min-h-0 !px-2 !py-1 text-xs"
+                                      onClick={() => void saveEditedDoc()}
+                                      disabled={savingDoc}
+                                    >
+                                      {savingDoc ? "Saving..." : "Save"}
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div className="flex justify-end gap-2">
+                                    <button
+                                      type="button"
+                                      className="btn btn-outline !min-h-0 !px-2 !py-1 text-xs"
+                                      onClick={() => startEditDoc(d)}
+                                    >
+                                      Edit
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="btn btn-outline !min-h-0 !border-red-300 !px-2 !py-1 text-xs text-red-700"
+                                      onClick={() => setDeleteDocId(d.id)}
+                                    >
+                                      Delete
+                                    </button>
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
+                    {editDocId && editDocKind === "digital_signature" && (
+                      <div className="mt-3">
+                        <label className="mb-1 block text-sm font-medium text-slate-700">Document text</label>
+                        <textarea
+                          value={editDocContent}
+                          onChange={(e) => setEditDocContent(e.target.value)}
+                          className="w-full min-h-[120px] rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                          placeholder="Paste document text for signature (offer letter / NDA terms)."
+                        />
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteDocId && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/40"
+            aria-label="Close dialog"
+            onClick={() => !deletingDoc && setDeleteDocId(null)}
+          />
+          <div role="dialog" aria-modal="true" className="relative z-10 w-full max-w-md rounded-xl border border-slate-200 bg-white p-5 shadow-xl">
+            <h2 className="text-lg font-semibold text-slate-900">Delete document</h2>
+            <p className="mt-2 text-sm text-slate-600">
+              Delete this company document? This may affect onboarding and existing invites.
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button type="button" className="btn btn-outline" onClick={() => setDeleteDocId(null)} disabled={deletingDoc}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn border border-red-600 bg-red-600 text-white hover:bg-red-700"
+                disabled={deletingDoc}
+                onClick={() => void deleteCompanyDoc(deleteDocId)}
+              >
+                {deletingDoc ? "Deleting…" : "Delete"}
+              </button>
             </div>
           </div>
         </div>
@@ -1344,9 +1778,9 @@ export default function EmployeesPage() {
                       {e.email}
                     </td>
                     <td className="whitespace-nowrap px-1.5 py-1">{e.phone || "—"}</td>
-                    <td className="whitespace-nowrap px-1.5 py-1">{e.dateOfJoining || "—"}</td>
+                    <td className="whitespace-nowrap px-1.5 py-1">{e.dateOfJoining ? fmtDmy(e.dateOfJoining) : "—"}</td>
                     {activeTab === "past" && (
-                      <td className="whitespace-nowrap px-1.5 py-1">{(e as any).dateOfLeaving || "—"}</td>
+                      <td className="whitespace-nowrap px-1.5 py-1">{(e as any).dateOfLeaving ? fmtDmy((e as any).dateOfLeaving) : "—"}</td>
                     )}
                     {activeTab === "past" && (
                       <td className="whitespace-nowrap px-1.5 py-1">
@@ -1374,6 +1808,14 @@ export default function EmployeesPage() {
                             ) : (
                               <span aria-hidden>👁</span>
                             )}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-outline !min-h-0 shrink-0 !px-1.5 !py-0.5 !text-[11px] leading-none"
+                            onClick={() => void openEdit(e.id)}
+                            title="Edit"
+                          >
+                            ✏️
                           </button>
                           <button
                             type="button"
@@ -1411,6 +1853,14 @@ export default function EmployeesPage() {
                             title="View"
                           >
                             👁
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-outline !min-h-0 shrink-0 !px-1.5 !py-0.5 !text-[11px] leading-none"
+                            onClick={() => void openEdit(e.id)}
+                            title="Edit"
+                          >
+                            ✏️
                           </button>
                           <button
                             type="button"
@@ -1673,13 +2123,27 @@ export default function EmployeesPage() {
                           <span className="text-slate-500">Phone:</span> {detailsData?.employee?.phone || "-"}
                         </div>
                         <div>
-                          <span className="text-slate-500">DOJ:</span> {detailsData?.employee?.date_of_joining || "-"}
+                          <span className="text-slate-500">DOB:</span>{" "}
+                          {detailsData?.employee?.date_of_birth ? fmtDmy(detailsData.employee.date_of_birth) : "-"}
+                        </div>
+                        <div>
+                          <span className="text-slate-500">DOJ:</span>{" "}
+                          {detailsData?.employee?.date_of_joining ? fmtDmy(detailsData.employee.date_of_joining) : "-"}
                         </div>
                         <div>
                           <span className="text-slate-500">Current address:</span> {detailsData?.employee?.current_address_line1 || "-"}
                         </div>
                         <div>
-                          <span className="text-slate-500">Bank:</span> {detailsData?.employee?.bank_account_number ? "Provided" : "-"}
+                          <span className="text-slate-500">Bank:</span>{" "}
+                          {detailsData?.employee?.bank_name
+                            ? `${detailsData.employee.bank_name}${detailsData?.employee?.bank_account_number ? " (Acct provided)" : ""}`
+                            : detailsData?.employee?.bank_account_number
+                              ? "Provided"
+                              : "-"}
+                        </div>
+                        <div>
+                          <span className="text-slate-500">TDS (monthly):</span>{" "}
+                          {detailsData?.payrollMaster?.tds != null ? Number(detailsData.payrollMaster.tds).toLocaleString("en-IN") : "0"}
                         </div>
                       </div>
                     </div>

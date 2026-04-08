@@ -59,8 +59,10 @@ function InvitePageInner() {
   const [permanentState, setPermanentState] = useState("");
   const [permanentCountry, setPermanentCountry] = useState("");
   const [permanentPostalCode, setPermanentPostalCode] = useState("");
+  const [permanentSameAsCurrent, setPermanentSameAsCurrent] = useState(false);
   const [aadhaar, setAadhaar] = useState("");
   const [pan, setPan] = useState("");
+  const [bankName, setBankName] = useState("");
   const [bankAccountNumber, setBankAccountNumber] = useState("");
   const [bankIfsc, setBankIfsc] = useState("");
 
@@ -109,6 +111,17 @@ function InvitePageInner() {
     return m;
   }, [submissions]);
 
+  const mandatoryMissing = useMemo(() => {
+    const missing: { id: string; name: string }[] = [];
+    for (const d of documents) {
+      if (!d.is_mandatory) continue;
+      const s = byDocId.get(d.id);
+      const done = s && (s.status === "submitted" || s.status === "signed" || s.status === "approved");
+      if (!done) missing.push({ id: d.id, name: d.name });
+    }
+    return missing;
+  }, [documents, byDocId]);
+
   async function refresh() {
     if (!token) return;
     setLoading(true);
@@ -155,6 +168,7 @@ function InvitePageInner() {
         setPermanentPostalCode(String(u.permanentPostalCode ?? "").replace(/\D+/g, ""));
         setAadhaar(String(u.aadhaar ?? "").trim());
         setPan(String(u.pan ?? "").trim());
+        setBankName(String(u.bankName ?? "").trim());
         setBankAccountNumber(String(u.bankAccountNumber ?? "").trim());
         setBankIfsc(String(u.bankIfsc ?? "").trim());
       }
@@ -170,6 +184,24 @@ function InvitePageInner() {
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
+
+  useEffect(() => {
+    if (!permanentSameAsCurrent) return;
+    setPermanentAddressLine1(currentAddressLine1);
+    setPermanentAddressLine2(currentAddressLine2);
+    setPermanentCity(currentCity);
+    setPermanentState(currentState);
+    setPermanentCountry(currentCountry);
+    setPermanentPostalCode(currentPostalCode);
+  }, [
+    permanentSameAsCurrent,
+    currentAddressLine1,
+    currentAddressLine2,
+    currentCity,
+    currentState,
+    currentCountry,
+    currentPostalCode,
+  ]);
 
   async function submitUpload(documentId: string, fileUrl: string) {
     setError(null);
@@ -275,9 +307,13 @@ function InvitePageInner() {
       const pcErr = validatePostal(currentPostalCode);
       setPostalError(pcErr);
       if (pcErr) requiredMissing.push("Postal code");
+      if (!bankName.trim()) requiredMissing.push("Bank name");
       if (!bankAccountNumber.trim()) requiredMissing.push("Bank account number");
       if (!bankIfsc.trim()) requiredMissing.push("IFSC");
       if (requiredMissing.length) throw new Error(`Please fill all required fields: ${requiredMissing.join(", ")}`);
+      if (mandatoryMissing.length) {
+        throw new Error(`Please complete mandatory documents first: ${mandatoryMissing.map((m) => m.name).join(", ")}`);
+      }
 
       const res = await fetch(`/api/invites/${token}`, {
         method: "POST",
@@ -303,6 +339,7 @@ function InvitePageInner() {
             permanentPostalCode: normalizeDigits(permanentPostalCode),
             aadhaar,
             pan,
+            bankName,
             bankAccountNumber,
             bankIfsc,
           },
@@ -597,6 +634,14 @@ function InvitePageInner() {
 
           <div className="sm:col-span-2 lg:col-span-4">
             <h3 className="text-sm font-semibold text-slate-800 mt-4 mb-2">Permanent address</h3>
+            <label className="mt-2 inline-flex items-center gap-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={permanentSameAsCurrent}
+                onChange={(e) => setPermanentSameAsCurrent(e.target.checked)}
+              />
+              Same as Current Address
+            </label>
           </div>
           <div className="sm:col-span-2">
             <label className="mb-1 block text-sm font-medium text-slate-700">Permanent address line 1</label>
@@ -604,6 +649,7 @@ function InvitePageInner() {
               type="text"
               value={permanentAddressLine1}
               onChange={(e) => setPermanentAddressLine1(e.target.value)}
+              disabled={permanentSameAsCurrent}
               placeholder="Address line 1"
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
             />
@@ -614,6 +660,7 @@ function InvitePageInner() {
               type="text"
               value={permanentAddressLine2}
               onChange={(e) => setPermanentAddressLine2(e.target.value)}
+              disabled={permanentSameAsCurrent}
               placeholder="Address line 2 (optional)"
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
             />
@@ -624,6 +671,7 @@ function InvitePageInner() {
               type="text"
               value={permanentCity}
               onChange={(e) => setPermanentCity(e.target.value)}
+              disabled={permanentSameAsCurrent}
               placeholder="City"
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
             />
@@ -634,6 +682,7 @@ function InvitePageInner() {
               type="text"
               value={permanentState}
               onChange={(e) => setPermanentState(e.target.value)}
+              disabled={permanentSameAsCurrent}
               placeholder="State"
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
             />
@@ -644,6 +693,7 @@ function InvitePageInner() {
               type="text"
               value={permanentCountry}
               onChange={(e) => setPermanentCountry(e.target.value)}
+              disabled={permanentSameAsCurrent}
               placeholder="Country"
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
             />
@@ -655,11 +705,22 @@ function InvitePageInner() {
               inputMode="numeric"
               value={permanentPostalCode}
               onChange={(e) => setPermanentPostalCode(e.target.value.replace(/\D/g, ""))}
+              disabled={permanentSameAsCurrent}
               placeholder="Postal code"
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
             />
           </div>
 
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">Bank name</label>
+            <input
+              type="text"
+              required
+              value={bankName}
+              onChange={(e) => setBankName(e.target.value)}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            />
+          </div>
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700">Bank account number</label>
             <input
@@ -726,10 +787,21 @@ function InvitePageInner() {
                   />
                 )}
               </div>
-              <button type="button" className="btn btn-primary" onClick={complete} disabled={completing}>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={complete}
+                disabled={completing || mandatoryMissing.length > 0}
+                title={mandatoryMissing.length ? "Complete mandatory documents first" : undefined}
+              >
                 {completing ? "Activating..." : "Complete onboarding"}
               </button>
             </div>
+            {mandatoryMissing.length > 0 && (
+              <p className="mt-2 text-sm text-amber-700">
+                Complete mandatory documents first: {mandatoryMissing.map((m) => m.name).join(", ")}
+              </p>
+            )}
           </div>
     </section>
   );

@@ -68,6 +68,16 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
     submissions = subRes.data ?? [];
   }
 
-  return NextResponse.json({ employee: user, invite, documents, submissions });
+  const { data: master } = await supabase
+    .from("HRMS_payroll_master")
+    .select("id, tds, advance_bonus, gross_salary, ctc, pf_eligible, esic_eligible, pt, effective_start_date")
+    .eq("company_id", me.company_id)
+    .eq("employee_user_id", id)
+    .is("effective_end_date", null)
+    .order("effective_start_date", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  return NextResponse.json({ employee: user, invite, documents, submissions, payrollMaster: master ?? null });
 }
 

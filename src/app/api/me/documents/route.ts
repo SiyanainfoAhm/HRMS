@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { COOKIE_NAME } from "@/lib/auth";
 import { getValidatedSession } from "@/lib/authValidate";
@@ -54,4 +54,82 @@ export async function GET() {
   });
 
   return NextResponse.json({ items });
+}
+
+export async function POST(request: NextRequest) {
+  const cookieStore = await cookies();
+  const session = await getValidatedSession(cookieStore.get(COOKIE_NAME)?.value);
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const body = await request.json().catch(() => ({}));
+  const action = typeof body?.action === "string" ? body.action : "";
+  if (action !== "submit_document") {
+    return NextResponse.json({ error: "Invalid action" }, { status: 400 });
+  }
+
+  const documentId = typeof body?.documentId === "string" ? body.documentId : "";
+  const fileUrl = typeof body?.fileUrl === "string" ? body.fileUrl.trim() : "";
+  const signatureName = typeof body?.signatureName === "string" ? body.signatureName.trim() : "";
+
+  if (!documentId) return NextResponse.json({ error: "documentId is required" }, { status: 400 });
+
+  // Ensure the document exists and read kind (upload vs digital_signature)
+  const { data: doc, error: docErr } = await supabase
+    .from("HRMS_company_documents")
+    .select("id, company_id, kind")
+    .eq("id", documentId)
+    .maybeSingle();
+  if (docErr) return NextResponse.json({ error: docErr.message }, { status: 400 });
+  if (!doc) return NextResponse.json({ error: "Invalid document" }, { status: 400 });
+
+  const nowIso = new Date().toISOString();
+  if (String((doc as any).kind) === "upload") {
+    if (!fileUrl) return NextResponse.json({ error: "fileUrl is required for upload documents" }, { status: 400 });
+    const { data, error } = await supabase
+      .from("HRMS_employee_document_submissions")
+      .upsert(
+        [
+          {
+            company_id: (doc as any).company_id,
+            user_id: session.id,
+            document_id: documentId,
+            status: "submitted",
+            file_url: fileUrl,
+            signature_name: null,
+            submitted_at: nowIso,
+            updated_at: nowIso,
+          },
+        ],
+        { onConflict: "user_id,document_id" }
+      )
+      .select("*")
+      .single();
+    if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+    return NextResponse.json({ submission: data });
+  }
+
+  // digital signature
+  if (!signatureName) return NextResponse.json({ error: "signatureName is required" }, { status: 400 });
+  const { data, error } = await supabase
+    .from("HRMS_employee_document_submissions")
+    .upsert(
+      [
+        {
+          company_id: (doc as any).company_id,
+          user_id: session.id,
+          document_id: documentId,
+          status: "signed",
+          file_url: fileUrl || null,
+          signature_name: signatureName,
+          signed_at: nowIso,
+          submitted_at: nowIso,
+          updated_at: nowIso,
+        },
+      ],
+      { onConflict: "user_id,document_id" }
+    )
+    .select("*")
+    .single();
+  if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+  return NextResponse.json({ submission: data });
 }

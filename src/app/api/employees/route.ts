@@ -190,6 +190,75 @@ export async function GET(request: NextRequest) {
   const companyId = me.company_id;
 
   const { searchParams } = new URL(request.url);
+  const userIdParam = searchParams.get("userId");
+  if (userIdParam) {
+    const { data: u, error: uErr } = await supabase
+      .from("HRMS_users")
+      .select("*")
+      .eq("company_id", companyId)
+      .eq("id", userIdParam)
+      .maybeSingle();
+    if (uErr) return NextResponse.json({ error: uErr.message }, { status: 400 });
+    if (!u) return NextResponse.json({ error: "Employee not found" }, { status: 404 });
+    if (u.role === "super_admin") return NextResponse.json({ error: "Not allowed" }, { status: 403 });
+
+    const { data: master, error: mErr } = await supabase
+      .from("HRMS_payroll_master")
+      .select("tds")
+      .eq("company_id", companyId)
+      .eq("employee_user_id", userIdParam)
+      .is("effective_end_date", null)
+      .order("effective_start_date", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (mErr) return NextResponse.json({ error: mErr.message }, { status: 400 });
+
+    return NextResponse.json({
+      employee: {
+        id: u.id,
+        email: u.email ?? "",
+        name: u.name ?? "",
+        role: u.role ?? "employee",
+        employmentStatus: u.employment_status ?? "preboarding",
+        employeeCode: u.employee_code ?? "",
+        phone: u.phone ?? "",
+        dateOfBirth: u.date_of_birth ? String(u.date_of_birth).slice(0, 10) : "",
+        dateOfJoining: u.date_of_joining ? String(u.date_of_joining).slice(0, 10) : "",
+        gender: u.gender ?? "",
+        designation: u.designation ?? "",
+        designationId: u.designation_id ?? "",
+        departmentId: u.department_id ?? "",
+        divisionId: u.division_id ?? "",
+        shiftId: u.shift_id ?? "",
+        aadhaar: u.aadhaar ?? "",
+        pan: u.pan ?? "",
+        uanNumber: u.uan_number ?? "",
+        pfNumber: u.pf_number ?? "",
+        esicNumber: u.esic_number ?? "",
+        currentAddressLine1: u.current_address_line1 ?? "",
+        currentAddressLine2: u.current_address_line2 ?? "",
+        currentCity: u.current_city ?? "",
+        currentState: u.current_state ?? "",
+        currentCountry: u.current_country ?? "",
+        currentPostalCode: u.current_postal_code ?? "",
+        permanentAddressLine1: u.permanent_address_line1 ?? "",
+        permanentAddressLine2: u.permanent_address_line2 ?? "",
+        permanentCity: u.permanent_city ?? "",
+        permanentState: u.permanent_state ?? "",
+        permanentCountry: u.permanent_country ?? "",
+        permanentPostalCode: u.permanent_postal_code ?? "",
+        emergencyContactName: u.emergency_contact_name ?? "",
+        emergencyContactPhone: u.emergency_contact_phone ?? "",
+        bankName: u.bank_name ?? "",
+        bankAccountNumber: u.bank_account_number ?? "",
+        bankIfsc: u.bank_ifsc ?? "",
+        grossSalary: u.gross_salary ?? null,
+        tds: master?.tds ?? u.tds_monthly ?? 0,
+        pfEligible: Boolean(u.pf_eligible),
+        esicEligible: Boolean(u.esic_eligible),
+      },
+    });
+  }
   const paginated = searchParams.has("page");
 
   function buildBaseQuery() {
@@ -342,6 +411,7 @@ export async function POST(request: NextRequest) {
   const plainPassword = typeof body?.password === "string" ? body.password.trim() : "";
   const employeeCode = typeof body?.employeeCode === "string" ? body.employeeCode.trim() : "";
   const phone = typeof body?.phone === "string" ? body.phone.trim() : "";
+  const dateOfBirth = typeof body?.dateOfBirth === "string" ? body.dateOfBirth.trim() : "";
   const dateOfJoining = typeof body?.dateOfJoining === "string" ? body.dateOfJoining.trim() : "";
   const employmentStatus = typeof body?.employmentStatus === "string" ? body.employmentStatus : "";
   const currentAddressLine1 = typeof body?.currentAddressLine1 === "string" ? body.currentAddressLine1.trim() : "";
@@ -368,6 +438,7 @@ export async function POST(request: NextRequest) {
     typeof body?.bankAccountNumber === "string" ? body.bankAccountNumber.trim() : "";
   const bankIfsc = typeof body?.bankIfsc === "string" ? body.bankIfsc.trim() : "";
   const grossSalary = body?.grossSalary != null ? Number(body.grossSalary) : undefined;
+  const tdsVal = body?.tds != null ? Math.max(0, Number(body.tds)) : 0;
   const pfEligible = body?.pfEligible === true;
   const esicEligible = body?.esicEligible === true;
   const allowedGenders = ["male", "female", "other"];
@@ -452,9 +523,11 @@ export async function POST(request: NextRequest) {
         employment_status: requestedStatus === "past" ? "past" : "preboarding",
         employee_code: finalEmployeeCode || null,
         phone: phoneDigits,
+        date_of_birth: ymdOrNull(dateOfBirth),
         date_of_joining: dateOfJoining || null,
         ctc: gross > 0 ? calculatedCtc : null,
         gross_salary: grossSalary != null && grossSalary >= 0 ? grossSalary : null,
+        tds_monthly: tdsVal,
         pf_eligible: pfEligible,
         esic_eligible: esicEligible,
         gender: gender ?? null,
@@ -492,6 +565,8 @@ export async function POST(request: NextRequest) {
     .select("*")
     .single();
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+
+  // NOTE: Payroll master should only exist for Current employees.
 
   // Generate preboarding invite link (employee completes onboarding + mandatory documents)
   let inviteToken: string | null = null;
@@ -560,6 +635,205 @@ export async function POST(request: NextRequest) {
     new URL(request.url).origin;
   const inviteUrl = inviteToken ? `${baseUrl}/invite/${inviteToken}` : null;
   return NextResponse.json({ employee: mapRow(inserted), inviteUrl });
+}
+
+export async function PUT(request: NextRequest) {
+  const cookieStore = await cookies();
+  const session = await getValidatedSession(cookieStore.get(COOKIE_NAME)?.value);
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!isManagerial(session.role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+  const body = await request.json().catch(() => ({}));
+  const userId = typeof body?.userId === "string" ? body.userId : "";
+  if (!userId) return NextResponse.json({ error: "userId is required" }, { status: 400 });
+
+  const { data: me, error: meErr } = await supabase
+    .from("HRMS_users")
+    .select("company_id")
+    .eq("id", session.id)
+    .maybeSingle();
+  if (meErr) return NextResponse.json({ error: meErr.message }, { status: 400 });
+  if (!me?.company_id) return NextResponse.json({ error: "User not linked to company" }, { status: 400 });
+
+  const companyId = me.company_id;
+  const { data: target, error: tErr } = await supabase
+    .from("HRMS_users")
+    .select("id, role, company_id")
+    .eq("id", userId)
+    .maybeSingle();
+  if (tErr) return NextResponse.json({ error: tErr.message }, { status: 400 });
+  if (!target || target.company_id !== companyId) return NextResponse.json({ error: "Employee not found" }, { status: 404 });
+  if (target.role === "super_admin") return NextResponse.json({ error: "Not allowed" }, { status: 403 });
+
+  const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
+  const name = typeof body?.name === "string" ? body.name.trim() : "";
+  const role = typeof body?.role === "string" ? body.role : "";
+  const employeeCode = typeof body?.employeeCode === "string" ? body.employeeCode.trim() : "";
+  const phone = typeof body?.phone === "string" ? body.phone.trim() : "";
+  const dateOfBirth = typeof body?.dateOfBirth === "string" ? body.dateOfBirth.trim() : "";
+  const dateOfJoining = typeof body?.dateOfJoining === "string" ? body.dateOfJoining.trim() : "";
+  const employmentStatus = typeof body?.employmentStatus === "string" ? body.employmentStatus : "";
+  const currentAddressLine1 = typeof body?.currentAddressLine1 === "string" ? body.currentAddressLine1.trim() : "";
+  const currentAddressLine2 = typeof body?.currentAddressLine2 === "string" ? body.currentAddressLine2.trim() : "";
+  const currentCity = typeof body?.currentCity === "string" ? body.currentCity.trim() : "";
+  const currentState = typeof body?.currentState === "string" ? body.currentState.trim() : "";
+  const currentCountry = typeof body?.currentCountry === "string" ? body.currentCountry.trim() : "";
+  const currentPostalCode = typeof body?.currentPostalCode === "string" ? body.currentPostalCode.trim() : "";
+  const permanentAddressLine1 =
+    typeof body?.permanentAddressLine1 === "string" ? body.permanentAddressLine1.trim() : "";
+  const permanentAddressLine2 =
+    typeof body?.permanentAddressLine2 === "string" ? body.permanentAddressLine2.trim() : "";
+  const permanentCity = typeof body?.permanentCity === "string" ? body.permanentCity.trim() : "";
+  const permanentState = typeof body?.permanentState === "string" ? body.permanentState.trim() : "";
+  const permanentCountry = typeof body?.permanentCountry === "string" ? body.permanentCountry.trim() : "";
+  const permanentPostalCode =
+    typeof body?.permanentPostalCode === "string" ? body.permanentPostalCode.trim() : "";
+  const emergencyContactName =
+    typeof body?.emergencyContactName === "string" ? body.emergencyContactName.trim() : "";
+  const emergencyContactPhone =
+    typeof body?.emergencyContactPhone === "string" ? body.emergencyContactPhone.trim() : "";
+  const bankName = typeof body?.bankName === "string" ? body.bankName.trim() : "";
+  const bankAccountNumber =
+    typeof body?.bankAccountNumber === "string" ? body.bankAccountNumber.trim() : "";
+  const bankIfsc = typeof body?.bankIfsc === "string" ? body.bankIfsc.trim() : "";
+  const grossSalary = body?.grossSalary != null ? Number(body.grossSalary) : undefined;
+  const tdsVal = body?.tds != null ? Math.max(0, Number(body.tds)) : null;
+  const pfEligible = body?.pfEligible === true;
+  const esicEligible = body?.esicEligible === true;
+  const allowedGenders = ["male", "female", "other"];
+  const gender = allowedGenders.includes(body?.gender) ? body.gender : null;
+  const designationId = typeof body?.designationId === "string" ? body.designationId.trim() || null : null;
+  const designation = typeof body?.designation === "string" ? body.designation.trim() || null : null;
+  const departmentId = typeof body?.departmentId === "string" ? body.departmentId.trim() || null : null;
+  const divisionId = typeof body?.divisionId === "string" ? body.divisionId.trim() || null : null;
+  const shiftId = typeof body?.shiftId === "string" ? body.shiftId.trim() || null : null;
+  const uanNumber = typeof body?.uanNumber === "string" ? body.uanNumber.trim() || null : null;
+  const pfNumber = typeof body?.pfNumber === "string" ? body.pfNumber.trim() || null : null;
+  const esicNumber = typeof body?.esicNumber === "string" ? body.esicNumber.trim() || null : null;
+
+  if (email) {
+    const emailFieldErr = validateEmailField(email);
+    if (emailFieldErr) return NextResponse.json({ error: emailFieldErr }, { status: 400 });
+  }
+  const phoneDigits = phone ? normalizeDigits(phone) : "";
+  if (phoneDigits) {
+    const phoneErr = validateIndianMobileDigits(phoneDigits);
+    if (phoneErr) return NextResponse.json({ error: phoneErr }, { status: 400 });
+  }
+
+  const aadhaarDigits = normalizeDigits(typeof body?.aadhaar === "string" ? body.aadhaar : "");
+  const aadhaarErr = validateAadhaarDigits(aadhaarDigits);
+  if (aadhaarErr) return NextResponse.json({ error: aadhaarErr }, { status: 400 });
+
+  const panNormalized = (typeof body?.pan === "string" ? body.pan : "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+  const panErr = validatePanNormalized(panNormalized);
+  if (panErr) return NextResponse.json({ error: panErr }, { status: 400 });
+
+  const allowedRoles = ["admin", "hr", "manager", "employee"];
+  const finalRole = allowedRoles.includes(role || "") ? (role as any) : undefined;
+  const allowedStatus = ["preboarding", "current", "past"];
+  const finalStatus = allowedStatus.includes(employmentStatus) ? (employmentStatus as any) : undefined;
+
+  const gross = grossSalary != null && Number.isFinite(grossSalary) && grossSalary >= 0 ? grossSalary : null;
+  const { ctc: calculatedCtc } = gross != null ? computePayrollFromGross(gross, pfEligible, esicEligible, 0) : { ctc: null as any };
+
+  const payload: any = {
+    updated_at: new Date().toISOString(),
+    ...(email ? { email } : {}),
+    ...(name ? { name } : {}),
+    ...(employeeCode ? { employee_code: employeeCode } : {}),
+    ...(phoneDigits ? { phone: phoneDigits } : {}),
+    ...(dateOfBirth ? { date_of_birth: ymdOrNull(dateOfBirth) } : { date_of_birth: null }),
+    ...(dateOfJoining ? { date_of_joining: dateOfJoining } : {}),
+    ...(finalRole ? { role: finalRole } : {}),
+    ...(finalStatus ? { employment_status: finalStatus } : {}),
+    gender: gender ?? null,
+    designation: designation ?? null,
+    designation_id: designationId ?? null,
+    department_id: departmentId ?? null,
+    division_id: divisionId ?? null,
+    shift_id: shiftId ?? null,
+    aadhaar: aadhaarDigits,
+    pan: panNormalized,
+    uan_number: uanNumber,
+    pf_number: pfNumber,
+    esic_number: esicNumber,
+    current_address_line1: currentAddressLine1 || null,
+    current_address_line2: currentAddressLine2 || null,
+    current_city: currentCity || null,
+    current_state: currentState || null,
+    current_country: currentCountry || null,
+    current_postal_code: currentPostalCode || null,
+    permanent_address_line1: permanentAddressLine1 || null,
+    permanent_address_line2: permanentAddressLine2 || null,
+    permanent_city: permanentCity || null,
+    permanent_state: permanentState || null,
+    permanent_country: permanentCountry || null,
+    permanent_postal_code: permanentPostalCode || null,
+    emergency_contact_name: emergencyContactName || null,
+    emergency_contact_phone: emergencyContactPhone || null,
+    bank_name: bankName || null,
+    bank_account_number: bankAccountNumber || null,
+    bank_ifsc: bankIfsc || null,
+    gross_salary: gross,
+    tds_monthly: tdsVal,
+    ctc: gross != null ? calculatedCtc : null,
+    pf_eligible: pfEligible,
+    esic_eligible: esicEligible,
+  };
+
+  const { data: updated, error: upErr } = await supabase
+    .from("HRMS_users")
+    .update(payload)
+    .eq("company_id", companyId)
+    .eq("id", userId)
+    .select("*")
+    .single();
+  if (upErr) return NextResponse.json({ error: upErr.message }, { status: 400 });
+
+  // Best-effort sync to HRMS_employees mirror table
+  try {
+    await supabase
+      .from("HRMS_employees")
+      .update({
+        employee_code: employeeCode || null,
+        email: email || null,
+        phone: phoneDigits || null,
+        date_of_joining: dateOfJoining || null,
+        designation_id: designationId ?? null,
+        department_id: departmentId ?? null,
+        division_id: divisionId ?? null,
+        shift_id: shiftId ?? null,
+        bank_account_number: bankAccountNumber || null,
+        bank_ifsc: bankIfsc || null,
+        emergency_contact_name: emergencyContactName || null,
+        emergency_contact_phone: emergencyContactPhone || null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("company_id", companyId)
+      .eq("user_id", userId);
+  } catch {
+    // ignore
+  }
+
+  // Best-effort update payroll master TDS (latest active master row)
+  if (tdsVal != null) {
+    try {
+      await supabase
+        .from("HRMS_payroll_master")
+        .update({ tds: tdsVal })
+        .eq("company_id", companyId)
+        .eq("employee_user_id", userId)
+        .is("effective_end_date", null);
+    } catch {
+      // ignore
+    }
+  }
+
+  return NextResponse.json({ employee: mapRow(updated) });
 }
 
 export async function PATCH(request: NextRequest) {
@@ -648,11 +922,13 @@ export async function PATCH(request: NextRequest) {
       .single();
     const ptMonthly = company?.professional_tax_monthly != null ? Number(company.professional_tax_monthly) : 200;
 
-    const { data: u } = await supabase.from("HRMS_users").select("ctc, gross_salary, pf_eligible, esic_eligible").eq("id", userId).single();
+    const { data: u } = await supabase.from("HRMS_users").select("ctc, gross_salary, pf_eligible, esic_eligible, tds_monthly").eq("id", userId).single();
     const gross = Number(u?.gross_salary ?? u?.ctc ?? 0);
     const pfOn = Boolean(u?.pf_eligible);
     const esicOn = Boolean(u?.esic_eligible);
     const { basic, hra, medical, trans, lta, personal, pfEmp, pfEmpr, esicEmp, esicEmpr, ctc: ctcVal, takeHome } = computePayrollFromGross(gross, pfOn, esicOn, ptMonthly);
+    const tdsMonthly = u?.tds_monthly != null ? Math.max(0, Number(u.tds_monthly)) : 0;
+    const takeHomeWithTds = Math.max(0, Number(takeHome ?? 0) - tdsMonthly);
 
     const { data: existingMaster } = await supabase
       .from("HRMS_payroll_master")
@@ -674,7 +950,9 @@ export async function PATCH(request: NextRequest) {
         esic_employee: esicEmp,
         esic_employer: esicEmpr,
         pt: ptMonthly,
-        take_home: takeHome,
+        tds: tdsMonthly,
+        advance_bonus: 0,
+        take_home: takeHomeWithTds,
         effective_start_date: doj,
         effective_end_date: null,
         reason_for_change: "NewJoin",
