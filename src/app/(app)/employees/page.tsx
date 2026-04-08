@@ -106,6 +106,7 @@ export default function EmployeesPage() {
   const [currentState, setCurrentState] = useState("");
   const [currentCountry, setCurrentCountry] = useState("");
   const [currentPostalCode, setCurrentPostalCode] = useState("");
+  const [permanentSameAsCurrent, setPermanentSameAsCurrent] = useState(false);
   const [permanentAddressLine1, setPermanentAddressLine1] = useState("");
   const [permanentAddressLine2, setPermanentAddressLine2] = useState("");
   const [permanentCity, setPermanentCity] = useState("");
@@ -319,6 +320,7 @@ export default function EmployeesPage() {
     setCurrentState("");
     setCurrentCountry("");
     setCurrentPostalCode("");
+    setPermanentSameAsCurrent(false);
     setPermanentAddressLine1("");
     setPermanentAddressLine2("");
     setPermanentCity("");
@@ -369,6 +371,7 @@ export default function EmployeesPage() {
       setCurrentState(String(u.currentState ?? ""));
       setCurrentCountry(String(u.currentCountry ?? ""));
       setCurrentPostalCode(String(u.currentPostalCode ?? ""));
+      setPermanentSameAsCurrent(false);
       setPermanentAddressLine1(String(u.permanentAddressLine1 ?? ""));
       setPermanentAddressLine2(String(u.permanentAddressLine2 ?? ""));
       setPermanentCity(String(u.permanentCity ?? ""));
@@ -402,6 +405,26 @@ export default function EmployeesPage() {
     pfEmp: calcPfEmp,
     esicEmp: calcEsicEmp,
   } = computePayrollFromGross(gross, pfEligible, esicEligible, ptMonthly);
+
+  useEffect(() => {
+    if (!isDialogOpen) return;
+    if (!permanentSameAsCurrent) return;
+    setPermanentAddressLine1(currentAddressLine1);
+    setPermanentAddressLine2(currentAddressLine2);
+    setPermanentCity(currentCity);
+    setPermanentState(currentState);
+    setPermanentCountry(currentCountry);
+    setPermanentPostalCode(currentPostalCode);
+  }, [
+    isDialogOpen,
+    permanentSameAsCurrent,
+    currentAddressLine1,
+    currentAddressLine2,
+    currentCity,
+    currentState,
+    currentCountry,
+    currentPostalCode,
+  ]);
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
@@ -1420,6 +1443,134 @@ export default function EmployeesPage() {
                     onChange={(e) => setEsicNumber(e.target.value)}
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                   />
+                </div>
+
+                <div className="md:col-span-4">
+                  <div className="rounded-xl border border-slate-200 bg-white p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h3 className="text-sm font-semibold text-slate-900">Address</h3>
+                      <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                        <input
+                          type="checkbox"
+                          checked={permanentSameAsCurrent}
+                          onChange={(e) => setPermanentSameAsCurrent(e.target.checked)}
+                        />
+                        Same as Current Address
+                      </label>
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-800">Current address</p>
+                        <div className="mt-2 grid grid-cols-1 gap-3">
+                          <input
+                            type="text"
+                            value={currentAddressLine1}
+                            onChange={(e) => setCurrentAddressLine1(e.target.value)}
+                            placeholder="Address line 1"
+                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                          />
+                          <input
+                            type="text"
+                            value={currentAddressLine2}
+                            onChange={(e) => setCurrentAddressLine2(e.target.value)}
+                            placeholder="Address line 2"
+                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                          />
+                          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                            <input
+                              type="text"
+                              value={currentCity}
+                              onChange={(e) => setCurrentCity(e.target.value)}
+                              placeholder="City"
+                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                            />
+                            <input
+                              type="text"
+                              value={currentState}
+                              onChange={(e) => setCurrentState(e.target.value)}
+                              placeholder="State"
+                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                            />
+                          </div>
+                          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                            <input
+                              type="text"
+                              value={currentCountry}
+                              onChange={(e) => setCurrentCountry(e.target.value)}
+                              placeholder="Country"
+                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                            />
+                            <input
+                              type="text"
+                              value={currentPostalCode}
+                              onChange={(e) => setCurrentPostalCode(e.target.value)}
+                              placeholder="Postal code"
+                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div>
+                        <p className="text-sm font-semibold text-slate-800">Permanent address</p>
+                        <div className="mt-2 grid grid-cols-1 gap-3">
+                          <input
+                            type="text"
+                            value={permanentAddressLine1}
+                            onChange={(e) => setPermanentAddressLine1(e.target.value)}
+                            placeholder="Address line 1"
+                            disabled={permanentSameAsCurrent}
+                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-50"
+                          />
+                          <input
+                            type="text"
+                            value={permanentAddressLine2}
+                            onChange={(e) => setPermanentAddressLine2(e.target.value)}
+                            placeholder="Address line 2"
+                            disabled={permanentSameAsCurrent}
+                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-50"
+                          />
+                          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                            <input
+                              type="text"
+                              value={permanentCity}
+                              onChange={(e) => setPermanentCity(e.target.value)}
+                              placeholder="City"
+                              disabled={permanentSameAsCurrent}
+                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-50"
+                            />
+                            <input
+                              type="text"
+                              value={permanentState}
+                              onChange={(e) => setPermanentState(e.target.value)}
+                              placeholder="State"
+                              disabled={permanentSameAsCurrent}
+                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-50"
+                            />
+                          </div>
+                          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                            <input
+                              type="text"
+                              value={permanentCountry}
+                              onChange={(e) => setPermanentCountry(e.target.value)}
+                              placeholder="Country"
+                              disabled={permanentSameAsCurrent}
+                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-50"
+                            />
+                            <input
+                              type="text"
+                              value={permanentPostalCode}
+                              onChange={(e) => setPermanentPostalCode(e.target.value)}
+                              placeholder="Postal code"
+                              disabled={permanentSameAsCurrent}
+                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-50"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
 
                 <div className="md:col-span-4">
