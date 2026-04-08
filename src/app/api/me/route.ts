@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { COOKIE_NAME } from "@/lib/auth";
+import { COOKIE_NAME, createSessionCookie, getCookieOptions, type SessionUser } from "@/lib/auth";
 import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -69,6 +69,7 @@ export async function PUT(request: NextRequest) {
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = await request.json().catch(() => ({}));
+  const canEditOrgFields = isManagerial(session.role);
 
   const allowedEmployment = ["preboarding", "current", "past"] as const;
   const employmentStatus = allowedEmployment.includes(body?.employmentStatus) ? body.employmentStatus : undefined;
@@ -98,7 +99,8 @@ export async function PUT(request: NextRequest) {
     employee_code: typeof body?.employeeCode === "string" ? body.employeeCode.trim() || null : undefined,
     phone: typeof body?.phone === "string" ? body.phone.trim() || null : undefined,
     date_of_birth: typeof body?.dateOfBirth === "string" ? body.dateOfBirth.trim() || null : undefined,
-    date_of_joining: typeof body?.dateOfJoining === "string" ? body.dateOfJoining.trim() || null : undefined,
+    date_of_joining:
+      canEditOrgFields && typeof body?.dateOfJoining === "string" ? body.dateOfJoining.trim() || null : undefined,
     current_address_line1:
       typeof body?.currentAddressLine1 === "string" ? body.currentAddressLine1.trim() || null : undefined,
     current_address_line2:
@@ -130,16 +132,20 @@ export async function PUT(request: NextRequest) {
       const allowed = ["male", "female", "other"];
       return allowed.includes(body?.gender) ? body.gender : undefined;
     })(),
-    designation: typeof body?.designation === "string" ? body.designation.trim() || null : undefined,
-    designation_id: typeof body?.designationId === "string" ? body.designationId.trim() || null : undefined,
-    department_id: typeof body?.departmentId === "string" ? body.departmentId.trim() || null : undefined,
-    division_id: typeof body?.divisionId === "string" ? body.divisionId.trim() || null : undefined,
-    shift_id: typeof body?.shiftId === "string" ? body.shiftId.trim() || null : undefined,
+    designation:
+      canEditOrgFields && typeof body?.designation === "string" ? body.designation.trim() || null : undefined,
+    designation_id:
+      canEditOrgFields && typeof body?.designationId === "string" ? body.designationId.trim() || null : undefined,
+    department_id:
+      canEditOrgFields && typeof body?.departmentId === "string" ? body.departmentId.trim() || null : undefined,
+    division_id:
+      canEditOrgFields && typeof body?.divisionId === "string" ? body.divisionId.trim() || null : undefined,
+    shift_id: canEditOrgFields && typeof body?.shiftId === "string" ? body.shiftId.trim() || null : undefined,
     aadhaar: typeof body?.aadhaar === "string" ? body.aadhaar.trim() || null : undefined,
     pan: typeof body?.pan === "string" ? body.pan.trim() || null : undefined,
     uan_number: isManagerial(session.role) && typeof body?.uanNumber === "string" ? body.uanNumber.trim() || null : undefined,
-    pf_number: typeof body?.pfNumber === "string" ? body.pfNumber.trim() || null : undefined,
-    esic_number: typeof body?.esicNumber === "string" ? body.esicNumber.trim() || null : undefined,
+    pf_number: canEditOrgFields && typeof body?.pfNumber === "string" ? body.pfNumber.trim() || null : undefined,
+    esic_number: canEditOrgFields && typeof body?.esicNumber === "string" ? body.esicNumber.trim() || null : undefined,
     updated_at: new Date().toISOString(),
   };
 
@@ -179,6 +185,14 @@ export async function PUT(request: NextRequest) {
     }
   }
 
-  return NextResponse.json({ user: mapUser(data) });
+  const res = NextResponse.json({ user: mapUser(data) });
+  // Keep signed session cookie in sync so Sidebar/Dashboard reflect latest name immediately.
+  const nextSession: SessionUser = {
+    ...session,
+    name: (data.name ?? null) as string | null,
+    email: (data.email ?? session.email) as string,
+  };
+  res.cookies.set(COOKIE_NAME, createSessionCookie(nextSession), getCookieOptions());
+  return res;
 }
 

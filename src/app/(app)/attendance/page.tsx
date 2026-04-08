@@ -19,9 +19,10 @@ type Row = {
   checkOutAt: string | null;
   totalHours: number | null;
   lunchBreakMinutes: number;
-  lunchBreakMinutesRecorded?: number;
-  mandatoryLunchAssumed?: boolean;
   teaBreakMinutes: number;
+  idleLunchMinutes?: number | null;
+  idleTeaMinutes?: number | null;
+  idleMinutes?: number | null;
   lunchBreakOpen: boolean;
   teaBreakOpen: boolean;
   status: string | null;
@@ -76,6 +77,9 @@ function AttendanceRow({
   showDateCol: boolean;
   showEmployeeCols: boolean;
 }) {
+  const idleLunch = r.idleLunchMinutes ?? r.lunchBreakMinutes ?? 0;
+  const idleTea = r.idleTeaMinutes ?? r.teaBreakMinutes ?? 0;
+  const idleTotal = r.idleMinutes ?? (r.grossMinutes != null ? Math.max(0, idleLunch + idleTea) : null);
   return (
     <tr className="bg-white transition-colors hover:bg-emerald-50/40">
       {showDateCol && (
@@ -94,10 +98,10 @@ function AttendanceRow({
       <td className="px-3 py-3 font-medium text-slate-800">{fmtHoursMin(r.grossMinutes)}</td>
       <td className="px-3 py-3 font-medium text-slate-800">{fmtHoursMin(r.activeMinutes)}</td>
       <td className="px-3 py-3 text-xs text-slate-600">
-        {r.lunchBreakMinutes} / {r.teaBreakMinutes}
+        {fmtHoursMin(idleLunch)} / {fmtHoursMin(idleTea)}
       </td>
       <td className="px-3 py-3 text-xs text-slate-600">
-        {r.mandatoryLunchAssumed ? "1h default (no lunch punch)" : "—"}
+        {fmtHoursMin(idleTotal)}
       </td>
       <td className="px-3 py-3">
         {r.checkOutAt ? (
@@ -110,16 +114,6 @@ function AttendanceRow({
           )
         ) : (
           <span className="text-slate-400">—</span>
-        )}
-      </td>
-      <td className="px-3 py-3 text-xs">
-        {r.lunchBreakOpen || r.teaBreakOpen ? (
-          <span className="text-amber-800">
-            {r.lunchBreakOpen ? "Lunch " : ""}
-            {r.teaBreakOpen ? "Tea" : ""}
-          </span>
-        ) : (
-          "—"
         )}
       </td>
     </tr>
@@ -135,6 +129,9 @@ function AttendanceMobileCard({
   showEmployeeCols: boolean;
   showDateLine: boolean;
 }) {
+  const idleLunch = r.idleLunchMinutes ?? r.lunchBreakMinutes ?? 0;
+  const idleTea = r.idleTeaMinutes ?? r.teaBreakMinutes ?? 0;
+  const idleTotal = r.idleMinutes ?? (r.grossMinutes != null ? Math.max(0, idleLunch + idleTea) : null);
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
       {showDateLine && (
@@ -172,14 +169,14 @@ function AttendanceMobileCard({
           <dd className="font-medium text-slate-800">{fmtHoursMin(r.activeMinutes)}</dd>
         </div>
         <div className="col-span-2">
-          <dt className="text-xs text-slate-500">Lunch / Tea (min)</dt>
+          <dt className="text-xs text-slate-500">Idle lunch / tea</dt>
           <dd className="text-slate-800">
-            {r.lunchBreakMinutes} / {r.teaBreakMinutes}
+            {fmtHoursMin(idleLunch)} / {fmtHoursMin(idleTea)}
           </dd>
         </div>
         <div className="col-span-2">
-          <dt className="text-xs text-slate-500">Lunch note</dt>
-          <dd className="text-xs text-slate-600">{r.mandatoryLunchAssumed ? "1h default (no lunch punch)" : "—"}</dd>
+          <dt className="text-xs text-slate-500">Total idle</dt>
+          <dd className="text-xs text-slate-600">{fmtHoursMin(idleTotal)}</dd>
         </div>
         <div>
           <dt className="text-xs text-slate-500">≥8h</dt>
@@ -194,19 +191,6 @@ function AttendanceMobileCard({
               )
             ) : (
               <span className="text-slate-400">—</span>
-            )}
-          </dd>
-        </div>
-        <div>
-          <dt className="text-xs text-slate-500">Open break</dt>
-          <dd className="text-xs">
-            {r.lunchBreakOpen || r.teaBreakOpen ? (
-              <span className="text-amber-800">
-                {r.lunchBreakOpen ? "Lunch " : ""}
-                {r.teaBreakOpen ? "Tea" : ""}
-              </span>
-            ) : (
-              "—"
             )}
           </dd>
         </div>
@@ -400,13 +384,10 @@ export default function AttendancePage() {
                         Lunch / Tea
                       </th>
                       <th className="whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-emerald-900/80">
-                        Lunch note
+                        Total idle
                       </th>
                       <th className="whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-emerald-900/80">
                         ≥8h
-                      </th>
-                      <th className="whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-emerald-900/80">
-                        Open break
                       </th>
                     </tr>
                   </thead>

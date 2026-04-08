@@ -73,11 +73,27 @@ export function DashboardContent() {
     { id: string; name: string; holiday_date: string; holiday_end_date: string | null }[]
   >([]);
   const [loading, setLoading] = useState(true);
+  const [confirmState, setConfirmState] = useState<null | { title: string; message: string; confirmText?: string }>(null);
+  const confirmResolveRef = useState<{ fn: ((v: boolean) => void) | null }>({ fn: null })[0];
   const [attendance, setAttendance] = useState<{
     hasEmployee: boolean;
     workDate: string;
     log: AttendanceLog | null;
   } | null>(null);
+
+  function confirmAction(args: { title: string; message: string; confirmText?: string }): Promise<boolean> {
+    return new Promise((resolve) => {
+      confirmResolveRef.fn = resolve;
+      setConfirmState({ title: args.title, message: args.message, confirmText: args.confirmText });
+    });
+  }
+
+  function closeConfirm(result: boolean) {
+    const fn = confirmResolveRef.fn;
+    confirmResolveRef.fn = null;
+    setConfirmState(null);
+    fn?.(result);
+  }
   const [attendanceLoading, setAttendanceLoading] = useState(true);
   const [punching, setPunching] = useState(false);
   /** Drives live HH:MM:SS / counters while punched in */
@@ -175,6 +191,20 @@ export function DashboardContent() {
   }, [attendance?.log?.check_in_at, attendance?.log?.check_out_at]);
 
   async function handleBreakToggle(kind: "lunch" | "tea") {
+    const isLunch = kind === "lunch";
+    const running = isLunch ? !!attendance?.log?.lunch_break_started_at : !!attendance?.log?.tea_break_started_at;
+    const ok = await confirmAction({
+      title: isLunch ? (running ? "End lunch break?" : "Start lunch break?") : running ? "End tea break?" : "Start tea break?",
+      message: isLunch
+        ? running
+          ? "This will mark Lunch In now."
+          : "This will mark Lunch Out now."
+        : running
+          ? "This will end tea break now."
+          : "This will start tea break now.",
+      confirmText: running ? "Confirm" : "Confirm",
+    });
+    if (!ok) return;
     setPunching(true);
     try {
       const res = await fetch("/api/attendance", {
@@ -196,7 +226,13 @@ export function DashboardContent() {
     }
   }
 
-  async function handleAttendancePunch(action: "in" | "out", opts?: { allowRepunchOut?: boolean; allowRepunchIn?: boolean }) {
+  async function handleAttendancePunch(action: "in" | "out", opts?: { allowRepunchOut?: boolean }) {
+    const ok = await confirmAction(
+      action === "in"
+        ? { title: "Punch in now?", message: "This will start your workday timer.", confirmText: "Punch in" }
+        : { title: "Final punch out now?", message: "This will complete today's attendance.", confirmText: "Punch out" }
+    );
+    if (!ok) return;
     setPunching(true);
     try {
       const res = await fetch("/api/attendance", {
@@ -205,7 +241,6 @@ export function DashboardContent() {
         body: JSON.stringify({
           action,
           allowRepunchOut: opts?.allowRepunchOut === true ? true : undefined,
-          allowRepunchIn: opts?.allowRepunchIn === true ? true : undefined,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -270,6 +305,30 @@ export function DashboardContent() {
 
     return (
       <section className="min-h-[60vh]">
+        {confirmState && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+            <button
+              type="button"
+              className="absolute inset-0 bg-black/40"
+              aria-label="Close dialog"
+              onClick={() => closeConfirm(false)}
+            />
+            <div role="dialog" aria-modal="true" className="relative z-10 w-full max-w-md rounded-xl border border-slate-200 bg-white shadow-xl">
+              <div className="border-b border-slate-200 px-5 py-4">
+                <h2 className="text-lg font-semibold text-slate-900">{confirmState.title}</h2>
+                <p className="mt-1 text-sm text-slate-600">{confirmState.message}</p>
+              </div>
+              <div className="flex justify-end gap-2 px-5 py-4">
+                <button type="button" className="btn btn-outline" onClick={() => closeConfirm(false)}>
+                  Cancel
+                </button>
+                <button type="button" className="btn btn-primary" onClick={() => closeConfirm(true)}>
+                  {confirmState.confirmText ?? "Confirm"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         {/* Top greeting banner */}
         <div
           className="mb-6 rounded-xl px-4 py-4 text-center text-white sm:px-6"
@@ -438,16 +497,8 @@ export function DashboardContent() {
                             out.
                           </p>
                           <div className="mt-3">
-                            <button
-                              type="button"
-                              disabled={punching}
-                              onClick={() => handleAttendancePunch("in", { allowRepunchIn: true })}
-                              className="btn btn-outline !py-1.5 !text-sm"
-                            >
-                              {punching ? "Re-opening…" : "Punch in again"}
-                            </button>
-                            <p className="mt-1 text-[11px] text-slate-500">
-                              If you punched out by mistake, this will reopen today’s attendance so you can continue and punch out later.
+                            <p className="text-[11px] text-slate-500">
+                              Today’s attendance is completed after final punch out. Contact HR/Admin if you need corrections.
                             </p>
                           </div>
                         </div>

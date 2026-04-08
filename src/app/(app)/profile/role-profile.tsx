@@ -1,6 +1,6 @@
 "use client";
 
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
 import { useEffect, useMemo, useState, useRef, FormEvent } from "react";
@@ -11,8 +11,10 @@ export function ProfileContent() {
   const { role } = useAuth();
   const params = useSearchParams();
   const tab = params.get("tab") || "profile";
+  const router = useRouter();
 
   const canEditEmployment = useMemo(() => role === "admin" || role === "hr", [role]);
+  const canEditOrgFields = useMemo(() => role === "super_admin" || role === "admin" || role === "hr", [role]);
   const isSuperAdmin = role === "super_admin";
 
   const [loading, setLoading] = useState(true);
@@ -334,6 +336,7 @@ export function ProfileContent() {
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to save profile");
       setSuccess("Saved");
+      router.refresh();
     } catch (e: any) {
       setError(e?.message || "Failed to save profile");
     } finally {
@@ -474,7 +477,7 @@ export function ProfileContent() {
               <p className="muted">
                 {isSuperAdmin
                   ? "Basic account info. You manage companies from the Companies section."
-                  : "These fields are stored in `HRMS_users` for custom auth."}
+                  : ""}
               </p>
             </div>
             <button type="submit" className="btn btn-primary" disabled={saving || loading}>
@@ -566,7 +569,9 @@ export function ProfileContent() {
                         else setDesignationAddPrompt(null);
                       }}
                       placeholder="Search or type new"
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                      readOnly={!canEditOrgFields}
+                      disabled={!canEditOrgFields}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-50 disabled:text-slate-600"
                     />
                     <datalist id="profile-designation-list">
                       {designations.map((d) => (
@@ -574,13 +579,17 @@ export function ProfileContent() {
                       ))}
                     </datalist>
                   </div>
+                  {!canEditOrgFields && (
+                    <p className="mt-1 text-xs text-slate-500">View only. Super admin/Admin/HR can edit in Employees.</p>
+                  )}
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-slate-700">Department</label>
                   <select
                     value={form.departmentId}
+                    disabled={!canEditOrgFields}
                     onChange={(e) => setForm((p) => ({ ...p, departmentId: e.target.value }))}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-50 disabled:text-slate-600"
                   >
                     <option value="">Select department</option>
                     {departments.map((d) => (
@@ -595,8 +604,9 @@ export function ProfileContent() {
                   <label className="mb-1 block text-sm font-medium text-slate-700">Division</label>
                   <select
                     value={form.divisionId}
+                    disabled={!canEditOrgFields}
                     onChange={(e) => setForm((p) => ({ ...p, divisionId: e.target.value }))}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-50 disabled:text-slate-600"
                   >
                     <option value="">Select division</option>
                     {divisions.map((d) => (
@@ -608,8 +618,9 @@ export function ProfileContent() {
                   <label className="mb-1 block text-sm font-medium text-slate-700">Shift</label>
                   <select
                     value={form.shiftId}
+                    disabled={!canEditOrgFields}
                     onChange={(e) => setForm((p) => ({ ...p, shiftId: e.target.value }))}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-50 disabled:text-slate-600"
                   >
                     <option value="">Select shift</option>
                     {shifts.map((s) => (
@@ -657,8 +668,13 @@ export function ProfileContent() {
                     type="text"
                     value={form.pfNumber}
                     onChange={(e) => setForm((p) => ({ ...p, pfNumber: e.target.value }))}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    readOnly={!canEditOrgFields}
+                    disabled={!canEditOrgFields}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-50 disabled:text-slate-600"
                   />
+                  {!canEditOrgFields && (
+                    <p className="mt-1 text-xs text-slate-500">View only. Super admin/Admin/HR can edit in Employees.</p>
+                  )}
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-slate-700">ESIC number</label>
@@ -666,8 +682,13 @@ export function ProfileContent() {
                     type="text"
                     value={form.esicNumber}
                     onChange={(e) => setForm((p) => ({ ...p, esicNumber: e.target.value }))}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    readOnly={!canEditOrgFields}
+                    disabled={!canEditOrgFields}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-50 disabled:text-slate-600"
                   />
+                  {!canEditOrgFields && (
+                    <p className="mt-1 text-xs text-slate-500">View only. Super admin/Admin/HR can edit in Employees.</p>
+                  )}
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-slate-700">Date of birth</label>
@@ -682,8 +703,12 @@ export function ProfileContent() {
                   <DatePickerField
                     value={form.dateOfJoining}
                     onChange={(v) => setForm((p) => ({ ...p, dateOfJoining: v }))}
+                    disabled={!canEditOrgFields}
                     className="w-full"
                   />
+                  {!canEditOrgFields && (
+                    <p className="mt-1 text-xs text-slate-500">View only. Super admin/Admin/HR can edit in Employees.</p>
+                  )}
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-slate-700">CTC (monthly)</label>

@@ -149,7 +149,9 @@ export function Sidebar({
       : []),
     { href: "/approvals", label: "Approvals", icon: <Icon name="approvals" /> },
     { href: "/profile", label: "Profile", icon: <Icon name="profile" /> },
-    { href: "/settings", label: "Settings", icon: <Icon name="settings" /> },
+    ...(role === "super_admin" || role === "admin" || role === "hr"
+      ? ([{ href: "/settings", label: "Settings", icon: <Icon name="settings" /> }] as const)
+      : []),
   ];
 
   const initials = getInitials(user.name, user.email);

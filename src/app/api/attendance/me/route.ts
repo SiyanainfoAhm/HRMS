@@ -70,7 +70,7 @@ export async function GET(request: NextRequest) {
   const { data: logs, error: logErr } = await supabase
     .from("HRMS_attendance_logs")
     .select(
-      "id, employee_id, work_date, check_in_at, check_out_at, total_hours, lunch_break_minutes, tea_break_minutes, lunch_break_started_at, tea_break_started_at, lunch_check_out_at, lunch_check_in_at, status"
+      "id, employee_id, work_date, check_in_at, check_out_at, total_hours, lunch_break_minutes, tea_break_minutes, lunch_break_started_at, tea_break_started_at, lunch_check_out_at, lunch_check_in_at, tea_check_out_at, tea_check_in_at, status"
     )
     .eq("company_id", me.company_id)
     .eq("employee_id", emp.id)
@@ -94,17 +94,34 @@ export async function GET(request: NextRequest) {
           )
         : null;
     const recordedLunchMin = Number(log.lunch_break_minutes) || 0;
+    const lunchOutAt = log.lunch_check_out_at ? new Date(String(log.lunch_check_out_at)).getTime() : null;
+    const lunchInAt = log.lunch_check_in_at ? new Date(String(log.lunch_check_in_at)).getTime() : null;
+    const lunchSpanMin =
+      lunchOutAt != null && lunchInAt != null && Number.isFinite(lunchOutAt) && Number.isFinite(lunchInAt) && lunchInAt > lunchOutAt
+        ? Math.round((lunchInAt - lunchOutAt) / 60000)
+        : 0;
     const teaMin = Number(log.tea_break_minutes) || 0;
+    const teaOutAt = log.tea_check_out_at ? new Date(String(log.tea_check_out_at)).getTime() : null;
+    const teaInAt = log.tea_check_in_at ? new Date(String(log.tea_check_in_at)).getTime() : null;
+    const teaSpanMin =
+      teaOutAt != null && teaInAt != null && Number.isFinite(teaOutAt) && Number.isFinite(teaInAt) && teaInAt > teaOutAt
+        ? Math.round((teaInAt - teaOutAt) / 60000)
+        : 0;
+    const lunchIdleMinBase = Math.max(recordedLunchMin, lunchSpanMin);
     const lunchMinEffective =
       grossMin != null
         ? effectiveLunchBreakMinutes({
-            recordedLunchMinutes: recordedLunchMin,
+            // Treat the lunch out→in span as idle (prevents counter drift and matches user expectation).
+            recordedLunchMinutes: lunchIdleMinBase,
             lunchCheckOutAt: log.lunch_check_out_at,
             lunchCheckInAt: log.lunch_check_in_at,
             grossWorkMinutes: grossMin,
           })
         : recordedLunchMin;
-    const activeMin = grossMin != null ? Math.max(0, grossMin - lunchMinEffective - teaMin) : null;
+    const lunchIdleMin = grossMin != null ? lunchMinEffective : lunchIdleMinBase;
+    const teaIdleMin = Math.max(teaMin, teaSpanMin);
+    const idleMinTotal = grossMin != null ? Math.max(0, lunchIdleMin + teaIdleMin) : null;
+    const activeMin = grossMin != null ? Math.max(0, grossMin - (idleMinTotal ?? 0)) : null;
     return {
       logId: log.id,
       employeeId: log.employee_id,
@@ -118,10 +135,11 @@ export async function GET(request: NextRequest) {
       lunchCheckInAt: log.lunch_check_in_at ?? null,
       checkOutAt: log.check_out_at,
       totalHours: log.total_hours,
-      lunchBreakMinutes: lunchMinEffective,
-      lunchBreakMinutesRecorded: recordedLunchMin,
-      mandatoryLunchAssumed: grossMin != null && lunchMinEffective > recordedLunchMin,
-      teaBreakMinutes: teaMin,
+      lunchBreakMinutes: lunchIdleMin,
+      teaBreakMinutes: teaIdleMin,
+      idleMinutes: idleMinTotal,
+      idleLunchMinutes: lunchIdleMin,
+      idleTeaMinutes: teaIdleMin,
       lunchBreakOpen: !!log.lunch_break_started_at,
       teaBreakOpen: !!log.tea_break_started_at,
       status: log.status,

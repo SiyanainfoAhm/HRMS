@@ -33,6 +33,8 @@ type AttendanceRow = {
   tea_break_started_at?: string | null;
   lunch_check_out_at?: string | null;
   lunch_check_in_at?: string | null;
+  tea_check_out_at?: string | null;
+  tea_check_in_at?: string | null;
 };
 
 export async function GET() {
@@ -95,7 +97,6 @@ export async function POST(request: NextRequest) {
   const lunchBreakMinutes = clampMinutes(Number(body?.lunchBreakMinutes) || 0);
   const teaBreakMinutes = clampMinutes(Number(body?.teaBreakMinutes) || 0);
   const allowRepunchOut = body?.allowRepunchOut === true;
-  const allowRepunchIn = body?.allowRepunchIn === true;
 
   const { data: me, error: meErr } = await supabase
     .from("HRMS_users")
@@ -127,7 +128,7 @@ export async function POST(request: NextRequest) {
   const { data: existing, error: exErr } = await supabase
     .from("HRMS_attendance_logs")
     .select(
-      "id, check_in_at, check_out_at, lunch_break_minutes, tea_break_minutes, lunch_break_started_at, tea_break_started_at, lunch_check_out_at, lunch_check_in_at"
+      "id, check_in_at, check_out_at, lunch_break_minutes, tea_break_minutes, lunch_break_started_at, tea_break_started_at, lunch_check_out_at, lunch_check_in_at, tea_check_out_at, tea_check_in_at"
     )
     .eq("company_id", me.company_id)
     .eq("employee_id", emp.id)
@@ -157,6 +158,8 @@ export async function POST(request: NextRequest) {
 
     let nextLunchOutAt: string | null | undefined = (row as AttendanceRow).lunch_check_out_at ?? null;
     let nextLunchInAt: string | null | undefined = (row as AttendanceRow).lunch_check_in_at ?? null;
+    let nextTeaOutAt: string | null | undefined = (row as AttendanceRow).tea_check_out_at ?? null;
+    let nextTeaInAt: string | null | undefined = (row as AttendanceRow).tea_check_in_at ?? null;
 
     if (isRunning) {
       // stop this break
@@ -167,12 +170,14 @@ export async function POST(request: NextRequest) {
       } else {
         nextTeaMin = addAccumulatedMinutes(teaMinBase, teaStarted, nowIso);
         nextTeaStarted = null;
+        nextTeaInAt = nowIso;
       }
     } else {
       // stop other break if running
       if (breakKind === "lunch" && teaStarted) {
         nextTeaMin = addAccumulatedMinutes(teaMinBase, teaStarted, nowIso);
         nextTeaStarted = null;
+        nextTeaInAt = nowIso;
       }
       if (breakKind === "tea" && lunchStarted) {
         nextLunchMin = addAccumulatedMinutes(lunchMinBase, lunchStarted, nowIso);
@@ -183,7 +188,10 @@ export async function POST(request: NextRequest) {
       if (breakKind === "lunch") {
         nextLunchStarted = nowIso;
         if (!nextLunchOutAt) nextLunchOutAt = nowIso;
-      } else nextTeaStarted = nowIso;
+      } else {
+        nextTeaStarted = nowIso;
+        if (!nextTeaOutAt) nextTeaOutAt = nowIso;
+      }
     }
 
     const { data: updated, error: upErr } = await supabase
@@ -195,11 +203,13 @@ export async function POST(request: NextRequest) {
         tea_break_started_at: nextTeaStarted,
         lunch_check_out_at: nextLunchOutAt ?? null,
         lunch_check_in_at: nextLunchInAt ?? null,
+        tea_check_out_at: nextTeaOutAt ?? null,
+        tea_check_in_at: nextTeaInAt ?? null,
         updated_at: nowIso,
       })
       .eq("id", row.id)
       .select(
-        "id, work_date, check_in_at, check_out_at, total_hours, lunch_break_minutes, tea_break_minutes, lunch_break_started_at, tea_break_started_at, lunch_check_out_at, lunch_check_in_at, status"
+        "id, work_date, check_in_at, check_out_at, total_hours, lunch_break_minutes, tea_break_minutes, lunch_break_started_at, tea_break_started_at, lunch_check_out_at, lunch_check_in_at, tea_check_out_at, tea_check_in_at, status"
       )
       .single();
     if (upErr) return NextResponse.json({ error: upErr.message }, { status: 400 });
@@ -208,30 +218,7 @@ export async function POST(request: NextRequest) {
 
   if (action === "in") {
     if (existing?.check_in_at && existing?.check_out_at) {
-      if (!allowRepunchIn) {
-        return NextResponse.json({ error: "Today's attendance is already complete." }, { status: 400 });
-      }
-      // Re-open today's attendance (user punched out by mistake)
-      const { data: reopened, error: reErr } = await supabase
-        .from("HRMS_attendance_logs")
-        .update({
-          check_out_at: null,
-          total_hours: null,
-          // keep accumulated minutes, but clear any running timers
-          lunch_break_started_at: null,
-          tea_break_started_at: null,
-          lunch_check_out_at: null,
-          lunch_check_in_at: null,
-          status: "present",
-          updated_at: nowIso,
-        })
-        .eq("id", existing.id)
-        .select(
-          "id, work_date, check_in_at, check_out_at, total_hours, lunch_break_minutes, tea_break_minutes, lunch_break_started_at, tea_break_started_at, lunch_check_out_at, lunch_check_in_at, status"
-        )
-        .single();
-      if (reErr) return NextResponse.json({ error: reErr.message }, { status: 400 });
-      return NextResponse.json({ ok: true, log: reopened });
+      return NextResponse.json({ error: "Today's attendance is already complete." }, { status: 400 });
     }
     if (existing?.check_in_at && !existing?.check_out_at) {
       return NextResponse.json({ error: "You are already punched in. Punch out to end your shift." }, { status: 400 });
@@ -252,13 +239,15 @@ export async function POST(request: NextRequest) {
           tea_break_started_at: null,
           lunch_check_out_at: null,
           lunch_check_in_at: null,
+          tea_check_out_at: null,
+          tea_check_in_at: null,
           total_hours: null,
           status: "present",
           updated_at: nowIso,
         },
       ])
       .select(
-        "id, work_date, check_in_at, check_out_at, total_hours, lunch_break_minutes, tea_break_minutes, lunch_break_started_at, tea_break_started_at, lunch_check_out_at, lunch_check_in_at, status"
+        "id, work_date, check_in_at, check_out_at, total_hours, lunch_break_minutes, tea_break_minutes, lunch_break_started_at, tea_break_started_at, lunch_check_out_at, lunch_check_in_at, tea_check_out_at, tea_check_in_at, status"
       )
       .single();
     if (insErr) return NextResponse.json({ error: insErr.message }, { status: 400 });
@@ -324,13 +313,14 @@ export async function POST(request: NextRequest) {
       tea_break_minutes: Math.max(finalTeaMin, teaBreakMinutes),
       lunch_break_started_at: null,
       tea_break_started_at: null,
+      tea_check_in_at: row.tea_break_started_at ? nowIso : (row as AttendanceRow).tea_check_in_at ?? null,
       total_hours: totalHours,
       status: "present",
       updated_at: nowIso,
     })
     .eq("id", existing.id)
     .select(
-      "id, work_date, check_in_at, check_out_at, total_hours, lunch_break_minutes, tea_break_minutes, lunch_break_started_at, tea_break_started_at, lunch_check_out_at, lunch_check_in_at, status"
+      "id, work_date, check_in_at, check_out_at, total_hours, lunch_break_minutes, tea_break_minutes, lunch_break_started_at, tea_break_started_at, lunch_check_out_at, lunch_check_in_at, tea_check_out_at, tea_check_in_at, status"
     )
     .single();
   if (upErr) return NextResponse.json({ error: upErr.message }, { status: 400 });
