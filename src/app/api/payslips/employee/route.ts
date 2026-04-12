@@ -39,13 +39,20 @@ export async function GET(request: NextRequest) {
 
   let slipQuery = supabase
     .from("HRMS_payslips")
-    .select("id, payroll_period_id, net_pay, gross_pay, pay_days, basic, hra, allowances, medical, trans, lta, personal, deductions, currency, payslip_number, generated_at, bank_name, bank_account_number, bank_ifsc, pf_employee, esic_employee, professional_tax, incentive, pr_bonus, reimbursement, tds")
+    .select("id, payroll_period_id, net_pay, gross_pay, pay_days, basic, hra, allowances, medical, trans, lta, personal, deductions, currency, payslip_number, generated_at, bank_name, bank_account_number, bank_ifsc, pf_employee, esic_employee, professional_tax, incentive, pr_bonus, reimbursement, tds, payroll_mode")
     .eq("company_id", me.company_id)
     .eq("employee_user_id", employeeUserId)
     .order("generated_at", { ascending: false });
 
   const { data: slipData, error } = await slipQuery;
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+
+  const slipIds = (slipData ?? []).map((p: any) => p.id).filter(Boolean);
+  const { data: govRows } =
+    slipIds.length > 0
+      ? await supabase.from("HRMS_government_monthly_payroll").select("*").in("payslip_id", slipIds)
+      : { data: [] };
+  const govByPayslipId = new Map((govRows ?? []).map((g: any) => [g.payslip_id, g]));
 
   const periodIds = [...new Set((slipData ?? []).map((p: any) => p.payroll_period_id).filter(Boolean))];
   let periodsById = new Map<string, { period_start: string; period_end: string; period_name: string }>();
@@ -79,8 +86,19 @@ export async function GET(request: NextRequest) {
   const rawLogo = (company as { logo_url?: string | null } | null)?.logo_url;
   const logoUrl = typeof rawLogo === "string" && rawLogo.trim() ? rawLogo.trim() : null;
 
-  const userRes = await supabase.from("HRMS_users").select("name, employee_code, designation, date_of_joining, aadhaar, pan, uan_number, pf_number, esic_number").eq("id", employeeUserId).single();
+  const userRes = await supabase
+    .from("HRMS_users")
+    .select(
+      "name, employee_code, designation, date_of_joining, aadhaar, pan, uan_number, pf_number, esic_number, department_id, government_pay_level"
+    )
+    .eq("id", employeeUserId)
+    .single();
   const user = userRes.data;
+
+  const deptId = (user as { department_id?: string | null } | null)?.department_id;
+  const { data: deptRow } = deptId
+    ? await supabase.from("HRMS_departments").select("name").eq("id", deptId).maybeSingle()
+    : { data: null };
 
   let payslips = (slipData ?? []).map((p: any) => {
     const period = periodsById.get(p.payroll_period_id);
@@ -96,9 +114,11 @@ export async function GET(request: NextRequest) {
     }
     const payDays = p.pay_days != null ? Number(p.pay_days) : 0;
     const unpaidLeaves = totalDays > 0 ? Math.max(0, totalDays - payDays) : 0;
+    const gov = govByPayslipId.get(p.id as string);
     return {
       id: p.id as string,
       payrollPeriodId: p.payroll_period_id as string,
+      payrollMode: (p as { payroll_mode?: string }).payroll_mode || "private",
       netPay: p.net_pay,
       grossPay: p.gross_pay,
       payDays,
@@ -129,6 +149,7 @@ export async function GET(request: NextRequest) {
       periodName: period?.period_name ?? "",
       periodFormatted,
       periodMonth: pMonth,
+      governmentMonthly: gov ?? null,
     };
   });
 
@@ -139,12 +160,14 @@ export async function GET(request: NextRequest) {
           name: user.name ?? "",
           employeeCode: user.employee_code ?? "",
           designation: user.designation ?? "",
+          departmentName: deptRow?.name ?? "",
           dateOfJoining: user.date_of_joining ? String(user.date_of_joining) : "",
           aadhaar: user.aadhaar ?? "",
           pan: user.pan ?? "",
           uanNumber: user.uan_number ?? "",
           pfNumber: user.pf_number ?? "",
           esicNumber: user.esic_number ?? "",
+          governmentPayLevel: (user as { government_pay_level?: number | null }).government_pay_level ?? null,
         }
       : null,
     payslips,

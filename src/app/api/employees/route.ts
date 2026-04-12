@@ -3,7 +3,11 @@ import { cookies } from "next/headers";
 import { COOKIE_NAME } from "@/lib/auth";
 import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
-import { computePayrollFromGross } from "@/lib/payrollCalc";
+import {
+  computeGovernmentMonthlyPayroll,
+  deriveTransportSlabFromLevel,
+  masterRowToDeductionDefaults,
+} from "@/lib/governmentPayroll";
 import {
   normalizeDigits,
   validateEmailField,
@@ -37,14 +41,36 @@ function mapRow(row: any, lookups?: {
   shiftById: Map<string, { name: string }>;
 }) {
   let ctc: number | null = row.ctc != null ? Number(row.ctc) : null;
-  if (ctc == null && row.gross_salary != null && Number(row.gross_salary) > 0) {
-    const { ctc: computed } = computePayrollFromGross(
-      Number(row.gross_salary),
-      Boolean(row.pf_eligible),
-      Boolean(row.esic_eligible),
-      0
-    );
-    ctc = computed;
+  const govLevel = row.government_pay_level != null ? Number(row.government_pay_level) : null;
+  const grossBasic = row.gross_salary != null ? Number(row.gross_salary) : null;
+  if (
+    ctc == null &&
+    govLevel != null &&
+    Number.isFinite(govLevel) &&
+    govLevel >= 1 &&
+    grossBasic != null &&
+    grossBasic > 0
+  ) {
+    try {
+      const preview = computeGovernmentMonthlyPayroll({
+        grossBasic,
+        daPercent: 53,
+        hraPercent: 30,
+        medicalFixed: 3000,
+        transportDaPercent: 48.06,
+        payLevel: govLevel,
+        daysInMonth: 30,
+        unpaidDays: 0,
+        deductionDefaults: masterRowToDeductionDefaults({
+          income_tax_default: row.tds_monthly ?? 0,
+          tds: row.tds_monthly ?? 0,
+          pt_default: 200,
+        }),
+      });
+      ctc = preview.totalEarnings;
+    } catch {
+      ctc = grossBasic;
+    }
   }
   const designationTitle = lookups?.designationById?.get(row.designation_id)?.title ?? row.designation ?? "";
   const departmentName = lookups?.departmentById?.get(row.department_id)?.name ?? "";
@@ -63,6 +89,7 @@ function mapRow(row: any, lookups?: {
     ctc,
     createdAt: new Date(row.created_at).toISOString(),
     designation: designationTitle,
+    governmentPayLevel: row.government_pay_level != null ? Number(row.government_pay_level) : null,
     designationId: row.designation_id ?? null,
     departmentId: row.department_id ?? null,
     departmentName: departmentName || null,
@@ -235,6 +262,9 @@ export async function GET(request: NextRequest) {
         uanNumber: u.uan_number ?? "",
         pfNumber: u.pf_number ?? "",
         esicNumber: u.esic_number ?? "",
+        governmentPayLevel: u.government_pay_level != null ? Number(u.government_pay_level) : null,
+        grossBasic: u.gross_salary != null ? Number(u.gross_salary) : null,
+        cpfNumber: u.cpf_number ?? "",
         currentAddressLine1: u.current_address_line1 ?? "",
         currentAddressLine2: u.current_address_line2 ?? "",
         currentCity: u.current_city ?? "",
@@ -253,6 +283,7 @@ export async function GET(request: NextRequest) {
         bankAccountNumber: u.bank_account_number ?? "",
         bankIfsc: u.bank_ifsc ?? "",
         grossSalary: u.gross_salary ?? null,
+        incomeTaxMonthly: u.tds_monthly ?? 0,
         tds: master?.tds ?? u.tds_monthly ?? 0,
         pfEligible: Boolean(u.pf_eligible),
         esicEligible: Boolean(u.esic_eligible),
@@ -437,10 +468,13 @@ export async function POST(request: NextRequest) {
   const bankAccountNumber =
     typeof body?.bankAccountNumber === "string" ? body.bankAccountNumber.trim() : "";
   const bankIfsc = typeof body?.bankIfsc === "string" ? body.bankIfsc.trim() : "";
-  const grossSalary = body?.grossSalary != null ? Number(body.grossSalary) : undefined;
-  const tdsVal = body?.tds != null ? Math.max(0, Number(body.tds)) : 0;
-  const pfEligible = body?.pfEligible === true;
-  const esicEligible = body?.esicEligible === true;
+  const grossBasicRaw = body?.grossBasic ?? body?.grossSalary;
+  const grossBasic =
+    grossBasicRaw != null && grossBasicRaw !== "" ? Number(grossBasicRaw) : NaN;
+  const incomeTaxRaw = body?.incomeTaxMonthly ?? body?.tds;
+  const incomeTaxVal =
+    incomeTaxRaw != null && incomeTaxRaw !== "" ? Math.max(0, Number(incomeTaxRaw)) : 0;
+  const cpfNumber = typeof body?.cpfNumber === "string" ? body.cpfNumber.trim() || null : null;
   const allowedGenders = ["male", "female", "other"];
   const gender = allowedGenders.includes(body?.gender) ? body.gender : null;
   const designationId = typeof body?.designationId === "string" ? body.designationId.trim() || null : null;
@@ -451,6 +485,11 @@ export async function POST(request: NextRequest) {
   const uanNumber = typeof body?.uanNumber === "string" ? body.uanNumber.trim() || null : null;
   const pfNumber = typeof body?.pfNumber === "string" ? body.pfNumber.trim() || null : null;
   const esicNumber = typeof body?.esicNumber === "string" ? body.esicNumber.trim() || null : null;
+  const governmentPayLevelRawPost = body?.governmentPayLevel;
+  const governmentPayLevelPost =
+    governmentPayLevelRawPost != null && governmentPayLevelRawPost !== ""
+      ? Math.floor(Number(governmentPayLevelRawPost))
+      : NaN;
   const requestedDocumentIds = Array.isArray(body?.requestedDocumentIds)
     ? body.requestedDocumentIds.filter((x: any) => typeof x === "string")
     : null;
@@ -477,6 +516,12 @@ export async function POST(request: NextRequest) {
   if (!departmentId) return NextResponse.json({ error: "Department is required" }, { status: 400 });
   if (!divisionId) return NextResponse.json({ error: "Division is required" }, { status: 400 });
   if (!shiftId) return NextResponse.json({ error: "Shift is required" }, { status: 400 });
+  if (!Number.isFinite(governmentPayLevelPost) || governmentPayLevelPost < 1) {
+    return NextResponse.json({ error: "Government pay level is required (whole number ≥ 1)" }, { status: 400 });
+  }
+  if (!Number.isFinite(grossBasic) || grossBasic <= 0) {
+    return NextResponse.json({ error: "Monthly gross basic pay is required" }, { status: 400 });
+  }
   const allowedRoles = ["admin", "hr", "manager", "employee"];
   const finalRole = allowedRoles.includes(role || "") ? (role as any) : "employee";
   const allowedStatus = ["preboarding", "current", "past"];
@@ -507,10 +552,23 @@ export async function POST(request: NextRequest) {
 
   const finalEmployeeCode = employeeCode || (await generateUniqueEmployeeCode());
 
-  // designation_id: only when user explicitly selects from dropdown or adds to master
-  // designation (text): always stored for display, even when not in designations master
-  const gross = grossSalary != null && grossSalary >= 0 ? grossSalary : 0;
-  const { ctc: calculatedCtc } = computePayrollFromGross(gross, pfEligible, esicEligible, 0);
+  const dedDefaults = masterRowToDeductionDefaults({
+    income_tax_default: incomeTaxVal,
+    tds: incomeTaxVal,
+    pt_default: 200,
+  });
+  const govPreview = computeGovernmentMonthlyPayroll({
+    grossBasic,
+    daPercent: 53,
+    hraPercent: 30,
+    medicalFixed: 3000,
+    transportDaPercent: 48.06,
+    payLevel: governmentPayLevelPost,
+    daysInMonth: 30,
+    unpaidDays: 0,
+    deductionDefaults: dedDefaults,
+  });
+  const calculatedCtc = govPreview.totalEarnings;
 
   const { data: inserted, error } = await supabase
     .from("HRMS_users")
@@ -525,11 +583,11 @@ export async function POST(request: NextRequest) {
         phone: phoneDigits,
         date_of_birth: ymdOrNull(dateOfBirth),
         date_of_joining: dateOfJoining || null,
-        ctc: gross > 0 ? calculatedCtc : null,
-        gross_salary: grossSalary != null && grossSalary >= 0 ? grossSalary : null,
-        tds_monthly: tdsVal,
-        pf_eligible: pfEligible,
-        esic_eligible: esicEligible,
+        ctc: calculatedCtc,
+        gross_salary: grossBasic,
+        tds_monthly: incomeTaxVal,
+        pf_eligible: false,
+        esic_eligible: false,
         gender: gender ?? null,
         designation: designation ?? null,
         designation_id: designationId ?? null,
@@ -541,6 +599,8 @@ export async function POST(request: NextRequest) {
         uan_number: uanNumber,
         pf_number: pfNumber,
         esic_number: esicNumber,
+        government_pay_level: governmentPayLevelPost,
+        cpf_number: cpfNumber,
         current_address_line1: currentAddressLine1 || null,
         current_address_line2: currentAddressLine2 || null,
         current_city: currentCity || null,
@@ -696,10 +756,13 @@ export async function PUT(request: NextRequest) {
   const bankAccountNumber =
     typeof body?.bankAccountNumber === "string" ? body.bankAccountNumber.trim() : "";
   const bankIfsc = typeof body?.bankIfsc === "string" ? body.bankIfsc.trim() : "";
-  const grossSalary = body?.grossSalary != null ? Number(body.grossSalary) : undefined;
-  const tdsVal = body?.tds != null ? Math.max(0, Number(body.tds)) : null;
-  const pfEligible = body?.pfEligible === true;
-  const esicEligible = body?.esicEligible === true;
+  const grossBasicRawPut = body?.grossBasic ?? body?.grossSalary;
+  const grossBasicPut =
+    grossBasicRawPut != null && grossBasicRawPut !== "" ? Number(grossBasicRawPut) : undefined;
+  const incomeTaxRawPut = body?.incomeTaxMonthly ?? body?.tds;
+  const incomeTaxPut =
+    incomeTaxRawPut != null && incomeTaxRawPut !== "" ? Math.max(0, Number(incomeTaxRawPut)) : null;
+  const cpfNumberPut = typeof body?.cpfNumber === "string" ? body.cpfNumber.trim() || null : undefined;
   const allowedGenders = ["male", "female", "other"];
   const gender = allowedGenders.includes(body?.gender) ? body.gender : null;
   const designationId = typeof body?.designationId === "string" ? body.designationId.trim() || null : null;
@@ -710,6 +773,29 @@ export async function PUT(request: NextRequest) {
   const uanNumber = typeof body?.uanNumber === "string" ? body.uanNumber.trim() || null : null;
   const pfNumber = typeof body?.pfNumber === "string" ? body.pfNumber.trim() || null : null;
   const esicNumber = typeof body?.esicNumber === "string" ? body.esicNumber.trim() || null : null;
+  const governmentPayLevelRaw = body?.governmentPayLevel;
+  const governmentPayLevel =
+    governmentPayLevelRaw != null && governmentPayLevelRaw !== ""
+      ? Math.floor(Number(governmentPayLevelRaw))
+      : null;
+  if (
+    grossBasicPut != null &&
+    (governmentPayLevel == null || !Number.isFinite(governmentPayLevel) || governmentPayLevel < 1)
+  ) {
+    return NextResponse.json(
+      { error: "Government pay level is required when gross basic is set" },
+      { status: 400 },
+    );
+  }
+  if (
+    governmentPayLevel != null &&
+    Number.isFinite(governmentPayLevel) &&
+    governmentPayLevel >= 1 &&
+    grossBasicPut != null &&
+    (!Number.isFinite(grossBasicPut) || grossBasicPut <= 0)
+  ) {
+    return NextResponse.json({ error: "Monthly gross basic pay must be greater than zero" }, { status: 400 });
+  }
 
   if (email) {
     const emailFieldErr = validateEmailField(email);
@@ -737,8 +823,31 @@ export async function PUT(request: NextRequest) {
   const allowedStatus = ["preboarding", "current", "past"];
   const finalStatus = allowedStatus.includes(employmentStatus) ? (employmentStatus as any) : undefined;
 
-  const gross = grossSalary != null && Number.isFinite(grossSalary) && grossSalary >= 0 ? grossSalary : null;
-  const { ctc: calculatedCtc } = gross != null ? computePayrollFromGross(gross, pfEligible, esicEligible, 0) : { ctc: null as any };
+  const gross = grossBasicPut != null && Number.isFinite(grossBasicPut) && grossBasicPut > 0 ? grossBasicPut : null;
+  let calculatedCtc: number | null = null;
+  if (
+    gross != null &&
+    governmentPayLevel != null &&
+    Number.isFinite(governmentPayLevel) &&
+    governmentPayLevel >= 1
+  ) {
+    const dedPut = masterRowToDeductionDefaults({
+      income_tax_default: incomeTaxPut ?? 0,
+      tds: incomeTaxPut ?? 0,
+      pt_default: 200,
+    });
+    calculatedCtc = computeGovernmentMonthlyPayroll({
+      grossBasic: gross,
+      daPercent: 53,
+      hraPercent: 30,
+      medicalFixed: 3000,
+      transportDaPercent: 48.06,
+      payLevel: governmentPayLevel,
+      daysInMonth: 30,
+      unpaidDays: 0,
+      deductionDefaults: dedPut,
+    }).totalEarnings;
+  }
 
   const payload: any = {
     updated_at: new Date().toISOString(),
@@ -761,6 +870,10 @@ export async function PUT(request: NextRequest) {
     uan_number: uanNumber,
     pf_number: pfNumber,
     esic_number: esicNumber,
+    government_pay_level:
+      governmentPayLevel != null && Number.isFinite(governmentPayLevel) && governmentPayLevel >= 1
+        ? governmentPayLevel
+        : null,
     current_address_line1: currentAddressLine1 || null,
     current_address_line2: currentAddressLine2 || null,
     current_city: currentCity || null,
@@ -779,10 +892,11 @@ export async function PUT(request: NextRequest) {
     bank_account_number: bankAccountNumber || null,
     bank_ifsc: bankIfsc || null,
     gross_salary: gross,
-    tds_monthly: tdsVal,
-    ctc: gross != null ? calculatedCtc : null,
-    pf_eligible: pfEligible,
-    esic_eligible: esicEligible,
+    tds_monthly: incomeTaxPut,
+    ctc: calculatedCtc,
+    pf_eligible: false,
+    esic_eligible: false,
+    ...(cpfNumberPut !== undefined ? { cpf_number: cpfNumberPut } : {}),
   };
 
   const { data: updated, error: upErr } = await supabase
@@ -819,12 +933,12 @@ export async function PUT(request: NextRequest) {
     // ignore
   }
 
-  // Best-effort update payroll master TDS (latest active master row)
-  if (tdsVal != null) {
+  // Best-effort update payroll master TDS / income tax (latest active master row)
+  if (incomeTaxPut != null) {
     try {
       await supabase
         .from("HRMS_payroll_master")
-        .update({ tds: tdsVal })
+        .update({ tds: incomeTaxPut, income_tax_default: incomeTaxPut })
         .eq("company_id", companyId)
         .eq("employee_user_id", userId)
         .is("effective_end_date", null);
@@ -922,13 +1036,58 @@ export async function PATCH(request: NextRequest) {
       .single();
     const ptMonthly = company?.professional_tax_monthly != null ? Number(company.professional_tax_monthly) : 200;
 
-    const { data: u } = await supabase.from("HRMS_users").select("ctc, gross_salary, pf_eligible, esic_eligible, tds_monthly").eq("id", userId).single();
-    const gross = Number(u?.gross_salary ?? u?.ctc ?? 0);
-    const pfOn = Boolean(u?.pf_eligible);
-    const esicOn = Boolean(u?.esic_eligible);
-    const { basic, hra, medical, trans, lta, personal, pfEmp, pfEmpr, esicEmp, esicEmpr, ctc: ctcVal, takeHome } = computePayrollFromGross(gross, pfOn, esicOn, ptMonthly);
+    const { data: u } = await supabase
+      .from("HRMS_users")
+      .select("ctc, gross_salary, tds_monthly, government_pay_level")
+      .eq("id", userId)
+      .single();
+    const grossBasicJoin = Number(u?.gross_salary ?? 0);
+    const payLevel = u?.government_pay_level != null ? Number(u.government_pay_level) : null;
+    if (payLevel == null || !Number.isFinite(payLevel) || payLevel < 1) {
+      return NextResponse.json(
+        { error: "Set government pay level on the employee before marking as current." },
+        { status: 400 },
+      );
+    }
+    if (!Number.isFinite(grossBasicJoin) || grossBasicJoin <= 0) {
+      return NextResponse.json(
+        { error: "Set monthly gross basic pay on the employee before marking as current." },
+        { status: 400 },
+      );
+    }
+
+    const slab = deriveTransportSlabFromLevel(payLevel);
     const tdsMonthly = u?.tds_monthly != null ? Math.max(0, Number(u.tds_monthly)) : 0;
-    const takeHomeWithTds = Math.max(0, Number(takeHome ?? 0) - tdsMonthly);
+    const ded = {
+      income_tax_default: tdsMonthly,
+      pt_default: ptMonthly,
+      lic_default: 0,
+      cpf_default: 0,
+      da_cpf_default: 0,
+      vpf_default: 0,
+      pf_loan_default: 0,
+      post_office_default: 0,
+      credit_society_default: 0,
+      std_licence_fee_default: 0,
+      electricity_default: 0,
+      water_default: 0,
+      mess_default: 0,
+      horticulture_default: 0,
+      welfare_default: 0,
+      veh_charge_default: 0,
+      other_deduction_default: 0,
+    };
+    const preview = computeGovernmentMonthlyPayroll({
+      grossBasic: grossBasicJoin,
+      daPercent: 53,
+      hraPercent: 30,
+      medicalFixed: 3000,
+      transportDaPercent: 48.06,
+      payLevel,
+      daysInMonth: 30,
+      unpaidDays: 0,
+      deductionDefaults: masterRowToDeductionDefaults(ded),
+    });
 
     const { data: existingMaster } = await supabase
       .from("HRMS_payroll_master")
@@ -938,33 +1097,56 @@ export async function PATCH(request: NextRequest) {
       .maybeSingle();
 
     if (!existingMaster) {
-      await supabase.from("HRMS_payroll_master").insert([{
-        company_id: me.company_id,
-        employee_user_id: userId,
-        gross_salary: gross,
-        ctc: ctcVal,
-        pf_eligible: pfOn,
-        esic_eligible: esicOn,
-        pf_employee: pfEmp,
-        pf_employer: pfEmpr,
-        esic_employee: esicEmp,
-        esic_employer: esicEmpr,
-        pt: ptMonthly,
-        tds: tdsMonthly,
-        advance_bonus: 0,
-        take_home: takeHomeWithTds,
-        effective_start_date: doj,
-        effective_end_date: null,
-        reason_for_change: "NewJoin",
-        created_by: session.id,
-        basic,
-        hra,
-        medical,
-        trans,
-        lta,
-        personal,
-      }]);
+      await supabase.from("HRMS_payroll_master").insert([
+        {
+          company_id: me.company_id,
+          employee_user_id: userId,
+          payroll_mode: "government",
+          gross_basic: grossBasicJoin,
+          gross_salary: grossBasicJoin,
+          da_percent: 53,
+          hra_percent: 30,
+          medical_fixed: 3000,
+          transport_da_percent: 48.06,
+          transport_slab_group: slab.transportSlabGroup,
+          transport_base: slab.transportBase,
+          ...ded,
+          pf_eligible: false,
+          esic_eligible: false,
+          pf_employee: 0,
+          pf_employer: 0,
+          esic_employee: 0,
+          esic_employer: 0,
+          pt: ded.pt_default,
+          tds: tdsMonthly,
+          advance_bonus: 0,
+          take_home: preview.netSalary,
+          ctc: grossBasicJoin,
+          basic: preview.basicPaid,
+          hra: preview.hraPaid,
+          medical: preview.medicalPaid,
+          trans: preview.transportPaid,
+          lta: 0,
+          personal: 0,
+          effective_start_date: doj,
+          effective_end_date: null,
+          reason_for_change: "NewJoin",
+          created_by: session.id,
+        },
+      ]);
     }
+
+    await supabase
+      .from("HRMS_users")
+      .update({
+        ctc: preview.totalEarnings,
+        gross_salary: grossBasicJoin,
+        pf_eligible: false,
+        esic_eligible: false,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("company_id", me.company_id)
+      .eq("id", userId);
 
     return NextResponse.json({ ok: true });
   }

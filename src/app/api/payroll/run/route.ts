@@ -6,7 +6,100 @@ import { supabase } from "@/lib/supabaseClient";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { overlapDaysInclusive } from "@/lib/leavePolicy";
 import { effectiveLunchBreakMinutes } from "@/lib/attendancePolicy";
+import {
+  computeGovernmentMonthlyPayroll,
+  masterRowToDeductionDefaults,
+  type GovernmentDeductionDefaults,
+  type GovernmentEarningPaidOverrides,
+  type GovernmentOptionalMonthlyEarnings,
+} from "@/lib/governmentPayroll";
 import * as XLSX from "xlsx-js-style";
+
+/** Merge payroll-master defaults with admin-edited preview values from the Run Payroll UI. */
+function deductionDefaultsForGovernmentRun(
+  master: Record<string, unknown>,
+  clientDefaults: unknown,
+): GovernmentDeductionDefaults {
+  const base = masterRowToDeductionDefaults(master);
+  if (!clientDefaults || typeof clientDefaults !== "object") return base;
+  const c = clientDefaults as Record<string, unknown>;
+  const result: GovernmentDeductionDefaults = { ...base };
+  for (const key of Object.keys(result) as (keyof GovernmentDeductionDefaults)[]) {
+    const v = c[key as string];
+    if (v != null && Number.isFinite(Number(v))) {
+      result[key] = Math.max(0, Math.round(Number(v))) as GovernmentDeductionDefaults[typeof key];
+    }
+  }
+  return result;
+}
+
+const GOV_EARNING_OVERRIDE_KEYS = [
+  "basicPaid",
+  "spPayPaid",
+  "daPaid",
+  "transportPaid",
+  "hraPaid",
+  "medicalPaid",
+  "extraWorkAllowancePaid",
+  "nightAllowancePaid",
+  "uniformAllowancePaid",
+  "educationAllowancePaid",
+  "daArrearsPaid",
+  "transportArrearsPaid",
+  "encashmentPaid",
+  "encashmentDaPaid",
+] as const;
+
+function governmentEarningPaidOverridesFromBody(raw: unknown): GovernmentEarningPaidOverrides | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const o = raw as Record<string, unknown>;
+  const out: GovernmentEarningPaidOverrides = {};
+  for (const k of GOV_EARNING_OVERRIDE_KEYS) {
+    const v = o[k];
+    if (v != null && Number.isFinite(Number(v))) {
+      out[k] = Math.max(0, Math.round(Number(v)));
+    }
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+function optionalEarningsFromClientGovernmentMonthly(gm: unknown): GovernmentOptionalMonthlyEarnings | undefined {
+  if (!gm || typeof gm !== "object") return undefined;
+  const g = gm as Record<string, unknown>;
+  const spPay = Number(g.spPayPaid) || 0;
+  const extraWorkAllowance = Number(g.extraWorkAllowancePaid) || 0;
+  const nightAllowance = Number(g.nightAllowancePaid) || 0;
+  const uniformAllowance = Number(g.uniformAllowancePaid) || 0;
+  const educationAllowance = Number(g.educationAllowancePaid) || 0;
+  const daArrears = Number(g.daArrearsPaid) || 0;
+  const transportArrears = Number(g.transportArrearsPaid) || 0;
+  const encashment = Number(g.encashmentPaid) || 0;
+  const encashmentDa = Number(g.encashmentDaPaid) || 0;
+  if (
+    !spPay &&
+    !extraWorkAllowance &&
+    !nightAllowance &&
+    !uniformAllowance &&
+    !educationAllowance &&
+    !daArrears &&
+    !transportArrears &&
+    !encashment &&
+    !encashmentDa
+  ) {
+    return undefined;
+  }
+  return {
+    spPay,
+    extraWorkAllowance,
+    nightAllowance,
+    uniformAllowance,
+    educationAllowance,
+    daArrears,
+    transportArrears,
+    encashment,
+    encashmentDa,
+  };
+}
 
 /** Minimum active work hours (after lunch/tea breaks) for a day to count as present in payroll. */
 const MIN_ACTIVE_HOURS_FOR_PRESENT = 8;
@@ -367,21 +460,29 @@ async function computePreview(
   const workingDaysInFullMonth = Math.max(1, daysInMonth);
   const workingDaysThroughRunDay = Math.max(1, effectiveRunDay);
 
+  // One payroll run per calendar month (period_start is always YYYY-MM-01); do not allow a second run with a different "through" date.
   const { data: existingPeriod } = await supabase
     .from("HRMS_payroll_periods")
     .select("id")
     .eq("company_id", companyId)
     .eq("period_start", periodStart)
-    .eq("period_end", periodEnd)
     .maybeSingle();
 
   // When payroll already generated, return saved values from HRMS_payslips (not recalculated)
   if (existingPeriod?.id) {
     const { data: payslips } = await supabase
       .from("HRMS_payslips")
-      .select("employee_user_id, pay_days, gross_pay, net_pay, pf_employee, pf_employer, esic_employee, esic_employer, professional_tax, incentive, pr_bonus, reimbursement, tds, deductions, ctc")
+      .select(
+        "employee_user_id, pay_days, gross_pay, net_pay, pf_employee, pf_employer, esic_employee, esic_employer, professional_tax, incentive, pr_bonus, reimbursement, tds, deductions, ctc, payroll_mode"
+      )
       .eq("payroll_period_id", existingPeriod.id)
       .eq("company_id", companyId);
+    const { data: govSaved } = await supabase
+      .from("HRMS_government_monthly_payroll")
+      .select("*")
+      .eq("payroll_period_id", existingPeriod.id)
+      .eq("company_id", companyId);
+    const govByUser = new Map((govSaved ?? []).map((g: any) => [g.employee_user_id, g]));
     if (payslips?.length) {
       const userIds = payslips.map((p: any) => p.employee_user_id).filter(Boolean);
       const { data: users } = await supabase
@@ -397,12 +498,14 @@ async function computePreview(
         const bonus = Number(p.pr_bonus) ?? 0;
         const reimb = Number(p.reimbursement) ?? 0;
         const takeHome = net - tds + inc + bonus + reimb;
+        const gov = govByUser.get(p.employee_user_id);
+        const isGov = p.payroll_mode === "government" || !!gov;
         return {
           employeeUserId: p.employee_user_id,
           employeeName: u?.name ?? null,
           employeeEmail: u?.email ?? "",
           payDays: Number(p.pay_days) ?? 0,
-          unpaidLeaveDays: 0,
+          unpaidLeaveDays: gov ? Number(gov.unpaid_days) || 0 : 0,
           grossPay: Math.round(Number(p.gross_pay) ?? 0),
           pfEmployee: Math.round(Number(p.pf_employee) ?? 0),
           pfEmployer: Math.round(Number(p.pf_employer) ?? 0),
@@ -417,6 +520,8 @@ async function computePreview(
           tds,
           takeHome: Math.round(takeHome),
           ctc: Math.round(Number(p.ctc) ?? 0),
+          payrollMode: isGov ? "government" : "private",
+          governmentMonthly: gov ?? null,
         };
       });
       return {
@@ -444,7 +549,7 @@ async function computePreview(
   const { data: masters } = await supabase
     .from("HRMS_payroll_master")
     .select(
-      "employee_user_id, gross_salary, ctc, pf_employee, pf_employer, esic_employee, esic_employer, basic, hra, medical, trans, lta, personal, pt, tds, advance_bonus"
+      "id, employee_user_id, payroll_mode, gross_salary, gross_basic, ctc, pf_employee, pf_employer, esic_employee, esic_employer, basic, hra, medical, trans, lta, personal, pt, tds, advance_bonus, da_percent, hra_percent, medical_fixed, transport_da_percent, income_tax_default, pt_default, lic_default, cpf_default, da_cpf_default, vpf_default, pf_loan_default, post_office_default, credit_society_default, std_licence_fee_default, electricity_default, water_default, mess_default, horticulture_default, welfare_default, veh_charge_default, other_deduction_default"
     )
     .eq("company_id", companyId)
     .is("effective_end_date", null);
@@ -466,7 +571,7 @@ async function computePreview(
   const userIds = masters.map((m: any) => m.employee_user_id);
   const { data: users } = await supabase
     .from("HRMS_users")
-    .select("id, name, email, date_of_joining, date_of_leaving, role")
+    .select("id, name, email, date_of_joining, date_of_leaving, role, government_pay_level")
     .in("id", userIds);
 
   const userById = new Map((users ?? []).map((u: any) => [u.id, u]));
@@ -511,6 +616,79 @@ async function computePreview(
     const unpaidLeaveDays = unpaidLeaveDaysByUser.get(m.employee_user_id) || 0;
     const paidLeaveDays = paidLeaveDaysByUser.get(m.employee_user_id) || 0;
     const presentDays = presentDaysByUser.get(m.employee_user_id) || 0;
+
+    if (m.payroll_mode === "government") {
+      const grossBasic = Number(m.gross_basic) || Number(m.gross_salary) || 0;
+      if (grossBasic <= 0) continue;
+      if (u.government_pay_level == null) {
+        rows.push({
+          employeeUserId: m.employee_user_id,
+          employeeName: u.name,
+          employeeEmail: u.email,
+          payrollMode: "government",
+          error: "Missing government pay level on employee profile",
+        });
+        continue;
+      }
+      const comp = computeGovernmentMonthlyPayroll({
+        grossBasic,
+        daPercent: Number(m.da_percent) || 53,
+        hraPercent: Number(m.hra_percent) || 30,
+        medicalFixed: Number(m.medical_fixed) || 3000,
+        transportDaPercent: Number(m.transport_da_percent) || 48.06,
+        payLevel: u.government_pay_level as number,
+        daysInMonth,
+        unpaidDays: unpaidLeaveDays,
+        deductionDefaults: masterRowToDeductionDefaults(m as Record<string, unknown>),
+      });
+      const paidDaysGov = Math.max(0, daysInMonth - unpaidLeaveDays);
+      const reimbursement = Math.round(reimbByUser.get(m.employee_user_id) || 0);
+      const advMonthG = Math.round(Number(m.advance_bonus) || 0);
+      const takeHome = comp.netSalary + advMonthG + reimbursement;
+      const cpfStatutory = Math.round(
+        comp.deductions.cpf + comp.deductions.daCpf + comp.deductions.vpf + comp.deductions.pfLoan,
+      );
+      rows.push({
+        employeeUserId: m.employee_user_id,
+        employeeName: u.name,
+        employeeEmail: u.email,
+        payrollMode: "government",
+        payDays: paidDaysGov,
+        rawPayDays: paidDaysGov,
+        attendanceQualifyingDays: presentDays,
+        payDaysSuppressedMinAttendance: false,
+        unpaidLeaveDays,
+        grossMonthly: Math.round(grossBasic),
+        grossPay: comp.totalEarnings,
+        deductions: comp.totalDeductions,
+        netPay: comp.netSalary,
+        takeHome: Math.round(takeHome),
+        tds: Math.round(comp.deductions.incomeTax),
+        incentive: advMonthG,
+        prBonus: 0,
+        reimbursement,
+        profTax: comp.deductions.pt,
+        governmentMonthly: comp,
+        /** Client can recompute when pay days change (same inputs as server preview). */
+        govRecalc: {
+          grossBasic,
+          daPercent: Number(m.da_percent) || 53,
+          hraPercent: Number(m.hra_percent) || 30,
+          medicalFixed: Number(m.medical_fixed) || 3000,
+          transportDaPercent: Number(m.transport_da_percent) || 48.06,
+          payLevel: u.government_pay_level as number,
+          deductionDefaults: masterRowToDeductionDefaults(m as Record<string, unknown>),
+        },
+        ctc: Math.round(Number(m.ctc) || grossBasic),
+        ctcBase: Math.round(Number(m.ctc) || grossBasic),
+        pfEmployee: cpfStatutory,
+        pfEmployer: 0,
+        esicEmployee: 0,
+        esicEmployer: 0,
+      });
+      continue;
+    }
+
     const rawPayDays = resolvePayDaysFromAttendance({
       presentDays,
       paidLeaveDays,
@@ -690,9 +868,13 @@ export async function POST(request: NextRequest) {
     .select("id")
     .eq("company_id", me.company_id)
     .eq("period_start", periodStart)
-    .eq("period_end", periodEnd)
     .maybeSingle();
-  if (existingPeriod) return NextResponse.json({ error: "Payroll already run for this period" }, { status: 400 });
+  if (existingPeriod) {
+    return NextResponse.json(
+      { error: "Payroll has already been run for this calendar month. You cannot run it again with a different date in the same month." },
+      { status: 400 },
+    );
+  }
 
   const { data: period, error: periodErr } = await supabase
     .from("HRMS_payroll_periods")
@@ -711,7 +893,7 @@ export async function POST(request: NextRequest) {
   const { data: masters } = await supabase
     .from("HRMS_payroll_master")
     .select(
-      "employee_user_id, gross_salary, ctc, pf_employee, pf_employer, esic_employee, esic_employer, basic, hra, medical, trans, lta, personal, pt, tds, advance_bonus"
+      "id, employee_user_id, payroll_mode, gross_salary, gross_basic, ctc, pf_employee, pf_employer, esic_employee, esic_employer, basic, hra, medical, trans, lta, personal, pt, tds, advance_bonus, da_percent, hra_percent, medical_fixed, transport_da_percent, income_tax_default, pt_default, lic_default, cpf_default, da_cpf_default, vpf_default, pf_loan_default, post_office_default, credit_society_default, std_licence_fee_default, electricity_default, water_default, mess_default, horticulture_default, welfare_default, veh_charge_default, other_deduction_default"
     )
     .eq("company_id", me.company_id)
     .is("effective_end_date", null);
@@ -727,7 +909,7 @@ export async function POST(request: NextRequest) {
   const userIds = masters.map((m: any) => m.employee_user_id);
   const { data: users, error: usersErr } = await supabase
     .from("HRMS_users")
-    .select("id, name, email, date_of_joining, date_of_leaving, role, bank_name, bank_account_number, bank_ifsc")
+    .select("id, name, email, date_of_joining, date_of_leaving, role, bank_name, bank_account_number, bank_ifsc, government_pay_level")
     .in("id", userIds);
   if (usersErr) return NextResponse.json({ error: usersErr.message }, { status: 400 });
 
@@ -736,13 +918,100 @@ export async function POST(request: NextRequest) {
   const overrideRows = Array.isArray(body?.rows) ? body.rows : null;
 
   let payslips: any[] = [];
+  const govLines: {
+    employeeUserId: string;
+    masterId: string;
+    unpaidDays: number;
+    payLevel: number;
+    transportDaPercent: number;
+    comp: ReturnType<typeof computeGovernmentMonthlyPayroll>;
+  }[] = [];
 
   if (overrideRows?.length) {
+    const reimbByUserOverride = await fetchApprovedReimbursementTotalsByUser(me.company_id, year, month);
     for (const row of overrideRows) {
       const employeeUserId = typeof row?.employeeUserId === "string" ? row.employeeUserId : null;
       if (!employeeUserId) continue;
       const u = userById.get(employeeUserId);
       if (!u || u.role === "super_admin") continue;
+      const master = (masters ?? []).find((m: any) => m.employee_user_id === employeeUserId);
+      if (master?.payroll_mode === "government") {
+        const grossBasic = Number(master.gross_basic) || Number(master.gross_salary) || 0;
+        if (!(grossBasic > 0)) continue;
+        if (u.government_pay_level == null) {
+          return NextResponse.json(
+            { error: `Government payroll: set Government pay level on the employee (${u.email}) before running payroll.` },
+            { status: 400 },
+          );
+        }
+        const payDays = Math.max(0, Math.min(daysInMonth, Math.round(Number(row.payDays) || 0)));
+        const unpaidDays = Math.max(0, daysInMonth - payDays);
+        const optionalEarnings = optionalEarningsFromClientGovernmentMonthly(row.governmentMonthly);
+        const deductionDefaults = deductionDefaultsForGovernmentRun(
+          master as Record<string, unknown>,
+          row.governmentDeductionDefaults,
+        );
+        const earningPaidOverrides = governmentEarningPaidOverridesFromBody(row.governmentEarningPaidOverrides);
+        const comp = computeGovernmentMonthlyPayroll({
+          grossBasic,
+          daPercent: Number(master.da_percent) || 53,
+          hraPercent: Number(master.hra_percent) || 30,
+          medicalFixed: Number(master.medical_fixed) || 3000,
+          transportDaPercent: Number(master.transport_da_percent) || 48.06,
+          payLevel: u.government_pay_level as number,
+          daysInMonth,
+          unpaidDays,
+          deductionDefaults,
+          optionalEarnings,
+          earningPaidOverrides,
+        });
+        const reimbursement = Math.round(Number(row.reimbursement) || reimbByUserOverride.get(employeeUserId) || 0);
+        const incentive = Math.round(Number(row.incentive ?? master.advance_bonus) || 0);
+        const takeHomeIns = comp.netSalary + incentive + reimbursement;
+        const pfEmpGov = Math.round(
+          comp.deductions.cpf + comp.deductions.daCpf + comp.deductions.vpf + comp.deductions.pfLoan,
+        );
+        payslips.push({
+          payroll_mode: "government",
+          company_id: me.company_id,
+          employee_id: null,
+          employee_user_id: employeeUserId,
+          payroll_period_id: period.id,
+          basic: comp.basicPaid,
+          hra: comp.hraPaid,
+          medical: comp.medicalPaid,
+          trans: comp.transportPaid,
+          lta: 0,
+          personal: 0,
+          allowances: 0,
+          deductions: comp.totalDeductions,
+          gross_pay: comp.totalEarnings,
+          net_pay: takeHomeIns,
+          pay_days: payDays,
+          ctc: Math.round(Number(master.ctc) || grossBasic),
+          pf_employee: pfEmpGov,
+          pf_employer: 0,
+          esic_employee: 0,
+          esic_employer: 0,
+          professional_tax: comp.deductions.pt,
+          incentive,
+          pr_bonus: 0,
+          reimbursement,
+          tds: comp.deductions.incomeTax,
+          bank_name: u?.bank_name ?? null,
+          bank_account_number: u?.bank_account_number ?? null,
+          bank_ifsc: u?.bank_ifsc ?? null,
+        });
+        govLines.push({
+          employeeUserId,
+          masterId: master.id as string,
+          unpaidDays,
+          payLevel: u.government_pay_level as number,
+          transportDaPercent: Number(master.transport_da_percent) || 48.06,
+          comp,
+        });
+        continue;
+      }
       const payDays = Math.max(0, Math.round(Number(row.payDays) || 0));
       const grossPay = Math.max(0, Math.round(Number(row.grossPay) || 0));
       const deductions = Math.max(0, Math.round(Number(row.deductions) || 0));
@@ -835,6 +1104,76 @@ export async function POST(request: NextRequest) {
       const unpaidLeaveDays = unpaidLeaveDaysByUser.get(m.employee_user_id) || 0;
       const paidLeaveDays = paidLeaveDaysByUser.get(m.employee_user_id) || 0;
       const presentDays = presentDaysByUser.get(m.employee_user_id) || 0;
+
+      if (m.payroll_mode === "government") {
+        const grossBasic = Number(m.gross_basic) || Number(m.gross_salary) || 0;
+        if (grossBasic <= 0) continue;
+        if (u.government_pay_level == null) {
+          return NextResponse.json(
+            { error: `Government payroll: set Government pay level on the employee (${u.email}) before running payroll.` },
+            { status: 400 },
+          );
+        }
+        const comp = computeGovernmentMonthlyPayroll({
+          grossBasic,
+          daPercent: Number(m.da_percent) || 53,
+          hraPercent: Number(m.hra_percent) || 30,
+          medicalFixed: Number(m.medical_fixed) || 3000,
+          transportDaPercent: Number(m.transport_da_percent) || 48.06,
+          payLevel: u.government_pay_level as number,
+          daysInMonth,
+          unpaidDays: unpaidLeaveDays,
+          deductionDefaults: masterRowToDeductionDefaults(m as Record<string, unknown>),
+        });
+        const paidDaysGov = Math.max(0, daysInMonth - unpaidLeaveDays);
+        const reimbursement = Math.round(reimbByUser.get(m.employee_user_id) || 0);
+        const advMonthG = Math.round(Number(m.advance_bonus) || 0);
+        const takeHomeIns = comp.netSalary + advMonthG + reimbursement;
+        const pfEmpGov = Math.round(
+          comp.deductions.cpf + comp.deductions.daCpf + comp.deductions.vpf + comp.deductions.pfLoan,
+        );
+        payslips.push({
+          payroll_mode: "government",
+          company_id: me.company_id,
+          employee_id: null,
+          employee_user_id: m.employee_user_id,
+          payroll_period_id: period.id,
+          basic: comp.basicPaid,
+          hra: comp.hraPaid,
+          medical: comp.medicalPaid,
+          trans: comp.transportPaid,
+          lta: 0,
+          personal: 0,
+          allowances: 0,
+          deductions: comp.totalDeductions,
+          gross_pay: comp.totalEarnings,
+          net_pay: takeHomeIns,
+          pay_days: paidDaysGov,
+          ctc: Math.round(Number(m.ctc) || grossBasic),
+          pf_employee: pfEmpGov,
+          pf_employer: 0,
+          esic_employee: 0,
+          esic_employer: 0,
+          professional_tax: comp.deductions.pt,
+          incentive: advMonthG,
+          pr_bonus: 0,
+          reimbursement,
+          tds: comp.deductions.incomeTax,
+          bank_name: u?.bank_name ?? null,
+          bank_account_number: u?.bank_account_number ?? null,
+          bank_ifsc: u?.bank_ifsc ?? null,
+        });
+        govLines.push({
+          employeeUserId: m.employee_user_id,
+          masterId: m.id as string,
+          unpaidDays: unpaidLeaveDays,
+          payLevel: u.government_pay_level as number,
+          transportDaPercent: Number(m.transport_da_percent) || 48.06,
+          comp,
+        });
+        continue;
+      }
+
       const rawPayDays = resolvePayDaysFromAttendance({
         presentDays,
         paidLeaveDays,
@@ -883,6 +1222,7 @@ export async function POST(request: NextRequest) {
       const takeHomeIns = netPay - tdsIns + incentiveIns + prBonusIns + reimbursement;
 
       payslips.push({
+        payroll_mode: "private",
         company_id: me.company_id,
         employee_id: null,
         employee_user_id: m.employee_user_id,
@@ -916,8 +1256,88 @@ export async function POST(request: NextRequest) {
   }
 
   if (payslips.length) {
-    const { error: slipErr } = await supabase.from("HRMS_payslips").insert(payslips);
+    const { data: insertedSlips, error: slipErr } = await supabase.from("HRMS_payslips").insert(payslips).select("id, employee_user_id");
     if (slipErr) return NextResponse.json({ error: slipErr.message }, { status: 400 });
+    if (govLines.length && insertedSlips?.length) {
+      const slipByUser = new Map((insertedSlips as { id: string; employee_user_id: string }[]).map((s) => [s.employee_user_id, s.id]));
+      const monthYmd = `${year}-${String(month).padStart(2, "0")}-01`;
+      const govInserts = govLines
+        .map((g) => {
+          const slipId = slipByUser.get(g.employeeUserId);
+          if (!slipId) return null;
+          const c = g.comp;
+          const slab = c.transportSlab;
+          return {
+            company_id: me.company_id,
+            payroll_period_id: period.id,
+            payroll_master_id: g.masterId,
+            employee_user_id: g.employeeUserId,
+            payslip_id: slipId,
+            month_year: monthYmd,
+            salary_date: periodEnd,
+            days_in_month: daysInMonth,
+            paid_days: Math.max(0, daysInMonth - g.unpaidDays),
+            unpaid_days: g.unpaidDays,
+            pay_level: g.payLevel,
+            transport_slab_group: slab.transportSlabGroup,
+            transport_base: slab.transportBase,
+            transport_da_percent: g.transportDaPercent,
+            basic_actual: c.basicActual,
+            basic_paid: c.basicPaid,
+            sp_pay_actual: c.spPayActual,
+            sp_pay_paid: c.spPayPaid,
+            da_actual: c.daActual,
+            da_paid: c.daPaid,
+            transport_actual: c.transportActual,
+            transport_paid: c.transportPaid,
+            hra_actual: c.hraActual,
+            hra_paid: c.hraPaid,
+            medical_actual: c.medicalActual,
+            medical_paid: c.medicalPaid,
+            extra_work_allowance_actual: c.extraWorkAllowanceActual,
+            extra_work_allowance_paid: c.extraWorkAllowancePaid,
+            night_allowance_actual: c.nightAllowanceActual,
+            night_allowance_paid: c.nightAllowancePaid,
+            uniform_allowance_actual: c.uniformAllowanceActual,
+            uniform_allowance_paid: c.uniformAllowancePaid,
+            education_allowance_actual: c.educationAllowanceActual,
+            education_allowance_paid: c.educationAllowancePaid,
+            da_arrears_actual: c.daArrearsActual,
+            da_arrears_paid: c.daArrearsPaid,
+            transport_arrears_actual: c.transportArrearsActual,
+            transport_arrears_paid: c.transportArrearsPaid,
+            encashment_actual: c.encashmentActual,
+            encashment_paid: c.encashmentPaid,
+            encashment_da_actual: c.encashmentDaActual,
+            encashment_da_paid: c.encashmentDaPaid,
+            income_tax_amount: c.deductions.incomeTax,
+            pt_amount: c.deductions.pt,
+            lic_amount: c.deductions.lic,
+            cpf_amount: c.deductions.cpf,
+            da_cpf_amount: c.deductions.daCpf,
+            vpf_amount: c.deductions.vpf,
+            pf_loan_amount: c.deductions.pfLoan,
+            post_office_amount: c.deductions.postOffice,
+            credit_society_amount: c.deductions.creditSociety,
+            std_licence_fee_amount: c.deductions.stdLicenceFee,
+            electricity_amount: c.deductions.electricity,
+            water_amount: c.deductions.water,
+            mess_amount: c.deductions.mess,
+            horticulture_amount: c.deductions.horticulture,
+            welfare_amount: c.deductions.welfare,
+            veh_charge_amount: c.deductions.vehCharge,
+            other_deduction_amount: c.deductions.other,
+            total_earnings: c.totalEarnings,
+            total_deductions: c.totalDeductions,
+            net_salary: c.netSalary,
+          };
+        })
+        .filter(Boolean);
+      const mErr = govInserts.length
+        ? (await supabase.from("HRMS_government_monthly_payroll").insert(govInserts as any[])).error
+        : null;
+      if (mErr) return NextResponse.json({ error: mErr.message }, { status: 400 });
+    }
   }
 
   try {

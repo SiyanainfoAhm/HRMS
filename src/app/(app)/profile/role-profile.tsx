@@ -8,6 +8,8 @@ import { DatePickerField } from "@/components/ui/DatePickerField";
 import { PasswordField } from "@/components/PasswordField";
 import { supabase } from "@/lib/supabaseClient";
 import { fmtDmy } from "@/lib/dateFormat";
+import { GovernmentPayslipPrint } from "@/components/payslip/GovernmentPayslipPrint";
+import type { GovernmentMonthlySlip } from "@/lib/governmentPayslipLayout";
 
 export function ProfileContent() {
   const { role } = useAuth();
@@ -73,10 +75,23 @@ export function ProfileContent() {
 
   const [payslipsData, setPayslipsData] = useState<{
     company: { name: string; address: string; logoUrl: string | null } | null;
-    user: { name: string; employeeCode: string; designation: string; dateOfJoining: string; aadhaar: string; pan: string; uanNumber: string; pfNumber: string; esicNumber: string } | null;
+    user: {
+      name: string;
+      employeeCode: string;
+      designation: string;
+      departmentName?: string;
+      dateOfJoining: string;
+      aadhaar: string;
+      pan: string;
+      uanNumber: string;
+      pfNumber: string;
+      esicNumber: string;
+      governmentPayLevel?: number | null;
+    } | null;
     payslips: {
       id: string;
       periodMonth: string;
+      periodStart: string;
       periodFormatted: string;
       generatedAt: string;
       payDays: number;
@@ -98,6 +113,10 @@ export function ProfileContent() {
       prBonus: number;
       reimbursement: number;
       tds: number;
+      bankName?: string;
+      bankAccountNumber?: string;
+      payrollMode?: string;
+      governmentMonthly?: Record<string, number> | null;
     }[];
   } | null>(null);
   const [myPayrollMaster, setMyPayrollMaster] = useState<{ tds?: number | null } | null>(null);
@@ -1080,6 +1099,34 @@ export function ProfileContent() {
                   const takeHome = Math.round(
                     salaryAfterDeductions - slip.tds + slip.incentive + slip.prBonus + slip.reimbursement
                   );
+                  const gov = slip.governmentMonthly;
+                  if (gov) {
+                    return (
+                      <GovernmentPayslipPrint
+                        ref={payslipRef}
+                        company={company}
+                        user={{
+                          name: user?.name,
+                          employeeCode: user?.employeeCode,
+                          designation: user?.designation,
+                          departmentName: user?.departmentName,
+                          dateOfJoining: user?.dateOfJoining,
+                          uanNumber: user?.uanNumber,
+                          pfNumber: user?.pfNumber,
+                        }}
+                        slip={{
+                          generatedAt: slip.generatedAt,
+                          periodStart: slip.periodStart,
+                          payDays: slip.payDays,
+                          unpaidLeaves: slip.unpaidLeaves,
+                          bankName: slip.bankName,
+                          bankAccountNumber: slip.bankAccountNumber,
+                          netPay: slip.netPay,
+                        }}
+                        gov={gov as GovernmentMonthlySlip}
+                      />
+                    );
+                  }
 
                   const cellClass = "border border-black px-3 py-2 align-top text-sm";
                   const thClass = "border border-black px-3 py-2 text-left font-semibold text-sm";
@@ -1117,6 +1164,7 @@ export function ProfileContent() {
                               <div className="space-y-1.5 text-sm leading-relaxed">
                                 <div><span className="text-slate-600">Employee Name:</span> {user?.name || "—"}</div>
                                 <div><span className="text-slate-600">Designation:</span> {user?.designation || "—"}</div>
+                                <div><span className="text-slate-600">Department:</span> {user?.departmentName || "—"}</div>
                                 <div><span className="text-slate-600">Salary Date:</span> {salaryDate}</div>
                               </div>
                             </td>
@@ -1146,6 +1194,7 @@ export function ProfileContent() {
                           <tr>
                             <td colSpan={2} className="border border-black p-0">
                               <table className="payslip-financial-table w-full border-collapse text-sm">
+                                  <>
                                 <colgroup>
                                   <col />
                                   <col />
@@ -1247,6 +1296,7 @@ export function ProfileContent() {
                                     <td colSpan={2} className={cellClass}></td>
                                   </tr>
                                 </tbody>
+                                  </>
                               </table>
                             </td>
                           </tr>

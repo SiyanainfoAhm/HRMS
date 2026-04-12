@@ -9,11 +9,9 @@ import { DatePickerField } from "@/components/ui/DatePickerField";
 import { useAuth } from "@/contexts/AuthContext";
 import { fmtDmy } from "@/lib/dateFormat";
 import {
-  computePayrollFromGross,
-  defaultSalaryBreakup,
-  isPfStatutorilyMandatory,
-  isWithinEsicGrossCeiling,
-} from "@/lib/payrollCalc";
+  computeGovernmentMonthlyPayroll,
+  masterRowToDeductionDefaults,
+} from "@/lib/governmentPayroll";
 import {
   normalizeDigits,
   normalizePanInput,
@@ -48,7 +46,6 @@ type Employee = {
 export default function EmployeesPage() {
   const { showToast } = useToast();
   const { role } = useAuth();
-  const canEditCtc = role === "super_admin" || role === "admin" || role === "hr";
   const isSuperAdmin = role === "super_admin";
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [employeePage, setEmployeePage] = useState(1);
@@ -94,12 +91,13 @@ export default function EmployeesPage() {
   const [dateOfBirth, setDateOfBirth] = useState("");
   const [uanNumber, setUanNumber] = useState("");
   const [pfNumber, setPfNumber] = useState("");
-  const [esicNumber, setEsicNumber] = useState("");
+  const [cpfNumber, setCpfNumber] = useState("");
+  const [governmentPayLevel, setGovernmentPayLevel] = useState("");
+  const [payLevelError, setPayLevelError] = useState<string | null>(null);
+  const [grossBasicError, setGrossBasicError] = useState<string | null>(null);
   const [dateOfJoining, setDateOfJoining] = useState("");
-  const [grossSalary, setGrossSalary] = useState("");
-  const [tdsMonthly, setTdsMonthly] = useState("");
-  const [pfEligible, setPfEligible] = useState(false);
-  const [esicEligible, setEsicEligible] = useState(false);
+  const [grossBasic, setGrossBasic] = useState("");
+  const [incomeTaxMonthly, setIncomeTaxMonthly] = useState("");
   const [currentAddressLine1, setCurrentAddressLine1] = useState("");
   const [currentAddressLine2, setCurrentAddressLine2] = useState("");
   const [currentCity, setCurrentCity] = useState("");
@@ -239,20 +237,6 @@ export default function EmployeesPage() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [isDialogOpen]);
 
-  /** When gross changes, align PF/ESIC flags with statutory thresholds (PF wage ≤ ₹15k, gross ≤ ₹21k for ESIC). */
-  useEffect(() => {
-    if (!isDialogOpen) return;
-    const g = parseFloat(grossSalary) || 0;
-    if (g <= 0) {
-      setPfEligible(false);
-      setEsicEligible(false);
-      return;
-    }
-    const { hra } = defaultSalaryBreakup(g);
-    setPfEligible(isPfStatutorilyMandatory(g, hra));
-    setEsicEligible(isWithinEsicGrossCeiling(g));
-  }, [grossSalary, isDialogOpen]);
-
   useEffect(() => {
     if (!isDialogOpen) return;
     let cancelled = false;
@@ -308,12 +292,13 @@ export default function EmployeesPage() {
     setDateOfBirth("");
     setUanNumber("");
     setPfNumber("");
-    setEsicNumber("");
+    setCpfNumber("");
+    setGovernmentPayLevel("");
+    setPayLevelError(null);
+    setGrossBasicError(null);
     setDateOfJoining("");
-    setGrossSalary("");
-    setTdsMonthly("");
-    setPfEligible(false);
-    setEsicEligible(false);
+    setGrossBasic("");
+    setIncomeTaxMonthly("");
     setCurrentAddressLine1("");
     setCurrentAddressLine2("");
     setCurrentCity("");
@@ -338,6 +323,8 @@ export default function EmployeesPage() {
 
   async function openEdit(userId: string) {
     setFormError(null);
+    setPayLevelError(null);
+    setGrossBasicError(null);
     setEditUserId(userId);
     setIsDialogOpen(true);
     setPrefillLoading(true);
@@ -364,7 +351,10 @@ export default function EmployeesPage() {
       setPan(String(u.pan ?? ""));
       setUanNumber(String(u.uanNumber ?? ""));
       setPfNumber(String(u.pfNumber ?? ""));
-      setEsicNumber(String(u.esicNumber ?? ""));
+      setCpfNumber(String(u.cpfNumber ?? ""));
+      setGovernmentPayLevel(
+        u.governmentPayLevel != null && u.governmentPayLevel !== "" ? String(u.governmentPayLevel) : ""
+      );
       setCurrentAddressLine1(String(u.currentAddressLine1 ?? ""));
       setCurrentAddressLine2(String(u.currentAddressLine2 ?? ""));
       setCurrentCity(String(u.currentCity ?? ""));
@@ -383,10 +373,10 @@ export default function EmployeesPage() {
       setBankName(String(u.bankName ?? ""));
       setBankAccountNumber(String(u.bankAccountNumber ?? ""));
       setBankIfsc(String(u.bankIfsc ?? ""));
-      setGrossSalary(u.grossSalary != null ? String(u.grossSalary) : "");
-      setTdsMonthly(u.tds != null ? String(u.tds) : "");
-      setPfEligible(Boolean(u.pfEligible));
-      setEsicEligible(Boolean(u.esicEligible));
+      const gb = u.grossBasic ?? u.grossSalary;
+      setGrossBasic(gb != null ? String(gb) : "");
+      const it = u.incomeTaxMonthly ?? u.tds;
+      setIncomeTaxMonthly(it != null ? String(it) : "");
       setPassword("");
       loadCompanyDocsForInvite();
     } catch (e: any) {
@@ -397,14 +387,34 @@ export default function EmployeesPage() {
     }
   }
 
-  const gross = parseFloat(grossSalary) || 0;
+  const gbNum = parseFloat(grossBasic) || 0;
+  const levelNum = parseInt(governmentPayLevel.trim(), 10);
   const ptMonthly = companyPtMonthly;
-  const {
-    ctc: calculatedCtc,
-    takeHome: calculatedTakeHome,
-    pfEmp: calcPfEmp,
-    esicEmp: calcEsicEmp,
-  } = computePayrollFromGross(gross, pfEligible, esicEligible, ptMonthly);
+  const incomeTaxNum = parseFloat(incomeTaxMonthly) || 0;
+  let govPreview: ReturnType<typeof computeGovernmentMonthlyPayroll> | null = null;
+  if (gbNum > 0 && Number.isFinite(levelNum) && levelNum >= 1) {
+    try {
+      govPreview = computeGovernmentMonthlyPayroll({
+        grossBasic: gbNum,
+        daPercent: 53,
+        hraPercent: 30,
+        medicalFixed: 3000,
+        transportDaPercent: 48.06,
+        payLevel: levelNum,
+        daysInMonth: 30,
+        unpaidDays: 0,
+        deductionDefaults: masterRowToDeductionDefaults({
+          income_tax_default: incomeTaxNum,
+          tds: incomeTaxNum,
+          pt_default: ptMonthly,
+        }),
+      });
+    } catch {
+      govPreview = null;
+    }
+  }
+  const calculatedMonthlyGross = govPreview?.totalEarnings ?? 0;
+  const calculatedNet = govPreview?.netSalary ?? 0;
 
   useEffect(() => {
     if (!isDialogOpen) return;
@@ -452,7 +462,31 @@ export default function EmployeesPage() {
       setDivisionError(divisionErr);
       const shiftErr = !shiftId ? "Please select a shift" : null;
       setShiftError(shiftErr);
-      if (eErr || phErr || ahErr || pnErr || nameErr || designationErr || departmentErr || divisionErr || shiftErr) {
+      const pl = parseInt(governmentPayLevel.trim(), 10);
+      const payLvErr =
+        !governmentPayLevel.trim() || !Number.isFinite(pl) || pl < 1
+          ? "Government pay level is required (≥ 1)"
+          : null;
+      setPayLevelError(payLvErr);
+      const gbParsed = parseFloat(grossBasic.trim());
+      const gbErr =
+        !grossBasic.trim() || !Number.isFinite(gbParsed) || gbParsed <= 0
+          ? "Monthly gross basic pay is required"
+          : null;
+      setGrossBasicError(gbErr);
+      if (
+        eErr ||
+        phErr ||
+        ahErr ||
+        pnErr ||
+        nameErr ||
+        designationErr ||
+        departmentErr ||
+        divisionErr ||
+        shiftErr ||
+        payLvErr ||
+        gbErr
+      ) {
         setFormLoading(false);
         return;
       }
@@ -484,10 +518,8 @@ export default function EmployeesPage() {
           bankName: bankName.trim() || undefined,
           bankAccountNumber: bankAccountNumber.trim() || undefined,
           bankIfsc: bankIfsc.trim() || undefined,
-          grossSalary: grossSalary.trim() ? parseFloat(grossSalary.trim()) : undefined,
-          tds: tdsMonthly.trim() ? parseFloat(tdsMonthly.trim()) : undefined,
-          pfEligible,
-          esicEligible,
+          grossBasic: gbParsed,
+          incomeTaxMonthly: incomeTaxMonthly.trim() ? parseFloat(incomeTaxMonthly.trim()) : undefined,
           gender: gender || undefined,
           designation: designation || undefined,
           designationId: designationId || undefined,
@@ -498,8 +530,8 @@ export default function EmployeesPage() {
           pan: panNorm,
           uanNumber: uanNumber || undefined,
           pfNumber: pfNumber || undefined,
-          esicNumber: esicNumber || undefined,
-          ctc: calculatedCtc || undefined,
+          cpfNumber: cpfNumber.trim() || undefined,
+          governmentPayLevel: pl,
           password: password.trim() || undefined,
           requestedDocumentIds: requestedDocIds.length ? requestedDocIds : undefined,
         }),
@@ -559,7 +591,31 @@ export default function EmployeesPage() {
       setDivisionError(divisionErr);
       const shiftErr = !shiftId ? "Please select a shift" : null;
       setShiftError(shiftErr);
-      if (eErr || phErr || ahErr || pnErr || nameErr || designationErr || departmentErr || divisionErr || shiftErr) {
+      const plU = parseInt(governmentPayLevel.trim(), 10);
+      const payLvErrU =
+        !governmentPayLevel.trim() || !Number.isFinite(plU) || plU < 1
+          ? "Government pay level is required (≥ 1)"
+          : null;
+      setPayLevelError(payLvErrU);
+      const gbParsedU = parseFloat(grossBasic.trim());
+      const gbErrU =
+        !grossBasic.trim() || !Number.isFinite(gbParsedU) || gbParsedU <= 0
+          ? "Monthly gross basic pay is required"
+          : null;
+      setGrossBasicError(gbErrU);
+      if (
+        eErr ||
+        phErr ||
+        ahErr ||
+        pnErr ||
+        nameErr ||
+        designationErr ||
+        departmentErr ||
+        divisionErr ||
+        shiftErr ||
+        payLvErrU ||
+        gbErrU
+      ) {
         setFormLoading(false);
         return;
       }
@@ -593,10 +649,8 @@ export default function EmployeesPage() {
           bankName: bankName.trim() || undefined,
           bankAccountNumber: bankAccountNumber.trim() || undefined,
           bankIfsc: bankIfsc.trim() || undefined,
-          grossSalary: grossSalary.trim() ? parseFloat(grossSalary.trim()) : undefined,
-          tds: tdsMonthly.trim() ? parseFloat(tdsMonthly.trim()) : undefined,
-          pfEligible,
-          esicEligible,
+          grossBasic: gbParsedU,
+          incomeTaxMonthly: incomeTaxMonthly.trim() ? parseFloat(incomeTaxMonthly.trim()) : undefined,
           gender: gender || undefined,
           designation: designation || undefined,
           designationId: designationId || undefined,
@@ -607,7 +661,8 @@ export default function EmployeesPage() {
           pan: panNorm,
           uanNumber: uanNumber || undefined,
           pfNumber: pfNumber || undefined,
-          esicNumber: esicNumber || undefined,
+          cpfNumber: cpfNumber.trim() || undefined,
+          governmentPayLevel: plU,
         }),
       });
       const data = await res.json();
@@ -1073,70 +1128,86 @@ export default function EmployeesPage() {
                   {emailError && <p className="mt-1 text-xs text-red-600">{emailError}</p>}
                 </div>
                 <div className="md:col-span-1">
-                  <label className="mb-1 block text-sm font-medium text-slate-700">Gross salary (monthly)</label>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    Government pay level <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={governmentPayLevel}
+                    onChange={(e) => {
+                      setGovernmentPayLevel(e.target.value);
+                      setPayLevelError(null);
+                    }}
+                    placeholder="e.g. 4"
+                    aria-invalid={Boolean(payLevelError)}
+                    className={`w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-1 ${
+                      payLevelError
+                        ? "border-red-500 focus:border-red-500 focus:ring-red-500"
+                        : "border-slate-300 focus:border-emerald-500 focus:ring-emerald-500"
+                    }`}
+                  />
+                  {payLevelError && <p className="mt-1 text-xs text-red-600">{payLevelError}</p>}
+                  <p className="mt-1 text-xs text-slate-500">Drives transport allowance slab (same rules as payslip).</p>
+                </div>
+                <div className="md:col-span-1">
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    Gross basic pay (monthly) <span className="text-red-500">*</span>
+                  </label>
                   <input
                     type="number"
                     min="0"
                     step="100"
-                    value={grossSalary}
-                    onChange={(e) => setGrossSalary(e.target.value)}
-                    placeholder="e.g. 25000"
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    value={grossBasic}
+                    onChange={(e) => {
+                      setGrossBasic(e.target.value);
+                      setGrossBasicError(null);
+                    }}
+                    placeholder="e.g. 52000"
+                    aria-invalid={Boolean(grossBasicError)}
+                    className={`w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-1 ${
+                      grossBasicError
+                        ? "border-red-500 focus:border-red-500 focus:ring-red-500"
+                        : "border-slate-300 focus:border-emerald-500 focus:ring-emerald-500"
+                    }`}
                   />
+                  {grossBasicError && <p className="mt-1 text-xs text-red-600">{grossBasicError}</p>}
                 </div>
                 <div className="md:col-span-1">
-                  <label className="mb-1 block text-sm font-medium text-slate-700">TDS (monthly)</label>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Income tax (monthly est.)</label>
                   <input
                     type="number"
                     min="0"
                     step="1"
-                    value={tdsMonthly}
-                    onChange={(e) => setTdsMonthly(e.target.value)}
-                    placeholder="e.g. 500"
+                    value={incomeTaxMonthly}
+                    onChange={(e) => setIncomeTaxMonthly(e.target.value)}
+                    placeholder="0"
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                   />
                 </div>
                 <div className="md:col-span-1">
-                  <label className="mb-1 block text-sm font-medium text-slate-700">CTC</label>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Monthly gross (basic + DA + HRA + medical + TA)</label>
                   <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-                    {calculatedCtc > 0 ? calculatedCtc.toLocaleString("en-IN") : "—"}
+                    {calculatedMonthlyGross > 0 ? calculatedMonthlyGross.toLocaleString("en-IN") : "—"}
                   </div>
                 </div>
                 <div className="md:col-span-1">
-                  <label className="mb-1 block text-sm font-medium text-slate-700">Take home (approx)</label>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Net pay (approx, full month)</label>
                   <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-                    {calculatedTakeHome > 0 ? calculatedTakeHome.toLocaleString("en-IN") : "—"}
+                    {calculatedNet > 0 ? calculatedNet.toLocaleString("en-IN") : "—"}
                   </div>
-                  {gross > 0 && (
+                  {govPreview && (
                     <p className="mt-1 text-xs text-slate-500">
-                      Deductions: PT ₹{ptMonthly.toLocaleString("en-IN")}
-                      {calcPfEmp > 0 && ` · PF ₹${calcPfEmp.toLocaleString("en-IN")}`}
-                      {calcEsicEmp > 0 && ` · ESIC ₹${calcEsicEmp.toLocaleString("en-IN")}`}
+                      Deductions (defaults): PT ₹{govPreview.deductions.pt.toLocaleString("en-IN")}
+                      {govPreview.deductions.incomeTax > 0 &&
+                        ` · IT ₹${govPreview.deductions.incomeTax.toLocaleString("en-IN")}`}
+                      {govPreview.deductions.cpf > 0 && ` · CPF ₹${govPreview.deductions.cpf.toLocaleString("en-IN")}`}
                     </p>
                   )}
                 </div>
-                <div className="md:col-span-1 flex flex-col justify-end gap-1 pb-2">
-                  <div className="flex flex-wrap items-center gap-4">
-                    <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
-                      <input
-                        type="checkbox"
-                        checked={pfEligible}
-                        onChange={(e) => setPfEligible(e.target.checked)}
-                      />
-                      PF eligible
-                    </label>
-                    <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
-                      <input
-                        type="checkbox"
-                        checked={esicEligible}
-                        onChange={(e) => setEsicEligible(e.target.checked)}
-                      />
-                      ESIC eligible
-                    </label>
-                  </div>
-                  <p className="text-xs text-slate-500">
-                    When you change gross, these update to match thresholds: PF when wage (gross − HRA) ≤ ₹15k; ESIC when gross ≤ ₹21k.
-                  </p>
+                <div className="md:col-span-1 md:col-span-4 rounded-lg border border-slate-100 bg-slate-50/80 px-3 py-2 text-xs text-slate-600">
+                  Preview uses DA 53%, HRA 30% of basic, medical ₹3,000, and TA slab by pay level (aligned with government payroll run).
                 </div>
                 <div className="md:col-span-1">
                   <label className="mb-1 block text-sm font-medium text-slate-700">Role</label>
@@ -1436,11 +1507,14 @@ export default function EmployeesPage() {
                   />
                 </div>
                 <div className="md:col-span-1">
-                  <label className="mb-1 block text-sm font-medium text-slate-700">ESIC number</label>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    CPF / GPF ref. <span className="text-slate-400 font-normal">(optional)</span>
+                  </label>
                   <input
                     type="text"
-                    value={esicNumber}
-                    onChange={(e) => setEsicNumber(e.target.value)}
+                    value={cpfNumber}
+                    onChange={(e) => setCpfNumber(e.target.value)}
+                    placeholder="If allotted"
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                   />
                 </div>
@@ -1879,7 +1953,7 @@ export default function EmployeesPage() {
                   <th className="w-[9%] px-1.5 py-1.5 font-medium whitespace-nowrap">Designation</th>
                   <th className="w-[9%] px-1.5 py-1.5 font-medium whitespace-nowrap">Department</th>
                   <th className="w-[8%] px-1.5 py-1.5 font-medium whitespace-nowrap">Shift</th>
-                  <th className="w-[7%] px-1.5 py-1.5 font-medium whitespace-nowrap">CTC</th>
+                  <th className="w-[7%] px-1.5 py-1.5 font-medium whitespace-nowrap">Monthly gross</th>
                   <th className="w-[18%] px-1.5 py-1.5 font-medium whitespace-nowrap">Email</th>
                   <th className="w-[10%] px-1.5 py-1.5 font-medium whitespace-nowrap">Phone</th>
                   <th className="w-[8%] px-1.5 py-1.5 font-medium whitespace-nowrap">DOJ</th>
@@ -2092,7 +2166,7 @@ export default function EmployeesPage() {
                     <dd className="text-right">{e.shiftName || "—"}</dd>
                   </div>
                   <div className="flex justify-between gap-3">
-                    <dt className="text-slate-500">CTC</dt>
+                    <dt className="text-slate-500">Monthly gross (est.)</dt>
                     <dd className="text-right tabular-nums">{e.ctc != null ? Number(e.ctc).toLocaleString("en-IN") : "—"}</dd>
                   </div>
                   <div className="flex justify-between gap-3">

@@ -3,6 +3,11 @@ import { cookies } from "next/headers";
 import { COOKIE_NAME } from "@/lib/auth";
 import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
+import {
+  computeGovernmentMonthlyPayroll,
+  deriveTransportSlabFromLevel,
+  masterRowToDeductionDefaults,
+} from "@/lib/governmentPayroll";
 
 function isManagerial(role: string): boolean {
   return role === "super_admin" || role === "admin" || role === "hr";
@@ -36,7 +41,7 @@ export async function GET() {
   const userIds = [...new Set((masters ?? []).map((m: any) => m.employee_user_id))];
   const { data: users } = await supabase
     .from("HRMS_users")
-    .select("id, name, email, role")
+    .select("id, name, email, role, government_pay_level")
     .in("id", userIds);
   const userMap = new Map((users ?? []).map((u: any) => [u.id, u]));
 
@@ -51,9 +56,18 @@ export async function GET() {
         employeeUserId: m.employee_user_id,
         employeeName: u?.name ?? null,
         employeeEmail: u?.email ?? "",
+        governmentPayLevel: (u as { government_pay_level?: number | null })?.government_pay_level ?? null,
         master: {
           id: m.id,
+          payrollMode: (m.payroll_mode as string) || "private",
           grossSalary: m.gross_salary,
+          grossBasic: m.gross_basic != null ? Number(m.gross_basic) : null,
+          daPercent: m.da_percent != null ? Number(m.da_percent) : 53,
+          hraPercent: m.hra_percent != null ? Number(m.hra_percent) : 30,
+          medicalFixed: m.medical_fixed != null ? Number(m.medical_fixed) : 3000,
+          transportDaPercent: m.transport_da_percent != null ? Number(m.transport_da_percent) : 48.06,
+          transportSlabGroup: m.transport_slab_group ?? null,
+          transportBase: m.transport_base != null ? Number(m.transport_base) : null,
           ctc: m.ctc,
           pfEligible: m.pf_eligible,
           esicEligible: m.esic_eligible,
@@ -72,6 +86,23 @@ export async function GET() {
           trans: m.trans ?? 0,
           lta: m.lta ?? 0,
           personal: m.personal ?? 0,
+          incomeTaxDefault: m.income_tax_default != null ? Number(m.income_tax_default) : 0,
+          ptDefault: m.pt_default != null ? Number(m.pt_default) : 200,
+          licDefault: m.lic_default != null ? Number(m.lic_default) : 0,
+          cpfDefault: m.cpf_default != null ? Number(m.cpf_default) : 0,
+          daCpfDefault: m.da_cpf_default != null ? Number(m.da_cpf_default) : 0,
+          vpfDefault: m.vpf_default != null ? Number(m.vpf_default) : 0,
+          pfLoanDefault: m.pf_loan_default != null ? Number(m.pf_loan_default) : 0,
+          postOfficeDefault: m.post_office_default != null ? Number(m.post_office_default) : 0,
+          creditSocietyDefault: m.credit_society_default != null ? Number(m.credit_society_default) : 0,
+          stdLicenceFeeDefault: m.std_licence_fee_default != null ? Number(m.std_licence_fee_default) : 0,
+          electricityDefault: m.electricity_default != null ? Number(m.electricity_default) : 0,
+          waterDefault: m.water_default != null ? Number(m.water_default) : 0,
+          messDefault: m.mess_default != null ? Number(m.mess_default) : 0,
+          horticultureDefault: m.horticulture_default != null ? Number(m.horticulture_default) : 0,
+          welfareDefault: m.welfare_default != null ? Number(m.welfare_default) : 0,
+          vehChargeDefault: m.veh_charge_default != null ? Number(m.veh_charge_default) : 0,
+          otherDeductionDefault: m.other_deduction_default != null ? Number(m.other_deduction_default) : 0,
         },
       };
     });
@@ -87,6 +118,7 @@ export async function PATCH(request: NextRequest) {
 
   const body = await request.json().catch(() => ({}));
   const userId = typeof body?.employeeUserId === "string" ? body.employeeUserId : "";
+  const payrollMode = body?.payrollMode === "government" ? "government" : "private";
   let grossSalary = body?.grossSalary != null ? Number(body.grossSalary) : 0;
   const pfEligible = body?.pfEligible === true;
   const esicEligible = body?.esicEligible === true;
@@ -127,11 +159,130 @@ export async function PATCH(request: NextRequest) {
 
   const { data: target } = await supabase
     .from("HRMS_users")
-    .select("id, company_id, employment_status")
+    .select("id, company_id, employment_status, government_pay_level")
     .eq("id", userId)
     .single();
   if (!target || target.company_id !== me.company_id || target.employment_status !== "current") {
     return NextResponse.json({ error: "Invalid employee" }, { status: 400 });
+  }
+
+  const { data: oldMaster } = await supabase
+    .from("HRMS_payroll_master")
+    .select("id")
+    .eq("employee_user_id", userId)
+    .is("effective_end_date", null)
+    .maybeSingle();
+
+  if (oldMaster) {
+    const d = new Date(effectiveStartDate + "T00:00:00Z");
+    d.setUTCDate(d.getUTCDate() - 1);
+    const prevDay = d.toISOString().slice(0, 10);
+    await supabase
+      .from("HRMS_payroll_master")
+      .update({ effective_end_date: prevDay })
+      .eq("id", oldMaster.id);
+  }
+
+  if (payrollMode === "government") {
+    if (target.government_pay_level == null) {
+      return NextResponse.json(
+        { error: "Set Government pay level on the employee profile before saving government payroll master." },
+        { status: 400 },
+      );
+    }
+    const grossBasic = body?.grossBasic != null ? Number(body.grossBasic) : 0;
+    if (!Number.isFinite(grossBasic) || grossBasic <= 0) {
+      return NextResponse.json({ error: "grossBasic (monthly) is required for government payroll" }, { status: 400 });
+    }
+    const daPercent = body?.daPercent != null ? Number(body.daPercent) : 53;
+    const hraPercent = body?.hraPercent != null ? Number(body.hraPercent) : 30;
+    const medicalFixed = body?.medicalFixed != null ? Number(body.medicalFixed) : 3000;
+    const transportDaPercent = body?.transportDaPercent != null ? Number(body.transportDaPercent) : 48.06;
+    const govPfEligible = body?.pfEligible !== false;
+
+    const slab = deriveTransportSlabFromLevel(target.government_pay_level);
+    const ded = {
+      income_tax_default: body?.incomeTaxDefault != null ? Number(body.incomeTaxDefault) : tdsVal,
+      pt_default: body?.ptDefault != null ? Number(body.ptDefault) : 200,
+      lic_default: body?.licDefault != null ? Number(body.licDefault) : 0,
+      cpf_default: body?.cpfDefault != null ? Number(body.cpfDefault) : 0,
+      da_cpf_default: body?.daCpfDefault != null ? Number(body.daCpfDefault) : 0,
+      vpf_default: body?.vpfDefault != null ? Number(body.vpfDefault) : 0,
+      pf_loan_default: body?.pfLoanDefault != null ? Number(body.pfLoanDefault) : 0,
+      post_office_default: body?.postOfficeDefault != null ? Number(body.postOfficeDefault) : 0,
+      credit_society_default: body?.creditSocietyDefault != null ? Number(body.creditSocietyDefault) : 0,
+      std_licence_fee_default: body?.stdLicenceFeeDefault != null ? Number(body.stdLicenceFeeDefault) : 0,
+      electricity_default: body?.electricityDefault != null ? Number(body.electricityDefault) : 0,
+      water_default: body?.waterDefault != null ? Number(body.waterDefault) : 0,
+      mess_default: body?.messDefault != null ? Number(body.messDefault) : 0,
+      horticulture_default: body?.horticultureDefault != null ? Number(body.horticultureDefault) : 0,
+      welfare_default: body?.welfareDefault != null ? Number(body.welfareDefault) : 0,
+      veh_charge_default: body?.vehChargeDefault != null ? Number(body.vehChargeDefault) : 0,
+      other_deduction_default: body?.otherDeductionDefault != null ? Number(body.otherDeductionDefault) : 0,
+    };
+
+    const preview = computeGovernmentMonthlyPayroll({
+      grossBasic,
+      daPercent,
+      hraPercent,
+      medicalFixed,
+      transportDaPercent,
+      payLevel: target.government_pay_level,
+      daysInMonth: 30,
+      unpaidDays: 0,
+      deductionDefaults: masterRowToDeductionDefaults(ded),
+    });
+
+    await supabase.from("HRMS_payroll_master").insert([
+      {
+        company_id: me.company_id,
+        employee_user_id: userId,
+        payroll_mode: "government",
+        gross_basic: grossBasic,
+        gross_salary: grossBasic,
+        da_percent: daPercent,
+        hra_percent: hraPercent,
+        medical_fixed: medicalFixed,
+        transport_da_percent: transportDaPercent,
+        transport_slab_group: slab.transportSlabGroup,
+        transport_base: slab.transportBase,
+        ...ded,
+        pf_eligible: govPfEligible,
+        esic_eligible: false,
+        pf_employee: 0,
+        pf_employer: 0,
+        esic_employee: 0,
+        esic_employer: 0,
+        pt: ded.pt_default,
+        tds: tdsVal,
+        advance_bonus: advanceBonusVal,
+        take_home: preview.netSalary,
+        ctc: grossBasic,
+        basic: preview.basicPaid,
+        hra: preview.hraPaid,
+        medical: preview.medicalPaid,
+        trans: preview.transportPaid,
+        lta: 0,
+        personal: 0,
+        effective_start_date: effectiveStartDate,
+        effective_end_date: null,
+        reason_for_change: reasonForChange,
+        created_by: session.id,
+      },
+    ]);
+
+    await supabase
+      .from("HRMS_users")
+      .update({
+        ctc: grossBasic,
+        gross_salary: grossBasic,
+        pf_eligible: govPfEligible,
+        esic_eligible: false,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", userId);
+
+    return NextResponse.json({ ok: true });
   }
 
   const { data: company } = await supabase
@@ -155,23 +306,6 @@ export async function PATCH(request: NextRequest) {
   const { pfEmp, pfEmpr, esicEmp, esicEmpr, ctc, takeHome: baseTakeHome, basic: calcBasic, hra: calcHra, medical: calcMedical, trans: calcTrans, lta: calcLta, personal: calcPersonal } = calc;
   const takeHome = Math.max(0, baseTakeHome - tdsVal + advanceBonusVal);
 
-  const { data: oldMaster } = await supabase
-    .from("HRMS_payroll_master")
-    .select("id")
-    .eq("employee_user_id", userId)
-    .is("effective_end_date", null)
-    .maybeSingle();
-
-  if (oldMaster) {
-    const d = new Date(effectiveStartDate + "T00:00:00Z");
-    d.setUTCDate(d.getUTCDate() - 1);
-    const prevDay = d.toISOString().slice(0, 10);
-    await supabase
-      .from("HRMS_payroll_master")
-      .update({ effective_end_date: prevDay })
-      .eq("id", oldMaster.id);
-  }
-
   const salaryComponents = {
     basic: calcBasic,
     hra: calcHra,
@@ -185,6 +319,7 @@ export async function PATCH(request: NextRequest) {
     {
       company_id: me.company_id,
       employee_user_id: userId,
+      payroll_mode: "private",
       gross_salary: grossSalary,
       ctc,
       pf_eligible: pfEligible,

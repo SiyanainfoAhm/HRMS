@@ -20,7 +20,7 @@ export async function GET() {
   const [slipRes, companyRes, userRes] = await Promise.all([
     supabase
       .from("HRMS_payslips")
-      .select("id, payroll_period_id, net_pay, gross_pay, pay_days, basic, hra, allowances, medical, trans, lta, personal, deductions, currency, payslip_number, generated_at, bank_name, bank_account_number, bank_ifsc, pf_employee, esic_employee, professional_tax, incentive, pr_bonus, reimbursement, tds")
+      .select("id, payroll_period_id, net_pay, gross_pay, pay_days, basic, hra, allowances, medical, trans, lta, personal, deductions, currency, payslip_number, generated_at, bank_name, bank_account_number, bank_ifsc, pf_employee, esic_employee, professional_tax, incentive, pr_bonus, reimbursement, tds, payroll_mode")
       .eq("company_id", me.company_id)
       .eq("employee_user_id", session.id)
       .order("generated_at", { ascending: false }),
@@ -29,11 +29,22 @@ export async function GET() {
       .select("name, logo_url, address_line1, address_line2, city, state, country, postal_code")
       .eq("id", me.company_id)
       .single(),
-    supabase.from("HRMS_users").select("name, employee_code, designation, date_of_joining, aadhaar, pan, uan_number, pf_number, esic_number").eq("id", session.id).single(),
+    supabase
+      .from("HRMS_users")
+      .select("name, employee_code, designation, date_of_joining, aadhaar, pan, uan_number, pf_number, esic_number, department_id, government_pay_level")
+      .eq("id", session.id)
+      .single(),
   ]);
 
   const { data: slipData, error } = slipRes;
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+
+  const slipIds = (slipData ?? []).map((p: { id: string }) => p.id).filter(Boolean);
+  const { data: govRows } =
+    slipIds.length > 0
+      ? await supabase.from("HRMS_government_monthly_payroll").select("*").in("payslip_id", slipIds)
+      : { data: [] };
+  const govByPayslipId = new Map((govRows ?? []).map((g: { payslip_id: string }) => [g.payslip_id, g]));
 
   const periodIds = [...new Set((slipData ?? []).map((p: any) => p.payroll_period_id).filter(Boolean))];
   let periodsById = new Map<string, { period_start: string; period_end: string; period_name: string }>();
@@ -60,23 +71,31 @@ export async function GET() {
   const companyAddress = addrParts.join(", ") || "";
 
   const user = userRes.data;
+  const deptId = (user as { department_id?: string | null } | null)?.department_id;
+  const { data: deptRow } = deptId
+    ? await supabase.from("HRMS_departments").select("name").eq("id", deptId).maybeSingle()
+    : { data: null };
 
   const rawLogo = (company as { logo_url?: string | null } | null)?.logo_url;
   const logoUrl = typeof rawLogo === "string" && rawLogo.trim() ? rawLogo.trim() : null;
 
   return NextResponse.json({
     company: company ? { name: company.name, address: companyAddress, logoUrl } : null,
-    user: user ? {
-      name: user.name ?? "",
-      employeeCode: user.employee_code ?? "",
-      designation: user.designation ?? "",
-      dateOfJoining: user.date_of_joining ? String(user.date_of_joining) : "",
-      aadhaar: user.aadhaar ?? "",
-      pan: user.pan ?? "",
-      uanNumber: user.uan_number ?? "",
-      pfNumber: user.pf_number ?? "",
-      esicNumber: user.esic_number ?? "",
-    } : null,
+    user: user
+      ? {
+          name: user.name ?? "",
+          employeeCode: user.employee_code ?? "",
+          designation: user.designation ?? "",
+          departmentName: deptRow?.name ?? "",
+          dateOfJoining: user.date_of_joining ? String(user.date_of_joining) : "",
+          aadhaar: user.aadhaar ?? "",
+          pan: user.pan ?? "",
+          uanNumber: user.uan_number ?? "",
+          pfNumber: user.pf_number ?? "",
+          esicNumber: user.esic_number ?? "",
+          governmentPayLevel: (user as { government_pay_level?: number | null }).government_pay_level ?? null,
+        }
+      : null,
     payslips: (slipData ?? []).map((p: any) => {
       const period = periodsById.get(p.payroll_period_id);
       const periodStart = period?.period_start ? String(period.period_start) : "";
@@ -91,9 +110,11 @@ export async function GET() {
       }
       const payDays = p.pay_days != null ? Number(p.pay_days) : 0;
       const unpaidLeaves = totalDays > 0 ? Math.max(0, totalDays - payDays) : 0;
+      const gov = govByPayslipId.get(p.id as string);
       return {
         id: p.id as string,
         payrollPeriodId: p.payroll_period_id as string,
+        payrollMode: (p.payroll_mode as string | undefined) || "private",
         netPay: p.net_pay,
         grossPay: p.gross_pay,
         payDays,
@@ -124,6 +145,7 @@ export async function GET() {
         periodName: period?.period_name ?? "",
         periodFormatted,
         periodMonth,
+        governmentMonthly: gov ?? null,
       };
     }),
   });

@@ -8,11 +8,25 @@ import { useToast } from "@/components/ToastProvider";
 import { SkeletonTable, SkeletonText } from "@/components/Skeleton";
 import { DatePickerField } from "@/components/ui/DatePickerField";
 import { computePayrollFromGross, defaultSalaryBreakup } from "@/lib/payrollCalc";
+import {
+  computeGovernmentMonthlyPayroll,
+  deriveTransportSlabFromLevel,
+  GOVERNMENT_DEFAULT_CPF_RATE_ON_TOTAL_EARNINGS,
+  type GovernmentDeductionDefaults,
+  type GovernmentEarningPaidOverrides,
+  type GovernmentOptionalMonthlyEarnings,
+} from "@/lib/governmentPayroll";
+import { GovernmentRunPreviewTable, type GovernmentRunPreviewRow } from "@/components/payroll/GovernmentRunPreviewTable";
+import { GovernmentPayslipPrint } from "@/components/payslip/GovernmentPayslipPrint";
+import type { GovernmentMonthlySlip } from "@/lib/governmentPayslipLayout";
 
 type MasterGridRow = {
   employeeUserId: string;
   employeeName: string | null;
   employeeEmail: string;
+  /** `private`: monthly gross salary. `government`: gross basic (pay level). */
+  payrollMode: "private" | "government";
+  governmentPayLevel: number | null;
   gross: number;
   ctc: number;
   pfEmp: number;
@@ -21,6 +35,8 @@ type MasterGridRow = {
   esicEmpr: number;
   pt: number;
   tds: number;
+  /** Government income tax monthly default (mirrors `tds` in grid edits). */
+  incomeTaxDefault: number;
   advanceBonus: number;
   takeHome: number;
   effectiveStartDate: string;
@@ -32,7 +48,219 @@ type MasterGridRow = {
   trans: number;
   lta: number;
   personal: number;
+  /** Government structure (ignored when private). */
+  daPercent: number;
+  hraPercent: number;
+  medicalFixed: number;
+  transportDaPercent: number;
+  cpfDefault: number;
+  daCpfDefault: number;
+  /** Monthly rupee defaults (government); mirrored on pay slip deduction side. */
+  licDefault: number;
+  messDefault: number;
+  welfareDefault: number;
+  vpfDefault: number;
+  pfLoanDefault: number;
+  postOfficeDefault: number;
+  creditSocietyDefault: number;
+  stdLicenceFeeDefault: number;
+  electricityDefault: number;
+  waterDefault: number;
+  horticultureDefault: number;
+  vehChargeDefault: number;
+  otherDeductionDefault: number;
+  govTotalEarnings: number;
+  govTransportPaid: number;
+  govTransportSlabGroup: string;
+  govEffectiveCpf: number;
+  govNetSalary: number;
 };
+
+/** Preserve variable earning heads when recomputing government preview after pay-day changes. */
+function govOptionalFromComputedMonthly(g: Record<string, unknown> | null | undefined): GovernmentOptionalMonthlyEarnings | undefined {
+  if (!g || typeof g !== "object") return undefined;
+  const spPay = Number(g.spPayPaid) || 0;
+  const extraWorkAllowance = Number(g.extraWorkAllowancePaid) || 0;
+  const nightAllowance = Number(g.nightAllowancePaid) || 0;
+  const uniformAllowance = Number(g.uniformAllowancePaid) || 0;
+  const educationAllowance = Number(g.educationAllowancePaid) || 0;
+  const daArrears = Number(g.daArrearsPaid) || 0;
+  const transportArrears = Number(g.transportArrearsPaid) || 0;
+  const encashment = Number(g.encashmentPaid) || 0;
+  const encashmentDa = Number(g.encashmentDaPaid) || 0;
+  if (
+    !spPay &&
+    !extraWorkAllowance &&
+    !nightAllowance &&
+    !uniformAllowance &&
+    !educationAllowance &&
+    !daArrears &&
+    !transportArrears &&
+    !encashment &&
+    !encashmentDa
+  ) {
+    return undefined;
+  }
+  return {
+    spPay,
+    extraWorkAllowance,
+    nightAllowance,
+    uniformAllowance,
+    educationAllowance,
+    daArrears,
+    transportArrears,
+    encashment,
+    encashmentDa,
+  };
+}
+
+/** Deduction keys editable in Run Payroll government preview (before Generate). */
+const GOV_RUN_EDITABLE_DEDUCTION_KEYS: (keyof GovernmentDeductionDefaults)[] = [
+  "incomeTax",
+  "pt",
+  "lic",
+  "cpf",
+  "daCpf",
+  "vpf",
+  "pfLoan",
+  "postOffice",
+  "creditSociety",
+  "stdLicenceFee",
+  "electricity",
+  "water",
+  "mess",
+  "horticulture",
+  "welfare",
+  "vehCharge",
+  "other",
+];
+
+const GOV_RUN_EDITABLE_EARNING_KEYS: (keyof GovernmentEarningPaidOverrides)[] = [
+  "basicPaid",
+  "spPayPaid",
+  "daPaid",
+  "transportPaid",
+  "hraPaid",
+  "medicalPaid",
+  "extraWorkAllowancePaid",
+  "nightAllowancePaid",
+  "uniformAllowancePaid",
+  "educationAllowancePaid",
+  "daArrearsPaid",
+  "transportArrearsPaid",
+  "encashmentPaid",
+  "encashmentDaPaid",
+];
+
+const MASTER_GOVT_DEDUCTION_DEFAULT_COLUMNS: { field: keyof MasterGridRow; label: string }[] = [
+  { field: "licDefault", label: "LIC" },
+  { field: "messDefault", label: "Mess" },
+  { field: "welfareDefault", label: "Welf." },
+  { field: "vpfDefault", label: "VPF" },
+  { field: "pfLoanDefault", label: "PF loan" },
+  { field: "postOfficeDefault", label: "P.O." },
+  { field: "creditSocietyDefault", label: "Cr. soc." },
+  { field: "stdLicenceFeeDefault", label: "Std lic." },
+  { field: "electricityDefault", label: "Elec." },
+  { field: "waterDefault", label: "Water" },
+  { field: "horticultureDefault", label: "Hort." },
+  { field: "vehChargeDefault", label: "Veh." },
+  { field: "otherDeductionDefault", label: "Oth." },
+];
+
+type GovRecalcPayload = {
+  grossBasic: number;
+  daPercent: number;
+  hraPercent: number;
+  medicalFixed: number;
+  transportDaPercent: number;
+  payLevel: number;
+  deductionDefaults: GovernmentDeductionDefaults;
+  /** Run-preview overrides for paid earning lines (optional). */
+  earningPaidOverrides?: GovernmentEarningPaidOverrides;
+};
+
+function govDeductionDefaultsFromMasterRow(row: MasterGridRow): GovernmentDeductionDefaults {
+  return {
+    incomeTax: row.incomeTaxDefault,
+    pt: row.pt,
+    lic: row.licDefault,
+    cpf: row.cpfDefault,
+    daCpf: row.daCpfDefault,
+    vpf: row.vpfDefault,
+    pfLoan: row.pfLoanDefault,
+    postOffice: row.postOfficeDefault,
+    creditSociety: row.creditSocietyDefault,
+    stdLicenceFee: row.stdLicenceFeeDefault,
+    electricity: row.electricityDefault,
+    water: row.waterDefault,
+    mess: row.messDefault,
+    horticulture: row.horticultureDefault,
+    welfare: row.welfareDefault,
+    vehCharge: row.vehChargeDefault,
+    other: row.otherDeductionDefault,
+  };
+}
+
+function computeGovernmentMasterDerived(row: MasterGridRow): Partial<MasterGridRow> {
+  if (row.payrollMode !== "government" || row.governmentPayLevel == null) {
+    return {
+      govTotalEarnings: 0,
+      govTransportPaid: 0,
+      govTransportSlabGroup: "",
+      govEffectiveCpf: 0,
+      govNetSalary: 0,
+    };
+  }
+  try {
+    const comp = computeGovernmentMonthlyPayroll({
+      grossBasic: row.gross,
+      daPercent: row.daPercent,
+      hraPercent: row.hraPercent,
+      medicalFixed: row.medicalFixed,
+      transportDaPercent: row.transportDaPercent,
+      payLevel: row.governmentPayLevel,
+      daysInMonth: 30,
+      unpaidDays: 0,
+      deductionDefaults: govDeductionDefaultsFromMasterRow(row),
+    });
+    const takeHome = Math.max(0, comp.netSalary + row.advanceBonus);
+    const cpfLikeRunPayroll =
+      comp.deductions.cpf + comp.deductions.daCpf + comp.deductions.vpf + comp.deductions.pfLoan;
+    return {
+      ctc: row.gross,
+      takeHome,
+      govTotalEarnings: comp.totalEarnings,
+      govTransportPaid: comp.transportPaid,
+      govTransportSlabGroup: comp.transportSlab.transportSlabGroup,
+      /** Matches Run Payroll “CPF” column (core CPF + DA CPF + VPF + PF loan defaults). */
+      govEffectiveCpf: cpfLikeRunPayroll,
+      govNetSalary: comp.netSalary,
+      pfEmp: 0,
+      pfEmpr: 0,
+      esicEmp: 0,
+      esicEmpr: 0,
+      basic: comp.basicPaid,
+      hra: comp.hraPaid,
+      medical: comp.medicalPaid,
+      trans: comp.transportPaid,
+    };
+  } catch {
+    return {
+      ctc: row.gross,
+      takeHome: Math.max(0, row.advanceBonus),
+      govTotalEarnings: 0,
+      govTransportPaid: 0,
+      govTransportSlabGroup: "",
+      govEffectiveCpf: 0,
+      govNetSalary: 0,
+      pfEmp: 0,
+      pfEmpr: 0,
+      esicEmp: 0,
+      esicEmpr: 0,
+    };
+  }
+}
 
 function breakupIfMatchesGross(row: Pick<MasterGridRow, "basic" | "hra" | "medical" | "trans" | "lta" | "personal" | "gross">) {
   const s = row.basic + row.hra + row.medical + row.trans + row.lta + row.personal;
@@ -100,9 +328,149 @@ function computeRowStatutory(
   };
 }
 
+function emptyGovFields(): Pick<
+  MasterGridRow,
+  | "daPercent"
+  | "hraPercent"
+  | "medicalFixed"
+  | "transportDaPercent"
+  | "cpfDefault"
+  | "daCpfDefault"
+  | "licDefault"
+  | "messDefault"
+  | "welfareDefault"
+  | "vpfDefault"
+  | "pfLoanDefault"
+  | "postOfficeDefault"
+  | "creditSocietyDefault"
+  | "stdLicenceFeeDefault"
+  | "electricityDefault"
+  | "waterDefault"
+  | "horticultureDefault"
+  | "vehChargeDefault"
+  | "otherDeductionDefault"
+  | "govTotalEarnings"
+  | "govTransportPaid"
+  | "govTransportSlabGroup"
+  | "govEffectiveCpf"
+  | "govNetSalary"
+> {
+  return {
+    daPercent: 0,
+    hraPercent: 0,
+    medicalFixed: 0,
+    transportDaPercent: 0,
+    cpfDefault: 0,
+    daCpfDefault: 0,
+    licDefault: 0,
+    messDefault: 0,
+    welfareDefault: 0,
+    vpfDefault: 0,
+    pfLoanDefault: 0,
+    postOfficeDefault: 0,
+    creditSocietyDefault: 0,
+    stdLicenceFeeDefault: 0,
+    electricityDefault: 0,
+    waterDefault: 0,
+    horticultureDefault: 0,
+    vehChargeDefault: 0,
+    otherDeductionDefault: 0,
+    govTotalEarnings: 0,
+    govTransportPaid: 0,
+    govTransportSlabGroup: "",
+    govEffectiveCpf: 0,
+    govNetSalary: 0,
+  };
+}
+
 function buildMasterGridRow(apiRow: any, companyPt: number): MasterGridRow | null {
   const m = apiRow.master;
   if (!m) return null;
+  const payrollMode = m.payrollMode === "government" ? "government" : "private";
+  const governmentPayLevel =
+    apiRow.governmentPayLevel != null && Number.isFinite(Number(apiRow.governmentPayLevel))
+      ? Number(apiRow.governmentPayLevel)
+      : null;
+
+  if (payrollMode === "government") {
+    const grossBasic = Number(m.grossBasic ?? m.grossSalary) || 0;
+    const pt = m.pt != null && Number(m.pt) >= 0 ? Number(m.pt) : companyPt;
+    const tds = Number(m.tds) || 0;
+    const incomeTaxDefault = Number(m.incomeTaxDefault ?? m.tds) || 0;
+    const advanceBonus = Number(m.advanceBonus) || 0;
+    const daPercent = Number(m.daPercent) || 53;
+    const hraPercent = Number(m.hraPercent) || 30;
+    const medicalFixed = Number(m.medicalFixed) || 3000;
+    const transportDaPercent = Number(m.transportDaPercent) || 48.06;
+    const cpfDefault = Number(m.cpfDefault) || 0;
+    const daCpfDefault = Number(m.daCpfDefault) || 0;
+    const licDefault = Number(m.licDefault) || 0;
+    const messDefault = Number(m.messDefault) || 0;
+    const welfareDefault = Number(m.welfareDefault) || 0;
+    const vpfDefault = Number(m.vpfDefault) || 0;
+    const pfLoanDefault = Number(m.pfLoanDefault) || 0;
+    const postOfficeDefault = Number(m.postOfficeDefault) || 0;
+    const creditSocietyDefault = Number(m.creditSocietyDefault) || 0;
+    const stdLicenceFeeDefault = Number(m.stdLicenceFeeDefault) || 0;
+    const electricityDefault = Number(m.electricityDefault) || 0;
+    const waterDefault = Number(m.waterDefault) || 0;
+    const horticultureDefault = Number(m.horticultureDefault) || 0;
+    const vehChargeDefault = Number(m.vehChargeDefault) || 0;
+    const otherDeductionDefault = Number(m.otherDeductionDefault) || 0;
+    const base: MasterGridRow = {
+      employeeUserId: apiRow.employeeUserId,
+      employeeName: apiRow.employeeName,
+      employeeEmail: apiRow.employeeEmail,
+      payrollMode: "government",
+      governmentPayLevel,
+      gross: grossBasic,
+      pt,
+      tds,
+      incomeTaxDefault,
+      advanceBonus,
+      effectiveStartDate: m.effectiveStartDate ? String(m.effectiveStartDate).slice(0, 10) : "",
+      pfEligible: !!m.pfEligible,
+      esicEligible: !!m.esicEligible,
+      daPercent,
+      hraPercent,
+      medicalFixed,
+      transportDaPercent,
+      cpfDefault,
+      daCpfDefault,
+      licDefault,
+      messDefault,
+      welfareDefault,
+      vpfDefault,
+      pfLoanDefault,
+      postOfficeDefault,
+      creditSocietyDefault,
+      stdLicenceFeeDefault,
+      electricityDefault,
+      waterDefault,
+      horticultureDefault,
+      vehChargeDefault,
+      otherDeductionDefault,
+      lta: 0,
+      personal: 0,
+      basic: 0,
+      hra: 0,
+      medical: 0,
+      trans: 0,
+      ctc: 0,
+      pfEmp: 0,
+      pfEmpr: 0,
+      esicEmp: 0,
+      esicEmpr: 0,
+      takeHome: 0,
+      govTotalEarnings: 0,
+      govTransportPaid: 0,
+      govTransportSlabGroup: "",
+      govEffectiveCpf: 0,
+      govNetSalary: 0,
+    };
+    return { ...base, ...computeGovernmentMasterDerived(base) };
+  }
+
   const gross = Number(m.grossSalary) || 0;
   const pt = m.pt != null && Number(m.pt) >= 0 ? Number(m.pt) : companyPt;
   const tds = Number(m.tds) || 0;
@@ -122,13 +490,16 @@ function buildMasterGridRow(apiRow: any, companyPt: number): MasterGridRow | nul
     lta = d.lta;
     personal = d.personal;
   }
-  const base: Omit<MasterGridRow, "ctc" | "pfEmp" | "pfEmpr" | "esicEmp" | "esicEmpr" | "takeHome"> = {
+  const base: MasterGridRow = {
     employeeUserId: apiRow.employeeUserId,
     employeeName: apiRow.employeeName,
     employeeEmail: apiRow.employeeEmail,
+    payrollMode: "private",
+    governmentPayLevel: null,
     gross,
     pt,
     tds,
+    incomeTaxDefault: tds,
     advanceBonus,
     effectiveStartDate: m.effectiveStartDate ? String(m.effectiveStartDate).slice(0, 10) : "",
     pfEligible: !!m.pfEligible,
@@ -139,6 +510,13 @@ function buildMasterGridRow(apiRow: any, companyPt: number): MasterGridRow | nul
     trans,
     lta,
     personal,
+    ctc: 0,
+    pfEmp: 0,
+    pfEmpr: 0,
+    esicEmp: 0,
+    esicEmpr: 0,
+    takeHome: 0,
+    ...emptyGovFields(),
   };
   const stat = computeRowStatutory(base);
   return { ...base, ...stat };
@@ -174,6 +552,16 @@ function PayrollPageContent() {
   const [editTds, setEditTds] = useState("");
   const [editAdvanceBonus, setEditAdvanceBonus] = useState("");
   const [editSaving, setEditSaving] = useState(false);
+  const [editPayrollMode, setEditPayrollMode] = useState<"private" | "government">("private");
+  const [editGrossBasic, setEditGrossBasic] = useState("");
+  const [editDaPercent, setEditDaPercent] = useState("53");
+  const [editHraPercent, setEditHraPercent] = useState("30");
+  const [editMedicalFixed, setEditMedicalFixed] = useState("3000");
+  const [editTransportDaPercent, setEditTransportDaPercent] = useState("48.06");
+  const [editGovPtDefault, setEditGovPtDefault] = useState("200");
+  const [editCpfDefault, setEditCpfDefault] = useState("0");
+  const [editDaCpfDefault, setEditDaCpfDefault] = useState("0");
+  const [editGovLevel, setEditGovLevel] = useState<number | null>(null);
 
   const [runMonth, setRunMonth] = useState(() => String(new Date().getMonth() + 1).padStart(2, "0"));
   const [runYear, setRunYear] = useState(() => String(new Date().getFullYear()));
@@ -210,6 +598,15 @@ function PayrollPageContent() {
       netPay: number;
       takeHome: number;
       ctc: number;
+      grossMonthly?: number;
+      incentive?: number;
+      prBonus?: number;
+      reimbursement?: number;
+      tds?: number;
+      payrollMode?: string;
+      governmentMonthly?: unknown;
+      govRecalc?: GovRecalcPayload;
+      error?: string;
     }[];
   } | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -242,8 +639,22 @@ function PayrollPageContent() {
       takeHome: number;
       ctc: number;
       ctcBase?: number;
+      payrollMode?: string;
+      governmentMonthly?: unknown;
+      govRecalc?: GovRecalcPayload;
     }[]
   >([]);
+
+  const previewHasGovernment = useMemo(
+    () => !!(preview?.rows?.length && preview.rows.some((r: any) => r.payrollMode === "government")),
+    [preview?.rows],
+  );
+
+  const previewAllGovernment = useMemo(() => {
+    const rows = preview?.rows;
+    if (!rows?.length) return false;
+    return rows.every((r: any) => r.payrollMode === "government" && !r.error);
+  }, [preview?.rows]);
 
   // Salary slips tab (admin/HR view employee payslips)
   const [employees, setEmployees] = useState<{ id: string; name: string | null; email: string }[]>([]);
@@ -251,10 +662,22 @@ function PayrollPageContent() {
   const [selectedEmployeeId, setSelectedEmployeeId] = useState("");
   const [slipsData, setSlipsData] = useState<{
     company: { name: string; address: string; logoUrl: string | null } | null;
-    user: { name: string; employeeCode: string; designation: string; dateOfJoining: string; aadhaar: string; pan: string; uanNumber: string; pfNumber: string; esicNumber: string } | null;
+    user: {
+      name: string;
+      employeeCode: string;
+      designation: string;
+      departmentName?: string;
+      dateOfJoining: string;
+      aadhaar: string;
+      pan: string;
+      uanNumber: string;
+      pfNumber: string;
+      esicNumber: string;
+    } | null;
     payslips: {
       id: string;
       periodMonth: string;
+      periodStart: string;
       periodFormatted: string;
       generatedAt: string;
       payDays: number;
@@ -276,6 +699,10 @@ function PayrollPageContent() {
       prBonus: number;
       reimbursement: number;
       tds: number;
+      bankName?: string;
+      bankAccountNumber?: string;
+      payrollMode?: string;
+      governmentMonthly?: Record<string, number> | null;
     }[];
   } | null>(null);
   const [slipsLoading, setSlipsLoading] = useState(false);
@@ -293,12 +720,25 @@ function PayrollPageContent() {
           ...r,
           grossMonthly:
             r.grossMonthly ??
-            Math.round((r.grossPay * denom) / (r.payDays || r.rawPayDays || 1)),
+            Math.round((Number(r.grossPay || 0) * denom) / (r.payDays || r.rawPayDays || 1)),
+          grossPay: Number(r.grossPay ?? 0),
+          netPay: Number(r.netPay ?? 0),
+          pfEmployee: Number(r.pfEmployee ?? 0),
+          pfEmployer: Number(r.pfEmployer ?? 0),
+          esicEmployee: Number(r.esicEmployee ?? 0),
+          esicEmployer: Number(r.esicEmployer ?? 0),
+          profTax: Number(r.profTax ?? 0),
+          deductions: Number(r.deductions ?? 0),
+          takeHome: Number(r.takeHome ?? 0),
+          ctc: Number(r.ctc ?? 0),
           incentive: r.incentive ?? 0,
           prBonus: r.prBonus ?? 0,
           reimbursement: r.reimbursement ?? 0,
           tds: r.tds ?? 0,
           ctcBase: r.ctcBase ?? r.ctc,
+          payrollMode: r.payrollMode,
+          governmentMonthly: r.governmentMonthly ?? null,
+          govRecalc: r.govRecalc,
         }))
       );
     } else {
@@ -404,9 +844,115 @@ function PayrollPageContent() {
   ) {
     const payDenom = preview?.daysInMonth ?? preview?.workingDaysInFullMonth ?? 30;
     const payDaysMax = preview?.effectiveRunDay ?? preview?.workingDaysThroughRunDay ?? preview?.daysInMonth ?? 31;
+    const govPayDaysMax = preview?.daysInMonth ?? 31;
     setEditableRows((prev) =>
       prev.map((row) => {
         if (row.employeeUserId !== employeeUserId) return row;
+
+        if (row.payrollMode === "government" && row.govRecalc) {
+          const dim = Math.max(1, Math.floor(Number(payDenom) || 30));
+          const gr0 = row.govRecalc;
+
+          const applyGovCompute = (gr: GovRecalcPayload, payDaysVal: number) => {
+            const capped = Math.max(0, Math.min(govPayDaysMax, payDaysVal));
+            const unpaidDays = Math.max(0, dim - capped);
+            const gm = row.governmentMonthly as Record<string, unknown> | null | undefined;
+            const optionalEarnings = govOptionalFromComputedMonthly(gm);
+            const comp = computeGovernmentMonthlyPayroll({
+              grossBasic: gr.grossBasic,
+              daPercent: gr.daPercent,
+              hraPercent: gr.hraPercent,
+              medicalFixed: gr.medicalFixed,
+              transportDaPercent: gr.transportDaPercent,
+              payLevel: gr.payLevel,
+              daysInMonth: dim,
+              unpaidDays,
+              deductionDefaults: gr.deductionDefaults,
+              optionalEarnings,
+              earningPaidOverrides: gr.earningPaidOverrides,
+            });
+            return { comp, capped, unpaidDays };
+          };
+
+          const rowFromGovCompute = (
+            comp: ReturnType<typeof computeGovernmentMonthlyPayroll>,
+            capped: number,
+            unpaidDays: number,
+            gr: GovRecalcPayload,
+            incentiveBase: typeof row,
+          ) => ({
+            ...row,
+            govRecalc: gr,
+            payDays: capped,
+            unpaidLeaveDays: unpaidDays,
+            governmentMonthly: comp,
+            grossPay: comp.totalEarnings,
+            deductions: comp.totalDeductions,
+            netPay: comp.netSalary,
+            tds: comp.deductions.incomeTax,
+            profTax: comp.deductions.pt,
+            pfEmployee: Math.round(
+              comp.deductions.cpf + comp.deductions.daCpf + comp.deductions.vpf + comp.deductions.pfLoan,
+            ),
+            pfEmployer: 0,
+            esicEmployee: 0,
+            esicEmployer: 0,
+            takeHome:
+              Math.round(comp.netSalary) +
+              Math.round(Number(incentiveBase.incentive) || 0) +
+              Math.round(Number(incentiveBase.prBonus) || 0) +
+              Math.round(Number(incentiveBase.reimbursement) || 0),
+          });
+
+          if (field.startsWith("govDeduction_")) {
+            const sub = field.slice("govDeduction_".length) as keyof GovernmentDeductionDefaults;
+            if (!GOV_RUN_EDITABLE_DEDUCTION_KEYS.includes(sub)) return row;
+            const ded = { ...gr0.deductionDefaults, [sub]: Math.max(0, Math.round(Number(value) || 0)) };
+            const grNext: GovRecalcPayload = { ...gr0, deductionDefaults: ded };
+            const { comp, capped, unpaidDays } = applyGovCompute(grNext, row.payDays);
+            return rowFromGovCompute(comp, capped, unpaidDays, grNext, row) as typeof row;
+          }
+
+          if (field.startsWith("govEarning_")) {
+            const sub = field.slice("govEarning_".length) as keyof GovernmentEarningPaidOverrides;
+            if (!GOV_RUN_EDITABLE_EARNING_KEYS.includes(sub)) return row;
+            const eo: GovernmentEarningPaidOverrides = {
+              ...(gr0.earningPaidOverrides ?? {}),
+              [sub]: Math.max(0, Math.round(Number(value) || 0)),
+            };
+            const grNext: GovRecalcPayload = { ...gr0, earningPaidOverrides: eo };
+            const { comp, capped, unpaidDays } = applyGovCompute(grNext, row.payDays);
+            return rowFromGovCompute(comp, capped, unpaidDays, grNext, row) as typeof row;
+          }
+
+          const next = { ...row, [field]: value } as typeof row;
+          const recalcGovTakeHome = () => {
+            next.takeHome =
+              Math.round(Number(next.netPay) || 0) +
+              Math.round(Number(next.incentive) || 0) +
+              Math.round(Number(next.prBonus) || 0) +
+              Math.round(Number(next.reimbursement) || 0);
+          };
+          if (field === "payDays") {
+            const { comp, capped, unpaidDays } = applyGovCompute(gr0, value);
+            Object.assign(next, rowFromGovCompute(comp, capped, unpaidDays, gr0, next));
+            return next;
+          }
+          if (["incentive", "prBonus", "reimbursement", "tds"].includes(field)) {
+            recalcGovTakeHome();
+            return next;
+          }
+          if (field === "takeHome") {
+            next.takeHome = value;
+            return next;
+          }
+          if (field === "ctc") {
+            next.ctc = value;
+            return next;
+          }
+          return next;
+        }
+
         const next = { ...row, [field]: value } as typeof row;
         const recalcTakeHome = () => {
           next.takeHome = next.netPay - (next.tds ?? 0) + (next.incentive ?? 0) + (next.prBonus ?? 0) + (next.reimbursement ?? 0);
@@ -593,6 +1139,65 @@ function PayrollPageContent() {
 
   const editMasterPreview = useMemo(() => {
     if (!editMasterOpen) return null;
+    if (editPayrollMode === "government" && editGovLevel != null) {
+      const gb = parseFloat(editGrossBasic) || 0;
+      const da = parseFloat(editDaPercent) || 0;
+      const hra = parseFloat(editHraPercent) || 0;
+      const med = parseFloat(editMedicalFixed) || 0;
+      const tda = parseFloat(editTransportDaPercent) || 0;
+      const pt = parseFloat(editGovPtDefault) || 0;
+      const cpf = parseFloat(editCpfDefault) || 0;
+      const daCpf = parseFloat(editDaCpfDefault) || 0;
+      const tds = parseFloat(editTds) || 0;
+      const adv = parseFloat(editAdvanceBonus) || 0;
+      try {
+        const comp = computeGovernmentMonthlyPayroll({
+          grossBasic: gb,
+          daPercent: da,
+          hraPercent: hra,
+          medicalFixed: med,
+          transportDaPercent: tda,
+          payLevel: editGovLevel,
+          daysInMonth: 30,
+          unpaidDays: 0,
+          deductionDefaults: {
+            incomeTax: tds,
+            pt,
+            lic: 0,
+            cpf,
+            daCpf,
+            vpf: 0,
+            pfLoan: 0,
+            postOffice: 0,
+            creditSociety: 0,
+            stdLicenceFee: 0,
+            electricity: 0,
+            water: 0,
+            mess: 0,
+            horticulture: 0,
+            welfare: 0,
+            vehCharge: 0,
+            other: 0,
+          },
+        });
+        const slab = deriveTransportSlabFromLevel(editGovLevel);
+        const statutoryCpf =
+          comp.deductions.cpf + comp.deductions.daCpf + comp.deductions.vpf + comp.deductions.pfLoan;
+        return {
+          takeHome: comp.netSalary + adv,
+          netSalary: comp.netSalary,
+          totalEarnings: comp.totalEarnings,
+          transportSlab: slab.transportSlabGroup,
+          transportBase: slab.transportBase,
+          transportAmount: comp.transportPaid,
+          effectiveCpfCore: comp.deductions.cpf,
+          statutoryCpf,
+          storedCpfDefault: cpf,
+        };
+      } catch {
+        return null;
+      }
+    }
     const gross = parseFloat(editGross) || 0;
     const basic = parseFloat(editBasic) || 0;
     const hra = parseFloat(editHra) || 0;
@@ -612,6 +1217,16 @@ function PayrollPageContent() {
     return { ...calc, takeHome, ptMonthly, tds, advanceBonus };
   }, [
     editMasterOpen,
+    editPayrollMode,
+    editGovLevel,
+    editGrossBasic,
+    editDaPercent,
+    editHraPercent,
+    editMedicalFixed,
+    editTransportDaPercent,
+    editGovPtDefault,
+    editCpfDefault,
+    editDaCpfDefault,
     editGross,
     editBasic,
     editHra,
@@ -627,11 +1242,25 @@ function PayrollPageContent() {
     companyPt,
   ]);
 
+  const masterHasGovernment = useMemo(
+    () => masterGrid.some((r) => r.payrollMode === "government"),
+    [masterGrid]
+  );
+
   function patchMasterGridRow(employeeUserId: string, patch: Partial<MasterGridRow>) {
     setMasterGrid((prev) =>
       prev.map((r) => {
         if (r.employeeUserId !== employeeUserId) return r;
         const next = { ...r, ...patch };
+        if (next.payrollMode === "government") {
+          if (patch.tds !== undefined && patch.incomeTaxDefault === undefined) {
+            next.incomeTaxDefault = next.tds;
+          }
+          if (patch.incomeTaxDefault !== undefined && patch.tds === undefined) {
+            next.tds = next.incomeTaxDefault;
+          }
+          return { ...next, ...computeGovernmentMasterDerived(next) };
+        }
         const stat = computeRowStatutory(next);
         return { ...next, ...stat };
       })
@@ -646,30 +1275,11 @@ function PayrollPageContent() {
     setMasterGrid((prev) => prev.map((r) => (r.employeeUserId === employeeUserId ? rebuilt : r)));
   }
 
-  /** Opens the salary breakup modal; `fields` can come from API or current grid row (includes unsaved inline edits). */
-  function openPayrollMasterEditDialog(
-    employeeUserId: string,
-    employeeName: string | null,
-    employeeEmail: string,
-    fields: {
-      gross: number;
-      basic: number;
-      hra: number;
-      medical: number;
-      trans: number;
-      lta: number;
-      personal: number;
-      pfEligible: boolean;
-      esicEligible: boolean;
-      effectiveStartDate: string;
-      pt: number;
-      tds: number;
-      advanceBonus: number;
-    }
-  ) {
-    const gross = fields.gross;
+  /** Opens the salary breakup modal from the current grid row (includes unsaved inline edits). */
+  function openPayrollMasterEditDialog(gridRow: MasterGridRow, apiRow?: any) {
+    const gross = gridRow.gross;
     const componentsSum =
-      fields.basic + fields.hra + fields.medical + fields.trans + fields.lta + fields.personal;
+      gridRow.basic + gridRow.hra + gridRow.medical + gridRow.trans + gridRow.lta + gridRow.personal;
     /** If stored components don’t add up to gross, use the standard split for gross (Basic 50%, HRA 20%, etc.). */
     const split =
       gross > 0 &&
@@ -677,18 +1287,18 @@ function PayrollPageContent() {
         ? defaultSalaryBreakup(gross)
         : componentsSum > 0
           ? {
-              basic: fields.basic,
-              hra: fields.hra,
-              medical: fields.medical,
-              trans: fields.trans,
-              lta: fields.lta,
-              personal: fields.personal,
+              basic: gridRow.basic,
+              hra: gridRow.hra,
+              medical: gridRow.medical,
+              trans: gridRow.trans,
+              lta: gridRow.lta,
+              personal: gridRow.personal,
             }
           : defaultSalaryBreakup(gross);
     setEditMasterOpen({
-      employeeUserId,
-      employeeName,
-      employeeEmail,
+      employeeUserId: gridRow.employeeUserId,
+      employeeName: gridRow.employeeName,
+      employeeEmail: gridRow.employeeEmail,
       master: { grossSalary: gross },
     });
     setEditGross(String(gross || ""));
@@ -698,18 +1308,42 @@ function PayrollPageContent() {
     setEditTrans(String(split.trans));
     setEditLta(String(split.lta));
     setEditPersonal(String(split.personal));
-    setEditPfEligible(fields.pfEligible);
-    setEditEsicEligible(fields.esicEligible);
+    setEditPfEligible(gridRow.pfEligible);
+    setEditEsicEligible(gridRow.esicEligible);
     setEditEffectiveDate(
-      fields.effectiveStartDate
-        ? String(fields.effectiveStartDate).slice(0, 10)
+      gridRow.effectiveStartDate
+        ? String(gridRow.effectiveStartDate).slice(0, 10)
         : new Date().toISOString().slice(0, 10)
     );
-    const mpt = fields.pt;
+    const mpt = gridRow.pt;
     setEditPt(mpt != null && Number(mpt) >= 0 ? String(mpt) : String(companyPt));
-    setEditTds(String(fields.tds ?? 0));
-    setEditAdvanceBonus(String(fields.advanceBonus ?? 0));
+    setEditTds(String(gridRow.tds ?? 0));
+    setEditAdvanceBonus(String(gridRow.advanceBonus ?? 0));
     setEditReason("UpdateOnly");
+
+    const m = apiRow?.master;
+    setEditPayrollMode(gridRow.payrollMode === "government" ? "government" : "private");
+    setEditGovLevel(gridRow.governmentPayLevel);
+    if (gridRow.payrollMode === "government") {
+      setEditGrossBasic(String(gridRow.gross));
+      setEditDaPercent(String(gridRow.daPercent));
+      setEditHraPercent(String(gridRow.hraPercent));
+      setEditMedicalFixed(String(gridRow.medicalFixed));
+      setEditTransportDaPercent(String(gridRow.transportDaPercent));
+      setEditGovPtDefault(String(gridRow.pt));
+      setEditCpfDefault(String(gridRow.cpfDefault));
+      setEditDaCpfDefault(String(gridRow.daCpfDefault));
+      setEditTds(String(gridRow.incomeTaxDefault ?? gridRow.tds ?? 0));
+    } else {
+      setEditGrossBasic(String(m?.grossBasic ?? gridRow.gross ?? ""));
+      setEditDaPercent(String(m?.daPercent ?? 53));
+      setEditHraPercent(String(m?.hraPercent ?? 30));
+      setEditMedicalFixed(String(m?.medicalFixed ?? 3000));
+      setEditTransportDaPercent(String(m?.transportDaPercent ?? 48.06));
+      setEditGovPtDefault(String(m?.ptDefault ?? m?.pt ?? 200));
+      setEditCpfDefault(String(m?.cpfDefault ?? 0));
+      setEditDaCpfDefault(String(m?.daCpfDefault ?? 0));
+    }
   }
 
   async function saveMasterGridRow(employeeUserId: string) {
@@ -721,6 +1355,57 @@ function PayrollPageContent() {
     }
     setMasterRowSaving(employeeUserId);
     try {
+      if (row.payrollMode === "government") {
+        if (row.governmentPayLevel == null) {
+          showToast("error", "Set Government pay level on the employee profile before saving.");
+          setMasterRowSaving(null);
+          return;
+        }
+        const res = await fetch("/api/payroll/master", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            employeeUserId,
+            payrollMode: "government",
+            grossBasic: row.gross,
+            daPercent: row.daPercent,
+            hraPercent: row.hraPercent,
+            medicalFixed: row.medicalFixed,
+            transportDaPercent: row.transportDaPercent,
+            pfEligible: true,
+            esicEligible: false,
+            effectiveStartDate: row.effectiveStartDate,
+            reasonForChange: "Payroll master grid",
+            ptDefault: row.pt,
+            cpfDefault: row.cpfDefault,
+            daCpfDefault: row.daCpfDefault,
+            incomeTaxDefault: row.incomeTaxDefault,
+            tds: row.tds,
+            advanceBonus: row.advanceBonus,
+            licDefault: row.licDefault,
+            messDefault: row.messDefault,
+            welfareDefault: row.welfareDefault,
+            vpfDefault: row.vpfDefault,
+            pfLoanDefault: row.pfLoanDefault,
+            postOfficeDefault: row.postOfficeDefault,
+            creditSocietyDefault: row.creditSocietyDefault,
+            stdLicenceFeeDefault: row.stdLicenceFeeDefault,
+            electricityDefault: row.electricityDefault,
+            waterDefault: row.waterDefault,
+            horticultureDefault: row.horticultureDefault,
+            vehChargeDefault: row.vehChargeDefault,
+            otherDeductionDefault: row.otherDeductionDefault,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.error || "Failed to update");
+        showToast("success", "Payroll master updated");
+        const refresh = await fetch("/api/payroll/master");
+        const refreshData = await refresh.json();
+        if (refresh.ok) setMasters(refreshData.masters || []);
+        setMasterRowSaving(null);
+        return;
+      }
       const res = await fetch("/api/payroll/master", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -760,6 +1445,54 @@ function PayrollPageContent() {
     if (!editMasterOpen) return;
     setEditSaving(true);
     try {
+      const pt = parseFloat(editPt);
+      const tds = parseFloat(editTds) || 0;
+      const advanceBonus = parseFloat(editAdvanceBonus) || 0;
+      if (editPayrollMode === "government") {
+        if (editGovLevel == null) {
+          showToast("error", "Set Government pay level on the employee profile before saving.");
+          setEditSaving(false);
+          return;
+        }
+        const gb = parseFloat(editGrossBasic) || 0;
+        if (gb <= 0) {
+          showToast("error", "Gross basic is required.");
+          setEditSaving(false);
+          return;
+        }
+        const res = await fetch("/api/payroll/master", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            employeeUserId: editMasterOpen.employeeUserId,
+            payrollMode: "government",
+            grossBasic: gb,
+            daPercent: parseFloat(editDaPercent) || 53,
+            hraPercent: parseFloat(editHraPercent) || 30,
+            medicalFixed: parseFloat(editMedicalFixed) || 3000,
+            transportDaPercent: parseFloat(editTransportDaPercent) || 48.06,
+            pfEligible: true,
+            esicEligible: false,
+            effectiveStartDate: editEffectiveDate,
+            reasonForChange: editReason,
+            tds,
+            advanceBonus,
+            ptDefault: parseFloat(editGovPtDefault) || 200,
+            cpfDefault: parseFloat(editCpfDefault) || 0,
+            daCpfDefault: parseFloat(editDaCpfDefault) || 0,
+            incomeTaxDefault: tds,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.error || "Failed to update");
+        showToast("success", "Payroll master updated");
+        setEditMasterOpen(null);
+        const refresh = await fetch("/api/payroll/master");
+        const refreshData = await refresh.json();
+        if (refresh.ok) setMasters(refreshData.masters || []);
+        setEditSaving(false);
+        return;
+      }
       const gross = parseFloat(editGross) || 0;
       const basic = parseFloat(editBasic) || 0;
       const hra = parseFloat(editHra) || 0;
@@ -767,14 +1500,12 @@ function PayrollPageContent() {
       const trans = parseFloat(editTrans) || 0;
       const lta = parseFloat(editLta) || 0;
       const personal = parseFloat(editPersonal) || 0;
-      const pt = parseFloat(editPt);
-      const tds = parseFloat(editTds) || 0;
-      const advanceBonus = parseFloat(editAdvanceBonus) || 0;
       const res = await fetch("/api/payroll/master", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           employeeUserId: editMasterOpen.employeeUserId,
+          payrollMode: "private",
           grossSalary: gross,
           basic: basic || undefined,
           hra: hra || undefined,
@@ -827,6 +1558,14 @@ function PayrollPageContent() {
         tds: r.tds ?? 0,
         takeHome: r.takeHome,
         ctc: r.ctc,
+        ...(r.payrollMode === "government" && r.govRecalc
+          ? {
+              payrollMode: r.payrollMode,
+              governmentMonthly: r.governmentMonthly,
+              governmentDeductionDefaults: r.govRecalc.deductionDefaults,
+              governmentEarningPaidOverrides: r.govRecalc.earningPaidOverrides,
+            }
+          : {}),
       }));
       const res = await fetch("/api/payroll/run", {
         method: "POST",
@@ -903,256 +1642,608 @@ function PayrollPageContent() {
               <p className="muted">No current employees with payroll master.</p>
             ) : (
               <div className="overflow-x-auto rounded-lg border border-slate-800/30 shadow-sm">
-                <table className="w-full min-w-[1090px] border-collapse text-left text-sm">
-                  <thead>
-                    <tr className="bg-[#0a1628] text-[11px] font-semibold uppercase tracking-wide text-white">
-                      <th rowSpan={2} className="border border-slate-700/90 px-2 py-2 align-middle whitespace-nowrap">
-                        Employee
-                      </th>
-                      <th rowSpan={2} className="min-w-[5rem] border border-slate-700/90 px-2 py-2 text-center">
-                        Gross
-                      </th>
-                      <th rowSpan={2} className="border border-slate-700/90 px-1 py-2 text-center text-[10px] leading-tight">
-                        PF
-                        <br />
-                        elig
-                      </th>
-                      <th rowSpan={2} className="border border-slate-700/90 px-1 py-2 text-center text-[10px] leading-tight">
-                        ESIC
-                        <br />
-                        elig
-                      </th>
-                      <th rowSpan={2} className="border border-slate-700/90 px-2 py-2 text-center">
-                        CTC
-                      </th>
-                      <th colSpan={2} className="border border-slate-700/90 px-2 py-1.5 text-center">
-                        Employee contribution
-                      </th>
-                      <th colSpan={2} className="border border-slate-700/90 px-2 py-1.5 text-center">
-                        Employer contribution
-                      </th>
-                      <th rowSpan={2} className="border border-slate-700/90 px-2 py-2 text-center">
-                        Adv bonus
-                      </th>
-                      <th rowSpan={2} className="border border-slate-700/90 px-2 py-2 text-center">
-                        PT
-                      </th>
-                      <th rowSpan={2} className="border border-slate-700/90 px-2 py-2 text-center">
-                        TDS
-                      </th>
-                      <th rowSpan={2} className="border border-slate-700/90 px-2 py-2 text-center">
-                        Take home
-                      </th>
-                      <th rowSpan={2} className="border border-slate-700/90 px-2 py-2 text-center whitespace-nowrap">
-                        Applicable month
-                      </th>
-                      <th rowSpan={2} className="border border-slate-700/90 px-2 py-2 text-center">
-                        Action
-                      </th>
-                    </tr>
-                    <tr className="bg-[#0a1628] text-[11px] font-medium text-white">
-                      <th className="border border-slate-700/90 px-2 py-1.5 text-center">PF</th>
-                      <th className="border border-slate-700/90 px-2 py-1.5 text-center">ESIC</th>
-                      <th className="border border-slate-700/90 px-2 py-1.5 text-center">PF</th>
-                      <th className="border border-slate-700/90 px-2 py-1.5 text-center">ESIC</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {masterGrid.map((row) => {
-                      const inpGross =
-                        "w-full min-w-[4rem] max-w-[6.5rem] rounded border border-sky-400/80 bg-white px-1.5 py-1 text-right text-sm tabular-nums text-slate-900";
-                      const inp =
-                        "w-full min-w-[4rem] max-w-[6.5rem] rounded border border-sky-400/80 bg-white px-1.5 py-1 text-right text-sm tabular-nums text-slate-900";
-                      const inpRo =
-                        "w-full min-w-[4rem] max-w-[6.5rem] rounded border border-slate-300/90 bg-slate-100/80 px-1.5 py-1 text-right text-sm tabular-nums text-slate-700";
-                      return (
-                        <tr
-                          key={row.employeeUserId}
-                          className={`border-t border-slate-200 bg-white hover:bg-slate-50/80 ${
-                            masterFocusId === row.employeeUserId ? "ring-2 ring-inset ring-violet-500/55" : ""
-                          }`}
-                          onClick={() => setMasterFocusId(row.employeeUserId)}
+                {masterHasGovernment && (
+                  <p className="border-b border-slate-200 bg-amber-50/95 px-3 py-2 text-xs leading-snug text-amber-950">
+                    Government payroll: <strong>CPF default 0</strong> means the same automatic deduction as Run
+                    Payroll ({Math.round(GOVERNMENT_DEFAULT_CPF_RATE_ON_TOTAL_EARNINGS * 100)}% of total monthly
+                    earnings). The <strong>CPF (eff.)</strong> column is the amount actually taken after that rule (and
+                    after DA CPF defaults).
+                  </p>
+                )}
+                {masterHasGovernment ? (
+                  <table className="w-full min-w-[2200px] border-collapse text-left text-sm">
+                    <thead>
+                      <tr className="bg-[#0a1628] text-[10px] font-semibold uppercase tracking-wide text-white">
+                        <th className="border border-slate-700/90 px-2 py-2 whitespace-nowrap">Employee</th>
+                        <th className="border border-slate-700/90 px-1 py-2 text-center">Type</th>
+                        <th className="border border-slate-700/90 px-1 py-2 text-center whitespace-nowrap" title="Government: gross basic; private: monthly gross">
+                          Gross / basic
+                        </th>
+                        <th className="border border-slate-700/90 px-1 py-2 text-center">DA %</th>
+                        <th className="border border-slate-700/90 px-1 py-2 text-center">HRA %</th>
+                        <th className="border border-slate-700/90 px-1 py-2 text-center">Med</th>
+                        <th className="border border-slate-700/90 px-1 py-2 text-center whitespace-nowrap">TA DA %</th>
+                        <th className="border border-slate-700/90 px-1 py-2 text-center">Transport ₹</th>
+                        <th className="border border-slate-700/90 px-1 py-2 text-center">Slab</th>
+                        <th className="border border-slate-700/90 px-1 py-2 text-center whitespace-nowrap">Tot. earn.</th>
+                        <th className="border border-slate-700/90 px-1 py-2 text-center" title="Stored monthly default; 0 = auto %">
+                          CPF def.
+                        </th>
+                        <th
+                          className="border border-slate-700/90 px-1 py-2 text-center"
+                          title="Full month, same bundle as Run Payroll CPF (core + DA CPF + VPF + PF loan defaults)"
                         >
-                          <td className="border border-slate-200 px-2 py-1.5 whitespace-nowrap">
-                            <span className="font-medium text-cyan-600">
-                              {row.employeeName || row.employeeEmail || "—"}
-                            </span>
-                          </td>
-                          <td className="border border-slate-200 px-1 py-1">
-                            <input
-                              type="number"
-                              min={0}
-                              step={100}
-                              className={inpGross}
-                              value={row.gross}
-                              onChange={(e) =>
-                                patchMasterGridRow(row.employeeUserId, {
-                                  gross: Math.max(0, parseFloat(e.target.value) || 0),
-                                })
-                              }
-                            />
-                          </td>
-                          <td className="border border-slate-200 px-1 py-1 text-center align-middle">
-                            <input
-                              type="checkbox"
-                              checked={row.pfEligible}
-                              onChange={(e) =>
-                                patchMasterGridRow(row.employeeUserId, { pfEligible: e.target.checked })
-                              }
-                              aria-label="PF eligible"
-                            />
-                          </td>
-                          <td className="border border-slate-200 px-1 py-1 text-center align-middle">
-                            <input
-                              type="checkbox"
-                              checked={row.esicEligible}
-                              onChange={(e) =>
-                                patchMasterGridRow(row.employeeUserId, { esicEligible: e.target.checked })
-                              }
-                              aria-label="ESIC eligible"
-                            />
-                          </td>
-                          <td className="border border-slate-200 px-1 py-1">
-                            <input type="text" readOnly className={inpRo} value={Math.round(row.ctc)} />
-                          </td>
-                          <td className="border border-slate-200 px-1 py-1">
-                            <input type="text" readOnly className={inpRo} value={Math.round(row.pfEmp)} />
-                          </td>
-                          <td className="border border-slate-200 px-1 py-1">
-                            <input type="text" readOnly className={inpRo} value={Math.round(row.esicEmp)} />
-                          </td>
-                          <td className="border border-slate-200 px-1 py-1">
-                            <input type="text" readOnly className={inpRo} value={Math.round(row.pfEmpr)} />
-                          </td>
-                          <td className="border border-slate-200 px-1 py-1">
-                            <input type="text" readOnly className={inpRo} value={Math.round(row.esicEmpr)} />
-                          </td>
-                          <td className="border border-slate-200 px-1 py-1">
-                            <input
-                              type="number"
-                              min={0}
-                              step={100}
-                              className={inp}
-                              value={row.advanceBonus}
-                              onChange={(e) =>
-                                patchMasterGridRow(row.employeeUserId, {
-                                  advanceBonus: Math.max(0, parseFloat(e.target.value) || 0),
-                                })
-                              }
-                            />
-                          </td>
-                          <td className="border border-slate-200 px-1 py-1">
-                            <input
-                              type="number"
-                              min={0}
-                              step={1}
-                              className={inp}
-                              value={row.pt}
-                              onChange={(e) =>
-                                patchMasterGridRow(row.employeeUserId, {
-                                  pt: Math.max(0, parseFloat(e.target.value) || 0),
-                                })
-                              }
-                            />
-                          </td>
-                          <td className="border border-slate-200 px-1 py-1">
-                            <input
-                              type="number"
-                              min={0}
-                              step={100}
-                              className={inp}
-                              value={row.tds}
-                              onChange={(e) =>
-                                patchMasterGridRow(row.employeeUserId, {
-                                  tds: Math.max(0, parseFloat(e.target.value) || 0),
-                                })
-                              }
-                            />
-                          </td>
-                          <td className="border border-slate-200 px-1 py-1">
-                            <input type="text" readOnly className={inpRo} value={Math.round(row.takeHome)} />
-                          </td>
-                          <td className="border border-slate-200 px-1 py-1">
-                            <input
-                              type="month"
-                              className="min-w-[8.5rem] rounded border border-sky-400/80 bg-white px-1 py-1 text-sm text-slate-900"
-                              value={
-                                row.effectiveStartDate && row.effectiveStartDate.length >= 7
-                                  ? row.effectiveStartDate.slice(0, 7)
-                                  : ""
-                              }
-                              onChange={(e) => {
-                                const v = e.target.value;
-                                patchMasterGridRow(row.employeeUserId, {
-                                  effectiveStartDate: v ? `${v}-01` : "",
-                                });
-                              }}
-                            />
-                          </td>
-                          <td className="border border-slate-200 px-1 py-1">
-                            <div className="flex items-center justify-center gap-0.5">
-                              <button
-                                type="button"
-                                className="rounded p-1.5 text-sky-700 hover:bg-sky-50"
-                                title="Edit in dialog"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  openPayrollMasterEditDialog(row.employeeUserId, row.employeeName, row.employeeEmail, {
-                                    gross: row.gross,
-                                    basic: row.basic,
-                                    hra: row.hra,
-                                    medical: row.medical,
-                                    trans: row.trans,
-                                    lta: row.lta,
-                                    personal: row.personal,
-                                    pfEligible: row.pfEligible,
-                                    esicEligible: row.esicEligible,
-                                    effectiveStartDate: row.effectiveStartDate,
-                                    pt: row.pt,
-                                    tds: row.tds,
-                                    advanceBonus: row.advanceBonus,
+                          CPF (eff.)
+                        </th>
+                        <th className="border border-slate-700/90 px-1 py-2 text-center">DA CPF</th>
+                        <th className="border border-slate-700/90 px-1 py-2 text-center">PT</th>
+                        <th className="border border-slate-700/90 px-1 py-2 text-center">Inc. tax</th>
+                        {MASTER_GOVT_DEDUCTION_DEFAULT_COLUMNS.map((c) => (
+                          <th
+                            key={c.field}
+                            className="border border-slate-700/90 px-0.5 py-2 text-center text-[9px] whitespace-nowrap"
+                            title={`Monthly default: ${c.label}`}
+                          >
+                            {c.label}
+                          </th>
+                        ))}
+                        <th className="border border-slate-700/90 px-1 py-2 text-center">Adv</th>
+                        <th className="border border-slate-700/90 px-1 py-2 text-center">Take home</th>
+                        <th className="border border-slate-700/90 px-1 py-2 text-center whitespace-nowrap">Month</th>
+                        <th className="border border-slate-700/90 px-1 py-2 text-center">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {masterGrid.map((row) => {
+                        const inpGross =
+                          "w-full min-w-[3.5rem] max-w-[6rem] rounded border border-sky-400/80 bg-white px-1 py-1 text-right text-xs tabular-nums text-slate-900";
+                        const inp =
+                          "w-full min-w-[3.25rem] max-w-[5.5rem] rounded border border-sky-400/80 bg-white px-1 py-1 text-right text-xs tabular-nums text-slate-900";
+                        const inpRo =
+                          "w-full min-w-[3.25rem] max-w-[5.5rem] rounded border border-slate-300/90 bg-slate-100/80 px-1 py-1 text-right text-xs tabular-nums text-slate-700";
+                        const dash = "—";
+                        const isGov = row.payrollMode === "government";
+                        return (
+                          <tr
+                            key={row.employeeUserId}
+                            className={`border-t border-slate-200 bg-white hover:bg-slate-50/80 ${
+                              masterFocusId === row.employeeUserId ? "ring-2 ring-inset ring-violet-500/55" : ""
+                            }`}
+                            onClick={() => setMasterFocusId(row.employeeUserId)}
+                          >
+                            <td className="border border-slate-200 px-2 py-1.5 whitespace-nowrap">
+                              <span className="font-medium text-cyan-600">
+                                {row.employeeName || row.employeeEmail || "—"}
+                              </span>
+                            </td>
+                            <td className="border border-slate-200 px-1 py-1 text-center align-middle">
+                              <span
+                                className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                                  isGov ? "bg-emerald-100 text-emerald-900" : "bg-slate-200 text-slate-800"
+                                }`}
+                              >
+                                {isGov ? "Gov" : "Pvt"}
+                              </span>
+                            </td>
+                            <td className="border border-slate-200 px-1 py-1">
+                              <input
+                                type="number"
+                                min={0}
+                                step={100}
+                                className={inpGross}
+                                value={row.gross}
+                                onChange={(e) =>
+                                  patchMasterGridRow(row.employeeUserId, {
+                                    gross: Math.max(0, parseFloat(e.target.value) || 0),
+                                  })
+                                }
+                              />
+                            </td>
+                            <td className="border border-slate-200 px-1 py-1 text-center text-xs text-slate-600">
+                              {isGov ? (
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  className={inp}
+                                  value={row.daPercent}
+                                  onChange={(e) =>
+                                    patchMasterGridRow(row.employeeUserId, {
+                                      daPercent: Math.max(0, parseFloat(e.target.value) || 0),
+                                    })
+                                  }
+                                />
+                              ) : (
+                                dash
+                              )}
+                            </td>
+                            <td className="border border-slate-200 px-1 py-1 text-center">
+                              {isGov ? (
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  className={inp}
+                                  value={row.hraPercent}
+                                  onChange={(e) =>
+                                    patchMasterGridRow(row.employeeUserId, {
+                                      hraPercent: Math.max(0, parseFloat(e.target.value) || 0),
+                                    })
+                                  }
+                                />
+                              ) : (
+                                dash
+                              )}
+                            </td>
+                            <td className="border border-slate-200 px-1 py-1 text-center">
+                              {isGov ? (
+                                <input
+                                  type="number"
+                                  min={0}
+                                  step={100}
+                                  className={inp}
+                                  value={row.medicalFixed}
+                                  onChange={(e) =>
+                                    patchMasterGridRow(row.employeeUserId, {
+                                      medicalFixed: Math.max(0, parseFloat(e.target.value) || 0),
+                                    })
+                                  }
+                                />
+                              ) : (
+                                dash
+                              )}
+                            </td>
+                            <td className="border border-slate-200 px-1 py-1 text-center">
+                              {isGov ? (
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  className={inp}
+                                  value={row.transportDaPercent}
+                                  onChange={(e) =>
+                                    patchMasterGridRow(row.employeeUserId, {
+                                      transportDaPercent: Math.max(0, parseFloat(e.target.value) || 0),
+                                    })
+                                  }
+                                />
+                              ) : (
+                                dash
+                              )}
+                            </td>
+                            <td className="border border-slate-200 px-1 py-1">
+                              <input
+                                type="text"
+                                readOnly
+                                className={inpRo}
+                                value={isGov ? Math.round(row.govTransportPaid) : Math.round(row.trans)}
+                              />
+                            </td>
+                            <td className="border border-slate-200 px-1 py-1 text-center text-[10px] font-medium text-slate-700">
+                              {isGov ? row.govTransportSlabGroup || "—" : dash}
+                            </td>
+                            <td className="border border-slate-200 px-1 py-1">
+                              <input
+                                type="text"
+                                readOnly
+                                className={inpRo}
+                                value={isGov ? Math.round(row.govTotalEarnings) : Math.round(row.gross)}
+                              />
+                            </td>
+                            <td className="border border-slate-200 px-1 py-1">
+                              {isGov ? (
+                                <input
+                                  type="number"
+                                  min={0}
+                                  step={1}
+                                  className={inp}
+                                  value={row.cpfDefault}
+                                  onChange={(e) =>
+                                    patchMasterGridRow(row.employeeUserId, {
+                                      cpfDefault: Math.max(0, parseFloat(e.target.value) || 0),
+                                    })
+                                  }
+                                />
+                              ) : (
+                                <input type="text" readOnly className={inpRo} value={dash} />
+                              )}
+                            </td>
+                            <td className="border border-slate-200 px-1 py-1">
+                              <input
+                                type="text"
+                                readOnly
+                                className={inpRo}
+                                value={isGov ? Math.round(row.govEffectiveCpf) : Math.round(row.pfEmp)}
+                              />
+                            </td>
+                            <td className="border border-slate-200 px-1 py-1">
+                              {isGov ? (
+                                <input
+                                  type="number"
+                                  min={0}
+                                  step={1}
+                                  className={inp}
+                                  value={row.daCpfDefault}
+                                  onChange={(e) =>
+                                    patchMasterGridRow(row.employeeUserId, {
+                                      daCpfDefault: Math.max(0, parseFloat(e.target.value) || 0),
+                                    })
+                                  }
+                                />
+                              ) : (
+                                <input type="text" readOnly className={inpRo} value={dash} />
+                              )}
+                            </td>
+                            <td className="border border-slate-200 px-1 py-1">
+                              <input
+                                type="number"
+                                min={0}
+                                step={1}
+                                className={inp}
+                                value={row.pt}
+                                onChange={(e) =>
+                                  patchMasterGridRow(row.employeeUserId, {
+                                    pt: Math.max(0, parseFloat(e.target.value) || 0),
+                                  })
+                                }
+                              />
+                            </td>
+                            <td className="border border-slate-200 px-1 py-1">
+                              <input
+                                type="number"
+                                min={0}
+                                step={100}
+                                className={inp}
+                                value={isGov ? row.incomeTaxDefault : row.tds}
+                                onChange={(e) => {
+                                  const v = Math.max(0, parseFloat(e.target.value) || 0);
+                                  if (isGov) {
+                                    patchMasterGridRow(row.employeeUserId, { incomeTaxDefault: v, tds: v });
+                                  } else {
+                                    patchMasterGridRow(row.employeeUserId, { tds: v });
+                                  }
+                                }}
+                              />
+                            </td>
+                            {MASTER_GOVT_DEDUCTION_DEFAULT_COLUMNS.map((c) => (
+                              <td key={c.field} className="border border-slate-200 px-0.5 py-1">
+                                {isGov ? (
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    step={1}
+                                    className={inp}
+                                    value={row[c.field] as number}
+                                    onChange={(e) =>
+                                      patchMasterGridRow(row.employeeUserId, {
+                                        [c.field]: Math.max(0, parseFloat(e.target.value) || 0),
+                                      } as Partial<MasterGridRow>)
+                                    }
+                                  />
+                                ) : (
+                                  <input type="text" readOnly className={inpRo} value={dash} />
+                                )}
+                              </td>
+                            ))}
+                            <td className="border border-slate-200 px-1 py-1">
+                              <input
+                                type="number"
+                                min={0}
+                                step={100}
+                                className={inp}
+                                value={row.advanceBonus}
+                                onChange={(e) =>
+                                  patchMasterGridRow(row.employeeUserId, {
+                                    advanceBonus: Math.max(0, parseFloat(e.target.value) || 0),
+                                  })
+                                }
+                              />
+                            </td>
+                            <td className="border border-slate-200 px-1 py-1">
+                              <input type="text" readOnly className={inpRo} value={Math.round(row.takeHome)} />
+                            </td>
+                            <td className="border border-slate-200 px-1 py-1">
+                              <input
+                                type="month"
+                                className="min-w-[8.5rem] rounded border border-sky-400/80 bg-white px-1 py-1 text-xs text-slate-900"
+                                value={
+                                  row.effectiveStartDate && row.effectiveStartDate.length >= 7
+                                    ? row.effectiveStartDate.slice(0, 7)
+                                    : ""
+                                }
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  patchMasterGridRow(row.employeeUserId, {
+                                    effectiveStartDate: v ? `${v}-01` : "",
                                   });
                                 }}
-                              >
-                                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-                                  <path d="M12 20h9M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z" />
-                                </svg>
-                              </button>
-                              <button
-                                type="button"
-                                className="rounded p-1.5 text-sky-700 hover:bg-sky-50 disabled:opacity-50"
-                                title="Save row"
-                                disabled={masterRowSaving === row.employeeUserId}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  void saveMasterGridRow(row.employeeUserId);
+                              />
+                            </td>
+                            <td className="border border-slate-200 px-1 py-1">
+                              <div className="flex items-center justify-center gap-0.5">
+                                <button
+                                  type="button"
+                                  className="rounded p-1.5 text-sky-700 hover:bg-sky-50"
+                                  title="Edit in dialog"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const apiRow = masters.find((m) => m.employeeUserId === row.employeeUserId);
+                                    openPayrollMasterEditDialog(row, apiRow);
+                                  }}
+                                >
+                                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                                    <path d="M12 20h9M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z" />
+                                  </svg>
+                                </button>
+                                <button
+                                  type="button"
+                                  className="rounded p-1.5 text-sky-700 hover:bg-sky-50 disabled:opacity-50"
+                                  title="Save row"
+                                  disabled={masterRowSaving === row.employeeUserId}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void saveMasterGridRow(row.employeeUserId);
+                                  }}
+                                >
+                                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                                    <path d="M20 6L9 17l-5-5" />
+                                  </svg>
+                                </button>
+                                <button
+                                  type="button"
+                                  className="rounded p-1.5 text-sky-700 hover:bg-sky-50"
+                                  title="Undo row changes"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    undoMasterGridRow(row.employeeUserId);
+                                  }}
+                                >
+                                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                                    <path d="M3 7v6h6M3 13a9 9 0 109-9 9 9 0 00-9 9" />
+                                  </svg>
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                ) : (
+                  <table className="w-full min-w-[1090px] border-collapse text-left text-sm">
+                    <thead>
+                      <tr className="bg-[#0a1628] text-[11px] font-semibold uppercase tracking-wide text-white">
+                        <th rowSpan={2} className="border border-slate-700/90 px-2 py-2 align-middle whitespace-nowrap">
+                          Employee
+                        </th>
+                        <th rowSpan={2} className="min-w-[5rem] border border-slate-700/90 px-2 py-2 text-center">
+                          Gross
+                        </th>
+                        <th rowSpan={2} className="border border-slate-700/90 px-1 py-2 text-center text-[10px] leading-tight">
+                          PF
+                          <br />
+                          elig
+                        </th>
+                        <th rowSpan={2} className="border border-slate-700/90 px-1 py-2 text-center text-[10px] leading-tight">
+                          ESIC
+                          <br />
+                          elig
+                        </th>
+                        <th rowSpan={2} className="border border-slate-700/90 px-2 py-2 text-center">
+                          CTC
+                        </th>
+                        <th colSpan={2} className="border border-slate-700/90 px-2 py-1.5 text-center">
+                          Employee contribution
+                        </th>
+                        <th colSpan={2} className="border border-slate-700/90 px-2 py-1.5 text-center">
+                          Employer contribution
+                        </th>
+                        <th rowSpan={2} className="border border-slate-700/90 px-2 py-2 text-center">
+                          Adv bonus
+                        </th>
+                        <th rowSpan={2} className="border border-slate-700/90 px-2 py-2 text-center">
+                          PT
+                        </th>
+                        <th rowSpan={2} className="border border-slate-700/90 px-2 py-2 text-center">
+                          TDS
+                        </th>
+                        <th rowSpan={2} className="border border-slate-700/90 px-2 py-2 text-center">
+                          Take home
+                        </th>
+                        <th rowSpan={2} className="border border-slate-700/90 px-2 py-2 text-center whitespace-nowrap">
+                          Applicable month
+                        </th>
+                        <th rowSpan={2} className="border border-slate-700/90 px-2 py-2 text-center">
+                          Action
+                        </th>
+                      </tr>
+                      <tr className="bg-[#0a1628] text-[11px] font-medium text-white">
+                        <th className="border border-slate-700/90 px-2 py-1.5 text-center">PF</th>
+                        <th className="border border-slate-700/90 px-2 py-1.5 text-center">ESIC</th>
+                        <th className="border border-slate-700/90 px-2 py-1.5 text-center">PF</th>
+                        <th className="border border-slate-700/90 px-2 py-1.5 text-center">ESIC</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {masterGrid.map((row) => {
+                        const inpGross =
+                          "w-full min-w-[4rem] max-w-[6.5rem] rounded border border-sky-400/80 bg-white px-1.5 py-1 text-right text-sm tabular-nums text-slate-900";
+                        const inp =
+                          "w-full min-w-[4rem] max-w-[6.5rem] rounded border border-sky-400/80 bg-white px-1.5 py-1 text-right text-sm tabular-nums text-slate-900";
+                        const inpRo =
+                          "w-full min-w-[4rem] max-w-[6.5rem] rounded border border-slate-300/90 bg-slate-100/80 px-1.5 py-1 text-right text-sm tabular-nums text-slate-700";
+                        return (
+                          <tr
+                            key={row.employeeUserId}
+                            className={`border-t border-slate-200 bg-white hover:bg-slate-50/80 ${
+                              masterFocusId === row.employeeUserId ? "ring-2 ring-inset ring-violet-500/55" : ""
+                            }`}
+                            onClick={() => setMasterFocusId(row.employeeUserId)}
+                          >
+                            <td className="border border-slate-200 px-2 py-1.5 whitespace-nowrap">
+                              <span className="font-medium text-cyan-600">
+                                {row.employeeName || row.employeeEmail || "—"}
+                              </span>
+                            </td>
+                            <td className="border border-slate-200 px-1 py-1">
+                              <input
+                                type="number"
+                                min={0}
+                                step={100}
+                                className={inpGross}
+                                value={row.gross}
+                                onChange={(e) =>
+                                  patchMasterGridRow(row.employeeUserId, {
+                                    gross: Math.max(0, parseFloat(e.target.value) || 0),
+                                  })
+                                }
+                              />
+                            </td>
+                            <td className="border border-slate-200 px-1 py-1 text-center align-middle">
+                              <input
+                                type="checkbox"
+                                checked={row.pfEligible}
+                                onChange={(e) =>
+                                  patchMasterGridRow(row.employeeUserId, { pfEligible: e.target.checked })
+                                }
+                                aria-label="PF eligible"
+                              />
+                            </td>
+                            <td className="border border-slate-200 px-1 py-1 text-center align-middle">
+                              <input
+                                type="checkbox"
+                                checked={row.esicEligible}
+                                onChange={(e) =>
+                                  patchMasterGridRow(row.employeeUserId, { esicEligible: e.target.checked })
+                                }
+                                aria-label="ESIC eligible"
+                              />
+                            </td>
+                            <td className="border border-slate-200 px-1 py-1">
+                              <input type="text" readOnly className={inpRo} value={Math.round(row.ctc)} />
+                            </td>
+                            <td className="border border-slate-200 px-1 py-1">
+                              <input type="text" readOnly className={inpRo} value={Math.round(row.pfEmp)} />
+                            </td>
+                            <td className="border border-slate-200 px-1 py-1">
+                              <input type="text" readOnly className={inpRo} value={Math.round(row.esicEmp)} />
+                            </td>
+                            <td className="border border-slate-200 px-1 py-1">
+                              <input type="text" readOnly className={inpRo} value={Math.round(row.pfEmpr)} />
+                            </td>
+                            <td className="border border-slate-200 px-1 py-1">
+                              <input type="text" readOnly className={inpRo} value={Math.round(row.esicEmpr)} />
+                            </td>
+                            <td className="border border-slate-200 px-1 py-1">
+                              <input
+                                type="number"
+                                min={0}
+                                step={100}
+                                className={inp}
+                                value={row.advanceBonus}
+                                onChange={(e) =>
+                                  patchMasterGridRow(row.employeeUserId, {
+                                    advanceBonus: Math.max(0, parseFloat(e.target.value) || 0),
+                                  })
+                                }
+                              />
+                            </td>
+                            <td className="border border-slate-200 px-1 py-1">
+                              <input
+                                type="number"
+                                min={0}
+                                step={1}
+                                className={inp}
+                                value={row.pt}
+                                onChange={(e) =>
+                                  patchMasterGridRow(row.employeeUserId, {
+                                    pt: Math.max(0, parseFloat(e.target.value) || 0),
+                                  })
+                                }
+                              />
+                            </td>
+                            <td className="border border-slate-200 px-1 py-1">
+                              <input
+                                type="number"
+                                min={0}
+                                step={100}
+                                className={inp}
+                                value={row.tds}
+                                onChange={(e) =>
+                                  patchMasterGridRow(row.employeeUserId, {
+                                    tds: Math.max(0, parseFloat(e.target.value) || 0),
+                                  })
+                                }
+                              />
+                            </td>
+                            <td className="border border-slate-200 px-1 py-1">
+                              <input type="text" readOnly className={inpRo} value={Math.round(row.takeHome)} />
+                            </td>
+                            <td className="border border-slate-200 px-1 py-1">
+                              <input
+                                type="month"
+                                className="min-w-[8.5rem] rounded border border-sky-400/80 bg-white px-1 py-1 text-sm text-slate-900"
+                                value={
+                                  row.effectiveStartDate && row.effectiveStartDate.length >= 7
+                                    ? row.effectiveStartDate.slice(0, 7)
+                                    : ""
+                                }
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  patchMasterGridRow(row.employeeUserId, {
+                                    effectiveStartDate: v ? `${v}-01` : "",
+                                  });
                                 }}
-                              >
-                                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-                                  <path d="M20 6L9 17l-5-5" />
-                                </svg>
-                              </button>
-                              <button
-                                type="button"
-                                className="rounded p-1.5 text-sky-700 hover:bg-sky-50"
-                                title="Undo row changes"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  undoMasterGridRow(row.employeeUserId);
-                                }}
-                              >
-                                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-                                  <path d="M3 7v6h6M3 13a9 9 0 109-9 9 9 0 00-9 9" />
-                                </svg>
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-
+                              />
+                            </td>
+                            <td className="border border-slate-200 px-1 py-1">
+                              <div className="flex items-center justify-center gap-0.5">
+                                <button
+                                  type="button"
+                                  className="rounded p-1.5 text-sky-700 hover:bg-sky-50"
+                                  title="Edit in dialog"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const apiRow = masters.find((m) => m.employeeUserId === row.employeeUserId);
+                                    openPayrollMasterEditDialog(row, apiRow);
+                                  }}
+                                >
+                                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                                    <path d="M12 20h9M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z" />
+                                  </svg>
+                                </button>
+                                <button
+                                  type="button"
+                                  className="rounded p-1.5 text-sky-700 hover:bg-sky-50 disabled:opacity-50"
+                                  title="Save row"
+                                  disabled={masterRowSaving === row.employeeUserId}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void saveMasterGridRow(row.employeeUserId);
+                                  }}
+                                >
+                                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                                    <path d="M20 6L9 17l-5-5" />
+                                  </svg>
+                                </button>
+                                <button
+                                  type="button"
+                                  className="rounded p-1.5 text-sky-700 hover:bg-sky-50"
+                                  title="Undo row changes"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    undoMasterGridRow(row.employeeUserId);
+                                  }}
+                                >
+                                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                                    <path d="M3 7v6h6M3 13a9 9 0 109-9 9 9 0 00-9 9" />
+                                  </svg>
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
               </div>
             )}
           </div>
@@ -1177,6 +2268,75 @@ function PayrollPageContent() {
                 <p className="mt-1 text-sm text-slate-500">{editMasterOpen.employeeName || editMasterOpen.employeeEmail}</p>
               </div>
               <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-5 py-4 sm:px-6">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-700">Structure</label>
+                <select
+                  value={editPayrollMode}
+                  onChange={(e) => setEditPayrollMode(e.target.value as "private" | "government")}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                >
+                  <option value="private">Private (CTC / gross)</option>
+                  <option value="government">Government (gross basic)</option>
+                </select>
+                {editPayrollMode === "government" && (
+                  <p className="mt-1 text-xs text-slate-500">
+                    Set Government pay level on the Employees page. Transport slab follows level (1–2, 3–8, 9+).
+                  </p>
+                )}
+              </div>
+              {editPayrollMode === "government" ? (
+                <div className="space-y-3">
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700">Gross basic (monthly) *</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="100"
+                      value={editGrossBasic}
+                      onChange={(e) => setEditGrossBasic(e.target.value)}
+                      required
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
+                    <div>
+                      <label className="text-slate-600">DA %</label>
+                      <input type="number" step="0.01" value={editDaPercent} onChange={(e) => setEditDaPercent(e.target.value)} className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm" />
+                    </div>
+                    <div>
+                      <label className="text-slate-600">HRA %</label>
+                      <input type="number" step="0.01" value={editHraPercent} onChange={(e) => setEditHraPercent(e.target.value)} className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm" />
+                    </div>
+                    <div>
+                      <label className="text-slate-600">Medical (fixed)</label>
+                      <input type="number" step="100" value={editMedicalFixed} onChange={(e) => setEditMedicalFixed(e.target.value)} className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm" />
+                    </div>
+                    <div>
+                      <label className="text-slate-600">Transport DA %</label>
+                      <input type="number" step="0.01" value={editTransportDaPercent} onChange={(e) => setEditTransportDaPercent(e.target.value)} className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm" />
+                    </div>
+                    <div>
+                      <label className="text-slate-600">P. Tax default</label>
+                      <input type="number" step="1" value={editGovPtDefault} onChange={(e) => setEditGovPtDefault(e.target.value)} className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm" />
+                    </div>
+                    <div>
+                      <label className="text-slate-600">Income tax</label>
+                      <input type="number" step="1" value={editTds} onChange={(e) => setEditTds(e.target.value)} className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm" />
+                    </div>
+                    <div>
+                      <label className="text-slate-600">
+                        CPF (rupees; 0 = auto {Math.round(GOVERNMENT_DEFAULT_CPF_RATE_ON_TOTAL_EARNINGS * 100)}%)
+                      </label>
+                      <input type="number" step="1" value={editCpfDefault} onChange={(e) => setEditCpfDefault(e.target.value)} className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm" />
+                    </div>
+                    <div>
+                      <label className="text-slate-600">DA CPF</label>
+                      <input type="number" step="1" value={editDaCpfDefault} onChange={(e) => setEditDaCpfDefault(e.target.value)} className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm" />
+                    </div>
+                  </div>
+                </div>
+              ) : (
+              <>
               <div>
                 <label className="mb-1 block text-sm font-medium text-slate-700">Gross salary (monthly) *</label>
                 <input
@@ -1267,15 +2427,80 @@ function PayrollPageContent() {
                   Leave all blank for auto-split from gross. When gross changes, Basic/HRA and other heads update if you were on the standard split. If the six fields don’t add up to gross, tab out of gross to align them.
                 </p>
               </div>
+              </>
+              )}
               {editMasterPreview && (
                 <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
                   <p className="mb-2 text-xs font-medium text-slate-600">Preview (same as server on Save)</p>
+                  {editPayrollMode === "government" && "totalEarnings" in editMasterPreview ? (
+                    <div className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
+                      <div>
+                        <span className="text-slate-500">Transport slab </span>
+                        <span className="font-medium text-slate-900">
+                          {(editMasterPreview as { transportSlab?: string }).transportSlab ?? "—"}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500">Transport (₹) </span>
+                        <span className="font-medium tabular-nums text-slate-900">
+                          ₹
+                          {Math.round(
+                            (editMasterPreview as { transportAmount?: number }).transportAmount ?? 0
+                          ).toLocaleString("en-IN")}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500">Total earnings (full month) </span>
+                        <span className="font-medium tabular-nums text-slate-900">
+                          ₹{Math.round((editMasterPreview as { totalEarnings: number }).totalEarnings).toLocaleString("en-IN")}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500">CPF (auto core) </span>
+                        <span className="font-medium tabular-nums text-slate-900">
+                          ₹
+                          {Math.round(
+                            (editMasterPreview as { effectiveCpfCore?: number }).effectiveCpfCore ?? 0
+                          ).toLocaleString("en-IN")}
+                          {(editMasterPreview as { storedCpfDefault?: number }).storedCpfDefault === 0 && (
+                            <span className="ml-1 text-xs font-normal text-slate-500">(0 stored → auto)</span>
+                          )}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500">CPF bundle (same as Run Payroll) </span>
+                        <span className="font-medium tabular-nums text-slate-900">
+                          ₹
+                          {Math.round(
+                            (editMasterPreview as { statutoryCpf?: number }).statutoryCpf ?? 0
+                          ).toLocaleString("en-IN")}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500">Net (after defaults) </span>
+                        <span className="font-medium tabular-nums text-slate-900">
+                          ₹{Math.round((editMasterPreview as { netSalary: number }).netSalary).toLocaleString("en-IN")}
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                  (() => {
+                    const pv = editMasterPreview as {
+                      ctc: number;
+                      takeHome: number;
+                      ptMonthly: number;
+                      pfEmp: number;
+                      esicEmp: number;
+                      tds: number;
+                      advanceBonus: number;
+                    };
+                    return (
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 text-sm">
                     <div>
                       <span className="text-slate-500">CTC </span>
                       <span className="font-medium tabular-nums text-slate-900">
-                        {editMasterPreview.ctc > 0
-                          ? `₹${Math.round(editMasterPreview.ctc).toLocaleString("en-IN")}`
+                        {pv.ctc > 0
+                          ? `₹${Math.round(pv.ctc).toLocaleString("en-IN")}`
                           : "—"}
                       </span>
                     </div>
@@ -1283,25 +2508,30 @@ function PayrollPageContent() {
                       <span className="text-slate-500">Take home </span>
                       <span className="font-medium tabular-nums text-slate-900">
                         {(parseFloat(editGross) || 0) > 0
-                          ? `₹${Math.round(editMasterPreview.takeHome).toLocaleString("en-IN")}`
+                          ? `₹${Math.round(pv.takeHome).toLocaleString("en-IN")}`
                           : "—"}
                       </span>
                     </div>
                     <div className="text-xs text-slate-500 sm:col-span-1">
                       {(parseFloat(editGross) || 0) > 0 && (
                         <>
-                          PT ₹{Math.round(editMasterPreview.ptMonthly).toLocaleString("en-IN")}
-                          {editMasterPreview.pfEmp > 0 && ` · PF ₹${Math.round(editMasterPreview.pfEmp).toLocaleString("en-IN")}`}
-                          {editMasterPreview.esicEmp > 0 && ` · ESIC ₹${Math.round(editMasterPreview.esicEmp).toLocaleString("en-IN")}`}
-                          {editMasterPreview.tds > 0 && ` · TDS ₹${Math.round(editMasterPreview.tds).toLocaleString("en-IN")}`}
-                          {editMasterPreview.advanceBonus > 0 &&
-                            ` · Adv +₹${Math.round(editMasterPreview.advanceBonus).toLocaleString("en-IN")}`}
+                          PT ₹{Math.round(pv.ptMonthly).toLocaleString("en-IN")}
+                          {pv.pfEmp > 0 && ` · PF ₹${Math.round(pv.pfEmp).toLocaleString("en-IN")}`}
+                          {pv.esicEmp > 0 && ` · ESIC ₹${Math.round(pv.esicEmp).toLocaleString("en-IN")}`}
+                          {pv.tds > 0 && ` · TDS ₹${Math.round(pv.tds).toLocaleString("en-IN")}`}
+                          {pv.advanceBonus > 0 &&
+                            ` · Adv +₹${Math.round(pv.advanceBonus).toLocaleString("en-IN")}`}
                         </>
                       )}
                     </div>
                   </div>
+                    );
+                  })()
+                  )}
                 </div>
               )}
+              {editPayrollMode === "private" ? (
+                <>
               <div className="flex gap-4">
                 <label className="flex items-center gap-2 text-sm">
                   <input type="checkbox" checked={editPfEligible} onChange={(e) => setEditPfEligible(e.target.checked)} />
@@ -1347,6 +2577,20 @@ function PayrollPageContent() {
                   />
                 </div>
               </div>
+                </>
+              ) : (
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Advance bonus (variable)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={100}
+                    value={editAdvanceBonus}
+                    onChange={(e) => setEditAdvanceBonus(e.target.value)}
+                    className="w-full max-w-xs rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  />
+                </div>
+              )}
               <div>
                 <label className="mb-1 block text-sm font-medium text-slate-700">Effective start date *</label>
                 <DatePickerField value={editEffectiveDate} onChange={setEditEffectiveDate} required className="w-full" />
@@ -1479,80 +2723,294 @@ function PayrollPageContent() {
                   <p className="mb-3 text-sm text-slate-600">
                     {preview?.alreadyRun
                       ? "Payroll generated for this period. Values are read-only."
-                      : "Edit values before generating. Changing pay days will recalculate gross, PF, ESIC and deductions."}
+                      : previewAllGovernment
+                        ? "Government payroll: preview matches the pay slip earnings and deduction columns. Paid days use the calendar month (see Days column max). Changing days recomputes Basic, DA, HRA, CPF, and totals."
+                        : "Edit values before generating. Changing pay days will recalculate gross, PF, ESIC and deductions."}
                   </p>
-                <div className="-mx-1 overflow-x-auto sm:mx-0">
-                <table className="w-full min-w-[720px] table-fixed text-left text-xs">
-                  <thead className="bg-slate-50 text-slate-600">
-                    <tr>
-                      <th className="w-[100px] px-1.5 py-1">Employee</th>
-                      <th className="w-[52px] px-1 py-1">Days</th>
-                      <th className="w-[60px] px-1 py-1">Gross</th>
-                      <th className="w-[60px] px-1 py-1">Net</th>
-                      <th className="w-[48px] px-1 py-1">PF</th>
-                      <th className="w-[48px] px-1 py-1">PF(R)</th>
-                      <th className="w-[48px] px-1 py-1">ESIC</th>
-                      <th className="w-[52px] px-1 py-1">ESIC(R)</th>
-                      <th className="w-[44px] px-1 py-1">PT</th>
-                      <th className="w-[48px] px-1 py-1">Bonus</th>
-                      <th className="w-[48px] px-1 py-1">Inc</th>
-                      <th className="w-[52px] px-1 py-1">Reimb</th>
-                      <th className="w-[44px] px-1 py-1">TDS</th>
-                      <th className="w-[52px] px-1 py-1">Ded</th>
-                      <th className="w-[60px] px-1 py-1">Take</th>
-                      <th className="w-[60px] px-1 py-1">CTC</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {editableRows.map((r) => {
-                      const readOnly = !!preview?.alreadyRun;
-                      return (
-                      <tr key={r.employeeUserId} className="border-t border-slate-200">
-                        <td className="truncate px-1.5 py-1 font-medium text-slate-900" title={r.employeeName || r.employeeEmail || undefined}>
-                          {r.employeeName || r.employeeEmail || "—"}
-                        </td>
-                        <td className="px-1 py-1">
-                          {readOnly ? (
-                            <span className="py-0.5">{r.payDays}{r.unpaidLeaveDays > 0 ? ` (-${r.unpaidLeaveDays})` : ""}</span>
-                          ) : (
-                            <>
-                              <input
-                                type="number"
-                                min={0}
-                                max={preview?.effectiveRunDay ?? preview?.daysInMonth ?? 31}
-                                value={r.payDays}
-                                onChange={(e) =>
-                                  updateEditableRow(r.employeeUserId, "payDays", parseInt(e.target.value, 10) || 0)
-                                }
-                                className="w-full max-w-[44px] rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                              />
-                              {r.unpaidLeaveDays > 0 && (
-                                <span className="ml-0.5 text-[10px] text-amber-700">(-{r.unpaidLeaveDays})</span>
-                              )}
-                              {r.payDaysSuppressedMinAttendance ? null : null}
-                            </>
-                          )}
-                        </td>
-                        <td className="px-1 py-1">{readOnly ? <span>{r.grossPay.toLocaleString("en-IN")}</span> : <input type="number" min={0} value={r.grossPay} onChange={(e) => updateEditableRow(r.employeeUserId, "grossPay", parseInt(e.target.value, 10) || 0)} className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500" />}</td>
-                        <td className="px-1 py-1">{readOnly ? <span>{r.netPay.toLocaleString("en-IN")}</span> : <input type="number" min={0} value={r.netPay} onChange={(e) => updateEditableRow(r.employeeUserId, "netPay", parseInt(e.target.value, 10) || 0)} className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500" />}</td>
-                        <td className="px-1 py-1">{readOnly ? <span>{r.pfEmployee.toLocaleString("en-IN")}</span> : <input type="number" min={0} value={r.pfEmployee} onChange={(e) => updateEditableRow(r.employeeUserId, "pfEmployee", parseInt(e.target.value, 10) || 0)} className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500" />}</td>
-                        <td className="px-1 py-1">{readOnly ? <span>{r.pfEmployer.toLocaleString("en-IN")}</span> : <input type="number" min={0} value={r.pfEmployer} onChange={(e) => updateEditableRow(r.employeeUserId, "pfEmployer", parseInt(e.target.value, 10) || 0)} className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500" />}</td>
-                        <td className="px-1 py-1">{readOnly ? <span>{r.esicEmployee.toLocaleString("en-IN")}</span> : <input type="number" min={0} value={r.esicEmployee} onChange={(e) => updateEditableRow(r.employeeUserId, "esicEmployee", parseInt(e.target.value, 10) || 0)} className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500" />}</td>
-                        <td className="px-1 py-1">{readOnly ? <span>{r.esicEmployer.toLocaleString("en-IN")}</span> : <input type="number" min={0} value={r.esicEmployer} onChange={(e) => updateEditableRow(r.employeeUserId, "esicEmployer", parseInt(e.target.value, 10) || 0)} className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500" />}</td>
-                        <td className="px-1 py-1">{readOnly ? <span>{r.profTax.toLocaleString("en-IN")}</span> : <input type="number" min={0} value={r.profTax} onChange={(e) => updateEditableRow(r.employeeUserId, "profTax", parseInt(e.target.value, 10) || 0)} className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500" />}</td>
-                        <td className="px-1 py-1">{readOnly ? <span>{(r.prBonus ?? 0).toLocaleString("en-IN")}</span> : <input type="number" min={0} value={r.prBonus ?? 0} onChange={(e) => updateEditableRow(r.employeeUserId, "prBonus", parseInt(e.target.value, 10) || 0)} className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500" />}</td>
-                        <td className="px-1 py-1">{readOnly ? <span>{(r.incentive ?? 0).toLocaleString("en-IN")}</span> : <input type="number" min={0} value={r.incentive ?? 0} onChange={(e) => updateEditableRow(r.employeeUserId, "incentive", parseInt(e.target.value, 10) || 0)} className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500" />}</td>
-                        <td className="px-1 py-1">{readOnly ? <span>{(r.reimbursement ?? 0).toLocaleString("en-IN")}</span> : <input type="number" min={0} value={r.reimbursement ?? 0} onChange={(e) => updateEditableRow(r.employeeUserId, "reimbursement", parseInt(e.target.value, 10) || 0)} className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500" />}</td>
-                        <td className="px-1 py-1">{readOnly ? <span>{(r.tds ?? 0).toLocaleString("en-IN")}</span> : <input type="number" min={0} value={r.tds ?? 0} onChange={(e) => updateEditableRow(r.employeeUserId, "tds", parseInt(e.target.value, 10) || 0)} className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500" />}</td>
-                        <td className="px-1 py-1">{readOnly ? <span>{r.deductions.toLocaleString("en-IN")}</span> : <input type="number" min={0} value={r.deductions} onChange={(e) => updateEditableRow(r.employeeUserId, "deductions", parseInt(e.target.value, 10) || 0)} className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500" />}</td>
-                        <td className="px-1 py-1">{readOnly ? <span className="font-medium">{r.takeHome.toLocaleString("en-IN")}</span> : <input type="number" min={0} value={r.takeHome} onChange={(e) => updateEditableRow(r.employeeUserId, "takeHome", parseInt(e.target.value, 10) || 0)} className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs font-medium focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500" />}</td>
-                        <td className="px-1 py-1">{readOnly ? <span>{r.ctc.toLocaleString("en-IN")}</span> : <input type="number" min={0} value={r.ctc} onChange={(e) => updateEditableRow(r.employeeUserId, "ctc", parseInt(e.target.value, 10) || 0)} className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500" />}</td>
-                      </tr>
-                    );
-                    })}
-                  </tbody>
-                </table>
-                </div>
+                  {previewAllGovernment && preview?.daysInMonth ? (
+                    <GovernmentRunPreviewTable
+                      rows={editableRows as GovernmentRunPreviewRow[]}
+                      daysInMonth={preview.daysInMonth}
+                      effectiveRunDay={preview.daysInMonth}
+                      readOnly={!!preview?.alreadyRun}
+                      onUpdate={updateEditableRow}
+                    />
+                  ) : (
+                    <div className="-mx-1 overflow-x-auto sm:mx-0">
+                      <table className="w-full min-w-[720px] table-fixed text-left text-xs">
+                        <thead className="bg-slate-50 text-slate-600">
+                          <tr>
+                            <th className="w-[100px] px-1.5 py-1">Employee</th>
+                            <th className="w-[52px] px-1 py-1">Days</th>
+                            <th className="w-[60px] px-1 py-1">Gross</th>
+                            <th className="w-[60px] px-1 py-1">Net</th>
+                            <th className="w-[48px] px-1 py-1">{previewHasGovernment ? "CPF" : "PF"}</th>
+                            <th className="w-[48px] px-1 py-1">PF(R)</th>
+                            <th className="w-[48px] px-1 py-1">ESIC</th>
+                            <th className="w-[52px] px-1 py-1">ESIC(R)</th>
+                            <th className="w-[44px] px-1 py-1">PT</th>
+                            <th className="w-[48px] px-1 py-1">Bonus</th>
+                            <th className="w-[48px] px-1 py-1">Inc</th>
+                            <th className="w-[52px] px-1 py-1">Reimb</th>
+                            <th className="w-[44px] px-1 py-1">TDS</th>
+                            <th className="w-[52px] px-1 py-1">Ded</th>
+                            <th className="w-[60px] px-1 py-1">Take</th>
+                            <th className="w-[60px] px-1 py-1">CTC</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {editableRows.map((r) => {
+                            const readOnly = !!preview?.alreadyRun;
+                            return (
+                              <tr key={r.employeeUserId} className="border-t border-slate-200">
+                                <td
+                                  className="truncate px-1.5 py-1 font-medium text-slate-900"
+                                  title={r.employeeName || r.employeeEmail || undefined}
+                                >
+                                  {r.employeeName || r.employeeEmail || "—"}
+                                </td>
+                                <td className="px-1 py-1">
+                                  {readOnly ? (
+                                    <span className="py-0.5">
+                                      {r.payDays}
+                                      {r.unpaidLeaveDays > 0 ? ` (-${r.unpaidLeaveDays})` : ""}
+                                    </span>
+                                  ) : (
+                                    <>
+                                      <input
+                                        type="number"
+                                        min={0}
+                                        max={preview?.effectiveRunDay ?? preview?.daysInMonth ?? 31}
+                                        value={r.payDays}
+                                        onChange={(e) =>
+                                          updateEditableRow(r.employeeUserId, "payDays", parseInt(e.target.value, 10) || 0)
+                                        }
+                                        className="w-full max-w-[44px] rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                                      />
+                                      {r.unpaidLeaveDays > 0 && (
+                                        <span className="ml-0.5 text-[10px] text-amber-700">(-{r.unpaidLeaveDays})</span>
+                                      )}
+                                      {r.payDaysSuppressedMinAttendance ? null : null}
+                                    </>
+                                  )}
+                                </td>
+                                <td className="px-1 py-1">
+                                  {readOnly ? (
+                                    <span>{r.grossPay.toLocaleString("en-IN")}</span>
+                                  ) : (
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      value={r.grossPay}
+                                      onChange={(e) =>
+                                        updateEditableRow(r.employeeUserId, "grossPay", parseInt(e.target.value, 10) || 0)
+                                      }
+                                      className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                                    />
+                                  )}
+                                </td>
+                                <td className="px-1 py-1">
+                                  {readOnly ? (
+                                    <span>{r.netPay.toLocaleString("en-IN")}</span>
+                                  ) : (
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      value={r.netPay}
+                                      onChange={(e) =>
+                                        updateEditableRow(r.employeeUserId, "netPay", parseInt(e.target.value, 10) || 0)
+                                      }
+                                      className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                                    />
+                                  )}
+                                </td>
+                                <td className="px-1 py-1">
+                                  {readOnly ? (
+                                    <span>{r.pfEmployee.toLocaleString("en-IN")}</span>
+                                  ) : (
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      value={r.pfEmployee}
+                                      onChange={(e) =>
+                                        updateEditableRow(r.employeeUserId, "pfEmployee", parseInt(e.target.value, 10) || 0)
+                                      }
+                                      className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                                    />
+                                  )}
+                                </td>
+                                <td className="px-1 py-1">
+                                  {readOnly ? (
+                                    <span>{r.pfEmployer.toLocaleString("en-IN")}</span>
+                                  ) : (
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      value={r.pfEmployer}
+                                      onChange={(e) =>
+                                        updateEditableRow(r.employeeUserId, "pfEmployer", parseInt(e.target.value, 10) || 0)
+                                      }
+                                      className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                                    />
+                                  )}
+                                </td>
+                                <td className="px-1 py-1">
+                                  {readOnly ? (
+                                    <span>{r.esicEmployee.toLocaleString("en-IN")}</span>
+                                  ) : (
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      value={r.esicEmployee}
+                                      onChange={(e) =>
+                                        updateEditableRow(r.employeeUserId, "esicEmployee", parseInt(e.target.value, 10) || 0)
+                                      }
+                                      className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                                    />
+                                  )}
+                                </td>
+                                <td className="px-1 py-1">
+                                  {readOnly ? (
+                                    <span>{r.esicEmployer.toLocaleString("en-IN")}</span>
+                                  ) : (
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      value={r.esicEmployer}
+                                      onChange={(e) =>
+                                        updateEditableRow(r.employeeUserId, "esicEmployer", parseInt(e.target.value, 10) || 0)
+                                      }
+                                      className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                                    />
+                                  )}
+                                </td>
+                                <td className="px-1 py-1">
+                                  {readOnly ? (
+                                    <span>{r.profTax.toLocaleString("en-IN")}</span>
+                                  ) : (
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      value={r.profTax}
+                                      onChange={(e) =>
+                                        updateEditableRow(r.employeeUserId, "profTax", parseInt(e.target.value, 10) || 0)
+                                      }
+                                      className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                                    />
+                                  )}
+                                </td>
+                                <td className="px-1 py-1">
+                                  {readOnly ? (
+                                    <span>{(r.prBonus ?? 0).toLocaleString("en-IN")}</span>
+                                  ) : (
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      value={r.prBonus ?? 0}
+                                      onChange={(e) =>
+                                        updateEditableRow(r.employeeUserId, "prBonus", parseInt(e.target.value, 10) || 0)
+                                      }
+                                      className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                                    />
+                                  )}
+                                </td>
+                                <td className="px-1 py-1">
+                                  {readOnly ? (
+                                    <span>{(r.incentive ?? 0).toLocaleString("en-IN")}</span>
+                                  ) : (
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      value={r.incentive ?? 0}
+                                      onChange={(e) =>
+                                        updateEditableRow(r.employeeUserId, "incentive", parseInt(e.target.value, 10) || 0)
+                                      }
+                                      className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                                    />
+                                  )}
+                                </td>
+                                <td className="px-1 py-1">
+                                  {readOnly ? (
+                                    <span>{(r.reimbursement ?? 0).toLocaleString("en-IN")}</span>
+                                  ) : (
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      value={r.reimbursement ?? 0}
+                                      onChange={(e) =>
+                                        updateEditableRow(r.employeeUserId, "reimbursement", parseInt(e.target.value, 10) || 0)
+                                      }
+                                      className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                                    />
+                                  )}
+                                </td>
+                                <td className="px-1 py-1">
+                                  {readOnly ? (
+                                    <span>{(r.tds ?? 0).toLocaleString("en-IN")}</span>
+                                  ) : (
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      value={r.tds ?? 0}
+                                      onChange={(e) =>
+                                        updateEditableRow(r.employeeUserId, "tds", parseInt(e.target.value, 10) || 0)
+                                      }
+                                      className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                                    />
+                                  )}
+                                </td>
+                                <td className="px-1 py-1">
+                                  {readOnly ? (
+                                    <span>{r.deductions.toLocaleString("en-IN")}</span>
+                                  ) : (
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      value={r.deductions}
+                                      onChange={(e) =>
+                                        updateEditableRow(r.employeeUserId, "deductions", parseInt(e.target.value, 10) || 0)
+                                      }
+                                      className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                                    />
+                                  )}
+                                </td>
+                                <td className="px-1 py-1">
+                                  {readOnly ? (
+                                    <span className="font-medium">{r.takeHome.toLocaleString("en-IN")}</span>
+                                  ) : (
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      value={r.takeHome}
+                                      onChange={(e) =>
+                                        updateEditableRow(r.employeeUserId, "takeHome", parseInt(e.target.value, 10) || 0)
+                                      }
+                                      className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs font-medium focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                                    />
+                                  )}
+                                </td>
+                                <td className="px-1 py-1">
+                                  {readOnly ? (
+                                    <span>{r.ctc.toLocaleString("en-IN")}</span>
+                                  ) : (
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      value={r.ctc}
+                                      onChange={(e) =>
+                                        updateEditableRow(r.employeeUserId, "ctc", parseInt(e.target.value, 10) || 0)
+                                      }
+                                      className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                                    />
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
             ) : !preview?.alreadyRun ? (
               <p className="muted py-6">No employees in payroll for the selected month and year. Ensure employees have Payroll Master records.</p>
@@ -1681,6 +3139,35 @@ function PayrollPageContent() {
               const cellClass = "border border-black px-3 py-2 align-top text-sm";
               const thClass = "border border-black px-3 py-2 text-left font-semibold text-sm";
 
+              const gov = slip.governmentMonthly;
+              if (gov) {
+                return (
+                  <GovernmentPayslipPrint
+                    ref={payslipRef}
+                    company={company}
+                    user={{
+                      name: user?.name,
+                      employeeCode: user?.employeeCode,
+                      designation: user?.designation,
+                      departmentName: user?.departmentName,
+                      dateOfJoining: user?.dateOfJoining,
+                      uanNumber: user?.uanNumber,
+                      pfNumber: user?.pfNumber,
+                    }}
+                    slip={{
+                      generatedAt: slip.generatedAt,
+                      periodStart: slip.periodStart,
+                      payDays: slip.payDays,
+                      unpaidLeaves: slip.unpaidLeaves,
+                      bankName: slip.bankName,
+                      bankAccountNumber: slip.bankAccountNumber,
+                      netPay: slip.netPay,
+                    }}
+                    gov={gov as GovernmentMonthlySlip}
+                  />
+                );
+              }
+
               return (
                 <div
                   ref={payslipRef}
@@ -1718,6 +3205,7 @@ function PayrollPageContent() {
                           <div className="space-y-1.5 text-sm leading-relaxed">
                             <div><span className="text-slate-600">Employee Name:</span> {user?.name || "—"}</div>
                             <div><span className="text-slate-600">Designation:</span> {user?.designation || "—"}</div>
+                            <div><span className="text-slate-600">Department:</span> {(user as { departmentName?: string })?.departmentName || "—"}</div>
                             <div><span className="text-slate-600">Salary Date:</span> {salaryDate}</div>
                           </div>
                         </td>
@@ -1747,6 +3235,7 @@ function PayrollPageContent() {
                       <tr>
                         <td colSpan={2} className="border border-black p-0">
                           <table className="payslip-financial-table w-full border-collapse text-sm">
+                              <>
                             <colgroup>
                               <col /><col /><col /><col /><col /><col /><col />
                             </colgroup>
@@ -1832,6 +3321,7 @@ function PayrollPageContent() {
                                 <td className={`${cellClass} text-right font-bold`}>{n(takeHome)}</td>
                               </tr>
                             </tbody>
+                              </>
                           </table>
                         </td>
                       </tr>
