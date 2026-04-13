@@ -765,9 +765,18 @@ function PayrollPageContent() {
         const res = await fetch("/api/employees");
         const data = await res.json();
         if (!cancelled && res.ok) {
-          const list = data.employees ?? [];
+          const raw = data.employees ?? [];
+          const list = raw.filter(
+            (e: any) => String(e.employmentStatus ?? "preboarding") !== "preboarding",
+          );
           setEmployees(list.map((e: any) => ({ id: e.id, name: e.name, email: e.email })));
-          if (list.length && !selectedEmployeeId) setSelectedEmployeeId(list[0].id);
+          if (list.length) {
+            if (!selectedEmployeeId || !list.some((e: any) => e.id === selectedEmployeeId)) {
+              setSelectedEmployeeId(list[0].id);
+            }
+          } else {
+            setSelectedEmployeeId("");
+          }
         }
       } finally {
         if (!cancelled) setEmployeesLoading(false);

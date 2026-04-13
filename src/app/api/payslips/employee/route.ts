@@ -36,11 +36,14 @@ export async function GET(request: NextRequest) {
   // Verify employee belongs to the same company
   const { data: emp, error: empErr } = await supabase
     .from("HRMS_users")
-    .select("id, company_id")
+    .select("id, company_id, employment_status")
     .eq("id", employeeUserId)
     .maybeSingle();
   if (empErr || !emp || emp.company_id !== me.company_id) {
     return NextResponse.json({ error: "Employee not found or access denied" }, { status: 404 });
+  }
+  if (String((emp as { employment_status?: string }).employment_status ?? "preboarding") === "preboarding") {
+    return NextResponse.json({ error: "Salary slips are not available for preboarding employees" }, { status: 400 });
   }
 
   let slipQuery = supabase
