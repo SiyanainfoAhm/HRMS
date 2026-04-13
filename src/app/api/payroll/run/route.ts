@@ -131,6 +131,11 @@ function addDaysUtc(d: Date, days: number): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + days, 0, 0, 0, 0));
 }
 
+function weekdayUtc(ymd: string): number {
+  // 0=Sun ... 6=Sat
+  return toUtcMidnightFromYmd(ymd).getUTCDay();
+}
+
 function* iterateYmdInclusive(startYmd: string, endYmd: string): Generator<string> {
   let d = toUtcMidnightFromYmd(startYmd);
   const end = toUtcMidnightFromYmd(endYmd);
@@ -297,6 +302,7 @@ async function computeAttendanceDrivenPayDays(args: {
   }
 
   const presentDaysByUser = new Map<string, number>();
+  const presentDatesByUser = new Map<string, Set<string>>();
   if (!employeeIds.length) {
     return { presentDaysByUser, paidLeaveDaysByUser, unpaidLeaveDaysByUser };
   }
@@ -352,6 +358,70 @@ async function computeAttendanceDrivenPayDays(args: {
     const activeHours = activeMinutes / 60;
     if (activeHours >= MIN_ACTIVE_HOURS_FOR_PRESENT) {
       presentDaysByUser.set(uid, (presentDaysByUser.get(uid) || 0) + 1);
+      const set = presentDatesByUser.get(uid) || new Set<string>();
+      set.add(workDate);
+      presentDatesByUser.set(uid, set);
+    }
+  }
+
+  // Weekend "sandwich" rule for pay-days:
+  // - Only weekends (Sat/Sun) inside the period can become payable.
+  // - Strict sandwich: weekend is payable only when BOTH adjacent working days qualify:
+  //   * Saturday: Friday AND Monday qualifying
+  //   * Sunday: Friday AND Monday qualifying
+  // - If either adjacent day is non-qualifying/absent/unpaid, weekend is NOT payable.
+  //
+  // Qualifying day = present OR paid leave. (Unpaid leave does NOT qualify.)
+  const paidLeaveApproxByUser = new Map<string, number>();
+  for (const [uid, n] of paidLeaveDaysByUser.entries()) paidLeaveApproxByUser.set(uid, Math.round(n));
+  const unpaidLeaveApproxByUser = new Map<string, number>();
+  for (const [uid, n] of unpaidLeaveDaysByUser.entries()) unpaidLeaveApproxByUser.set(uid, Math.round(n));
+
+  // Build quick lookup for "paid-leave day" by user/date using leaveDaysByUser,
+  // but only when the leave type is effectively paid for that day. Since we don't have
+  // per-day paid/unpaid split here, treat any approved leave-day as qualifying only if
+  // the user's total unpaid leave days in the window is 0 OR the leave type is paid.
+  // (This keeps behavior conservative when partial unpaid leave exists.)
+  const qualifiesByUserDate = new Map<string, Set<string>>();
+  for (const uid of userIds) {
+    const set = new Set<string>();
+    const pres = presentDatesByUser.get(uid);
+    if (pres) for (const d of pres) set.add(d);
+    // If user has any paid leave days, assume leaveDays are qualifying unless there is unpaid leave recorded.
+    // When unpaid leave exists, we only treat punched-present days as qualifying to avoid overpaying weekends.
+    const hasPaidLeave = (paidLeaveApproxByUser.get(uid) || 0) > 0;
+    const hasUnpaidLeave = (unpaidLeaveApproxByUser.get(uid) || 0) > 0;
+    if (hasPaidLeave && !hasUnpaidLeave) {
+      const leaveDays = leaveDaysByUser.get(uid);
+      if (leaveDays) for (const d of leaveDays) set.add(d);
+    }
+    qualifiesByUserDate.set(uid, set);
+  }
+
+  for (const uid of userIds) {
+    const qualifying = qualifiesByUserDate.get(uid) || new Set<string>();
+    let weekendAdded = 0;
+    for (const ymd of iterateYmdInclusive(periodStartYmd, periodEndYmdInclusive)) {
+      const dow = weekdayUtc(ymd);
+      if (dow !== 6 && dow !== 0) continue; // only Sat/Sun
+      if (qualifying.has(ymd)) continue; // already present/qualifying
+
+      const d = toUtcMidnightFromYmd(ymd);
+      const prevFri = toYmdUtc(addDaysUtc(d, dow === 6 ? -1 : -2)); // Sat->Fri, Sun->Fri
+      const nextMon = toYmdUtc(addDaysUtc(d, dow === 6 ? 2 : 1)); // Sat->Mon, Sun->Mon
+
+      const friQual = prevFri >= periodStartYmd && prevFri <= periodEndYmdInclusive && qualifying.has(prevFri);
+      const monQual = nextMon >= periodStartYmd && nextMon <= periodEndYmdInclusive && qualifying.has(nextMon);
+
+      // Strict sandwich: weekend is payable only when BOTH sides qualify.
+      // If either Fri or Mon is absent/non-qualifying, keep weekend as non-pay.
+      if (friQual && monQual) {
+        weekendAdded += 1;
+        qualifying.add(ymd);
+      }
+    }
+    if (weekendAdded > 0) {
+      presentDaysByUser.set(uid, (presentDaysByUser.get(uid) || 0) + weekendAdded);
     }
   }
 
@@ -524,10 +594,27 @@ async function computeFreshPayrollPreviewFromMasters(
         transportDaPercent: Number(m.transport_da_percent) || 48.06,
         payLevel: u.government_pay_level as number,
         daysInMonth,
-        unpaidDays: unpaidLeaveDays,
+        unpaidDays: Math.max(
+          0,
+          daysInMonth -
+            resolvePayDaysFromAttendance({
+              presentDays,
+              paidLeaveDays,
+              unpaidLeaveDays,
+              eligibleDays: eligibleCalendarDays,
+            }),
+        ),
         deductionDefaults: masterRowToDeductionDefaults(m as Record<string, unknown>),
       });
-      const paidDaysGov = Math.max(0, daysInMonth - unpaidLeaveDays);
+      const paidDaysGov = Math.max(
+        0,
+        resolvePayDaysFromAttendance({
+          presentDays,
+          paidLeaveDays,
+          unpaidLeaveDays,
+          eligibleDays: eligibleCalendarDays,
+        }),
+      );
       const reimbursement = Math.round(reimbByUser.get(m.employee_user_id) || 0);
       const advMonthG = Math.round(Number(m.advance_bonus) || 0);
       const takeHome = comp.netSalary + advMonthG + reimbursement;
@@ -1108,10 +1195,27 @@ export async function POST(request: NextRequest) {
           transportDaPercent: Number(m.transport_da_percent) || 48.06,
           payLevel: u.government_pay_level as number,
           daysInMonth,
-          unpaidDays: unpaidLeaveDays,
+          unpaidDays: Math.max(
+            0,
+            daysInMonth -
+              resolvePayDaysFromAttendance({
+                presentDays,
+                paidLeaveDays,
+                unpaidLeaveDays,
+                eligibleDays: eligibleCalendarDays,
+              }),
+          ),
           deductionDefaults: masterRowToDeductionDefaults(m as Record<string, unknown>),
         });
-        const paidDaysGov = Math.max(0, daysInMonth - unpaidLeaveDays);
+        const paidDaysGov = Math.max(
+          0,
+          resolvePayDaysFromAttendance({
+            presentDays,
+            paidLeaveDays,
+            unpaidLeaveDays,
+            eligibleDays: eligibleCalendarDays,
+          }),
+        );
         const reimbursement = Math.round(reimbByUserCm.get(m.employee_user_id) || 0);
         const advMonthG = Math.round(Number(m.advance_bonus) || 0);
         const takeHomeIns = comp.netSalary + advMonthG + reimbursement;
@@ -1608,10 +1712,27 @@ export async function POST(request: NextRequest) {
           transportDaPercent: Number(m.transport_da_percent) || 48.06,
           payLevel: u.government_pay_level as number,
           daysInMonth,
-          unpaidDays: unpaidLeaveDays,
+          unpaidDays: Math.max(
+            0,
+            daysInMonth -
+              resolvePayDaysFromAttendance({
+                presentDays,
+                paidLeaveDays,
+                unpaidLeaveDays,
+                eligibleDays: eligibleCalendarDays,
+              }),
+          ),
           deductionDefaults: masterRowToDeductionDefaults(m as Record<string, unknown>),
         });
-        const paidDaysGov = Math.max(0, daysInMonth - unpaidLeaveDays);
+        const paidDaysGov = Math.max(
+          0,
+          resolvePayDaysFromAttendance({
+            presentDays,
+            paidLeaveDays,
+            unpaidLeaveDays,
+            eligibleDays: eligibleCalendarDays,
+          }),
+        );
         const reimbursement = Math.round(reimbByUser.get(m.employee_user_id) || 0);
         const advMonthG = Math.round(Number(m.advance_bonus) || 0);
         const takeHomeIns = comp.netSalary + advMonthG + reimbursement;

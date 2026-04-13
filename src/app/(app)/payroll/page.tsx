@@ -2778,14 +2778,7 @@ function PayrollPageContent() {
         <div className="space-y-4">
           <div className="card">
             <h2 className="mb-1 text-lg font-semibold text-slate-900">Run monthly payroll</h2>
-            <p className="muted mb-4">
-              Generate payroll once per month for employees who have an active Payroll Master (effective end date empty).
-              The master &quot;applicable month&quot; is when that salary structure starts; it does not limit which calendar month you run.
-              Pay days are based on Mon–Fri (UTC) working days with sufficient attendance on those days; company holidays from your holiday calendar (including multi-day ranges) are excluded from working days and from attendance-based presence.
-              The same working-day presence (not weekends or holidays) must reach at least 10 qualifying days in the run-through period (8-hour active rule after breaks) before pay days apply for salary proration. Below that, preview shows 0 pay days (you may override manually). Auto payroll skips payslips until the threshold is met when attendance data exists.
-              Salary is prorated against working days in the full calendar month. If there is no attendance yet and no unpaid leave in the window, pay days default to all working days in the run-through date range (still subject to the 10 qualifying days rule when attendance exists).
-              If the month was already run but new employees (or others) still have no payslip, the preview lists everyone with an active master; use Generate again to add only the missing payslips and refresh the Excel file.
-            </p>
+            
             <form onSubmit={handleRunPayroll} className="space-y-4">
               <div className="flex flex-wrap items-end gap-4">
                 <div>
