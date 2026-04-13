@@ -4,6 +4,11 @@ import { COOKIE_NAME } from "@/lib/auth";
 import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import {
+  buildPayrollExcelRow,
+  PAYROLL_EXCEL_HEADER,
+  payrollExcelAmountColumnIndices,
+} from "@/lib/payrollExcelExport";
 import * as XLSX from "xlsx-js-style";
 
 function isManagerial(role: string): boolean {
@@ -40,6 +45,7 @@ export async function POST(request: NextRequest) {
     .from("HRMS_payslips")
     .select(`
       employee_user_id,
+      payroll_mode,
       bank_account_number,
       ctc,
       esic_employee,
@@ -54,7 +60,13 @@ export async function POST(request: NextRequest) {
       pr_bonus,
       reimbursement,
       tds,
-      deductions
+      deductions,
+      basic,
+      hra,
+      medical,
+      trans,
+      lta,
+      personal
     `)
     .eq("payroll_period_id", periodId)
     .eq("company_id", companyId);
@@ -70,55 +82,32 @@ export async function POST(request: NextRequest) {
     .in("id", userIds);
   const userById = new Map((users ?? []).map((u: any) => [u.id, u]));
 
+  const { data: govRows } = await supabase
+    .from("HRMS_government_monthly_payroll")
+    .select("*")
+    .eq("payroll_period_id", periodId)
+    .eq("company_id", companyId);
+  const govByUser = new Map((govRows ?? []).map((r: any) => [r.employee_user_id, r]));
+
   const monthNames = ["", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
   const fileName = `${monthNames[month]} ${year} Payroll`;
 
   const rows = payslips.map((p: any) => {
     const u = userById.get(p.employee_user_id);
-    const accountNum = p.bank_account_number != null ? String(p.bank_account_number) : "";
-    return {
-      AccountNumber: accountNum,
-      CTC: Number(p.ctc) || 0,
-      EmployeeESIC: Number(p.esic_employee) ?? 0,
-      EmployeeName: u?.name ?? "",
-      EmployeePF: Number(p.pf_employee) ?? 0,
-      EmployerESIC: Number(p.esic_employer) ?? 0,
-      EmployerPF: Number(p.pf_employer) ?? 0,
-      GrossSalary: Number(p.gross_pay) ?? 0,
-      Incentive: Number(p.incentive) ?? 0,
-      NetPay: Number(p.net_pay) ?? 0,
-      PRBonus: Number(p.pr_bonus) ?? 0,
-      PayDays: Number(p.pay_days) ?? 0,
-      ProfessionalTax: Number(p.professional_tax) ?? 0,
-      Reimbursement: Number(p.reimbursement) ?? 0,
-      TDS: Number(p.tds) ?? 0,
-      TakeHome: Number(p.net_pay) ?? 0,
-    };
+    const gr = p.payroll_mode === "government" ? govByUser.get(p.employee_user_id) : null;
+    return buildPayrollExcelRow(
+      p,
+      u?.name ?? "",
+      gr ? { kind: "row", row: gr } : null,
+    );
   });
 
   const ws = XLSX.utils.json_to_sheet(rows, {
-    header: ["AccountNumber", "CTC", "EmployeeESIC", "EmployeeName", "EmployeePF", "EmployerESIC", "EmployerPF", "GrossSalary", "Incentive", "NetPay", "PRBonus", "PayDays", "ProfessionalTax", "Reimbursement", "TDS", "TakeHome"],
+    header: [...PAYROLL_EXCEL_HEADER],
   });
 
-  ws["!cols"] = [
-    { wch: 16 },
-    { wch: 12 },
-    { wch: 14 },
-    { wch: 20 },
-    { wch: 12 },
-    { wch: 14 },
-    { wch: 12 },
-    { wch: 14 },
-    { wch: 12 },
-    { wch: 12 },
-    { wch: 10 },
-    { wch: 10 },
-    { wch: 16 },
-    { wch: 14 },
-    { wch: 10 },
-    { wch: 12 },
-  ];
-  const amountCols = [1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+  ws["!cols"] = PAYROLL_EXCEL_HEADER.map((_, i) => ({ wch: i < 2 ? 20 : 12 }));
+  const amountCols = payrollExcelAmountColumnIndices();
   const rowCount = rows.length + 1;
   for (let r = 1; r <= rowCount; r++) {
     for (const c of amountCols) {
@@ -189,6 +178,7 @@ export async function GET(request: NextRequest) {
     .from("HRMS_payslips")
     .select(`
       employee_user_id,
+      payroll_mode,
       bank_account_number,
       ctc,
       esic_employee,
@@ -202,7 +192,14 @@ export async function GET(request: NextRequest) {
       incentive,
       pr_bonus,
       reimbursement,
-      tds
+      tds,
+      deductions,
+      basic,
+      hra,
+      medical,
+      trans,
+      lta,
+      personal
     `)
     .eq("payroll_period_id", periodId)
     .eq("company_id", me.company_id);
@@ -215,50 +212,24 @@ export async function GET(request: NextRequest) {
   const { data: users } = await supabase.from("HRMS_users").select("id, name").in("id", userIds);
   const userById = new Map((users ?? []).map((u: any) => [u.id, u]));
 
+  const { data: govRows } = await supabase
+    .from("HRMS_government_monthly_payroll")
+    .select("*")
+    .eq("payroll_period_id", periodId)
+    .eq("company_id", me.company_id);
+  const govByUser = new Map((govRows ?? []).map((r: any) => [r.employee_user_id, r]));
+
   const rows = payslips.map((p: any) => {
     const u = userById.get(p.employee_user_id);
-    return {
-      AccountNumber: p.bank_account_number != null ? String(p.bank_account_number) : "",
-      CTC: Number(p.ctc) || 0,
-      EmployeeESIC: Number(p.esic_employee) ?? 0,
-      EmployeeName: u?.name ?? "",
-      EmployeePF: Number(p.pf_employee) ?? 0,
-      EmployerESIC: Number(p.esic_employer) ?? 0,
-      EmployerPF: Number(p.pf_employer) ?? 0,
-      GrossSalary: Number(p.gross_pay) ?? 0,
-      Incentive: Number(p.incentive) ?? 0,
-      NetPay: Number(p.net_pay) ?? 0,
-      PRBonus: Number(p.pr_bonus) ?? 0,
-      PayDays: Number(p.pay_days) ?? 0,
-      ProfessionalTax: Number(p.professional_tax) ?? 0,
-      Reimbursement: Number(p.reimbursement) ?? 0,
-      TDS: Number(p.tds) ?? 0,
-      TakeHome: Number(p.net_pay) ?? 0,
-    };
+    const gr = p.payroll_mode === "government" ? govByUser.get(p.employee_user_id) : null;
+    return buildPayrollExcelRow(p, u?.name ?? "", gr ? { kind: "row", row: gr } : null);
   });
 
   const ws = XLSX.utils.json_to_sheet(rows, {
-    header: ["AccountNumber", "CTC", "EmployeeESIC", "EmployeeName", "EmployeePF", "EmployerESIC", "EmployerPF", "GrossSalary", "Incentive", "NetPay", "PRBonus", "PayDays", "ProfessionalTax", "Reimbursement", "TDS", "TakeHome"],
+    header: [...PAYROLL_EXCEL_HEADER],
   });
-  ws["!cols"] = [
-    { wch: 16 },
-    { wch: 12 },
-    { wch: 14 },
-    { wch: 20 },
-    { wch: 12 },
-    { wch: 14 },
-    { wch: 12 },
-    { wch: 14 },
-    { wch: 12 },
-    { wch: 12 },
-    { wch: 10 },
-    { wch: 10 },
-    { wch: 16 },
-    { wch: 14 },
-    { wch: 10 },
-    { wch: 12 },
-  ];
-  const amountCols = [1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+  ws["!cols"] = PAYROLL_EXCEL_HEADER.map((_, i) => ({ wch: i < 2 ? 20 : 12 }));
+  const amountCols = payrollExcelAmountColumnIndices();
   const rowCount = rows.length + 1;
   for (let r = 1; r <= rowCount; r++) {
     for (const c of amountCols) {

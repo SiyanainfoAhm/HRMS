@@ -41,7 +41,7 @@ export async function GET() {
   const userIds = [...new Set((masters ?? []).map((m: any) => m.employee_user_id))];
   const { data: users } = await supabase
     .from("HRMS_users")
-    .select("id, name, email, role, government_pay_level")
+    .select("id, name, email, role, government_pay_level, bank_name, bank_account_number, bank_ifsc")
     .in("id", userIds);
   const userMap = new Map((users ?? []).map((u: any) => [u.id, u]));
 
@@ -57,6 +57,9 @@ export async function GET() {
         employeeName: u?.name ?? null,
         employeeEmail: u?.email ?? "",
         governmentPayLevel: (u as { government_pay_level?: number | null })?.government_pay_level ?? null,
+        bankName: (u as { bank_name?: string | null })?.bank_name ?? "",
+        bankAccountNumber: (u as { bank_account_number?: string | null })?.bank_account_number ?? "",
+        bankIfsc: (u as { bank_ifsc?: string | null })?.bank_ifsc ?? "",
         master: {
           id: m.id,
           payrollMode: (m.payroll_mode as string) || "private",
@@ -141,6 +144,44 @@ export async function PATCH(request: NextRequest) {
   const personal = body?.personal != null ? Number(body.personal) : 0;
   const componentsSum = basic + hra + medical + trans + lta + personal;
   if (componentsSum > 0) grossSalary = componentsSum;
+
+  const updateBankOnly = body?.updateBankOnly === true;
+  if (updateBankOnly) {
+    const { data: meB, error: meBErr } = await supabase
+      .from("HRMS_users")
+      .select("company_id")
+      .eq("id", session.id)
+      .maybeSingle();
+    if (meBErr) return NextResponse.json({ error: meBErr.message }, { status: 400 });
+    if (!meB?.company_id) return NextResponse.json({ error: "No company" }, { status: 400 });
+    if (!userId) return NextResponse.json({ error: "employeeUserId is required" }, { status: 400 });
+
+    const { data: targetB } = await supabase
+      .from("HRMS_users")
+      .select("id, company_id, employment_status")
+      .eq("id", userId)
+      .single();
+    if (!targetB || targetB.company_id !== meB.company_id || targetB.employment_status !== "current") {
+      return NextResponse.json({ error: "Invalid employee" }, { status: 400 });
+    }
+
+    const bankName = typeof body?.bankName === "string" ? body.bankName.trim() : "";
+    const bankAccountNumber = typeof body?.bankAccountNumber === "string" ? body.bankAccountNumber.trim() : "";
+    const bankIfsc = typeof body?.bankIfsc === "string" ? body.bankIfsc.trim().toUpperCase() : "";
+
+    const { error: bankErr } = await supabase
+      .from("HRMS_users")
+      .update({
+        bank_name: bankName || null,
+        bank_account_number: bankAccountNumber || null,
+        bank_ifsc: bankIfsc || null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", userId)
+      .eq("company_id", meB.company_id);
+    if (bankErr) return NextResponse.json({ error: bankErr.message }, { status: 400 });
+    return NextResponse.json({ ok: true });
+  }
 
   if (!userId || !effectiveStartDate) {
     return NextResponse.json({ error: "employeeUserId and effectiveStartDate are required" }, { status: 400 });

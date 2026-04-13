@@ -3,6 +3,12 @@ import { cookies } from "next/headers";
 import { COOKIE_NAME } from "@/lib/auth";
 import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
+import {
+  computeLeaveBalanceRows,
+  formatGovernmentLeavePayslipDisplay,
+  slipBalanceAsOfYmd,
+  type GovernmentLeavePayslipDisplay,
+} from "@/lib/leaveBalancesCompute";
 
 export async function GET() {
   const cookieStore = await cookies();
@@ -79,6 +85,37 @@ export async function GET() {
   const rawLogo = (company as { logo_url?: string | null } | null)?.logo_url;
   const logoUrl = typeof rawLogo === "string" && rawLogo.trim() ? rawLogo.trim() : null;
 
+  const { data: policyRows, error: polErr } = await supabase
+    .from("HRMS_leave_policies")
+    .select("*, HRMS_leave_types(id, name, is_paid, code, payslip_slot)")
+    .eq("company_id", me.company_id);
+  if (polErr) return NextResponse.json({ error: polErr.message }, { status: 400 });
+
+  const { data: leaveReqRows, error: lrErr } = await supabase
+    .from("HRMS_leave_requests")
+    .select("leave_type_id, start_date, end_date, total_days")
+    .eq("company_id", me.company_id)
+    .eq("employee_user_id", session.id)
+    .eq("status", "approved");
+  if (lrErr) return NextResponse.json({ error: lrErr.message }, { status: 400 });
+
+  const approvedLeaves = (leaveReqRows ?? []).map((r: any) => ({
+    leave_type_id: r.leave_type_id as string,
+    start_date: String(r.start_date).slice(0, 10),
+    end_date: String(r.end_date).slice(0, 10),
+    total_days: Number(r.total_days) || 0,
+  }));
+  const joinStr = user?.date_of_joining ? String(user.date_of_joining).slice(0, 10) : null;
+  const leaveLineCache = new Map<string, GovernmentLeavePayslipDisplay>();
+  const leaveLinesFor = (periodEnd: string, periodStart: string, generatedAtIso: string) => {
+    const asOf = slipBalanceAsOfYmd(periodEnd, periodStart, generatedAtIso);
+    if (!leaveLineCache.has(asOf)) {
+      const rows = computeLeaveBalanceRows((policyRows ?? []) as any[], approvedLeaves, joinStr, asOf);
+      leaveLineCache.set(asOf, formatGovernmentLeavePayslipDisplay(rows));
+    }
+    return leaveLineCache.get(asOf)!;
+  };
+
   return NextResponse.json({
     company: company ? { name: company.name, address: companyAddress, logoUrl } : null,
     user: user
@@ -111,6 +148,8 @@ export async function GET() {
       const payDays = p.pay_days != null ? Number(p.pay_days) : 0;
       const unpaidLeaves = totalDays > 0 ? Math.max(0, totalDays - payDays) : 0;
       const gov = govByPayslipId.get(p.id as string);
+      const generatedAtIso = new Date(p.generated_at).toISOString();
+      const leavePayslip = gov ? leaveLinesFor(periodEnd, periodStart, generatedAtIso) : null;
       return {
         id: p.id as string,
         payrollPeriodId: p.payroll_period_id as string,
@@ -136,7 +175,7 @@ export async function GET() {
         tds: Number(p.tds) ?? 0,
         currency: p.currency as string,
         payslipNumber: p.payslip_number as string | null,
-        generatedAt: new Date(p.generated_at).toISOString(),
+        generatedAt: generatedAtIso,
         bankName: (p.bank_name ?? "") as string,
         bankAccountNumber: (p.bank_account_number ?? "") as string,
         bankIfsc: (p.bank_ifsc ?? "") as string,
@@ -146,6 +185,7 @@ export async function GET() {
         periodFormatted,
         periodMonth,
         governmentMonthly: gov ?? null,
+        leavePayslip,
       };
     }),
   });

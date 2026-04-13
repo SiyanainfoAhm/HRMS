@@ -3,7 +3,8 @@ import { cookies } from "next/headers";
 import { COOKIE_NAME } from "@/lib/auth";
 import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
-import { computeEntitled, computeUsedDaysForYear, leaveYearStart, type LeavePolicy } from "@/lib/leavePolicy";
+import { computeLeaveBalanceRows } from "@/lib/leaveBalancesCompute";
+import { leaveYearStart } from "@/lib/leavePolicy";
 
 function todayIstYmd(): string {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
@@ -44,11 +45,10 @@ export async function GET(request: NextRequest) {
 
   const asOfYmd = asOfParam || todayIstYmd();
   const asOf = new Date(asOfYmd + "T00:00:00Z");
-  const joinDate = targetUser.date_of_joining ? new Date(String(targetUser.date_of_joining) + "T00:00:00Z") : null;
 
   let policiesQuery = supabase
     .from("HRMS_leave_policies")
-    .select("*, HRMS_leave_types(id, name, is_paid, code)")
+    .select("*, HRMS_leave_types(id, name, is_paid, code, payslip_slot)")
     .eq("company_id", me.company_id);
   if (leaveTypeIdParam) policiesQuery = policiesQuery.eq("leave_type_id", leaveTypeIdParam);
   const { data: policies, error: polErr } = await policiesQuery;
@@ -62,35 +62,35 @@ export async function GET(request: NextRequest) {
     .eq("status", "approved");
   if (leaveErr) return NextResponse.json({ error: leaveErr.message }, { status: 400 });
 
-  const balances = (policies ?? []).map((p: any) => {
-    const policy: LeavePolicy = {
-      leave_type_id: p.leave_type_id,
-      accrual_method: p.accrual_method,
-      monthly_accrual_rate: p.monthly_accrual_rate,
-      annual_quota: p.annual_quota,
-      prorate_on_join: Boolean(p.prorate_on_join),
-      reset_month: Number(p.reset_month ?? 1),
-      reset_day: Number(p.reset_day ?? 1),
-      allow_carryover: Boolean(p.allow_carryover),
-      carryover_limit: p.carryover_limit,
-    };
+  const rows = computeLeaveBalanceRows(
+    (policies ?? []) as any[],
+    (leaves ?? []).map((r: any) => ({
+      leave_type_id: r.leave_type_id,
+      start_date: String(r.start_date).slice(0, 10),
+      end_date: String(r.end_date).slice(0, 10),
+      total_days: Number(r.total_days) || 0,
+    })),
+    targetUser.date_of_joining ? String(targetUser.date_of_joining).slice(0, 10) : null,
+    asOfYmd,
+  );
 
-    const yearStart = leaveYearStart(asOf, policy.reset_month, policy.reset_day);
-    const yearEndExclusive = new Date(Date.UTC(yearStart.getUTCFullYear() + 1, yearStart.getUTCMonth(), yearStart.getUTCDate(), 0, 0, 0, 0));
-
-    const entitled = computeEntitled(policy, joinDate, asOf); // null => unlimited
-    const used = computeUsedDaysForYear(leaves ?? [], p.leave_type_id, yearStart, yearEndExclusive);
-    const remaining = entitled == null ? null : Math.max(0, entitled - used);
+  const balances = rows.map((row) => {
+    const p = (policies ?? []).find((x: any) => x.leave_type_id === row.leaveTypeId);
+    const pol = p as any;
+    const periodStartStr = p
+      ? leaveYearStart(asOf, Number(pol?.reset_month ?? 1), Number(pol?.reset_day ?? 1)).toISOString().slice(0, 10)
+      : asOfYmd;
 
     return {
-      leaveTypeId: p.leave_type_id,
-      leaveTypeName: p.HRMS_leave_types?.name ?? "",
-      isPaid: Boolean(p.HRMS_leave_types?.is_paid),
-      accrualMethod: p.accrual_method,
-      entitled,
-      used,
-      remaining,
-      periodStart: yearStart.toISOString().slice(0, 10),
+      leaveTypeId: row.leaveTypeId,
+      leaveTypeName: row.leaveTypeName,
+      payslipSlot: row.payslipSlot,
+      isPaid: row.isPaid,
+      accrualMethod: p?.accrual_method,
+      entitled: row.entitled,
+      used: row.used,
+      remaining: row.remaining,
+      periodStart: periodStartStr,
     };
   });
 

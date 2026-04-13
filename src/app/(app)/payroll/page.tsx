@@ -19,6 +19,7 @@ import {
 import { GovernmentRunPreviewTable, type GovernmentRunPreviewRow } from "@/components/payroll/GovernmentRunPreviewTable";
 import { GovernmentPayslipPrint } from "@/components/payslip/GovernmentPayslipPrint";
 import type { GovernmentMonthlySlip } from "@/lib/governmentPayslipLayout";
+import type { GovernmentLeavePayslipDisplay } from "@/lib/leaveBalancesCompute";
 
 type MasterGridRow = {
   employeeUserId: string;
@@ -552,6 +553,10 @@ function PayrollPageContent() {
   const [editTds, setEditTds] = useState("");
   const [editAdvanceBonus, setEditAdvanceBonus] = useState("");
   const [editSaving, setEditSaving] = useState(false);
+  const [editMasterTab, setEditMasterTab] = useState<"structure" | "bank">("structure");
+  const [editBankName, setEditBankName] = useState("");
+  const [editBankAccountNumber, setEditBankAccountNumber] = useState("");
+  const [editBankIfsc, setEditBankIfsc] = useState("");
   const [editPayrollMode, setEditPayrollMode] = useState<"private" | "government">("private");
   const [editGrossBasic, setEditGrossBasic] = useState("");
   const [editDaPercent, setEditDaPercent] = useState("53");
@@ -578,6 +583,8 @@ function PayrollPageContent() {
     effectiveRunDay: number;
     alreadyRun: boolean;
     existingPeriodId: string | null;
+    payrollComplete?: boolean;
+    missingPayslipCount?: number;
     rows: {
       employeeUserId: string;
       employeeName: string | null;
@@ -607,6 +614,7 @@ function PayrollPageContent() {
       governmentMonthly?: unknown;
       govRecalc?: GovRecalcPayload;
       error?: string;
+      payslipPending?: boolean;
     }[];
   } | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -642,6 +650,7 @@ function PayrollPageContent() {
       payrollMode?: string;
       governmentMonthly?: unknown;
       govRecalc?: GovRecalcPayload;
+      payslipPending?: boolean;
     }[]
   >([]);
 
@@ -703,6 +712,7 @@ function PayrollPageContent() {
       bankAccountNumber?: string;
       payrollMode?: string;
       governmentMonthly?: Record<string, number> | null;
+      leavePayslip?: GovernmentLeavePayslipDisplay | null;
     }[];
   } | null>(null);
   const [slipsLoading, setSlipsLoading] = useState(false);
@@ -1295,6 +1305,10 @@ function PayrollPageContent() {
               personal: gridRow.personal,
             }
           : defaultSalaryBreakup(gross);
+    setEditMasterTab("structure");
+    setEditBankName(String(apiRow?.bankName ?? ""));
+    setEditBankAccountNumber(String(apiRow?.bankAccountNumber ?? ""));
+    setEditBankIfsc(String(apiRow?.bankIfsc ?? ""));
     setEditMasterOpen({
       employeeUserId: gridRow.employeeUserId,
       employeeName: gridRow.employeeName,
@@ -1440,9 +1454,43 @@ function PayrollPageContent() {
     }
   }
 
+  async function saveEditMasterBank() {
+    if (!editMasterOpen) return;
+    setEditSaving(true);
+    try {
+      const res = await fetch("/api/payroll/master", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          employeeUserId: editMasterOpen.employeeUserId,
+          updateBankOnly: true,
+          bankName: editBankName,
+          bankAccountNumber: editBankAccountNumber,
+          bankIfsc: editBankIfsc,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Failed to save bank details");
+      showToast("success", "Bank details updated");
+      setEditMasterOpen(null);
+      setEditMasterTab("structure");
+      const refresh = await fetch("/api/payroll/master");
+      const refreshData = await refresh.json();
+      if (refresh.ok) setMasters(refreshData.masters || []);
+    } catch (e: any) {
+      showToast("error", e?.message || "Failed to save bank details");
+    } finally {
+      setEditSaving(false);
+    }
+  }
+
   async function handleSaveMaster(e: FormEvent) {
     e.preventDefault();
     if (!editMasterOpen) return;
+    if (editMasterTab === "bank") {
+      await saveEditMasterBank();
+      return;
+    }
     setEditSaving(true);
     try {
       const pt = parseFloat(editPt);
@@ -1541,6 +1589,7 @@ function PayrollPageContent() {
     setRunError(null);
     setRunning(true);
     try {
+      const useCompleteMissing = Boolean(preview?.alreadyRun && preview?.payrollComplete === false);
       const rowsPayload = editableRows.map((r) => ({
         employeeUserId: r.employeeUserId,
         payDays: r.payDays,
@@ -1570,16 +1619,30 @@ function PayrollPageContent() {
       const res = await fetch("/api/payroll/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          year: parseInt(runYear, 10),
-          month: parseInt(runMonth, 10),
-          runDay: parseInt(runDay, 10),
-          rows: rowsPayload,
-        }),
+        body: JSON.stringify(
+          useCompleteMissing
+            ? {
+                year: parseInt(runYear, 10),
+                month: parseInt(runMonth, 10),
+                runDay: parseInt(runDay, 10),
+                completeMissingPayslips: true,
+              }
+            : {
+                year: parseInt(runYear, 10),
+                month: parseInt(runMonth, 10),
+                runDay: parseInt(runDay, 10),
+                rows: rowsPayload,
+              },
+        ),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to run payroll");
-      showToast("success", `Payroll generated: ${data.payslipsGenerated} payslips. Excel saved to storage.`);
+      showToast(
+        "success",
+        useCompleteMissing
+          ? `Added ${data.payslipsGenerated} missing payslip(s). Excel updated.`
+          : `Payroll generated: ${data.payslipsGenerated} payslips. Excel saved to storage.`,
+      );
       // Stay on Run tab and refetch preview to show generated records + Download Excel
       const refreshRes = await fetch(
         `/api/payroll/run?year=${runYear}&month=${runMonth}&runDay=${runDay}`
@@ -2256,7 +2319,10 @@ function PayrollPageContent() {
             type="button"
             className="fixed inset-0 bg-black/40"
             aria-label="Close"
-            onClick={() => setEditMasterOpen(null)}
+            onClick={() => {
+              setEditMasterOpen(null);
+              setEditMasterTab("structure");
+            }}
           />
           <div className="relative z-10 flex min-h-full items-center justify-center px-4 py-6 sm:px-6 sm:py-8">
             <form
@@ -2266,8 +2332,66 @@ function PayrollPageContent() {
               <div className="shrink-0 border-b border-slate-100 px-5 pb-3 pt-5 sm:px-6 sm:pt-6">
                 <h3 className="text-lg font-semibold text-slate-900">Edit Payroll Master</h3>
                 <p className="mt-1 text-sm text-slate-500">{editMasterOpen.employeeName || editMasterOpen.employeeEmail}</p>
+                <div className="mt-4 flex gap-1 rounded-lg bg-slate-100 p-1">
+                  <button
+                    type="button"
+                    className={`flex-1 rounded-md px-3 py-2 text-sm font-medium ${
+                      editMasterTab === "structure" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"
+                    }`}
+                    onClick={() => setEditMasterTab("structure")}
+                  >
+                    Payroll structure
+                  </button>
+                  <button
+                    type="button"
+                    className={`flex-1 rounded-md px-3 py-2 text-sm font-medium ${
+                      editMasterTab === "bank" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"
+                    }`}
+                    onClick={() => setEditMasterTab("bank")}
+                  >
+                    Bank information
+                  </button>
+                </div>
               </div>
               <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-5 py-4 sm:px-6">
+              {editMasterTab === "bank" ? (
+                <div className="space-y-4">
+                  <p className="text-sm text-slate-600">
+                    Update salary credit details for this employee. These values are used on payslips and payroll export. Saving here does not create a new payroll master row.
+                  </p>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700">Bank name</label>
+                    <input
+                      type="text"
+                      value={editBankName}
+                      onChange={(e) => setEditBankName(e.target.value)}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      autoComplete="off"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700">Account number</label>
+                    <input
+                      type="text"
+                      value={editBankAccountNumber}
+                      onChange={(e) => setEditBankAccountNumber(e.target.value)}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono"
+                      autoComplete="off"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700">IFSC</label>
+                    <input
+                      type="text"
+                      value={editBankIfsc}
+                      onChange={(e) => setEditBankIfsc(e.target.value.toUpperCase())}
+                      className="w-full max-w-xs rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono uppercase"
+                      autoComplete="off"
+                    />
+                  </div>
+                </div>
+              ) : (
+              <>
               <div>
                 <label className="mb-1 block text-sm font-medium text-slate-700">Structure</label>
                 <select
@@ -2615,14 +2739,24 @@ function PayrollPageContent() {
                   <option value="UpdateOnly">Update Only</option>
                 </select>
               </div>
+              </>
+              )}
               </div>
               <div className="shrink-0 border-t border-slate-100 bg-slate-50/90 px-5 py-3 sm:px-6">
                 <div className="flex justify-end gap-2">
-                  <button type="button" className="btn btn-outline" onClick={() => setEditMasterOpen(null)} disabled={editSaving}>
+                  <button
+                    type="button"
+                    className="btn btn-outline"
+                    onClick={() => {
+                      setEditMasterOpen(null);
+                      setEditMasterTab("structure");
+                    }}
+                    disabled={editSaving}
+                  >
                     Cancel
                   </button>
                   <button type="submit" className="btn btn-primary" disabled={editSaving}>
-                    {editSaving ? "Saving..." : "Save"}
+                    {editSaving ? "Saving..." : editMasterTab === "bank" ? "Save bank details" : "Save payroll"}
                   </button>
                 </div>
               </div>
@@ -2641,6 +2775,7 @@ function PayrollPageContent() {
               Pay days are based on Mon–Fri (UTC) working days with sufficient attendance on those days; company holidays from your holiday calendar (including multi-day ranges) are excluded from working days and from attendance-based presence.
               The same working-day presence (not weekends or holidays) must reach at least 10 qualifying days in the run-through period (8-hour active rule after breaks) before pay days apply for salary proration. Below that, preview shows 0 pay days (you may override manually). Auto payroll skips payslips until the threshold is met when attendance data exists.
               Salary is prorated against working days in the full calendar month. If there is no attendance yet and no unpaid leave in the window, pay days default to all working days in the run-through date range (still subject to the 10 qualifying days rule when attendance exists).
+              If the month was already run but new employees (or others) still have no payslip, the preview lists everyone with an active master; use Generate again to add only the missing payslips and refresh the Excel file.
             </p>
             <form onSubmit={handleRunPayroll} className="space-y-4">
               <div className="flex flex-wrap items-end gap-4">
@@ -2686,10 +2821,16 @@ function PayrollPageContent() {
                   )}
                   <button
                     type="submit"
-                    className={`btn btn-primary ${preview?.alreadyRun ? "cursor-not-allowed opacity-50" : ""}`}
-                    disabled={running || preview?.alreadyRun}
+                    className={`btn btn-primary ${
+                      preview?.alreadyRun && preview?.payrollComplete !== false ? "cursor-not-allowed opacity-50" : ""
+                    }`}
+                    disabled={running || (!!preview?.alreadyRun && preview?.payrollComplete !== false)}
                   >
-                    {running ? "Generating..." : "Generate"}
+                    {running
+                      ? "Generating..."
+                      : preview?.alreadyRun && preview?.payrollComplete === false
+                        ? "Add missing payslips"
+                        : "Generate"}
                   </button>
                 </div>
               </div>
@@ -2702,7 +2843,15 @@ function PayrollPageContent() {
               )}
               {preview?.alreadyRun && (
                 <div className="flex flex-wrap items-center gap-3">
-                  <p className="text-sm text-amber-700">Payroll already run for this period.</p>
+                  <p className="text-sm text-amber-700">
+                    Payroll already run for this period.
+                    {preview.payrollComplete === false && typeof preview.missingPayslipCount === "number" ? (
+                      <span className="ml-1 font-medium">
+                        {preview.missingPayslipCount} employee(s) still need payslips (e.g. new joiners)—click &quot;Add missing
+                        payslips&quot; to create them and update Excel.
+                      </span>
+                    ) : null}
+                  </p>
                   {preview?.existingPeriodId && (
                     <a
                       href={`/api/payroll/export?periodId=${preview.existingPeriodId}`}
@@ -2722,7 +2871,9 @@ function PayrollPageContent() {
                 <div className="mt-4 border-t border-slate-200 pt-4">
                   <p className="mb-3 text-sm text-slate-600">
                     {preview?.alreadyRun
-                      ? "Payroll generated for this period. Values are read-only."
+                      ? preview?.payrollComplete === false
+                        ? "Saved payslips are read-only. Rows marked as pending will get payslips when you add missing payslips."
+                        : "Payroll generated for this period. Values are read-only."
                       : previewAllGovernment
                         ? "Government payroll: preview matches the pay slip earnings and deduction columns. Paid days use the calendar month (see Days column max). Changing days recomputes Basic, DA, HRA, CPF, and totals."
                         : "Edit values before generating. Changing pay days will recalculate gross, PF, ESIC and deductions."}
@@ -2767,7 +2918,12 @@ function PayrollPageContent() {
                                   className="truncate px-1.5 py-1 font-medium text-slate-900"
                                   title={r.employeeName || r.employeeEmail || undefined}
                                 >
-                                  {r.employeeName || r.employeeEmail || "—"}
+                                  <span className="align-middle">{r.employeeName || r.employeeEmail || "—"}</span>
+                                  {r.payslipPending ? (
+                                    <span className="ml-1 inline-block align-middle rounded bg-amber-100 px-1 py-0 text-[10px] font-medium text-amber-900">
+                                      Pending slip
+                                    </span>
+                                  ) : null}
                                 </td>
                                 <td className="px-1 py-1">
                                   {readOnly ? (
@@ -3164,6 +3320,7 @@ function PayrollPageContent() {
                       netPay: slip.netPay,
                     }}
                     gov={gov as GovernmentMonthlySlip}
+                    leavePayslip={slip.leavePayslip ?? null}
                   />
                 );
               }

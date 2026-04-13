@@ -81,9 +81,12 @@ export function ApprovalsContent() {
   const [newMonthlyRate, setNewMonthlyRate] = useState("1");
   const [newAnnualQuota, setNewAnnualQuota] = useState("12");
   const [newProrateOnJoin, setNewProrateOnJoin] = useState(true);
+  const [newPayslipSlot, setNewPayslipSlot] = useState("");
   const [creatingType, setCreatingType] = useState(false);
 
   const [editPolicyFor, setEditPolicyFor] = useState<null | { leaveTypeId: string; name: string }>(null);
+  const [editTypeName, setEditTypeName] = useState("");
+  const [editPayslipSlot, setEditPayslipSlot] = useState("");
   const [editAccrualMethod, setEditAccrualMethod] = useState<"monthly" | "annual" | "none">("monthly");
   const [editMonthlyRate, setEditMonthlyRate] = useState("1");
   const [editAnnualQuota, setEditAnnualQuota] = useState("12");
@@ -340,6 +343,7 @@ export function ApprovalsContent() {
           name,
           isPaid: Boolean(newTypeIsPaid),
           code: name.toUpperCase().replace(/[^A-Z0-9]+/g, "_").slice(0, 16) || undefined,
+          payslipSlot: newPayslipSlot || null,
         }),
       });
       const typeData = await typeRes.json();
@@ -371,6 +375,7 @@ export function ApprovalsContent() {
       setNewMonthlyRate("1");
       setNewAnnualQuota("12");
       setNewProrateOnJoin(true);
+      setNewPayslipSlot("");
       setManageTypesOpen(false);
       showToast("success", "Leave type created");
     } catch (e: any) {
@@ -384,6 +389,9 @@ export function ApprovalsContent() {
   function openEditPolicy(t: any) {
     const p = Array.isArray(t.HRMS_leave_policies) ? t.HRMS_leave_policies[0] : t.HRMS_leave_policies;
     setEditPolicyFor({ leaveTypeId: t.id, name: t.name });
+    setEditTypeName(String(t.name ?? ""));
+    const ps = t.payslip_slot != null && String(t.payslip_slot).trim() ? String(t.payslip_slot).trim().toUpperCase() : "";
+    setEditPayslipSlot(["CL", "EL", "HPL", "HL"].includes(ps) ? ps : "");
     setEditAccrualMethod((p?.accrual_method as any) || "monthly");
     setEditMonthlyRate(String(p?.monthly_accrual_rate ?? "1"));
     setEditAnnualQuota(String(p?.annual_quota ?? "12"));
@@ -395,6 +403,21 @@ export function ApprovalsContent() {
     setSavingPolicy(true);
     setError(null);
     try {
+      const typeName = editTypeName.trim();
+      if (!typeName) throw new Error("Display name is required");
+
+      const typeRes = await fetch("/api/leave/types", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: editPolicyFor.leaveTypeId,
+          name: typeName,
+          payslipSlot: editPayslipSlot || null,
+        }),
+      });
+      const typeData = await typeRes.json();
+      if (!typeRes.ok) throw new Error(typeData?.error || "Failed to update leave type");
+
       const res = await fetch("/api/leave/policies", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -680,6 +703,7 @@ export function ApprovalsContent() {
                   <thead className="text-slate-600">
                     <tr>
                       <th className="px-3 py-2">Type</th>
+                      <th className="px-3 py-2">Payslip</th>
                       <th className="px-3 py-2">Paid</th>
                       <th className="px-3 py-2">Accrual</th>
                       <th className="px-3 py-2">Monthly</th>
@@ -693,6 +717,9 @@ export function ApprovalsContent() {
                       return (
                         <tr key={t.id} className="border-t border-slate-200">
                           <td className="px-3 py-2">{t.name}</td>
+                          <td className="px-3 py-2 font-mono text-xs text-slate-600">
+                            {t.payslip_slot ? String(t.payslip_slot) : "—"}
+                          </td>
                           <td className="px-3 py-2">{t.is_paid ? "Yes" : "No"}</td>
                           <td className="px-3 py-2">{p?.accrual_method ?? "-"}</td>
                           <td className="px-3 py-2">{p?.monthly_accrual_rate ?? "-"}</td>
@@ -1010,6 +1037,21 @@ export function ApprovalsContent() {
                     </div>
 
                     <div>
+                      <label className="mb-1 block text-sm font-medium text-slate-700">Payslip line (government slip)</label>
+                      <select
+                        value={newPayslipSlot}
+                        onChange={(e) => setNewPayslipSlot(e.target.value)}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                      >
+                        <option value="">Not shown</option>
+                        <option value="CL">CL — Casual leave</option>
+                        <option value="EL">EL — Earned leave</option>
+                        <option value="HPL">HPL — Half pay leave</option>
+                        <option value="HL">HL — Half leave</option>
+                      </select>
+                    </div>
+
+                    <div>
                       <label className="mb-1 block text-sm font-medium text-slate-700">Accrual method</label>
                       <select
                         value={newAccrualMethod}
@@ -1090,6 +1132,30 @@ export function ApprovalsContent() {
 
                 <div className="p-5 space-y-4">
                   <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-slate-700">Display name</label>
+                      <input
+                        type="text"
+                        value={editTypeName}
+                        onChange={(e) => setEditTypeName(e.target.value)}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-slate-700">Payslip line (government slip)</label>
+                      <select
+                        value={editPayslipSlot}
+                        onChange={(e) => setEditPayslipSlot(e.target.value)}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                      >
+                        <option value="">Not shown</option>
+                        <option value="CL">CL — Casual leave</option>
+                        <option value="EL">EL — Earned leave</option>
+                        <option value="HPL">HPL — Half pay leave</option>
+                        <option value="HL">HL — Half leave</option>
+                      </select>
+                    </div>
                     <div>
                       <label className="mb-1 block text-sm font-medium text-slate-700">Accrual method</label>
                       <select

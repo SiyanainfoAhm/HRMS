@@ -6,6 +6,7 @@ import {
   governmentPayslipTAccountRows,
   type GovernmentMonthlySlip,
 } from "@/lib/governmentPayslipLayout";
+import type { GovernmentLeavePayslipDisplay } from "@/lib/leaveBalancesCompute";
 
 export type GovernmentPayslipPrintCompany = {
   name?: string | null;
@@ -38,6 +39,8 @@ export type GovernmentPayslipPrintProps = {
   user: GovernmentPayslipPrintUser | null;
   slip: GovernmentPayslipPrintSlip;
   gov: GovernmentMonthlySlip;
+  /** Leave lines for government slip; labels are fixed (Casual / Earned / HPL / HL + total). */
+  leavePayslip?: GovernmentLeavePayslipDisplay | null;
 };
 
 function fmtDmy(iso: string) {
@@ -55,7 +58,7 @@ function fmtSalaryDate(iso: string) {
 }
 
 export const GovernmentPayslipPrint = forwardRef<HTMLDivElement, GovernmentPayslipPrintProps>(
-  function GovernmentPayslipPrint({ company, user, slip, gov }, ref) {
+  function GovernmentPayslipPrint({ company, user, slip, gov, leavePayslip }, ref) {
     const n = (x: number) => (Number(x) || 0).toLocaleString("en-IN");
     const cellClass = "border border-black px-2 py-1.5 align-top text-sm";
     const thClass = "border border-black px-2 py-1.5 text-left text-xs font-semibold uppercase tracking-wide";
@@ -160,16 +163,20 @@ export const GovernmentPayslipPrint = forwardRef<HTMLDivElement, GovernmentPaysl
               <td className={cellClass}>
                 <div className="space-y-1 text-sm text-slate-700">
                   <div>
-                    <span className="text-slate-600">Leave balance:</span> —
+                    <span className="text-slate-600">Leave balance:</span>{" "}
+                    {leavePayslip?.leaveBalanceTotal ?? "—"}
                   </div>
                   <div>
-                    <span className="text-slate-600">Casual leave:</span> —
+                    <span className="text-slate-600">Casual leave:</span> {leavePayslip?.casualLeave ?? "—"}
                   </div>
                   <div>
-                    <span className="text-slate-600">Earned leave:</span> —
+                    <span className="text-slate-600">Earned leave:</span> {leavePayslip?.earnedLeave ?? "—"}
                   </div>
                   <div>
-                    <span className="text-slate-600">HPL:</span> —
+                    <span className="text-slate-600">HPL:</span> {leavePayslip?.hpl ?? "—"}
+                  </div>
+                  <div>
+                    <span className="text-slate-600">HL:</span> {leavePayslip?.hl ?? "—"}
                   </div>
                 </div>
               </td>

@@ -3,11 +3,11 @@ import { cookies } from "next/headers";
 import { COOKIE_NAME } from "@/lib/auth";
 import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
+import { computeGovernmentMonthlyPayroll, masterRowToDeductionDefaults } from "@/lib/governmentPayroll";
 import {
-  computeGovernmentMonthlyPayroll,
-  deriveTransportSlabFromLevel,
-  masterRowToDeductionDefaults,
-} from "@/lib/governmentPayroll";
+  payrollMasterPayloadForClient,
+  resolveConvertPayrollMasterInput,
+} from "@/lib/convertToCurrentPayroll";
 import {
   normalizeDigits,
   validateEmailField,
@@ -950,6 +950,60 @@ export async function PUT(request: NextRequest) {
   return NextResponse.json({ employee: mapRow(updated) });
 }
 
+async function checkConvertToCurrentGate(
+  userId: string,
+  companyId: string,
+  dateOfJoining: string | undefined,
+): Promise<{ error: NextResponse } | { doj: string }> {
+  const { data: invite, error: iErr } = await supabase
+    .from("HRMS_employee_invites")
+    .select("*")
+    .eq("company_id", companyId)
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (iErr) return { error: NextResponse.json({ error: iErr.message }, { status: 400 }) };
+
+  // Admin / HR / super_admin may mark an employee current without any invite, or before invite completion.
+  // Mandatory-document checks apply only when a completed invite exists (normal onboarding path).
+  if (invite?.status === "completed") {
+    const requestedIds = Array.isArray(invite.requested_document_ids)
+      ? (invite.requested_document_ids as unknown[]).filter((x) => typeof x === "string")
+      : null;
+    let docQuery = supabase
+      .from("HRMS_company_documents")
+      .select("id, is_mandatory")
+      .eq("company_id", companyId);
+    if (requestedIds && requestedIds.length) docQuery = docQuery.in("id", requestedIds);
+    const { data: docs, error: dErr } = await docQuery;
+    if (dErr) return { error: NextResponse.json({ error: dErr.message }, { status: 400 }) };
+
+    const mandatoryIds = (docs ?? []).filter((d: { is_mandatory?: boolean }) => d.is_mandatory).map((d: { id: string }) => d.id);
+    if (mandatoryIds.length) {
+      const { data: subs, error: sErr } = await supabase
+        .from("HRMS_employee_document_submissions")
+        .select("document_id, status")
+        .eq("user_id", userId);
+      if (sErr) return { error: NextResponse.json({ error: sErr.message }, { status: 400 }) };
+      const done = new Set(
+        (subs ?? [])
+          .filter((s: { status?: string }) => ["submitted", "signed", "approved"].includes(String(s.status)))
+          .map((s: { document_id: string }) => s.document_id),
+      );
+      const missing = mandatoryIds.filter((id) => !done.has(id));
+      if (missing.length) return { error: NextResponse.json({ error: "Mandatory documents still pending" }, { status: 400 }) };
+    }
+  }
+
+  const { data: userForDoj } = await supabase.from("HRMS_users").select("date_of_joining").eq("id", userId).single();
+  const doj =
+    dateOfJoining?.trim() ||
+    (userForDoj?.date_of_joining ? String(userForDoj.date_of_joining).slice(0, 10) : null) ||
+    new Date().toISOString().slice(0, 10);
+  return { doj };
+}
+
 export async function PATCH(request: NextRequest) {
   const cookieStore = await cookies();
   const session = await getValidatedSession(cookieStore.get(COOKIE_NAME)?.value);
@@ -962,7 +1016,12 @@ export async function PATCH(request: NextRequest) {
   const dateOfJoining = typeof body?.dateOfJoining === "string" ? body.dateOfJoining.trim() : "";
   const lastWorkingDate = typeof body?.lastWorkingDate === "string" ? body.lastWorkingDate.trim() : "";
   if (!userId) return NextResponse.json({ error: "userId is required" }, { status: 400 });
-  if (action !== "convert_to_current" && action !== "convert_to_past" && action !== "revoke_notice")
+  if (
+    action !== "convert_to_current" &&
+    action !== "convert_to_past" &&
+    action !== "revoke_notice" &&
+    action !== "preview_convert_to_current"
+  )
     return NextResponse.json({ error: "Invalid action" }, { status: 400 });
 
   const { data: me, error: meErr } = await supabase
@@ -973,61 +1032,10 @@ export async function PATCH(request: NextRequest) {
   if (meErr) return NextResponse.json({ error: meErr.message }, { status: 400 });
   if (!me?.company_id) return NextResponse.json({ error: "User not linked to company" }, { status: 400 });
 
-  const { data: invite, error: iErr } = await supabase
-    .from("HRMS_employee_invites")
-    .select("*")
-    .eq("company_id", me.company_id)
-    .eq("user_id", userId)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (iErr) return NextResponse.json({ error: iErr.message }, { status: 400 });
-  if (!invite) return NextResponse.json({ error: "No invite found for employee" }, { status: 400 });
-
-  if (action === "convert_to_current") {
-    if (invite.status !== "completed") return NextResponse.json({ error: "Invite not completed yet" }, { status: 400 });
-
-    const requestedIds = Array.isArray(invite.requested_document_ids)
-      ? (invite.requested_document_ids as any[]).filter((x) => typeof x === "string")
-      : null;
-    let docQuery = supabase
-      .from("HRMS_company_documents")
-      .select("id, is_mandatory")
-      .eq("company_id", me.company_id);
-    if (requestedIds && requestedIds.length) docQuery = docQuery.in("id", requestedIds);
-    const { data: docs, error: dErr } = await docQuery;
-    if (dErr) return NextResponse.json({ error: dErr.message }, { status: 400 });
-
-    const mandatoryIds = (docs ?? []).filter((d: any) => d.is_mandatory).map((d: any) => d.id as string);
-    if (mandatoryIds.length) {
-      const { data: subs, error: sErr } = await supabase
-        .from("HRMS_employee_document_submissions")
-        .select("document_id, status")
-        .eq("user_id", userId);
-      if (sErr) return NextResponse.json({ error: sErr.message }, { status: 400 });
-      const done = new Set((subs ?? []).filter((s: any) => ["submitted", "signed", "approved"].includes(s.status)).map((s: any) => s.document_id));
-      const missing = mandatoryIds.filter((id) => !done.has(id));
-      if (missing.length) return NextResponse.json({ error: "Mandatory documents still pending" }, { status: 400 });
-    }
-
-    const { data: userForDoj } = await supabase
-      .from("HRMS_users")
-      .select("date_of_joining")
-      .eq("id", userId)
-      .single();
-    const doj = dateOfJoining || (userForDoj?.date_of_joining ? String(userForDoj.date_of_joining).slice(0, 10) : null) || new Date().toISOString().slice(0, 10);
-    const { error: updErr } = await supabase
-      .from("HRMS_users")
-      .update({ employment_status: "current", date_of_joining: doj, date_of_leaving: null, updated_at: new Date().toISOString() })
-      .eq("company_id", me.company_id)
-      .eq("id", userId);
-    if (updErr) return NextResponse.json({ error: updErr.message }, { status: 400 });
-
-    await supabase
-      .from("HRMS_employees")
-      .update({ is_active: true, date_of_joining: doj, date_of_leaving: null, updated_at: new Date().toISOString() })
-      .eq("company_id", me.company_id)
-      .eq("user_id", userId);
+  if (action === "preview_convert_to_current") {
+    const gate = await checkConvertToCurrentGate(userId, me.company_id, dateOfJoining || undefined);
+    if ("error" in gate) return gate.error;
+    const { doj } = gate;
 
     const { data: company } = await supabase
       .from("HRMS_companies")
@@ -1036,13 +1044,16 @@ export async function PATCH(request: NextRequest) {
       .single();
     const ptMonthly = company?.professional_tax_monthly != null ? Number(company.professional_tax_monthly) : 200;
 
-    const { data: u } = await supabase
+    const { data: u, error: uErr } = await supabase
       .from("HRMS_users")
-      .select("ctc, gross_salary, tds_monthly, government_pay_level")
+      .select("gross_salary, government_pay_level, tds_monthly")
       .eq("id", userId)
-      .single();
-    const grossBasicJoin = Number(u?.gross_salary ?? 0);
-    const payLevel = u?.government_pay_level != null ? Number(u.government_pay_level) : null;
+      .eq("company_id", me.company_id)
+      .maybeSingle();
+    if (uErr || !u) return NextResponse.json({ error: "Employee not found" }, { status: 400 });
+
+    const grossBasicJoin = Number(u.gross_salary ?? 0);
+    const payLevel = u.government_pay_level != null ? Number(u.government_pay_level) : null;
     if (payLevel == null || !Number.isFinite(payLevel) || payLevel < 1) {
       return NextResponse.json(
         { error: "Set government pay level on the employee before marking as current." },
@@ -1056,38 +1067,95 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
-    const slab = deriveTransportSlabFromLevel(payLevel);
-    const tdsMonthly = u?.tds_monthly != null ? Math.max(0, Number(u.tds_monthly)) : 0;
-    const ded = {
-      income_tax_default: tdsMonthly,
-      pt_default: ptMonthly,
-      lic_default: 0,
-      cpf_default: 0,
-      da_cpf_default: 0,
-      vpf_default: 0,
-      pf_loan_default: 0,
-      post_office_default: 0,
-      credit_society_default: 0,
-      std_licence_fee_default: 0,
-      electricity_default: 0,
-      water_default: 0,
-      mess_default: 0,
-      horticulture_default: 0,
-      welfare_default: 0,
-      veh_charge_default: 0,
-      other_deduction_default: 0,
-    };
-    const preview = computeGovernmentMonthlyPayroll({
+    const tdsBase = u.tds_monthly != null ? Math.max(0, Number(u.tds_monthly)) : 0;
+    const resolved = resolveConvertPayrollMasterInput(null, {
       grossBasic: grossBasicJoin,
-      daPercent: 53,
-      hraPercent: 30,
-      medicalFixed: 3000,
-      transportDaPercent: 48.06,
       payLevel,
-      daysInMonth: 30,
-      unpaidDays: 0,
-      deductionDefaults: masterRowToDeductionDefaults(ded),
+      ptMonthly,
+      tdsMonthly: tdsBase,
     });
+    const p = resolved.preview;
+    return NextResponse.json({
+      dateOfJoining: doj,
+      payrollMaster: payrollMasterPayloadForClient(resolved),
+      government_pay_level: payLevel,
+      computed: {
+        totalEarnings: p.totalEarnings,
+        netSalary: p.netSalary,
+        basicPaid: p.basicPaid,
+        hraPaid: p.hraPaid,
+        medicalPaid: p.medicalPaid,
+        transportPaid: p.transportPaid,
+        transportSlabGroup: resolved.slab.transportSlabGroup,
+        transportBase: resolved.slab.transportBase,
+        cpf: p.deductions.cpf,
+        daCpf: p.deductions.daCpf,
+        totalDeductions: p.totalDeductions,
+      },
+    });
+  }
+
+  if (action === "convert_to_current") {
+    const gate = await checkConvertToCurrentGate(userId, me.company_id, dateOfJoining || undefined);
+    if ("error" in gate) return gate.error;
+    const { doj } = gate;
+
+    const { data: company } = await supabase
+      .from("HRMS_companies")
+      .select("professional_tax_monthly")
+      .eq("id", me.company_id)
+      .single();
+    const ptMonthly = company?.professional_tax_monthly != null ? Number(company.professional_tax_monthly) : 200;
+
+    const { data: u, error: uErr } = await supabase
+      .from("HRMS_users")
+      .select("gross_salary, tds_monthly, government_pay_level")
+      .eq("id", userId)
+      .eq("company_id", me.company_id)
+      .maybeSingle();
+    if (uErr || !u) return NextResponse.json({ error: "Employee not found" }, { status: 400 });
+
+    const grossBasicJoin = Number(u.gross_salary ?? 0);
+    const payLevel = u.government_pay_level != null ? Number(u.government_pay_level) : null;
+    if (payLevel == null || !Number.isFinite(payLevel) || payLevel < 1) {
+      return NextResponse.json(
+        { error: "Set government pay level on the employee before marking as current." },
+        { status: 400 },
+      );
+    }
+    if (!Number.isFinite(grossBasicJoin) || grossBasicJoin <= 0) {
+      return NextResponse.json(
+        { error: "Set monthly gross basic pay on the employee before marking as current." },
+        { status: 400 },
+      );
+    }
+
+    const tdsBase = u.tds_monthly != null ? Math.max(0, Number(u.tds_monthly)) : 0;
+    const payrollMasterRaw = (body as Record<string, unknown>).payrollMaster;
+    const resolved = resolveConvertPayrollMasterInput(payrollMasterRaw ?? null, {
+      grossBasic: grossBasicJoin,
+      payLevel,
+      ptMonthly,
+      tdsMonthly: tdsBase,
+    });
+    const preview = resolved.preview;
+    const slab = resolved.slab;
+    const dedForInsert = Object.fromEntries(
+      Object.entries(resolved.dedRow).map(([k, v]) => [k, Math.max(0, Math.round(Number(v)))]),
+    ) as Record<string, number>;
+
+    const { error: updErr } = await supabase
+      .from("HRMS_users")
+      .update({ employment_status: "current", date_of_joining: doj, date_of_leaving: null, updated_at: new Date().toISOString() })
+      .eq("company_id", me.company_id)
+      .eq("id", userId);
+    if (updErr) return NextResponse.json({ error: updErr.message }, { status: 400 });
+
+    await supabase
+      .from("HRMS_employees")
+      .update({ is_active: true, date_of_joining: doj, date_of_leaving: null, updated_at: new Date().toISOString() })
+      .eq("company_id", me.company_id)
+      .eq("user_id", userId);
 
     const { data: existingMaster } = await supabase
       .from("HRMS_payroll_master")
@@ -1097,31 +1165,31 @@ export async function PATCH(request: NextRequest) {
       .maybeSingle();
 
     if (!existingMaster) {
-      await supabase.from("HRMS_payroll_master").insert([
+      const { error: insErr } = await supabase.from("HRMS_payroll_master").insert([
         {
           company_id: me.company_id,
           employee_user_id: userId,
           payroll_mode: "government",
-          gross_basic: grossBasicJoin,
-          gross_salary: grossBasicJoin,
-          da_percent: 53,
-          hra_percent: 30,
-          medical_fixed: 3000,
-          transport_da_percent: 48.06,
+          gross_basic: resolved.grossBasic,
+          gross_salary: resolved.grossBasic,
+          da_percent: resolved.daPercent,
+          hra_percent: resolved.hraPercent,
+          medical_fixed: resolved.medicalFixed,
+          transport_da_percent: resolved.transportDaPercent,
           transport_slab_group: slab.transportSlabGroup,
           transport_base: slab.transportBase,
-          ...ded,
+          ...dedForInsert,
           pf_eligible: false,
           esic_eligible: false,
           pf_employee: 0,
           pf_employer: 0,
           esic_employee: 0,
           esic_employer: 0,
-          pt: ded.pt_default,
-          tds: tdsMonthly,
-          advance_bonus: 0,
+          pt: dedForInsert.pt_default,
+          tds: resolved.tdsMonthly,
+          advance_bonus: resolved.advanceBonus,
           take_home: preview.netSalary,
-          ctc: grossBasicJoin,
+          ctc: resolved.grossBasic,
           basic: preview.basicPaid,
           hra: preview.hraPaid,
           medical: preview.medicalPaid,
@@ -1134,19 +1202,22 @@ export async function PATCH(request: NextRequest) {
           created_by: session.id,
         },
       ]);
+      if (insErr) return NextResponse.json({ error: insErr.message }, { status: 400 });
     }
 
-    await supabase
+    const { error: finErr } = await supabase
       .from("HRMS_users")
       .update({
         ctc: preview.totalEarnings,
-        gross_salary: grossBasicJoin,
+        gross_salary: resolved.grossBasic,
+        tds_monthly: resolved.tdsMonthly,
         pf_eligible: false,
         esic_eligible: false,
         updated_at: new Date().toISOString(),
       })
       .eq("company_id", me.company_id)
       .eq("id", userId);
+    if (finErr) return NextResponse.json({ error: finErr.message }, { status: 400 });
 
     return NextResponse.json({ ok: true });
   }

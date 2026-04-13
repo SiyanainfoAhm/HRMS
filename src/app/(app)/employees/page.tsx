@@ -12,6 +12,7 @@ import {
   computeGovernmentMonthlyPayroll,
   masterRowToDeductionDefaults,
 } from "@/lib/governmentPayroll";
+import { resolveConvertPayrollMasterInput } from "@/lib/convertToCurrentPayroll";
 import {
   normalizeDigits,
   normalizePanInput,
@@ -90,8 +91,8 @@ export default function EmployeesPage() {
   const [pan, setPan] = useState("");
   const [dateOfBirth, setDateOfBirth] = useState("");
   const [uanNumber, setUanNumber] = useState("");
+  /** PF / CPF (GPF) account reference — saved to both `pf_number` and `cpf_number` for payslips and clarity. */
   const [pfNumber, setPfNumber] = useState("");
-  const [cpfNumber, setCpfNumber] = useState("");
   const [governmentPayLevel, setGovernmentPayLevel] = useState("");
   const [payLevelError, setPayLevelError] = useState<string | null>(null);
   const [grossBasicError, setGrossBasicError] = useState<string | null>(null);
@@ -157,6 +158,10 @@ export default function EmployeesPage() {
   const [convertConfirmStatus, setConvertConfirmStatus] = useState<"current" | "past">("current");
   const [convertDate, setConvertDate] = useState("");
   const [converting, setConverting] = useState(false);
+  const [convertStep, setConvertStep] = useState<1 | 2>(1);
+  const [convertPayrollForm, setConvertPayrollForm] = useState<Record<string, number> | null>(null);
+  const [convertPayLevel, setConvertPayLevel] = useState<number | null>(null);
+  const [convertPreviewLoading, setConvertPreviewLoading] = useState(false);
 
   const [deleteTarget, setDeleteTarget] = useState<Employee | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -201,6 +206,34 @@ export default function EmployeesPage() {
   useEffect(() => {
     setEmployeePage(1);
   }, [pageSize]);
+
+  useEffect(() => {
+    if (convertDialogOpen) {
+      setConvertStep(1);
+      setConvertPayrollForm(null);
+      setConvertPayLevel(null);
+    }
+  }, [convertDialogOpen, convertTarget?.id]);
+
+  useEffect(() => {
+    setConvertStep(1);
+    setConvertPayrollForm(null);
+    setConvertPayLevel(null);
+  }, [convertConfirmStatus]);
+
+  const convertResolvedPreview = useMemo(() => {
+    if (convertStep !== 2 || !convertPayrollForm || convertPayLevel == null || convertPayLevel < 1) return null;
+    try {
+      return resolveConvertPayrollMasterInput(convertPayrollForm, {
+        grossBasic: convertPayrollForm.gross_basic,
+        payLevel: convertPayLevel,
+        ptMonthly: companyPtMonthly,
+        tdsMonthly: convertPayrollForm.tds,
+      });
+    } catch {
+      return null;
+    }
+  }, [convertStep, convertPayrollForm, convertPayLevel, companyPtMonthly]);
 
   const filteredDesignations = useMemo<{ id: string; title: string }[]>(() => {
     const q = designation.trim().toLowerCase();
@@ -292,7 +325,6 @@ export default function EmployeesPage() {
     setDateOfBirth("");
     setUanNumber("");
     setPfNumber("");
-    setCpfNumber("");
     setGovernmentPayLevel("");
     setPayLevelError(null);
     setGrossBasicError(null);
@@ -350,8 +382,7 @@ export default function EmployeesPage() {
       setAadhaar(String(u.aadhaar ?? ""));
       setPan(String(u.pan ?? ""));
       setUanNumber(String(u.uanNumber ?? ""));
-      setPfNumber(String(u.pfNumber ?? ""));
-      setCpfNumber(String(u.cpfNumber ?? ""));
+      setPfNumber(String(u.pfNumber ?? u.cpfNumber ?? ""));
       setGovernmentPayLevel(
         u.governmentPayLevel != null && u.governmentPayLevel !== "" ? String(u.governmentPayLevel) : ""
       );
@@ -529,8 +560,8 @@ export default function EmployeesPage() {
           aadhaar: aDigits,
           pan: panNorm,
           uanNumber: uanNumber || undefined,
-          pfNumber: pfNumber || undefined,
-          cpfNumber: cpfNumber.trim() || undefined,
+          pfNumber: pfNumber.trim() || undefined,
+          cpfNumber: pfNumber.trim() || undefined,
           governmentPayLevel: pl,
           password: password.trim() || undefined,
           requestedDocumentIds: requestedDocIds.length ? requestedDocIds : undefined,
@@ -660,8 +691,8 @@ export default function EmployeesPage() {
           aadhaar: aDigits,
           pan: panNorm,
           uanNumber: uanNumber || undefined,
-          pfNumber: pfNumber || undefined,
-          cpfNumber: cpfNumber.trim() || undefined,
+          pfNumber: pfNumber.trim() || undefined,
+          cpfNumber: pfNumber.trim() || undefined,
           governmentPayLevel: plU,
         }),
       });
@@ -806,7 +837,12 @@ export default function EmployeesPage() {
     }
   }
 
-  async function convertEmployee(emp: Employee, status: "current" | "past", date: string) {
+  async function convertEmployee(
+    emp: Employee,
+    status: "current" | "past",
+    date: string,
+    options?: { payrollMaster?: Record<string, number> | null },
+  ) {
     try {
       setError(null);
       setConverting(true);
@@ -815,12 +851,18 @@ export default function EmployeesPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(
           status === "current"
-            ? { action: "convert_to_current", userId: emp.id, dateOfJoining: date || undefined }
-            : { action: "convert_to_past", userId: emp.id, lastWorkingDate: date || undefined }
+            ? {
+                action: "convert_to_current",
+                userId: emp.id,
+                dateOfJoining: date || undefined,
+                payrollMaster: options?.payrollMaster ?? undefined,
+              }
+            : { action: "convert_to_past", userId: emp.id, lastWorkingDate: date || undefined },
         ),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to convert");
+      setConvertDialogOpen(false);
       setListRefresh((n) => n + 1);
       showToast("success", status === "current" ? "Employee moved to Current" : "Employee moved to Past");
     } catch (e: any) {
@@ -1496,27 +1538,16 @@ export default function EmployeesPage() {
                 </div>
                 <div className="md:col-span-1">
                   <label className="mb-1 block text-sm font-medium text-slate-700">
-                    PF number <span className="text-slate-400 font-normal">(optional)</span>
+                    PF / CPF (GPF) account no. <span className="text-slate-400 font-normal">(optional)</span>
                   </label>
                   <input
                     type="text"
                     value={pfNumber}
                     onChange={(e) => setPfNumber(e.target.value)}
-                    placeholder="If already allotted"
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                  />
-                </div>
-                <div className="md:col-span-1">
-                  <label className="mb-1 block text-sm font-medium text-slate-700">
-                    CPF / GPF ref. <span className="text-slate-400 font-normal">(optional)</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={cpfNumber}
-                    onChange={(e) => setCpfNumber(e.target.value)}
                     placeholder="If allotted"
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                   />
+                  <p className="mt-1 text-xs text-slate-500">One reference for payslip and records (stored as PF and CPF fields).</p>
                 </div>
 
                 <div className="md:col-span-4">
@@ -2600,51 +2631,302 @@ export default function EmployeesPage() {
       {convertDialogOpen && convertTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <button type="button" className="absolute inset-0 bg-black/40" aria-label="Close dialog" onClick={() => setConvertDialogOpen(false)} />
-          <div role="dialog" aria-modal="true" className="relative z-10 w-full max-w-lg rounded-xl border border-slate-200 bg-white shadow-xl">
-            <div className="border-b border-slate-200 px-5 py-4">
-              <h2 className="text-lg font-semibold text-slate-900">Convert employee</h2>
-              <p className="text-sm text-slate-500">
-                Convert <span className="font-medium">{convertTarget.email}</span> to{" "}
-                <span className="font-medium">{convertConfirmStatus === "current" ? "Current" : "Past"}</span>.
-              </p>
-            </div>
-            <div className="p-5 space-y-4">
-              <div>
-                <label className="mb-1 block text-sm font-medium text-slate-700">New status</label>
-                <select
-                  value={convertConfirmStatus}
-                  onChange={(e) => setConvertConfirmStatus(e.target.value as any)}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                >
-                  <option value="current">Current (default)</option>
-                  <option value="past">Past</option>
-                </select>
-              </div>
-              <div>
-                <label className="mb-1 block text-sm font-medium text-slate-700">
-                  {convertConfirmStatus === "current" ? "Date of joining" : "Last working date"}
-                </label>
-                <DatePickerField value={convertDate} onChange={setConvertDate} required className="w-full" />
-              </div>
+          <div
+            role="dialog"
+            aria-modal="true"
+            className={`relative z-10 w-full rounded-xl border border-slate-200 bg-white shadow-xl ${
+              convertStep === 2 ? "max-h-[90vh] max-w-3xl overflow-y-auto" : "max-w-lg"
+            }`}
+          >
+            {convertStep === 1 ? (
+              <>
+                <div className="border-b border-slate-200 px-5 py-4">
+                  <h2 className="text-lg font-semibold text-slate-900">Convert employee</h2>
+                  <p className="text-sm text-slate-500">
+                    Convert <span className="font-medium">{convertTarget.email}</span> to{" "}
+                    <span className="font-medium">{convertConfirmStatus === "current" ? "Current" : "Past"}</span>.
+                  </p>
+                </div>
+                <div className="p-5 space-y-4">
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700">New status</label>
+                    <select
+                      value={convertConfirmStatus}
+                      onChange={(e) => setConvertConfirmStatus(e.target.value as "current" | "past")}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    >
+                      <option value="current">Current (default)</option>
+                      <option value="past">Past</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700">
+                      {convertConfirmStatus === "current" ? "Date of joining" : "Last working date"}
+                    </label>
+                    <DatePickerField value={convertDate} onChange={setConvertDate} required className="w-full" />
+                  </div>
+                  {convertConfirmStatus === "current" && (
+                    <p className="text-xs text-slate-500">
+                      Next, you will review the payroll master row (government mode) that is created when they become current. You can adjust
+                      amounts before confirming.
+                    </p>
+                  )}
 
-              <div className="flex justify-end gap-2">
-                <button type="button" className="btn btn-outline" onClick={() => setConvertDialogOpen(false)} disabled={converting}>
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  disabled={converting}
-                  onClick={async () => {
-                    if (!convertTarget) return;
-                    setConvertDialogOpen(false);
-                    await convertEmployee(convertTarget, convertConfirmStatus, convertDate);
-                  }}
-                >
-                  {converting ? "Converting..." : convertConfirmStatus === "current" ? "Convert to Current" : "Convert to Past"}
-                </button>
-              </div>
-            </div>
+                  <div className="flex justify-end gap-2">
+                    <button type="button" className="btn btn-outline" onClick={() => setConvertDialogOpen(false)} disabled={converting || convertPreviewLoading}>
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      disabled={converting || convertPreviewLoading}
+                      onClick={async () => {
+                        if (!convertTarget) return;
+                        if (convertConfirmStatus === "past") {
+                          setConvertDialogOpen(false);
+                          await convertEmployee(convertTarget, "past", convertDate);
+                          return;
+                        }
+                        setConvertPreviewLoading(true);
+                        try {
+                          const res = await fetch("/api/employees", {
+                            method: "PATCH",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                              action: "preview_convert_to_current",
+                              userId: convertTarget.id,
+                              dateOfJoining: convertDate || undefined,
+                            }),
+                          });
+                          const data = await res.json();
+                          if (!res.ok) throw new Error(data?.error || "Preview failed");
+                          setConvertPayrollForm(data.payrollMaster as Record<string, number>);
+                          setConvertPayLevel(
+                            typeof data.government_pay_level === "number" ? data.government_pay_level : Number(data.government_pay_level),
+                          );
+                          setConvertStep(2);
+                        } catch (e: unknown) {
+                          showToast("error", e instanceof Error ? e.message : "Preview failed");
+                        } finally {
+                          setConvertPreviewLoading(false);
+                        }
+                      }}
+                    >
+                      {convertPreviewLoading
+                        ? "Loading…"
+                        : convertConfirmStatus === "current"
+                          ? "Continue to payroll"
+                          : "Convert to Past"}
+                    </button>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="border-b border-slate-200 px-5 py-4">
+                  <h2 className="text-lg font-semibold text-slate-900">Review payroll master</h2>
+                  <p className="text-sm text-slate-500">
+                    <span className="font-medium">{convertTarget.email}</span> · DOJ{" "}
+                    <span className="font-medium">{convertDate || "—"}</span>
+                    {convertPayLevel != null && (
+                      <>
+                        {" "}
+                        · Pay level <span className="font-medium">{convertPayLevel}</span>
+                      </>
+                    )}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    These values are written to <code className="rounded bg-slate-100 px-1">HRMS_payroll_master</code> (new row) when you confirm.
+                    Employee gross / TDS on the user profile are updated to match.
+                  </p>
+                </div>
+                <div className="space-y-4 p-5">
+                  {convertPayrollForm && (
+                    <>
+                      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                        <div>
+                          <label className="mb-1 block text-sm font-medium text-slate-700">Gross basic (₹)</label>
+                          <input
+                            type="number"
+                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                            value={convertPayrollForm.gross_basic}
+                            onChange={(e) => {
+                              const v = Math.round(Number(e.target.value));
+                              setConvertPayrollForm((p) => (p && Number.isFinite(v) ? { ...p, gross_basic: Math.max(0, v) } : p));
+                            }}
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-sm font-medium text-slate-700">DA %</label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                            value={convertPayrollForm.da_percent}
+                            onChange={(e) => {
+                              const v = Number(e.target.value);
+                              setConvertPayrollForm((p) => (p && Number.isFinite(v) ? { ...p, da_percent: v } : p));
+                            }}
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-sm font-medium text-slate-700">HRA %</label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                            value={convertPayrollForm.hra_percent}
+                            onChange={(e) => {
+                              const v = Number(e.target.value);
+                              setConvertPayrollForm((p) => (p && Number.isFinite(v) ? { ...p, hra_percent: v } : p));
+                            }}
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-sm font-medium text-slate-700">Medical fixed (₹)</label>
+                          <input
+                            type="number"
+                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                            value={convertPayrollForm.medical_fixed}
+                            onChange={(e) => {
+                              const v = Math.round(Number(e.target.value));
+                              setConvertPayrollForm((p) => (p && Number.isFinite(v) ? { ...p, medical_fixed: Math.max(0, v) } : p));
+                            }}
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-sm font-medium text-slate-700">Transport DA %</label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                            value={convertPayrollForm.transport_da_percent}
+                            onChange={(e) => {
+                              const v = Number(e.target.value);
+                              setConvertPayrollForm((p) => (p && Number.isFinite(v) ? { ...p, transport_da_percent: v } : p));
+                            }}
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-sm font-medium text-slate-700">TDS / income tax (₹ / mo)</label>
+                          <input
+                            type="number"
+                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                            value={convertPayrollForm.tds}
+                            onChange={(e) => {
+                              const v = Math.round(Number(e.target.value));
+                              setConvertPayrollForm((p) => (p && Number.isFinite(v) ? { ...p, tds: Math.max(0, v) } : p));
+                            }}
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-sm font-medium text-slate-700">PT default (₹)</label>
+                          <input
+                            type="number"
+                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                            value={convertPayrollForm.pt_default}
+                            onChange={(e) => {
+                              const v = Math.round(Number(e.target.value));
+                              setConvertPayrollForm((p) => (p && Number.isFinite(v) ? { ...p, pt_default: Math.max(0, v) } : p));
+                            }}
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-sm font-medium text-slate-700">Advance bonus (₹)</label>
+                          <input
+                            type="number"
+                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                            value={convertPayrollForm.advance_bonus}
+                            onChange={(e) => {
+                              const v = Math.round(Number(e.target.value));
+                              setConvertPayrollForm((p) => (p && Number.isFinite(v) ? { ...p, advance_bonus: Math.max(0, v) } : p));
+                            }}
+                          />
+                        </div>
+                      </div>
+
+                      <details className="rounded-lg border border-slate-200 bg-slate-50/80 p-3 text-sm">
+                        <summary className="cursor-pointer font-medium text-slate-800">More deduction defaults (optional)</summary>
+                        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                          {(
+                            [
+                              ["lic_default", "LIC"],
+                              ["cpf_default", "CPF default (0 = auto)"],
+                              ["da_cpf_default", "DA CPF"],
+                              ["vpf_default", "VPF"],
+                              ["pf_loan_default", "PF loan"],
+                              ["post_office_default", "Post office"],
+                              ["credit_society_default", "Credit society"],
+                              ["std_licence_fee_default", "Std licence fee"],
+                              ["electricity_default", "Electricity"],
+                              ["water_default", "Water"],
+                              ["mess_default", "Mess"],
+                              ["horticulture_default", "Horticulture"],
+                              ["welfare_default", "Welfare"],
+                              ["veh_charge_default", "Vehicle charge"],
+                              ["other_deduction_default", "Other"],
+                            ] as const
+                          ).map(([key, label]) => (
+                            <div key={key}>
+                              <label className="mb-0.5 block text-xs font-medium text-slate-600">{label}</label>
+                              <input
+                                type="number"
+                                className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
+                                value={convertPayrollForm[key]}
+                                onChange={(e) => {
+                                  const v = Math.round(Number(e.target.value));
+                                  setConvertPayrollForm((p) => (p && Number.isFinite(v) ? { ...p, [key]: Math.max(0, v) } : p));
+                                }}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+
+                      {convertResolvedPreview && (
+                        <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 p-3 text-sm text-slate-800">
+                          <p className="font-medium text-emerald-900">Computed preview (full month)</p>
+                          <ul className="mt-2 grid gap-1 sm:grid-cols-2">
+                            <li>Total earnings: ₹{convertResolvedPreview.preview.totalEarnings.toLocaleString("en-IN")}</li>
+                            <li>Net after deductions: ₹{convertResolvedPreview.preview.netSalary.toLocaleString("en-IN")}</li>
+                            <li>Basic paid: ₹{convertResolvedPreview.preview.basicPaid.toLocaleString("en-IN")}</li>
+                            <li>DA paid: ₹{convertResolvedPreview.preview.daPaid.toLocaleString("en-IN")}</li>
+                            <li>HRA paid: ₹{convertResolvedPreview.preview.hraPaid.toLocaleString("en-IN")}</li>
+                            <li>TA paid: ₹{convertResolvedPreview.preview.transportPaid.toLocaleString("en-IN")}</li>
+                            <li>Transport slab: {convertResolvedPreview.slab.transportSlabGroup}</li>
+                            <li>CPF (core): ₹{convertResolvedPreview.preview.deductions.cpf.toLocaleString("en-IN")}</li>
+                          </ul>
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  <div className="flex justify-end gap-2 border-t border-slate-100 pt-4">
+                    <button
+                      type="button"
+                      className="btn btn-outline"
+                      disabled={converting}
+                      onClick={() => {
+                        setConvertStep(1);
+                      }}
+                    >
+                      Back
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      disabled={converting || !convertPayrollForm}
+                      onClick={async () => {
+                        if (!convertTarget || !convertPayrollForm) return;
+                        await convertEmployee(convertTarget, "current", convertDate, { payrollMaster: convertPayrollForm });
+                      }}
+                    >
+                      {converting ? "Converting…" : "Confirm conversion"}
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

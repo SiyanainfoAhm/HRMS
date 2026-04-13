@@ -10,6 +10,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { fmtDmy } from "@/lib/dateFormat";
 import { GovernmentPayslipPrint } from "@/components/payslip/GovernmentPayslipPrint";
 import type { GovernmentMonthlySlip } from "@/lib/governmentPayslipLayout";
+import type { GovernmentLeavePayslipDisplay } from "@/lib/leaveBalancesCompute";
 
 export function ProfileContent() {
   const { role } = useAuth();
@@ -117,6 +118,7 @@ export function ProfileContent() {
       bankAccountNumber?: string;
       payrollMode?: string;
       governmentMonthly?: Record<string, number> | null;
+      leavePayslip?: GovernmentLeavePayslipDisplay | null;
     }[];
   } | null>(null);
   const [myPayrollMaster, setMyPayrollMaster] = useState<{ tds?: number | null } | null>(null);
@@ -1124,6 +1126,7 @@ export function ProfileContent() {
                           netPay: slip.netPay,
                         }}
                         gov={gov as GovernmentMonthlySlip}
+                        leavePayslip={slip.leavePayslip ?? null}
                       />
                     );
                   }
