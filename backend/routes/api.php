@@ -29,6 +29,7 @@ Route::prefix('v1')->group(function () {
 
     // ── Invite public endpoints (onboarding token flow) ─────────
     Route::get('invites/{token}', [InviteController::class, 'showByToken']);
+    Route::post('invites/{token}/action', [InviteController::class, 'processAction']);
     Route::put('invites/{token}', [InviteController::class, 'updateByToken']);
 
     // ── Authenticated routes ────────────────────────────────────
@@ -105,8 +106,10 @@ Route::prefix('v1')->group(function () {
         // Leave
         Route::get('leave/types', [LeaveController::class, 'types']);
         Route::post('leave/types', [LeaveController::class, 'storeType']);
+        Route::put('leave/types/{id}', [LeaveController::class, 'updateType']);
         Route::get('leave/policies', [LeaveController::class, 'policies']);
         Route::post('leave/policies', [LeaveController::class, 'storePolicy']);
+        Route::put('leave/policies', [LeaveController::class, 'storePolicy']);
         Route::get('leave/balance', [LeaveController::class, 'balance']);
         Route::get('leave/requests', [LeaveController::class, 'requests']);
         Route::post('leave/requests', [LeaveController::class, 'storeRequest']);
@@ -124,6 +127,8 @@ Route::prefix('v1')->group(function () {
         Route::put('payroll/periods/{id}', [PayrollController::class, 'updatePeriod']);
         Route::get('payroll/master', [PayrollController::class, 'master']);
         Route::post('payroll/master', [PayrollController::class, 'storeMaster']);
+        Route::patch('payroll/master', [PayrollController::class, 'upsertMaster']);
+        Route::get('payroll/run', [PayrollController::class, 'runPreview']);
         Route::post('payroll/run', [PayrollController::class, 'run']);
         Route::post('payroll/payslips', [PayrollController::class, 'storePayslips']);
         Route::get('payroll/export', [PayrollController::class, 'export']);

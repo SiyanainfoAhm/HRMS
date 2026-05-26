@@ -726,30 +726,65 @@ function PayrollPageContent() {
     const denom = preview?.daysInMonth ?? preview?.workingDaysInFullMonth;
     if (preview?.rows?.length && denom) {
       setEditableRows(
-        preview.rows.map((r: any) => ({
-          ...r,
-          grossMonthly:
-            r.grossMonthly ??
-            Math.round((Number(r.grossPay || 0) * denom) / (r.payDays || r.rawPayDays || 1)),
-          grossPay: Number(r.grossPay ?? 0),
-          netPay: Number(r.netPay ?? 0),
-          pfEmployee: Number(r.pfEmployee ?? 0),
-          pfEmployer: Number(r.pfEmployer ?? 0),
-          esicEmployee: Number(r.esicEmployee ?? 0),
-          esicEmployer: Number(r.esicEmployer ?? 0),
-          profTax: Number(r.profTax ?? 0),
-          deductions: Number(r.deductions ?? 0),
-          takeHome: Number(r.takeHome ?? 0),
-          ctc: Number(r.ctc ?? 0),
-          incentive: r.incentive ?? 0,
-          prBonus: r.prBonus ?? 0,
-          reimbursement: r.reimbursement ?? 0,
-          tds: r.tds ?? 0,
-          ctcBase: r.ctcBase ?? r.ctc,
-          payrollMode: r.payrollMode,
-          governmentMonthly: r.governmentMonthly ?? null,
-          govRecalc: r.govRecalc,
-        }))
+        preview.rows.map((r: any) => {
+          const base = {
+            ...r,
+            grossMonthly:
+              r.grossMonthly ??
+              Math.round((Number(r.grossPay || 0) * denom) / (r.payDays || r.rawPayDays || 1)),
+            grossPay: Number(r.grossPay ?? 0),
+            netPay: Number(r.netPay ?? 0),
+            pfEmployee: Number(r.pfEmployee ?? 0),
+            pfEmployer: Number(r.pfEmployer ?? 0),
+            esicEmployee: Number(r.esicEmployee ?? 0),
+            esicEmployer: Number(r.esicEmployer ?? 0),
+            profTax: Number(r.profTax ?? 0),
+            deductions: Number(r.deductions ?? 0),
+            takeHome: Number(r.takeHome ?? 0),
+            ctc: Number(r.ctc ?? 0),
+            incentive: r.incentive ?? 0,
+            prBonus: r.prBonus ?? 0,
+            reimbursement: r.reimbursement ?? 0,
+            tds: r.tds ?? 0,
+            ctcBase: r.ctcBase ?? r.ctc,
+            payrollMode: r.payrollMode,
+            governmentMonthly: r.governmentMonthly ?? null,
+            govRecalc: r.govRecalc,
+          };
+          if (r.payrollMode === "government" && r.govRecalc && !r.governmentMonthly) {
+            const gr = r.govRecalc;
+            const dim = Math.max(1, Math.floor(Number(denom) || 30));
+            const payDays = Number(r.payDays ?? dim);
+            const unpaidDays = Math.max(0, dim - payDays);
+            const comp = computeGovernmentMonthlyPayroll({
+              grossBasic: gr.grossBasic,
+              daPercent: gr.daPercent,
+              hraPercent: gr.hraPercent,
+              medicalFixed: gr.medicalFixed,
+              transportDaPercent: gr.transportDaPercent,
+              payLevel: gr.payLevel,
+              daysInMonth: dim,
+              unpaidDays,
+              deductionDefaults: gr.deductionDefaults,
+              earningPaidOverrides: gr.earningPaidOverrides,
+            });
+            base.governmentMonthly = comp;
+            base.grossMonthly = gr.grossBasic;
+            base.grossPay = comp.totalEarnings;
+            base.deductions = comp.totalDeductions;
+            base.netPay = comp.netSalary;
+            base.tds = comp.deductions.incomeTax;
+            base.profTax = comp.deductions.pt;
+            base.pfEmployee = Math.round(
+              comp.deductions.cpf + comp.deductions.daCpf + comp.deductions.vpf + comp.deductions.pfLoan
+            );
+            base.takeHome = Math.round(comp.netSalary) +
+              Math.round(Number(r.incentive) || 0) +
+              Math.round(Number(r.prBonus) || 0) +
+              Math.round(Number(r.reimbursement) || 0);
+          }
+          return base;
+        })
       );
     } else {
       setEditableRows([]);

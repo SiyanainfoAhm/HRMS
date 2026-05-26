@@ -2379,15 +2379,19 @@ export default function EmployeesPage() {
                           <span className="text-slate-500">Phone:</span> {detailsData?.employee?.phone || "-"}
                         </div>
                         <div>
+                          <span className="text-slate-500">Gender:</span> {detailsData?.employee?.gender || "-"}
+                        </div>
+                        <div>
                           <span className="text-slate-500">DOB:</span>{" "}
-                          {detailsData?.employee?.date_of_birth ? fmtDmy(detailsData.employee.date_of_birth) : "-"}
+                          {detailsData?.employee?.date_of_birth ? fmtDmy(String(detailsData.employee.date_of_birth).slice(0, 10)) : "-"}
                         </div>
                         <div>
                           <span className="text-slate-500">DOJ:</span>{" "}
-                          {detailsData?.employee?.date_of_joining ? fmtDmy(detailsData.employee.date_of_joining) : "-"}
+                          {detailsData?.employee?.date_of_joining ? fmtDmy(String(detailsData.employee.date_of_joining).slice(0, 10)) : "-"}
                         </div>
                         <div>
-                          <span className="text-slate-500">Current address:</span> {detailsData?.employee?.current_address_line1 || "-"}
+                          <span className="text-slate-500">Current address:</span>{" "}
+                          {[detailsData?.employee?.current_address_line1, detailsData?.employee?.current_city, detailsData?.employee?.current_state].filter(Boolean).join(", ") || "-"}
                         </div>
                         <div>
                           <span className="text-slate-500">Bank:</span>{" "}
@@ -2399,7 +2403,11 @@ export default function EmployeesPage() {
                         </div>
                         <div>
                           <span className="text-slate-500">TDS (monthly):</span>{" "}
-                          {detailsData?.payrollMaster?.tds != null ? Number(detailsData.payrollMaster.tds).toLocaleString("en-IN") : "0"}
+                          {detailsData?.employee?.tds_monthly != null
+                            ? Number(detailsData.employee.tds_monthly).toLocaleString("en-IN")
+                            : detailsData?.payrollMaster?.tds != null
+                              ? Number(detailsData.payrollMaster.tds).toLocaleString("en-IN")
+                              : "0"}
                         </div>
                       </div>
                     </div>
@@ -2423,14 +2431,14 @@ export default function EmployeesPage() {
                               !isInviteSendable(detailsData?.invite)
                             }
                             onClick={async () => {
-                              const uid = detailsData?.employee?.id;
-                              if (!uid) return;
+                              const inviteId = detailsData?.invite?.id;
+                              if (!inviteId) return;
                               setDetailsSendEmailLoading(true);
                               try {
                                 const res = await fetch("/api/invites/hrms-send-invite", {
                                   method: "POST",
                                   headers: { "Content-Type": "application/json" },
-                                  body: JSON.stringify({ userId: uid }),
+                                  body: JSON.stringify({ inviteId }),
                                 });
                                 const data = await res.json();
                                 if (!res.ok) throw new Error(data?.error || "Failed to send email");
@@ -2455,9 +2463,34 @@ export default function EmployeesPage() {
                   </div>
 
                   <div className="card mt-4">
-                    <h3 className="text-base font-semibold text-slate-900">Documents</h3>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h3 className="text-base font-semibold text-slate-900">Documents</h3>
+                      {detailsData?.employee && (
+                        <button
+                          type="button"
+                          className="btn btn-primary text-xs"
+                          onClick={() => {
+                            const emp: Employee = {
+                              id: detailsData.employee.id,
+                              email: detailsData.employee.email || "",
+                              name: detailsData.employee.name || null,
+                              role: detailsData.employee.role || "employee",
+                              employmentStatus: "preboarding",
+                              employeeCode: detailsData.employee.employee_code || "",
+                              phone: detailsData.employee.phone || "",
+                              dateOfJoining: detailsData.employee.date_of_joining || "",
+                              createdAt: "",
+                            };
+                            closeDetails();
+                            void resendInvite(emp);
+                          }}
+                        >
+                          Request documents
+                        </button>
+                      )}
+                    </div>
                     {(!detailsData?.documents || detailsData.documents.length === 0) ? (
-                      <p className="muted mt-2">No documents requested.</p>
+                      <p className="muted mt-2">No documents requested. Use &ldquo;Request documents&rdquo; to send an invite with document requests.</p>
                     ) : (
                       <div className="mt-3 overflow-x-auto">
                         <table className="w-full text-left text-sm">
@@ -2470,12 +2503,13 @@ export default function EmployeesPage() {
                             </tr>
                           </thead>
                           <tbody>
-                            {detailsData.documents.map((d: any) => {
-                              const sub = (detailsData.submissions || []).find((s: any) => s.document_id === d.id);
+                            {detailsData.documents.map((item: any, idx: number) => {
+                              const doc = item.document || item;
+                              const sub = item.submission || null;
                               return (
-                                <tr key={d.id} className="border-t border-slate-200">
-                                  <td className="px-3 py-2">{d.name}</td>
-                                  <td className="px-3 py-2">{d.kind}</td>
+                                <tr key={doc.id || idx} className="border-t border-slate-200">
+                                  <td className="px-3 py-2">{doc.name}</td>
+                                  <td className="px-3 py-2">{doc.kind}</td>
                                   <td className="px-3 py-2">{sub?.status || "pending"}</td>
                                   <td className="px-3 py-2">
                                     {sub?.file_url ? (
@@ -2701,8 +2735,9 @@ export default function EmployeesPage() {
                           const data = await res.json();
                           if (!res.ok) throw new Error(data?.error || "Preview failed");
                           setConvertPayrollForm(data.payrollMaster as Record<string, number>);
+                          const rawLevel = data.government_pay_level ?? data.payrollMaster?.government_pay_level;
                           setConvertPayLevel(
-                            typeof data.government_pay_level === "number" ? data.government_pay_level : Number(data.government_pay_level),
+                            rawLevel != null && Number.isFinite(Number(rawLevel)) ? Number(rawLevel) : null,
                           );
                           setConvertStep(2);
                         } catch (e: unknown) {
@@ -2728,7 +2763,7 @@ export default function EmployeesPage() {
                   <p className="text-sm text-slate-500">
                     <span className="font-medium">{convertTarget.email}</span> · DOJ{" "}
                     <span className="font-medium">{convertDate || "—"}</span>
-                    {convertPayLevel != null && (
+                    {convertPayLevel != null && Number.isFinite(convertPayLevel) && convertPayLevel > 0 && (
                       <>
                         {" "}
                         · Pay level <span className="font-medium">{convertPayLevel}</span>

@@ -94,17 +94,6 @@ function InvitePageInner() {
     return null;
   }
 
-  function sanitizeSegment(s: string): string {
-    return (s || "")
-      .trim()
-      .replace(/[\/\\]+/g, "-")
-      .replace(/[^\w\s.\-]/g, "")
-      .replace(/\s+/g, " ")
-      .trim()
-      .replace(/\s/g, "_")
-      .slice(0, 64);
-  }
-
   const byDocId = useMemo(() => {
     const m = new Map<string, Submission>();
     for (const s of submissions) m.set(s.document_id, s);
@@ -134,7 +123,6 @@ function InvitePageInner() {
       setDocuments(data.documents || []);
       setSubmissions(data.submissions || []);
 
-      // Pre-populate form with admin-filled user details (only on first load, not on refresh)
       const u = data.user;
       if (u && !hasPopulatedFromUserRef.current) {
         hasPopulatedFromUserRef.current = true;
@@ -244,7 +232,7 @@ function InvitePageInner() {
     try {
       if (doc) receiptUrl = await uploadSignatureReceipt(doc, signatureName);
     } catch {
-      // best-effort; still store signature metadata in DB
+      // best-effort
     }
     const res = await fetch(`/api/invites/${token}`, {
       method: "POST",
@@ -453,7 +441,6 @@ function InvitePageInner() {
                   className="flex w-full items-center justify-between gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                 >
                   <span className="flex items-center gap-2">
-                    {/* flagcdn uses lowercase iso */}
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                       src={`https://flagcdn.com/w20/${selectedCountry.iso}.png`}
@@ -736,7 +723,7 @@ function InvitePageInner() {
 
             {authProvider === "google" && (
               <div className="mt-3">
-                <GoogleAuthButton mode="login" onSuccessRedirect={`/invite/${token}`} />
+                <GoogleAuthButton mode="login" onSuccessRedirect={`/invites/${token}`} />
               </div>
             )}
 
@@ -890,4 +877,3 @@ function SignatureBox({
     </div>
   );
 }
-

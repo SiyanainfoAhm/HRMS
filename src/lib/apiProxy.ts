@@ -3,6 +3,22 @@ import { TOKEN_COOKIE_NAME } from "@/lib/auth";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
 
+function camelToSnake(str: string): string {
+  return str.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+}
+
+function transformKeysToSnake(obj: any): any {
+  if (Array.isArray(obj)) return obj.map(transformKeysToSnake);
+  if (obj !== null && typeof obj === "object" && !(obj instanceof Date)) {
+    const out: Record<string, any> = {};
+    for (const [key, value] of Object.entries(obj)) {
+      out[camelToSnake(key)] = transformKeysToSnake(value);
+    }
+    return out;
+  }
+  return obj;
+}
+
 export async function proxyToLaravel(
   request: NextRequest,
   laravelPath: string,
@@ -34,7 +50,16 @@ export async function proxyToLaravel(
     } else {
       try {
         const body = await request.text();
-        if (body) fetchOptions.body = body;
+        if (body) {
+          try {
+            const parsed = JSON.parse(body);
+            const transformed = transformKeysToSnake(parsed);
+            fetchOptions.body = JSON.stringify(transformed);
+            headers["Content-Type"] = "application/json";
+          } catch {
+            fetchOptions.body = body;
+          }
+        }
       } catch { /* no body */ }
     }
   }

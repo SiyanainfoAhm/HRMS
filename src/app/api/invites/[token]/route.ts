@@ -8,5 +8,10 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
+  return proxyToLaravel(request, `/invites/${token}/action`);
+}
+
+export async function PUT(request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
+  const { token } = await params;
   return proxyToLaravel(request, `/invites/${token}`);
 }

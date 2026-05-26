@@ -17,7 +17,7 @@ class HrmsLeaveType extends Model
     const UPDATED_AT = null;
 
     protected $fillable = [
-        'company_id', 'name', 'code', 'description', 'is_paid', 'annual_quota',
+        'company_id', 'name', 'code', 'description', 'is_paid', 'annual_quota', 'payslip_slot',
     ];
 
     protected function casts(): array

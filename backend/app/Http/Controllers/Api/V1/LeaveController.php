@@ -43,6 +43,19 @@ class LeaveController extends Controller
         return response()->json(['leaveType' => $type], 201);
     }
 
+    public function updateType(Request $request, string $id): JsonResponse
+    {
+        $user = $request->user();
+        if (! $user->role?->isManagerial()) {
+            return response()->json(['error' => 'Forbidden'], 403);
+        }
+
+        $type = HrmsLeaveType::findOrFail($id);
+        $type->update($request->only(['name', 'code', 'description', 'is_paid', 'annual_quota', 'payslip_slot']));
+
+        return response()->json(['type' => $type->refresh()]);
+    }
+
     public function policies(Request $request): JsonResponse
     {
         $policies = HrmsLeavePolicy::where('company_id', $request->user()->company_id)
@@ -150,26 +163,36 @@ class LeaveController extends Controller
     public function storeRequest(Request $request): JsonResponse
     {
         $user = $request->user();
+
+        $targetUserId = $user->id;
+        if ($request->filled('employee_user_id') && $user->role?->isManagerial()) {
+            $targetUserId = $request->input('employee_user_id');
+        }
+
         $data = $request->validate([
             'leave_type_id' => ['required', 'uuid'],
             'start_date' => ['required', 'date'],
             'end_date' => ['required', 'date', 'after_or_equal:start_date'],
-            'total_days' => ['required', 'numeric', 'min:0.5'],
+            'total_days' => ['nullable', 'numeric', 'min:0.5'],
             'reason' => ['nullable', 'string'],
+            'employee_user_id' => ['nullable', 'uuid'],
         ]);
 
-        $employee = HrmsEmployee::where('user_id', $user->id)->first();
+        $totalDays = $data['total_days']
+            ?? ((\Carbon\Carbon::parse($data['start_date'])->diffInDays(\Carbon\Carbon::parse($data['end_date']))) + 1);
+
+        $employee = HrmsEmployee::where('user_id', $targetUserId)->first();
 
         $leaveRequest = HrmsLeaveRequest::create([
             'company_id' => $user->company_id,
             'employee_id' => $employee?->id,
-            'employee_user_id' => $user->id,
+            'employee_user_id' => $targetUserId,
             'manager_id' => $employee?->manager_id,
             'department_id' => $employee?->department_id ?? $user->department_id,
             'leave_type_id' => $data['leave_type_id'],
             'start_date' => $data['start_date'],
             'end_date' => $data['end_date'],
-            'total_days' => $data['total_days'],
+            'total_days' => $totalDays,
             'reason' => $data['reason'] ?? null,
             'status' => 'pending',
         ]);

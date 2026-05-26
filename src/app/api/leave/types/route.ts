@@ -1,5 +1,24 @@
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { proxyToLaravel } from "@/lib/apiProxy";
+import { TOKEN_COOKIE_NAME } from "@/lib/auth";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
+
+function camelToSnake(str: string): string {
+  return str.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+}
+
+function transformKeys(obj: any): any {
+  if (Array.isArray(obj)) return obj.map(transformKeys);
+  if (obj !== null && typeof obj === "object") {
+    const out: Record<string, any> = {};
+    for (const [key, value] of Object.entries(obj)) {
+      out[camelToSnake(key)] = transformKeys(value);
+    }
+    return out;
+  }
+  return obj;
+}
 
 export async function GET(request: NextRequest) {
   return proxyToLaravel(request, "/leave/types");
@@ -10,5 +29,34 @@ export async function POST(request: NextRequest) {
 }
 
 export async function PATCH(request: NextRequest) {
-  return proxyToLaravel(request, "/leave/types");
+  const body = await request.json().catch(() => ({}));
+  const id = body?.id;
+  if (!id) return NextResponse.json({ error: "ID is required" }, { status: 400 });
+
+  const payload = transformKeys(body);
+  delete payload.id;
+
+  const token = request.cookies.get(TOKEN_COOKIE_NAME)?.value;
+  const authHeader = request.headers.get("authorization");
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  };
+  if (authHeader) headers["Authorization"] = authHeader;
+  else if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  try {
+    const res = await fetch(`${API_BASE}/leave/types/${id}`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify(payload),
+    });
+    const data = await res.text();
+    return new NextResponse(data, {
+      status: res.status,
+      headers: { "Content-Type": res.headers.get("content-type") || "application/json" },
+    });
+  } catch {
+    return NextResponse.json({ error: "API unavailable" }, { status: 502 });
+  }
 }

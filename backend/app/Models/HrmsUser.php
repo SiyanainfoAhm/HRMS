@@ -32,7 +32,7 @@ class HrmsUser extends Authenticatable
         'permanent_address_line1', 'permanent_address_line2', 'permanent_city',
         'permanent_state', 'permanent_country', 'permanent_postal_code',
         'emergency_contact_name', 'emergency_contact_phone',
-        'bank_name', 'bank_account_number', 'bank_ifsc',
+        'bank_name', 'bank_account_holder_name', 'bank_account_number', 'bank_ifsc',
         'ctc', 'gross_salary', 'gender', 'designation',
         'designation_id', 'department_id', 'division_id', 'shift_id',
         'aadhaar', 'pan', 'uan_number', 'pf_number', 'esic_number',
