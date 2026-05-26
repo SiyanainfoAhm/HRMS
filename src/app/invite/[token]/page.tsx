@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
-import { supabase } from "@/lib/supabaseClient";
+import { upload as apiUpload } from "@/lib/api";
 import { ToastProvider, useToast } from "@/components/ToastProvider";
 import { DatePickerField } from "@/components/ui/DatePickerField";
 import { PasswordField } from "@/components/PasswordField";
@@ -66,7 +66,6 @@ function InvitePageInner() {
   const [bankAccountNumber, setBankAccountNumber] = useState("");
   const [bankIfsc, setBankIfsc] = useState("");
 
-  const bucket = process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET || "photomedia";
   const countryOptions = [
     { iso: "in", alpha2: "IN", code: "+91" },
     { iso: "us", alpha2: "US", code: "+1" },
@@ -220,50 +219,20 @@ function InvitePageInner() {
     await refresh();
   }
 
-  function extractStoragePathFromPublicUrl(publicUrl: string): string | null {
-    if (!publicUrl) return null;
-    const marker = `/object/public/${bucket}/`;
-    const idx = publicUrl.indexOf(marker);
-    if (idx !== -1) return publicUrl.slice(idx + marker.length);
-    // Fallback for some Supabase URL shapes
-    const alt = `/${bucket}/`;
-    const idx2 = publicUrl.indexOf(alt);
-    if (idx2 !== -1) return publicUrl.slice(idx2 + alt.length);
-    return null;
-  }
-
-  async function uploadToStorage(document: Doc, file: File): Promise<string> {
-    const userId = String(invite?.user_id || "unknown");
-    const employeeName = sanitizeSegment(name) || "Employee";
-    const employeeFolder = `${employeeName}${userId}`;
-    const category = document.kind === "upload" ? "upload" : "esign";
-    const docFolder = sanitizeSegment(document.name) || "Document";
-    const ext = (file.name.split(".").pop() || "").slice(0, 10);
-    const safeBase = docFolder;
-    const finalFileName = ext ? `${safeBase}.${ext}` : safeBase;
-    // Deterministic path so re-uploads overwrite the previous file for this doc.
-    const path = `HRMS/${employeeFolder}/${category}/${docFolder}/${finalFileName}`;
-    const { error: upErr } = await supabase.storage.from(bucket).upload(path, file, { upsert: true });
-    if (upErr) throw new Error(upErr.message);
-    const { data } = supabase.storage.from(bucket).getPublicUrl(path);
-    if (!data?.publicUrl) throw new Error("Failed to get public URL");
-    return data.publicUrl;
+  async function uploadToStorage(_document: Doc, file: File): Promise<string> {
+    const formData = new FormData();
+    formData.append("file", file, file.name);
+    const result = await apiUpload("/reimbursements/upload", formData);
+    return result.url;
   }
 
   async function uploadSignatureReceipt(document: Doc, signatureName: string): Promise<string> {
-    const userId = String(invite?.user_id || "unknown");
-    const employeeName = sanitizeSegment(name) || "Employee";
-    const employeeFolder = `${employeeName}${userId}`;
-    const docFolder = sanitizeSegment(document.name) || "Document";
     const receiptText = `Document: ${document.name}\nSigned by: ${signatureName}\nSigned at: ${new Date().toISOString()}\nEmail: ${invite?.email || ""}\n`;
     const blob = new Blob([receiptText], { type: "text/plain" });
-    const receiptName = `${docFolder}_SIGNATURE_RECEIPT.txt`;
-    const path = `HRMS/${employeeFolder}/esign/${docFolder}/${Date.now()}_${receiptName}`;
-    const { error: upErr } = await supabase.storage.from(bucket).upload(path, blob, { upsert: true });
-    if (upErr) throw new Error(upErr.message);
-    const { data } = supabase.storage.from(bucket).getPublicUrl(path);
-    if (!data?.publicUrl) throw new Error("Failed to get public URL");
-    return data.publicUrl;
+    const formData = new FormData();
+    formData.append("file", blob, `${document.name}_SIGNATURE_RECEIPT.txt`);
+    const result = await apiUpload("/reimbursements/upload", formData);
+    return result.url;
   }
 
   async function submitSignature(documentId: string, signatureName: string) {
@@ -426,12 +395,6 @@ function InvitePageInner() {
                         documentName={d.name}
                         onUpload={async (file) => {
                           if (!invite?.id) throw new Error("Invite not loaded");
-                          // Remove previous file from storage (if any), then upload and submit.
-                          const prevUrl = s?.file_url ?? "";
-                          const prevPath = extractStoragePathFromPublicUrl(prevUrl);
-                          if (prevPath) {
-                            await supabase.storage.from(bucket).remove([prevPath]);
-                          }
                           const publicUrl = await uploadToStorage(d, file);
                           await submitUpload(d.id, publicUrl);
                           return publicUrl;

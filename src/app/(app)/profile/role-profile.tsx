@@ -6,7 +6,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useEffect, useMemo, useState, useRef, FormEvent } from "react";
 import { DatePickerField } from "@/components/ui/DatePickerField";
 import { PasswordField } from "@/components/PasswordField";
-import { supabase } from "@/lib/supabaseClient";
+import { upload as apiUpload } from "@/lib/api";
 import { fmtDmy } from "@/lib/dateFormat";
 import { GovernmentPayslipPrint } from "@/components/payslip/GovernmentPayslipPrint";
 import type { GovernmentMonthlySlip } from "@/lib/governmentPayslipLayout";
@@ -154,32 +154,11 @@ export function ProfileContent() {
   const [meId, setMeId] = useState<string>("");
   const [docBusyId, setDocBusyId] = useState<string | null>(null);
 
-  const bucket = process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET || "photomedia";
-
-  function sanitizeSegment(s: string): string {
-    return (s || "")
-      .trim()
-      .replace(/[\/\\]+/g, "-")
-      .replace(/[^\w\s.\-]/g, "")
-      .replace(/\s+/g, " ")
-      .trim()
-      .replace(/\s/g, "_")
-      .slice(0, 64);
-  }
-
-  async function uploadToStorage(docName: string, kind: "upload" | "digital_signature", file: Blob, fileNameHint: string) {
-    const userId = meId || "me";
-    const employeeName = sanitizeSegment(form.name) || "Employee";
-    const employeeFolder = `${employeeName}${userId}`;
-    const category = kind === "digital_signature" ? "esign" : "upload";
-    const docFolder = sanitizeSegment(docName) || "Document";
-    const safeFile = sanitizeSegment(fileNameHint) || "file";
-    const path = `HRMS/${employeeFolder}/${category}/${docFolder}/${Date.now()}_${safeFile}`;
-    const { error: upErr } = await supabase.storage.from(bucket).upload(path, file, { upsert: true });
-    if (upErr) throw new Error(upErr.message);
-    const { data } = supabase.storage.from(bucket).getPublicUrl(path);
-    if (!data?.publicUrl) throw new Error("Failed to get public URL");
-    return data.publicUrl;
+  async function uploadToStorage(_docName: string, _kind: "upload" | "digital_signature", file: Blob, fileNameHint: string) {
+    const formData = new FormData();
+    formData.append("file", file, fileNameHint || "file");
+    const result = await apiUpload("/reimbursements/upload", formData);
+    return result.url;
   }
 
   async function refreshMyDocuments() {

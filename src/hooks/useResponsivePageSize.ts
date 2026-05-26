@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 
 /**
  * Matches data-fetch page sizes to viewport: fewer rows on small screens (less scroll),
- * more on desktop. Used with API `page` + `pageSize` (Supabase range).
+ * more on desktop. Used with API `page` + `pageSize` params.
  *
  * - lg+ (1024px): 20 — laptop / desktop
  * - md (768–1023px): 15 — tablet

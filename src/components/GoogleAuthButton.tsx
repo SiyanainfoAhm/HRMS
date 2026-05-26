@@ -88,6 +88,17 @@ export function GoogleAuthButton(props: {
                   name: typeof u?.name === "string" ? u.name : undefined,
                 });
               }
+
+              const role = u?.role;
+              if (role === "super_admin" || role === "admin") {
+                const companyRes = await fetch("/api/company/me");
+                const companyData = await companyRes.json().catch(() => ({}));
+                if (!companyData?.company) {
+                  window.location.href = "/setup/company";
+                  return;
+                }
+              }
+
               window.location.href = redirectTo;
             } catch (e: any) {
               setError(e?.message || "Google sign-in failed");

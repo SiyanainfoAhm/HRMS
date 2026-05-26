@@ -1,6 +1,6 @@
 /**
  * Government-style payroll (Gross Basic / DA / HRA / transport slab by pay level).
- * Keep in sync with supabase/migrations/*_government_payroll.sql RPC hrm_generate_monthly_payroll.
+ * Keep in sync with the database RPC hrm_generate_monthly_payroll.
  */
 
 export type TransportSlab = { transportSlabGroup: string; transportBase: number };

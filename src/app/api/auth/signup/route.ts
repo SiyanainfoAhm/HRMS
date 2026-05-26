@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createUser } from "@/lib/users";
-import { createSessionCookie, getCookieOptions, COOKIE_NAME, type SessionUser } from "@/lib/auth";
+import { createSessionCookie, getCookieOptions, COOKIE_NAME, TOKEN_COOKIE_NAME, type SessionUser } from "@/lib/auth";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
 
 export async function POST(request: NextRequest) {
   try {
@@ -9,29 +10,32 @@ export async function POST(request: NextRequest) {
     if (!email || typeof email !== "string" || !password || typeof password !== "string") {
       return NextResponse.json({ error: "Email and password required" }, { status: 400 });
     }
-    if (password.length < 6) {
-      return NextResponse.json({ error: "Password must be at least 6 characters" }, { status: 400 });
-    }
 
-    const user = await createUser({
-      email: email.trim(),
-      password,
-      name: typeof name === "string" ? name.trim() || undefined : undefined,
+    const apiRes = await fetch(`${API_BASE}/auth/signup`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ email, password, name }),
     });
 
+    const data = await apiRes.json();
+    if (!apiRes.ok) {
+      return NextResponse.json({ error: data.error || "Sign up failed" }, { status: apiRes.status });
+    }
+
+    const u = data.user;
     const session: SessionUser = {
-      id: user.id,
-      email: user.email,
-      name: user.name,
-      role: user.role,
-      sv: user.authSessionVersion,
+      id: u.id,
+      email: u.email,
+      name: u.name,
+      role: u.role,
+      sv: u.sv ?? 0,
     };
     const cookie = createSessionCookie(session);
-    const res = NextResponse.json({ user: session });
+    const res = NextResponse.json({ user: session, token: data.token });
     res.cookies.set(COOKIE_NAME, cookie, getCookieOptions());
+    res.cookies.set(TOKEN_COOKIE_NAME, data.token, getCookieOptions());
     return res;
-  } catch (e) {
-    const message = e instanceof Error ? e.message : "Sign up failed";
-    return NextResponse.json({ error: message }, { status: 400 });
+  } catch {
+    return NextResponse.json({ error: "Sign up failed" }, { status: 500 });
   }
 }

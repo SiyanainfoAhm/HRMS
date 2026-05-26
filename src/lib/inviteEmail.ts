@@ -78,50 +78,19 @@ function getInviteWebhookSecret(): string | undefined {
   return s || undefined;
 }
 
-function getSupabaseInviteFunctionUrl(): string | undefined {
-  return process.env.SUPABASE_SEND_HRMS_INVITE_FUNCTION_URL?.trim();
-}
-
 /**
  * Sends the invite email (first match wins):
- * 1) **Supabase Edge** — body `{ userId, companyId, link }`. Edge POSTs: `{ email, link, name, companyName, subject }` (no html).
- * 2) **Direct Power Automate** — same JSON shape.
- * 3) **Resend** — `RESEND_API_KEY` + `EMAIL_FROM` (HTML built in this app).
+ * 1) **Power Automate** — JSON webhook.
+ * 2) **Resend** — `RESEND_API_KEY` + `EMAIL_FROM` (HTML built in this app).
  */
 export async function sendInviteEmail(args: {
   to: string;
   inviteUrl: string;
   recipientName?: string | null;
   companyName?: string | null;
-  /** Required for Supabase Edge delivery path. */
   userId?: string;
   companyId?: string;
 }): Promise<SendInviteEmailResult> {
-  const edgeUrl = getSupabaseInviteFunctionUrl();
-  const supabaseAnon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim();
-
-  if (edgeUrl && supabaseAnon && args.userId && args.companyId) {
-    const res = await fetch(edgeUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${supabaseAnon}`,
-        apikey: supabaseAnon,
-      },
-      body: JSON.stringify({
-        userId: args.userId,
-        companyId: args.companyId,
-        link: args.inviteUrl,
-      }),
-    });
-    const data = (await res.json().catch(() => ({}))) as { success?: boolean; message?: string };
-    if (!res.ok || data.success === false) {
-      const msg = typeof data.message === "string" ? data.message : `Edge error (${res.status})`;
-      return { ok: false, error: msg };
-    }
-    return { ok: true };
-  }
-
   const hookUrl = getInviteWebhookUrl();
 
   const subject = inviteEmailSubject(args.companyName);
@@ -156,7 +125,7 @@ export async function sendInviteEmail(args: {
     return {
       ok: false,
       error:
-        "Email not configured. Set SUPABASE_SEND_HRMS_INVITE_FUNCTION_URL (Edge → Power Automate JSON), or POWER_AUTOMATE_INVITE_URL (same JSON), or RESEND_API_KEY + EMAIL_FROM.",
+        "Email not configured. Set POWER_AUTOMATE_INVITE_URL (JSON webhook), or RESEND_API_KEY + EMAIL_FROM.",
     };
   }
 

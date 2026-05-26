@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 
 export default function CompanySetupPage() {
@@ -8,7 +8,21 @@ export default function CompanySetupPage() {
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
+  const [checking, setChecking] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/company/me")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data?.company) {
+          router.replace("/dashboard");
+        } else {
+          setChecking(false);
+        }
+      })
+      .catch(() => setChecking(false));
+  }, [router]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -38,12 +52,20 @@ export default function CompanySetupPage() {
     }
   }
 
+  if (checking) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <p className="text-sm text-slate-500">Loading...</p>
+      </div>
+    );
+  }
+
   return (
     <div className="flex min-h-screen flex-col items-center justify-center px-4">
       <div className="w-full max-w-md space-y-6">
         <div className="text-center">
-          <h1 className="page-title">Set up your company</h1>
-          <p className="mt-1 text-sm text-slate-500">Create your company to continue</p>
+          <h1 className="page-title">Set up your organization</h1>
+          <p className="mt-1 text-sm text-slate-500">Create your organization to continue</p>
         </div>
         <form onSubmit={handleSubmit} className="card space-y-4">
           <div>

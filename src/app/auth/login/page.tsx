@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { PasswordField } from "@/components/PasswordField";
 import { GoogleAuthButton } from "@/components/GoogleAuthButton";
+import { setToken } from "@/lib/api";
 
 function LoginForm() {
   const router = useRouter();
@@ -30,6 +31,19 @@ function LoginForm() {
         setLoading(false);
         return;
       }
+      if (data.token) setToken(data.token);
+
+      const role = data.user?.role;
+      if (role === "super_admin" || role === "admin") {
+        const companyRes = await fetch("/api/company/me");
+        const companyData = await companyRes.json().catch(() => ({}));
+        if (!companyData?.company) {
+          router.push("/setup/company");
+          router.refresh();
+          return;
+        }
+      }
+
       router.push("/dashboard");
       router.refresh();
     } catch {

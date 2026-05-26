@@ -83,7 +83,7 @@ type PayslipExcelInput = {
   tds?: number | null;
 };
 
-/** Row from HRMS_government_monthly_payroll (Supabase shape). */
+/** Row from HRMS_government_monthly_payroll table. */
 export type GovernmentMonthlyRow = {
   pay_level?: number | null;
   basic_paid?: number | null;

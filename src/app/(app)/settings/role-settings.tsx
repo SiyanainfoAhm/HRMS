@@ -280,9 +280,9 @@ export function SettingsContent() {
         body: JSON.stringify({
           id: shiftForm.id || undefined,
           name: shiftForm.name,
-          isNightShift: shiftForm.isNightShift,
-          startTime: start24,
-          endTime: end24,
+          is_night_shift: shiftForm.isNightShift,
+          start_time: start24,
+          end_time: end24,
         }),
       });
       const data = await res.json();
@@ -408,7 +408,7 @@ export function SettingsContent() {
       const res = await fetch(`/api/settings/${kind}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, isActive }),
+        body: JSON.stringify({ id, is_active: isActive }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to update status");

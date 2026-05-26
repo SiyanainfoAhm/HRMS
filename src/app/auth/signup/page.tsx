@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { PasswordField } from "@/components/PasswordField";
 import { GoogleAuthButton } from "@/components/GoogleAuthButton";
+import { setToken } from "@/lib/api";
 
 export default function SignupPage() {
   const router = useRouter();
@@ -35,7 +36,8 @@ export default function SignupPage() {
         setLoading(false);
         return;
       }
-      router.push("/dashboard");
+      if (data.token) setToken(data.token);
+      router.push("/setup/company");
       router.refresh();
     } catch {
       setError("Sign up failed");
@@ -96,7 +98,7 @@ export default function SignupPage() {
 
           <GoogleAuthButton
             mode="signup"
-            onSuccessRedirect="/dashboard"
+            onSuccessRedirect="/setup/company"
             onPrefill={({ email, name }) => {
               if (email) setEmail(email);
               if (name) setName(name);

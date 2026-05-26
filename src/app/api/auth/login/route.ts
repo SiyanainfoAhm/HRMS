@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { findUserByEmail, verifyPassword } from "@/lib/users";
-import { createSessionCookie, getCookieOptions, COOKIE_NAME, type SessionUser } from "@/lib/auth";
+import { createSessionCookie, getCookieOptions, COOKIE_NAME, TOKEN_COOKIE_NAME, type SessionUser } from "@/lib/auth";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
 
 export async function POST(request: NextRequest) {
   try {
@@ -10,31 +11,31 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Email and password required" }, { status: 400 });
     }
 
-    const user = await findUserByEmail(email);
-    if (!user) {
-      return NextResponse.json({ error: "Invalid email or password" }, { status: 401 });
-    }
-    if ((user as any).authProvider && (user as any).authProvider !== "password") {
-      return NextResponse.json({ error: "This account uses Google sign-in. Please continue with Google." }, { status: 400 });
+    const apiRes = await fetch(`${API_BASE}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+
+    const data = await apiRes.json();
+    if (!apiRes.ok) {
+      return NextResponse.json({ error: data.error || "Login failed" }, { status: apiRes.status });
     }
 
-    const ok = await verifyPassword(user, password);
-    if (!ok) {
-      return NextResponse.json({ error: "Invalid email or password" }, { status: 401 });
-    }
-
+    const u = data.user;
     const session: SessionUser = {
-      id: user.id,
-      email: user.email,
-      name: user.name,
-      role: user.role,
-      sv: user.authSessionVersion,
+      id: u.id,
+      email: u.email,
+      name: u.name,
+      role: u.role,
+      sv: u.sv ?? 0,
     };
     const cookie = createSessionCookie(session);
-    const res = NextResponse.json({ user: session });
+    const res = NextResponse.json({ user: session, token: data.token });
     res.cookies.set(COOKIE_NAME, cookie, getCookieOptions());
+    res.cookies.set(TOKEN_COOKIE_NAME, data.token, getCookieOptions());
     return res;
-  } catch (e) {
+  } catch {
     return NextResponse.json({ error: "Login failed" }, { status: 500 });
   }
 }

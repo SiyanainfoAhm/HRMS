@@ -56,4 +56,6 @@ export function getCookieOptions() {
   };
 }
 
-export { COOKIE_NAME };
+const TOKEN_COOKIE_NAME = "hrms_api_token";
+
+export { COOKIE_NAME, TOKEN_COOKIE_NAME };

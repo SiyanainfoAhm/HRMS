@@ -1,45 +1,43 @@
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
-import { COOKIE_NAME } from "@/lib/auth";
+import { COOKIE_NAME, TOKEN_COOKIE_NAME } from "@/lib/auth";
 import { getValidatedSession } from "@/lib/authValidate";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { AppShell } from "@/components/AppShell";
-import { supabase } from "@/lib/supabaseClient";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const cookieStore = await cookies();
   const session = await getValidatedSession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) redirect("/auth/login");
 
-  // Ensure user is associated with a company; if not, go to setup
-  const { data: dbUser, error } = await supabase
-    .from("HRMS_users")
-    .select("id, company_id")
-    .eq("id", session.id)
-    .maybeSingle();
-  if (!error && dbUser && !dbUser.company_id) {
-    redirect("/setup/company");
-  }
-
-  let companyBranding: { name: string; logoUrl: string | null } | null = null;
-  if (dbUser?.company_id) {
-    const { data: co } = await supabase
-      .from("HRMS_companies")
-      .select("name, logo_url")
-      .eq("id", dbUser.company_id)
-      .maybeSingle();
-    if (co) {
-      const nm = typeof co.name === "string" ? co.name.trim() : "";
-      companyBranding = {
-        name: nm || "Company",
-        logoUrl: co.logo_url && String(co.logo_url).trim() ? String(co.logo_url).trim() : null,
-      };
+  if (session.role === "super_admin" || session.role === "admin") {
+    const token = cookieStore.get(TOKEN_COOKIE_NAME)?.value;
+    if (!token) {
+      redirect("/auth/login");
+    }
+    try {
+      const res = await fetch(`${API_BASE}/company/me`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+        cache: "no-store",
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (!data.company) {
+          redirect("/setup/company");
+        }
+      } else if (res.status === 401) {
+        redirect("/auth/login");
+      }
+    } catch {
+      // If API is unreachable, let them through rather than blocking
     }
   }
 
   return (
     <AuthProvider user={session}>
-      <AppShell user={session} companyBranding={companyBranding}>
+      <AppShell user={session} companyBranding={null}>
         {children}
       </AppShell>
     </AuthProvider>
