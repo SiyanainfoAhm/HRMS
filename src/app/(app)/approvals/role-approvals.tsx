@@ -266,7 +266,10 @@ export function ApprovalsContent() {
         const data = await res.json();
         if (!res.ok) throw new Error(data?.error || "Failed to load employees");
         if (cancelled) return;
-        const current = (data.employees || []).filter((e: any) => e.employmentStatus === "current");
+        const allowedRoles = new Set(["employee", "manager"]);
+        const current = (data.employees || []).filter(
+          (e: any) => e.employmentStatus === "current" && allowedRoles.has(String(e.role ?? "").toLowerCase()),
+        );
         const mapped = current
           .map((e: any) => ({
             id: String(e.userId ?? e.user_id ?? e.id ?? ""),

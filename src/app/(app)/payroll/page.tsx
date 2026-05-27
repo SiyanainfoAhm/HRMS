@@ -809,8 +809,11 @@ function PayrollPageContent() {
         const data = await res.json();
         if (!cancelled && res.ok) {
           const raw = data.employees ?? [];
+          const allowedRoles = new Set(["employee", "manager"]);
           const list = raw.filter(
-            (e: any) => String(e.employmentStatus ?? "preboarding") !== "preboarding",
+            (e: any) =>
+              String(e.employmentStatus ?? "preboarding") !== "preboarding" &&
+              allowedRoles.has(String(e.role ?? "").toLowerCase()),
           );
           setEmployees(
             list.map((e: any) => ({

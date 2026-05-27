@@ -842,8 +842,8 @@ export function DashboardContent() {
           <p className="muted">
             View generated payslips for each payroll period. Admin / HR can run payroll per company.
           </p>
-          <Link href="/profile?tab=pay" className="btn btn-primary mt-3">
-            View my payslips
+          <Link href="/payroll?tab=slips" className="btn btn-primary mt-3">
+            View payslips
           </Link>
         </div>
 
