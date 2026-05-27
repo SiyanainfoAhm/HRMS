@@ -152,11 +152,7 @@ export function AttendanceDateFilter({
               key={p.id}
               type="button"
               onClick={() => applyPreset(p.id)}
-              className={`rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors ${
-                active
-                  ? "bg-emerald-700 text-white shadow-sm ring-1 ring-emerald-800/20"
-                  : "border border-slate-200 bg-white text-slate-700 hover:border-emerald-300 hover:bg-emerald-50/80"
-              }`}
+              className={`filter-pill ${active ? "filter-pill-active" : "filter-pill-inactive"}`}
             >
               {p.label}
             </button>

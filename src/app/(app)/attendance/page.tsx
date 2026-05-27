@@ -71,7 +71,7 @@ function AttendanceRow({
   const idleTea = r.idleTeaMinutes ?? r.teaBreakMinutes ?? 0;
   const idleTotal = r.idleMinutes ?? (r.grossMinutes != null ? Math.max(0, idleLunch + idleTea) : null);
   return (
-    <tr className="bg-white transition-colors hover:bg-emerald-50/40">
+    <tr className="bg-white transition-colors hover:bg-brand-blue/[0.03]">
       {showDateCol && (
         <td className="whitespace-nowrap px-4 py-3 text-xs font-medium text-slate-600">{formatShortYmd(r.workDate)}</td>
       )}
@@ -96,7 +96,7 @@ function AttendanceRow({
       <td className="px-3 py-3">
         {r.checkOutAt ? (
           r.meetsEightHourWork ? (
-            <span className="inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
+            <span className="inline-flex rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-brand-navy ring-1 ring-inset ring-blue-600/15">
               Yes
             </span>
           ) : (
@@ -125,7 +125,7 @@ function AttendanceMobileCard({
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
       {showDateLine && (
-        <p className="text-xs font-semibold uppercase tracking-wide text-emerald-900/80">{formatShortYmd(r.workDate)}</p>
+        <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">{formatShortYmd(r.workDate)}</p>
       )}
       {showEmployeeCols && (
         <div className={showDateLine ? "mt-2" : ""}>
@@ -173,7 +173,7 @@ function AttendanceMobileCard({
           <dd>
             {r.checkOutAt ? (
               r.meetsEightHourWork ? (
-                <span className="inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
+                <span className="inline-flex rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-brand-navy ring-1 ring-inset ring-blue-600/15">
                   Yes
                 </span>
               ) : (
@@ -349,42 +349,42 @@ export default function AttendancePage() {
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[720px] text-left text-sm">
                   <thead>
-                    <tr className="border-b border-emerald-900/10 bg-gradient-to-r from-emerald-900/[0.07] to-slate-50/80">
+                    <tr className="border-b border-brand-border bg-slate-50/90">
                       {showDateCol && (
-                        <th className="whitespace-nowrap px-4 py-3 text-xs font-semibold uppercase tracking-wide text-emerald-900/80">
+                        <th className="whitespace-nowrap px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-600">
                           Date
                         </th>
                       )}
                       {showEmployeeCols && (
-                        <th className="whitespace-nowrap px-4 py-3 text-xs font-semibold uppercase tracking-wide text-emerald-900/80">
+                        <th className="whitespace-nowrap px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-600">
                           Employee
                         </th>
                       )}
-                      <th className="whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-emerald-900/80">
+                      <th className="whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-600">
                         1. First in
                       </th>
-                      <th className="whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-emerald-900/80">
+                      <th className="whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-600">
                         2. Lunch out
                       </th>
-                      <th className="whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-emerald-900/80">
+                      <th className="whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-600">
                         3. Lunch in
                       </th>
-                      <th className="whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-emerald-900/80">
+                      <th className="whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-600">
                         4. Final out
                       </th>
-                      <th className="whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-emerald-900/80">
+                      <th className="whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-600">
                         Gross
                       </th>
-                      <th className="whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-emerald-900/80">
+                      <th className="whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-600">
                         Active
                       </th>
-                      <th className="whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-emerald-900/80">
+                      <th className="whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-600">
                         Lunch / Tea
                       </th>
-                      <th className="whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-emerald-900/80">
+                      <th className="whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-600">
                         Total idle
                       </th>
-                      <th className="whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-emerald-900/80">
+                      <th className="whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-600">
                         ≥8h
                       </th>
                     </tr>

@@ -279,10 +279,8 @@ export default function HolidaysPage() {
               key={tab.key}
               type="button"
               onClick={() => setActiveLocationTab(tab.key)}
-              className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${
-                activeLocationTab === tab.key
-                  ? "bg-emerald-600 text-white"
-                  : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+              className={`filter-tab ${
+                activeLocationTab === tab.key ? "filter-tab-active" : "filter-tab-inactive"
               }`}
             >
               {tab.label}
@@ -331,13 +329,13 @@ export default function HolidaysPage() {
             <form onSubmit={submitHoliday} className="p-5">
               <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
                 <div className="md:col-span-2">
-                  <label className="mb-1 block text-sm font-medium text-slate-700">Holiday name</label>
+                  <label className="label-field">Holiday name</label>
                   <input
                     type="text"
                     required
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    className="input-field"
                   />
                 </div>
                 <div className="md:col-span-1">
@@ -355,13 +353,13 @@ export default function HolidaysPage() {
                   <p className="mt-1 text-xs text-slate-500">Leave empty or same as start for a single day.</p>
                 </div>
                 <div className="md:col-span-4">
-                  <label className="mb-1 block text-sm font-medium text-slate-700">Location (optional)</label>
+                  <label className="label-field">Location (optional)</label>
                   <input
                     type="text"
                     value={location}
                     onChange={(e) => setLocation(e.target.value)}
                     placeholder="e.g. Ahmedabad, or leave empty for all offices"
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    className="input-field"
                   />
                 </div>
                 <div className="md:col-span-4 flex flex-wrap items-center justify-between gap-3">

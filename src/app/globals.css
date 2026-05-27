@@ -85,6 +85,46 @@
     @apply bg-brand-teal text-white shadow-sm hover:opacity-95 active:scale-[0.98];
   }
 
+  .filter-tab {
+    @apply inline-flex items-center rounded-xl px-3 py-1.5 text-sm font-medium transition-all duration-200;
+  }
+
+  .filter-tab-active {
+    @apply bg-brand-navy text-white shadow-sm;
+  }
+
+  .filter-tab-inactive {
+    @apply bg-slate-100 text-slate-700 hover:bg-slate-200/90;
+  }
+
+  .filter-pill {
+    @apply rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors;
+  }
+
+  .filter-pill-active {
+    @apply bg-brand-navy text-white shadow-sm ring-1 ring-brand-navy/20;
+  }
+
+  .filter-pill-inactive {
+    @apply border border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50;
+  }
+
+  .picker-nav-btn {
+    @apply inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-brand-navy transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent;
+  }
+
+  .picker-grid-btn {
+    @apply rounded-lg border border-slate-200 px-2 py-2.5 text-center text-sm font-medium text-slate-700 transition hover:border-brand-blue/40 hover:bg-blue-50/60;
+  }
+
+  .picker-grid-btn-active {
+    @apply border-brand-blue bg-blue-50 text-brand-navy;
+  }
+
+  .picker-link {
+    @apply text-xs font-medium text-brand-blue hover:text-brand-navy hover:underline;
+  }
+
   .muted {
     @apply text-sm leading-relaxed text-brand-muted;
   }

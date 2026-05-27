@@ -228,12 +228,10 @@ export function DatePickerField({
   };
 
   const triggerClass =
-    "flex w-full items-center justify-between gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-left text-sm " +
-    "focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 " +
-    (disabled ? "cursor-not-allowed bg-slate-50 text-slate-500" : "text-slate-900 hover:border-slate-400");
+    "input-field flex items-center justify-between gap-2 text-left " +
+    (disabled ? "cursor-not-allowed bg-slate-50 text-slate-500" : "hover:border-slate-400");
 
-  const navBtn =
-    "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-emerald-700 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent";
+  const navBtn = "picker-nav-btn";
 
   const panel =
     typeof document !== "undefined" &&
@@ -385,12 +383,8 @@ export function DatePickerField({
                     setView("days");
                   }}
                   className={
-                    "rounded-lg border px-2 py-2.5 text-center text-sm font-medium transition " +
-                    (dis
-                      ? "cursor-not-allowed border-slate-100 text-slate-300"
-                      : isCurrent
-                        ? "border-emerald-600 bg-emerald-50 text-emerald-900"
-                        : "border-slate-200 text-slate-700 hover:border-emerald-300 hover:bg-emerald-50/60")
+                    (dis ? "cursor-not-allowed border border-slate-100 text-slate-300 rounded-lg px-2 py-2.5 text-center text-sm font-medium " : "") +
+                    (dis ? "" : isCurrent ? "picker-grid-btn picker-grid-btn-active" : "picker-grid-btn")
                   }
                 >
                   {label}
@@ -418,12 +412,9 @@ export function DatePickerField({
                     setView("months");
                   }}
                   className={
-                    "rounded-lg border px-2 py-2.5 text-center text-sm font-medium tabular-nums transition " +
                     (dis
-                      ? "cursor-not-allowed border-slate-100 text-slate-300"
-                      : isCurrent
-                        ? "border-emerald-600 bg-emerald-50 text-emerald-900"
-                        : "border-slate-200 text-slate-700 hover:border-emerald-300 hover:bg-emerald-50/60")
+                      ? "cursor-not-allowed rounded-lg border border-slate-100 px-2 py-2.5 text-center text-sm font-medium tabular-nums text-slate-300 "
+                      : "") + (dis ? "" : isCurrent ? "picker-grid-btn picker-grid-btn-active tabular-nums" : "picker-grid-btn tabular-nums")
                   }
                 >
                   {y}
@@ -438,7 +429,7 @@ export function DatePickerField({
             {!required && (
               <button
                 type="button"
-                className="text-xs font-medium text-slate-600 hover:text-emerald-800"
+                className="text-xs font-medium text-slate-600 hover:text-brand-navy"
                 onClick={() => {
                   onChange("");
                   setOpen(false);
@@ -449,7 +440,7 @@ export function DatePickerField({
             )}
             <button
               type="button"
-              className="text-xs font-medium text-emerald-700 hover:underline"
+              className="picker-link"
               onClick={() => {
                 const t = istTodayYmd();
                 if (min && t < min) return;
