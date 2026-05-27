@@ -2,53 +2,134 @@
 @tailwind components;
 @tailwind utilities;
 
-@layer components {
-  .page-title {
-    @apply text-xl font-semibold tracking-tight text-slate-900 sm:text-2xl;
+@layer base {
+  :root {
+    --brand-navy: #1e3a8a;
+    --brand-blue: #2563eb;
+    --brand-teal: #0d9488;
+    --brand-bg: #f8fafc;
+    --brand-surface: #ffffff;
+    --brand-text: #0f172a;
+    --brand-muted: #64748b;
+    --brand-border: #e2e8f0;
+    --sidebar-width: 16rem;
+    --sidebar-collapsed: 4.5rem;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-brand-bg text-slate-900 antialiased;
+    overflow-x: hidden;
+  }
+
+  *:focus-visible {
+    @apply outline-none ring-2 ring-brand-blue/40 ring-offset-2 ring-offset-brand-bg;
   }
 }
 
-body {
-  @apply bg-slate-50 text-slate-900;
-  /* Avoid horizontal scroll from wide tables / flex children on small screens */
-  overflow-x: hidden;
+@layer components {
+  .page-title {
+    @apply text-2xl font-bold tracking-tight text-slate-900 sm:text-[1.75rem];
+  }
+
+  .section-title {
+    @apply text-lg font-semibold tracking-tight text-slate-900;
+  }
+
+  .card-title {
+    @apply text-base font-semibold text-slate-900;
+  }
+
+  .card {
+    @apply rounded-2xl border border-brand-border bg-white p-5 shadow-card transition-shadow duration-200 sm:p-6;
+  }
+
+  @media (hover: hover) {
+    .card-interactive:hover {
+      @apply shadow-card-hover border-slate-300/80;
+    }
+  }
+
+  .grid-3 {
+    @apply grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn-primary {
+    @apply bg-brand-navy text-white shadow-sm hover:bg-brand-blue active:scale-[0.98];
+  }
+
+  .btn-secondary {
+    @apply border border-brand-border bg-white text-slate-800 shadow-sm hover:bg-slate-50 active:scale-[0.98];
+  }
+
+  .btn-outline {
+    @apply border border-slate-300 bg-transparent text-slate-800 hover:bg-white active:scale-[0.98];
+  }
+
+  .btn-danger {
+    @apply bg-danger text-white shadow-sm hover:bg-red-700 active:scale-[0.98];
+  }
+
+  .btn-ghost {
+    @apply text-slate-600 hover:bg-slate-100 hover:text-slate-900;
+  }
+
+  .btn-teal {
+    @apply bg-brand-teal text-white shadow-sm hover:opacity-95 active:scale-[0.98];
+  }
+
+  .muted {
+    @apply text-sm leading-relaxed text-brand-muted;
+  }
+
+  .input-field {
+    @apply w-full rounded-xl border border-brand-border bg-white px-3.5 py-2.5 text-sm text-slate-900 shadow-sm transition-colors placeholder:text-slate-400 focus:border-brand-blue focus:ring-2 focus:ring-brand-blue/20;
+  }
+
+  .label-field {
+    @apply mb-1.5 block text-sm font-medium text-slate-700;
+  }
+
+  .table-shell {
+    @apply overflow-hidden rounded-2xl border border-brand-border bg-white shadow-card;
+  }
+
+  .table-modern thead {
+    @apply bg-slate-50/90 text-left text-xs font-semibold uppercase tracking-wide text-slate-600;
+  }
+
+  .table-modern th {
+    @apply whitespace-nowrap px-4 py-3.5;
+  }
+
+  .table-modern td {
+    @apply border-t border-brand-border px-4 py-3 text-sm text-slate-800;
+  }
+
+  .table-modern tbody tr {
+    @apply transition-colors duration-150;
+  }
+
+  @media (hover: hover) {
+    .table-modern tbody tr:hover {
+      @apply bg-brand-blue/[0.03];
+    }
+  }
 }
 
-/* Safe area for notched phones when using fixed UI */
 @supports (padding: max(0px)) {
   .app-main-pad {
     padding-bottom: max(1rem, env(safe-area-inset-bottom));
   }
 }
 
-.card {
-  @apply bg-white rounded-xl px-4 py-4 shadow-sm border border-slate-200 sm:px-6 sm:py-5;
-}
-
-.grid-3 {
-  @apply grid gap-4 grid-cols-1 md:grid-cols-2 xl:grid-cols-3;
-}
-
-.btn {
-  @apply inline-flex items-center justify-center px-3 py-2 rounded-md text-sm font-medium cursor-pointer;
-}
-
-.btn-primary {
-  @apply bg-emerald-700 text-emerald-50 hover:bg-emerald-800;
-}
-
-.btn-outline {
-  @apply border border-slate-900 text-slate-900 bg-transparent hover:bg-slate-100;
-}
-
-.muted {
-  @apply text-slate-500 text-sm;
-}
-
-/*
- * PasswordField: hide browser-native password reveal / clear (Edge, IE, Chromium)
- * so only the in-app eye toggle shows.
- */
 .password-field-input::-ms-reveal,
 .password-field-input::-ms-clear {
   display: none;
@@ -65,12 +146,12 @@ body {
   width: 0;
 }
 
-/* DayPicker — emerald theme (attendance filter + DatePickerField) */
+/* DayPicker — brand theme */
 .attendance-day-picker .rdp-root,
 .rdp-theme .rdp-root {
-  --rdp-accent-color: #047857;
-  --rdp-accent-background-color: #d1fae5;
-  --rdp-today-color: #047857;
+  --rdp-accent-color: #2563eb;
+  --rdp-accent-background-color: #dbeafe;
+  --rdp-today-color: #1e3a8a;
   --rdp-day_button-border-radius: 0.5rem;
 }
 
@@ -78,13 +159,11 @@ body {
   font-size: 0.8125rem;
 }
 
-/* DatePickerField — month/year grid panels (no native selects) */
 .date-picker-panel .picker-view-grid button:focus-visible {
-  outline: 2px solid #047857;
+  outline: 2px solid #2563eb;
   outline-offset: 2px;
 }
 
-/* Payslip: Gross Basic inner row — full-width borders that meet parent cell edges */
 .payslip-print-area .payslip-gross-basic-inner {
   width: 100%;
   max-width: 100%;
@@ -96,7 +175,6 @@ body {
   border-color: #000;
 }
 
-/* Print: show only payslip, A4 portrait */
 @media print {
   body * {
     visibility: hidden;
@@ -133,7 +211,6 @@ body {
     padding: 12px 16px !important;
     border-color: #000 !important;
   }
-  /* Gross Basic row: borders must span full cell width and meet at corners */
   .payslip-print-area .payslip-gross-basic-inner {
     width: 100% !important;
     max-width: 100% !important;
@@ -150,9 +227,7 @@ body {
     border-right-style: solid !important;
   }
   @page {
-    /* Shorter page to fit salary slip content, reduce white space */
     size: 210mm 170mm;
     margin: 10mm;
   }
 }
-

@@ -1,6 +1,8 @@
 "use client";
 
 import { createContext, useCallback, useContext, useMemo, useRef, useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { CheckCircle2, XCircle, X } from "lucide-react";
 
 type ToastType = "success" | "error";
 
@@ -29,83 +31,76 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     setToasts((prev) => prev.filter((x) => x.id !== id));
   }, []);
 
-  const showToast = useCallback((type: ToastType, message: string) => {
-    const id = crypto.randomUUID();
-    const toast: Toast = { id, type, message, createdAt: Date.now(), durationMs: 4500 };
-    setToasts((prev) => [...prev, toast]);
-    const timeoutId = window.setTimeout(() => removeToast(id), toast.durationMs);
-    timersRef.current.set(id, timeoutId);
-  }, [removeToast]);
+  const showToast = useCallback(
+    (type: ToastType, message: string) => {
+      const id = crypto.randomUUID();
+      const toast: Toast = { id, type, message, createdAt: Date.now(), durationMs: 4500 };
+      setToasts((prev) => [...prev, toast]);
+      const timeoutId = window.setTimeout(() => removeToast(id), toast.durationMs);
+      timersRef.current.set(id, timeoutId);
+    },
+    [removeToast],
+  );
 
   const value = useMemo(() => ({ showToast }), [showToast]);
 
   return (
     <ToastContext.Provider value={value}>
       {children}
-      <div className="pointer-events-none fixed right-4 top-16 z-[100] flex w-[420px] max-w-[calc(100vw-2rem)] flex-col gap-3">
-        {toasts.map((t) => (
-          <div
-            key={t.id}
-            role="status"
-            className={`pointer-events-auto overflow-hidden rounded-xl border shadow-lg ${
-              t.type === "success" ? "border-emerald-300 bg-emerald-50" : "border-red-300 bg-red-50"
-            }`}
-          >
-            <div className="flex items-start gap-3 px-4 py-3">
-              <div
-                className={`mt-0.5 flex h-7 w-7 items-center justify-center rounded-full ${
-                  t.type === "success" ? "bg-emerald-600 text-white" : "bg-red-600 text-white"
-                }`}
-                aria-hidden="true"
-              >
-                ✓
+      <div className="pointer-events-none fixed right-4 top-4 z-[100] flex w-[420px] max-w-[calc(100vw-2rem)] flex-col gap-3 md:top-16">
+        <AnimatePresence>
+          {toasts.map((t) => (
+            <motion.div
+              key={t.id}
+              role="status"
+              initial={{ opacity: 0, x: 24, scale: 0.96 }}
+              animate={{ opacity: 1, x: 0, scale: 1 }}
+              exit={{ opacity: 0, x: 16, scale: 0.98 }}
+              transition={{ duration: 0.22 }}
+              className={`pointer-events-auto overflow-hidden rounded-2xl border shadow-card ${
+                t.type === "success" ? "border-green-200 bg-white" : "border-red-200 bg-white"
+              }`}
+            >
+              <div className="flex items-start gap-3 px-4 py-3">
+                <div
+                  className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
+                    t.type === "success" ? "bg-success-soft text-success" : "bg-danger-soft text-danger"
+                  }`}
+                  aria-hidden
+                >
+                  {t.type === "success" ? <CheckCircle2 className="h-5 w-5" /> : <XCircle className="h-5 w-5" />}
+                </div>
+                <div className="min-w-0 flex-1 text-sm text-slate-800">
+                  <div className="font-semibold text-slate-900">{t.type === "success" ? "Success" : "Error"}</div>
+                  <div className="mt-0.5 break-words text-[13px] leading-5 text-brand-muted">{t.message}</div>
+                </div>
+                <button
+                  type="button"
+                  className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                  onClick={() => removeToast(t.id)}
+                  aria-label="Dismiss"
+                >
+                  <X className="h-4 w-4" />
+                </button>
               </div>
-              <div className={`min-w-0 flex-1 text-sm ${t.type === "success" ? "text-emerald-950" : "text-red-950"}`}>
-                <div className="font-medium">{t.type === "success" ? "Success" : "Error"}</div>
-                <div className="mt-0.5 break-words text-[13px] leading-5 opacity-90">{t.message}</div>
+              <div className="h-1 w-full bg-slate-100">
+                <motion.div
+                  className={`h-1 ${t.type === "success" ? "bg-success" : "bg-danger"}`}
+                  initial={{ width: "100%" }}
+                  animate={{ width: "0%" }}
+                  transition={{ duration: t.durationMs / 1000, ease: "linear" }}
+                />
               </div>
-              <button
-                type="button"
-                className={`rounded-md px-2 py-1 text-sm ${
-                  t.type === "success" ? "text-emerald-900/70 hover:text-emerald-950" : "text-red-900/70 hover:text-red-950"
-                }`}
-                onClick={() => removeToast(t.id)}
-                aria-label="Dismiss"
-              >
-                ×
-              </button>
-            </div>
-            <div className="h-1 w-full bg-black/5">
-              <div
-                className={`${t.type === "success" ? "bg-emerald-600" : "bg-red-600"} h-1`}
-                style={{
-                  width: "100%",
-                  animation: `toast-shrink ${t.durationMs}ms linear forwards`,
-                }}
-              />
-            </div>
-          </div>
-        ))}
+            </motion.div>
+          ))}
+        </AnimatePresence>
       </div>
-      <style jsx global>{`
-        @keyframes toast-shrink {
-          from {
-            width: 100%;
-          }
-          to {
-            width: 0%;
-          }
-        }
-      `}</style>
     </ToastContext.Provider>
   );
 }
 
-export function useToast(): ToastContextValue {
+export function useToast() {
   const ctx = useContext(ToastContext);
-  if (!ctx) {
-    throw new Error("useToast must be used within ToastProvider");
-  }
+  if (!ctx) throw new Error("useToast must be used within ToastProvider");
   return ctx;
 }
-

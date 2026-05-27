@@ -7,6 +7,10 @@ import { SkeletonTable } from "@/components/Skeleton";
 import { useResponsivePageSize } from "@/hooks/useResponsivePageSize";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { fmtDmy, formatMinutesAsHours } from "@/lib/dateFormat";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { ErrorState } from "@/components/ui/ErrorState";
+import { CalendarClock } from "lucide-react";
 
 type Row = {
   logId: string;
@@ -273,20 +277,16 @@ export default function AttendancePage() {
 
   return (
     <section className="space-y-6">
-      <div>
-        <h1 className="page-title">{title}</h1>
-        <p className="muted mt-1 max-w-3xl">{description}</p>
-      </div>
+      <PageHeader title={title} description={description} />
 
       {!hasEmployee ? (
-        <div className="card border-amber-200/80 bg-amber-50/40">
-          <p className="text-sm font-medium text-slate-800">No employee profile linked</p>
-          <p className="muted mt-1">
-            Your account is not linked to an employee record yet. Ask HR to complete your profile; then your attendance history will appear here.
-          </p>
-        </div>
+        <EmptyState
+          icon={CalendarClock}
+          title="No employee profile linked"
+          description="Ask HR to complete your employee record. Your attendance history will appear here once your profile is linked."
+        />
       ) : (
-        <div className="card border-slate-200/80 shadow-md shadow-slate-200/40">
+        <div className="card">
           <div className="mb-5 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <AttendanceDateFilter
               startDate={startDate}
@@ -308,7 +308,11 @@ export default function AttendancePage() {
             </button>
           </div>
 
-          {error && <p className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+          {error && (
+            <div className="mb-4">
+              <ErrorState message={error} onRetry={() => void load()} />
+            </div>
+          )}
 
           {orderedRows.length > mobilePageSize && !loading && (
             <div className="mb-4 md:hidden">
@@ -325,12 +329,20 @@ export default function AttendancePage() {
           {loading ? (
             <SkeletonTable rows={6} columns={colCount} />
           ) : rows.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/50 py-12 text-center">
-              <p className="text-sm font-medium text-slate-600">No attendance records for this period.</p>
-              <p className="muted mt-1">
-                {isManagerial ? "Try another date range or refresh after employees punch." : "Try another date range, or punch in from the Dashboard for today."}
-              </p>
-            </div>
+            <EmptyState
+              icon={CalendarClock}
+              title="No attendance records"
+              description={
+                isManagerial
+                  ? "Try another date range or refresh after employees punch."
+                  : "Try another date range, or punch in from the Dashboard for today."
+              }
+              action={
+                <button type="button" className="btn btn-secondary" onClick={() => void load()}>
+                  Refresh
+                </button>
+              }
+            />
           ) : (
             <>
             <div className="hidden overflow-hidden rounded-xl border border-slate-200/90 bg-white shadow-sm md:block">

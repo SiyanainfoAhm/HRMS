@@ -2,19 +2,14 @@
 
 import type { SessionUser } from "@/lib/auth";
 import { Sidebar, type CompanyBranding } from "./Sidebar";
+import { Topbar } from "./ui/Topbar";
 import { ToastProvider } from "./ToastProvider";
 import { startTransition, useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
+import { Menu } from "lucide-react";
+import { titleForPathname } from "@/lib/pageTitles";
 
 export type { CompanyBranding };
-
-function MenuIcon() {
-  return (
-    <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" aria-hidden>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
-    </svg>
-  );
-}
 
 function brandingFromApiCompany(company: Record<string, unknown> | null | undefined): CompanyBranding | null {
   if (!company) return null;
@@ -103,16 +98,17 @@ export function AppShell({
     });
   }
 
-  const brandName = companyBranding?.name?.trim() || "Company";
+  const brandName = companyBranding?.name?.trim() || "CIRT HRMS";
   const effectiveCollapsed = sidebarCollapsed && isDesktop;
+  const mobileTitle = titleForPathname(pathname);
 
   return (
     <ToastProvider>
-      <div className="flex h-[100dvh] min-h-0 flex-col bg-slate-50 md:flex-row">
+      <div className="flex h-[100dvh] min-h-0 flex-col bg-brand-bg md:flex-row">
         {mobileNavOpen && (
           <button
             type="button"
-            className="fixed inset-0 z-40 bg-black/40 md:hidden"
+            className="fixed inset-0 z-40 bg-slate-900/50 backdrop-blur-[1px] md:hidden"
             aria-label="Close menu"
             onClick={() => setMobileNavOpen(false)}
           />
@@ -126,19 +122,23 @@ export function AppShell({
           onMobileClose={() => setMobileNavOpen(false)}
         />
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-          <header className="flex shrink-0 items-center gap-3 border-b border-slate-200 bg-white px-3 py-2.5 sm:px-4 md:hidden">
+          <header className="flex shrink-0 items-center gap-3 border-b border-brand-border bg-white px-3 py-2.5 shadow-sm md:hidden">
             <button
               type="button"
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-slate-700 hover:bg-slate-100"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-slate-700 hover:bg-slate-100"
               onClick={() => setMobileNavOpen(true)}
               aria-label="Open menu"
             >
-              <MenuIcon />
+              <Menu className="h-6 w-6" />
             </button>
-            <div className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-900">{brandName}</div>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-bold text-slate-900">{mobileTitle}</div>
+              <div className="truncate text-xs text-brand-muted">{brandName} HRMS</div>
+            </div>
           </header>
+          <Topbar user={user} />
           <div className="app-main-pad min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
-            <div className="mx-auto w-full max-w-[100vw] p-4 sm:p-5 lg:p-6">{children}</div>
+            <div className="mx-auto w-full max-w-[1600px] p-4 sm:p-5 lg:p-8">{children}</div>
           </div>
         </div>
       </div>

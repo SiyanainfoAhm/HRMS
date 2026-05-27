@@ -53,7 +53,7 @@ export function PasswordField({
 
   return (
     <div className={className}>
-      <label htmlFor={id} className="mb-1 block text-sm font-medium text-slate-700">
+      <label htmlFor={id} className="label-field">
         {label}
       </label>
       <div className="relative">
@@ -66,7 +66,7 @@ export function PasswordField({
           placeholder={placeholder}
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          className="password-field-input w-full rounded-lg border border-slate-300 py-2 pl-3 pr-10 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+          className="password-field-input input-field !pr-10"
         />
         <button
           type="button"

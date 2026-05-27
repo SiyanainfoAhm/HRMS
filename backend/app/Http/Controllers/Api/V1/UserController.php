@@ -134,7 +134,27 @@ class UserController extends Controller
             ->with('document')
             ->get();
 
-        return response()->json(['documents' => $submissions]);
+        $items = $submissions->map(function ($submission) {
+            $doc = $submission->document;
+
+            return [
+                'submission_id' => $submission->id,
+                'document_id' => $submission->document_id,
+                'document_name' => $doc?->name ?? 'Document',
+                'kind' => $doc?->kind ?? 'upload',
+                'status' => $submission->status,
+                'file_url' => $submission->file_url,
+                'signature_name' => $submission->signature_name,
+                'signed_at' => $submission->signed_at?->toIso8601String(),
+                'submitted_at' => $submission->submitted_at?->toIso8601String(),
+                'review_note' => $submission->review_note,
+            ];
+        })->values()->all();
+
+        return response()->json([
+            'documents' => $submissions,
+            'items' => $items,
+        ]);
     }
 
     public function myPayrollMaster(Request $request): JsonResponse

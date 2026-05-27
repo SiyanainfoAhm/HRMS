@@ -37,13 +37,14 @@ import { dispatchHrmsChange, onHrmsChange } from "@/lib/hrmsChangeBus";
 
 type LeaveRequestRow = {
   id: string;
-  leaveTypeName?: string;
-  startDate?: string;
-  endDate?: string;
-  totalDays?: number;
-  status?: string;
-  reason?: string | null;
-  createdAt?: string;
+  leaveTypeId: string;
+  leaveTypeName: string;
+  startDate: string;
+  endDate: string;
+  totalDays: number;
+  status: string;
+  reason: string | null;
+  createdAt: string;
 };
 
 function parseLeaveRequestsPayload(data: Record<string, unknown> | null | undefined): {
@@ -55,19 +56,25 @@ function parseLeaveRequestsPayload(data: Record<string, unknown> | null | undefi
     (data?.leaveRequests as unknown[]) ??
     (data?.leave_requests as unknown[]) ??
     [];
-  const rows = (Array.isArray(raw) ? raw : []).map((r: Record<string, unknown>) => ({
-    id: String(r.id ?? ""),
-    leaveTypeName:
-      (r.leaveTypeName as string | undefined) ??
-      (r.leave_type_name as string | undefined) ??
-      ((r.leaveType as { name?: string } | undefined)?.name),
-    startDate: String(r.startDate ?? r.start_date ?? "").slice(0, 10),
-    endDate: String(r.endDate ?? r.end_date ?? "").slice(0, 10),
-    totalDays: (r.totalDays ?? r.total_days) as number | undefined,
-    status: r.status as string | undefined,
-    reason: (r.reason as string | null | undefined) ?? null,
-    createdAt: (r.createdAt ?? r.created_at) as string | undefined,
-  }));
+  const rows = (Array.isArray(raw) ? raw : []).map((item) => {
+    const r = item as Record<string, unknown>;
+    return {
+      id: String(r.id ?? ""),
+      leaveTypeId: String(r.leaveTypeId ?? r.leave_type_id ?? ""),
+      leaveTypeName: String(
+        (r.leaveTypeName as string | undefined) ??
+          (r.leave_type_name as string | undefined) ??
+          ((r.leaveType as { name?: string } | undefined)?.name) ??
+          "",
+      ),
+      startDate: String(r.startDate ?? r.start_date ?? "").slice(0, 10),
+      endDate: String(r.endDate ?? r.end_date ?? "").slice(0, 10),
+      totalDays: Number(r.totalDays ?? r.total_days ?? 0),
+      status: String(r.status ?? "pending"),
+      reason: (r.reason as string | null | undefined) ?? null,
+      createdAt: String(r.createdAt ?? r.created_at ?? ""),
+    };
+  });
   const total = typeof data?.total === "number" ? data.total : rows.length;
   return { rows, total };
 }
@@ -85,19 +92,7 @@ export function ApprovalsContent() {
 
   const [types, setTypes] = useState<{ id: string; name: string }[]>([]);
   const [typeRows, setTypeRows] = useState<any[]>([]);
-  const [requests, setRequests] = useState<
-    {
-      id: string;
-      leaveTypeId: string;
-      leaveTypeName: string;
-      startDate: string;
-      endDate: string;
-      totalDays: any;
-      reason: string | null;
-      status: string;
-      createdAt: string;
-    }[]
-  >([]);
+  const [requests, setRequests] = useState<LeaveRequestRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

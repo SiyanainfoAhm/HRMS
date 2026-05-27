@@ -7,8 +7,7 @@ import { useEffect, useState } from "react";
 import { Skeleton } from "@/components/Skeleton";
 import { useToast } from "@/components/ToastProvider";
 import { onHrmsChange } from "@/lib/hrmsChangeBus";
-
-const TEAL = "#0d9488";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 function getGreeting(): string {
   const h = new Date().getHours();
@@ -420,10 +419,7 @@ export function DashboardContent() {
           </div>
         )}
         {/* Top greeting banner */}
-        <div
-          className="mb-6 rounded-xl px-4 py-4 text-center text-white sm:px-6"
-          style={{ backgroundColor: TEAL }}
-        >
+        <div className="mb-6 rounded-2xl bg-gradient-to-r from-brand-navy to-brand-blue px-4 py-4 text-center text-white shadow-md sm:px-6">
           <h1 className="text-lg font-semibold sm:text-xl">
             {greeting} {displayName}
           </h1>
@@ -471,16 +467,13 @@ export function DashboardContent() {
                       className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50/50 px-4 py-3"
                     >
                       <div className="flex items-center gap-3">
-                        <div
-                          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg"
-                          style={{ backgroundColor: `${TEAL}20` }}
-                        >
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-brand-teal/15">
                           {b.isPaid ? (
-                            <svg className="h-5 w-5" style={{ color: TEAL }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <svg className="h-5 w-5 text-brand-teal" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                               <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
                             </svg>
                           ) : (
-                            <svg className="h-5 w-5" style={{ color: TEAL }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <svg className="h-5 w-5 text-brand-teal" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                               <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
                               <line x1="16" y1="2" x2="16" y2="6" />
                               <line x1="8" y1="2" x2="8" y2="6" />
@@ -489,13 +482,13 @@ export function DashboardContent() {
                           )}
                         </div>
                         <div>
-                          <p className="text-sm font-medium" style={{ color: TEAL }}>
+                          <p className="text-sm font-medium text-brand-teal">
                             {b.leaveTypeName}
                           </p>
                         </div>
                       </div>
                       <div className="text-right">
-                        <p className="text-xl font-bold" style={{ color: TEAL }}>
+                        <p className="text-xl font-bold text-brand-navy">
                           {b.remaining != null ? b.remaining : "∞"}
                         </p>
                         <p className="text-xs font-medium text-slate-500">Available</p>
@@ -511,8 +504,7 @@ export function DashboardContent() {
 
               <Link
                 href="/approvals?tab=leave"
-                className="mt-4 block w-full rounded-lg py-2.5 text-center text-sm font-medium text-white transition hover:opacity-90"
-                style={{ backgroundColor: TEAL }}
+                className="mt-4 block w-full rounded-xl bg-gradient-to-r from-brand-navy to-brand-blue py-2.5 text-center text-sm font-semibold text-white shadow-md transition hover:opacity-95"
               >
                 Go to Leave module
               </Link>
@@ -522,10 +514,7 @@ export function DashboardContent() {
           {/* Right: Attendance + My Pay + holidays */}
           <div className="lg:col-span-2 space-y-6">
             <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-              <div
-                className="px-6 py-3 text-lg font-semibold text-white"
-                style={{ backgroundColor: TEAL }}
-              >
+              <div className="bg-gradient-to-r from-brand-navy to-brand-blue px-6 py-3.5 text-lg font-semibold text-white">
                 Today&apos;s attendance
               </div>
               <div className="p-6">
@@ -543,8 +532,7 @@ export function DashboardContent() {
                     <p>Could not load today&apos;s attendance.</p>
                     <button
                       type="button"
-                      className="text-sm font-medium underline"
-                      style={{ color: TEAL }}
+                      className="text-sm font-semibold text-brand-blue underline hover:text-brand-navy"
                       onClick={() => void refreshAttendance()}
                     >
                       Retry
@@ -728,8 +716,7 @@ export function DashboardContent() {
                           type="button"
                           disabled={punching}
                           onClick={() => handleAttendancePunch("in")}
-                          className="w-full rounded-xl px-4 py-4 text-center text-base font-semibold text-white shadow-md transition hover:opacity-95 disabled:opacity-50"
-                          style={{ backgroundColor: TEAL }}
+                          className="w-full rounded-xl bg-gradient-to-r from-brand-navy to-brand-blue px-4 py-4 text-center text-base font-semibold text-white shadow-md transition hover:opacity-95 disabled:opacity-50"
                         >
                           {punching ? "Saving…" : "1. First check in"}
                         </button>
@@ -741,10 +728,7 @@ export function DashboardContent() {
             </div>
 
             <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-              <div
-                className="px-6 py-3 text-lg font-semibold text-white"
-                style={{ backgroundColor: TEAL }}
-              >
+              <div className="bg-gradient-to-r from-brand-navy to-brand-blue px-6 py-3.5 text-lg font-semibold text-white">
                 My Pay
               </div>
               <div className="p-6">
@@ -772,7 +756,7 @@ export function DashboardContent() {
             <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                 <h3 className="text-sm font-semibold text-slate-700">Upcoming holidays</h3>
-                <Link href="/holidays" className="text-xs font-medium" style={{ color: TEAL }}>
+                <Link href="/holidays" className="text-xs font-semibold text-brand-blue hover:text-brand-navy">
                   View all
                 </Link>
               </div>
@@ -811,18 +795,14 @@ export function DashboardContent() {
     );
   }
 
-  // Managerial / Admin dashboard (cleaner card layout, teal accents)
   return (
-    <section className="space-y-4">
-      <div>
-        <h1 className="page-title">Dashboard</h1>
-        <p className="muted">You are viewing the {role.replace("_", " ")} workflow.</p>
-      </div>
+    <section className="space-y-6">
+      <PageHeader
+        title="Dashboard"
+        description={`Welcome back — ${role.replace("_", " ")} workspace for CIRT HRMS .`}
+      />
 
-      <div
-        className="mb-6 rounded-xl px-4 py-4 text-white sm:px-6"
-        style={{ backgroundColor: TEAL }}
-      >
+      <div className="mb-6 rounded-2xl bg-gradient-to-r from-brand-navy to-brand-blue px-4 py-4 text-white shadow-md sm:px-6">
         <h2 className="text-lg font-semibold">
           {greeting}, {displayName}
         </h2>
@@ -839,8 +819,7 @@ export function DashboardContent() {
             {(role === "super_admin" || role === "admin" || role === "hr") && (
               <Link
                 href="/attendance"
-                className="mt-3 inline-flex rounded-lg px-4 py-2 text-sm font-medium text-white transition hover:opacity-90"
-                style={{ backgroundColor: TEAL }}
+                className="btn btn-primary mt-3"
               >
                 Company attendance
               </Link>
@@ -853,11 +832,7 @@ export function DashboardContent() {
           <p className="muted">
             See your current leave balance and recent requests. Managers and HR can see their team or company.
           </p>
-          <Link
-            href="/approvals?tab=leave"
-            className="mt-3 inline-flex rounded-lg px-4 py-2 text-sm font-medium text-white transition hover:opacity-90"
-            style={{ backgroundColor: TEAL }}
-          >
+          <Link href="/approvals?tab=leave" className="btn btn-primary mt-3">
             Go to Leave module
           </Link>
         </div>
@@ -867,11 +842,7 @@ export function DashboardContent() {
           <p className="muted">
             View generated payslips for each payroll period. Admin / HR can run payroll per company.
           </p>
-          <Link
-            href="/profile?tab=pay"
-            className="mt-3 inline-flex rounded-lg px-4 py-2 text-sm font-medium text-white transition hover:opacity-90"
-            style={{ backgroundColor: TEAL }}
-          >
+          <Link href="/profile?tab=pay" className="btn btn-primary mt-3">
             View my payslips
           </Link>
         </div>
@@ -881,8 +852,7 @@ export function DashboardContent() {
           <p className="muted">Company holiday calendar as configured by Admin / HR, visible to all employees.</p>
           <Link
             href="/holidays"
-            className="mt-3 inline-flex rounded-lg border-2 px-4 py-2 text-sm font-medium transition hover:bg-slate-50"
-            style={{ borderColor: TEAL, color: TEAL }}
+            className="btn btn-outline mt-3 border-2 border-brand-navy text-brand-navy"
           >
             View calendar
           </Link>
@@ -892,11 +862,7 @@ export function DashboardContent() {
           <div className="card">
             <h2 className="mb-1 text-lg font-semibold text-slate-900">Employee Hub</h2>
             <p className="muted">Search, view and manage employee records for the entire company.</p>
-            <Link
-              href="/employees"
-              className="mt-3 inline-flex rounded-lg px-4 py-2 text-sm font-medium text-white transition hover:opacity-90"
-              style={{ backgroundColor: TEAL }}
-            >
+            <Link href="/employees" className="btn btn-primary mt-3">
               Go to Employees
             </Link>
           </div>

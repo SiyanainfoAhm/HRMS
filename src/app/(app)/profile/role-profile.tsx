@@ -163,6 +163,32 @@ export function ProfileContent() {
     submitted_at: string | null;
     review_note: string | null;
   };
+
+  function parseMyDocumentsPayload(data: Record<string, unknown>): MyDocRow[] {
+    const raw =
+      (data.items as unknown[]) ??
+      (data.documents as unknown[]) ??
+      [];
+    if (!Array.isArray(raw)) return [];
+
+    return raw.map((item) => {
+      const row = item as Record<string, unknown>;
+      const doc = (row.document as Record<string, unknown> | undefined) ?? {};
+      return {
+        submission_id: String(row.submission_id ?? row.id ?? ""),
+        document_id: String(row.document_id ?? doc.id ?? ""),
+        document_name: String(row.document_name ?? doc.name ?? "Document"),
+        kind: String(row.kind ?? doc.kind ?? "upload"),
+        status: String(row.status ?? "pending"),
+        file_url: (row.file_url as string | null) ?? null,
+        signature_name: (row.signature_name as string | null) ?? null,
+        signed_at: (row.signed_at as string | null) ?? null,
+        submitted_at: (row.submitted_at as string | null) ?? null,
+        review_note: (row.review_note as string | null) ?? null,
+      };
+    });
+  }
+
   const [myDocuments, setMyDocuments] = useState<MyDocRow[]>([]);
   const [docsLoading, setDocsLoading] = useState(false);
   const [docsError, setDocsError] = useState<string | null>(null);
@@ -180,7 +206,7 @@ export function ProfileContent() {
     const res = await fetch("/api/me/documents");
     const data = await res.json();
     if (!res.ok) throw new Error(data?.error || "Failed to load documents");
-    setMyDocuments(data.items ?? []);
+    setMyDocuments(parseMyDocumentsPayload(data));
   }
 
   async function handleDownloadPdf(userName?: string, month?: string, year?: string) {
@@ -1522,7 +1548,7 @@ export function ProfileContent() {
                       <td className="py-2 pr-4 align-top">{row.status}</td>
                       <td className="py-2 pr-4 align-top">
                         {row.file_url ? (
-                          <a href={row.file_url} target="_blank" rel="noreferrer" className="text-emerald-700 underline">
+                          <a href={row.file_url} target="_blank" rel="noreferrer" className="font-medium text-brand-blue underline hover:text-brand-navy">
                             Open file
                           </a>
                         ) : row.signature_name ? (
