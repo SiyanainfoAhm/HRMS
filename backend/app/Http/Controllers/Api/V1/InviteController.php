@@ -8,6 +8,8 @@ use App\Models\HrmsCompanyDocument;
 use App\Models\HrmsEmployeeDocumentSubmission;
 use App\Models\HrmsEmployeeInvite;
 use App\Models\HrmsUser;
+use App\Support\BankDetailsService;
+use App\Support\BankDetailsValidator;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -210,13 +212,33 @@ class InviteController extends Controller
             'bankIfsc' => 'bank_ifsc',
         ];
 
-        foreach ($fieldMap as $camel => $snake) {
-            if (isset($profile[$camel]) && $profile[$camel] !== '') {
-                $user->{$snake} = $profile[$camel];
+        $bankFieldKeys = ['bankName', 'bankAccountHolderName', 'bankAccountNumber', 'bankIfsc'];
+        $hasBankInProfile = false;
+        foreach ($bankFieldKeys as $key) {
+            $snake = $fieldMap[$key] ?? null;
+            if ($snake && (array_key_exists($key, $profile) || array_key_exists($snake, $profile))) {
+                $hasBankInProfile = true;
+                break;
             }
         }
 
-        $user->save();
+        foreach ($fieldMap as $camel => $snake) {
+            if (in_array($camel, $bankFieldKeys, true)) {
+                continue;
+            }
+            $val = $profile[$camel] ?? $profile[$snake] ?? null;
+            if ($val !== null && $val !== '') {
+                $user->{$snake} = is_string($val) ? trim($val) : $val;
+            }
+        }
+
+        if ($hasBankInProfile) {
+            $legalName = trim((string) ($profile['name'] ?? $user->name ?? ''));
+            $normalized = BankDetailsValidator::normalizeAndValidate($profile, $legalName !== '' ? $legalName : null, true);
+            BankDetailsService::applyToUser($user, $normalized, $user->id);
+        } else {
+            $user->save();
+        }
 
         $invite->update([
             'status' => 'completed',

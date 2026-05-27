@@ -16,3 +16,12 @@ export function fmtDmy(isoOrYmd: string | null | undefined): string {
   return `${d}-${m}-${y}`;
 }
 
+/** Whole minutes → "2h 15m" (never shows fractional minutes). */
+export function formatMinutesAsHours(min: number | null | undefined): string {
+  if (min == null || !Number.isFinite(min)) return "—";
+  const total = Math.max(0, Math.round(min));
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  return `${h}h ${m}m`;
+}
+

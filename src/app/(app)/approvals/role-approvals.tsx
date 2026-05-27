@@ -8,6 +8,7 @@ import { PaginationBar } from "@/components/PaginationBar";
 import { DatePickerField } from "@/components/ui/DatePickerField";
 import { useResponsivePageSize } from "@/hooks/useResponsivePageSize";
 import { fmtDmy } from "@/lib/dateFormat";
+import { isPayrollRunForClaimDate, type PayrollPeriodRow } from "@/lib/payrollRunGuard";
 
 function payrollHintFromClaimDate(claimDate: string): string | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(claimDate)) return null;
@@ -32,6 +33,44 @@ function payrollPeriodLabel(claimDate: string | null | undefined, payrollYear: n
   return `${label} ${payrollYear ?? "—"}`;
 }
 import { useToast } from "@/components/ToastProvider";
+import { dispatchHrmsChange, onHrmsChange } from "@/lib/hrmsChangeBus";
+
+type LeaveRequestRow = {
+  id: string;
+  leaveTypeName?: string;
+  startDate?: string;
+  endDate?: string;
+  totalDays?: number;
+  status?: string;
+  reason?: string | null;
+  createdAt?: string;
+};
+
+function parseLeaveRequestsPayload(data: Record<string, unknown> | null | undefined): {
+  rows: LeaveRequestRow[];
+  total: number;
+} {
+  const raw =
+    (data?.requests as unknown[]) ??
+    (data?.leaveRequests as unknown[]) ??
+    (data?.leave_requests as unknown[]) ??
+    [];
+  const rows = (Array.isArray(raw) ? raw : []).map((r: Record<string, unknown>) => ({
+    id: String(r.id ?? ""),
+    leaveTypeName:
+      (r.leaveTypeName as string | undefined) ??
+      (r.leave_type_name as string | undefined) ??
+      ((r.leaveType as { name?: string } | undefined)?.name),
+    startDate: String(r.startDate ?? r.start_date ?? "").slice(0, 10),
+    endDate: String(r.endDate ?? r.end_date ?? "").slice(0, 10),
+    totalDays: (r.totalDays ?? r.total_days) as number | undefined,
+    status: r.status as string | undefined,
+    reason: (r.reason as string | null | undefined) ?? null,
+    createdAt: (r.createdAt ?? r.created_at) as string | undefined,
+  }));
+  const total = typeof data?.total === "number" ? data.total : rows.length;
+  return { rows, total };
+}
 
 export function ApprovalsContent() {
   const { role } = useAuth();
@@ -100,10 +139,12 @@ export function ApprovalsContent() {
   const [reimbClaimDate, setReimbClaimDate] = useState("");
   const [reimbDesc, setReimbDesc] = useState("");
   const [reimbFile, setReimbFile] = useState<File | null>(null);
+  const [reimbEmployeeId, setReimbEmployeeId] = useState("");
   const [reimbSubmitting, setReimbSubmitting] = useState(false);
   const [reimbActionId, setReimbActionId] = useState<string | null>(null);
   const [reimbRejectDialog, setReimbRejectDialog] = useState<null | { id: string; reason: string }>(null);
   const [reimbDialogOpen, setReimbDialogOpen] = useState(false);
+  const [payrollPeriods, setPayrollPeriods] = useState<PayrollPeriodRow[]>([]);
 
   const listPageSize = useResponsivePageSize();
   const [leaveListPage, setLeaveListPage] = useState(1);
@@ -122,6 +163,10 @@ export function ApprovalsContent() {
   const selectedLeaveType = typeRows.find((t: any) => t.id === leaveTypeId);
   const totalDays = diffDaysInclusive(startDate, endDate);
   const reimbPayrollHint = useMemo(() => payrollHintFromClaimDate(reimbClaimDate), [reimbClaimDate]);
+  const reimbClaimMonthLocked = useMemo(
+    () => Boolean(reimbClaimDate && isPayrollRunForClaimDate(payrollPeriods, reimbClaimDate)),
+    [reimbClaimDate, payrollPeriods],
+  );
 
   useEffect(() => {
     if (tab !== "leave") return;
@@ -143,11 +188,13 @@ export function ApprovalsContent() {
         if (!typesRes.ok) throw new Error(typesData?.error || "Failed to load leave types");
         if (!reqRes.ok) throw new Error(reqData?.error || "Failed to load leave requests");
         if (cancelled) return;
-        setTypeRows(typesData.types || []);
-        setTypes((typesData.types || []).map((t: any) => ({ id: t.id, name: t.name })));
-        setRequests(reqData.requests || []);
-        setLeaveRequestsTotal(typeof reqData.total === "number" ? reqData.total : (reqData.requests?.length ?? 0));
-        if (!leaveTypeId && (typesData.types || []).length) setLeaveTypeId(typesData.types[0].id);
+        const loadedTypes = typesData.types ?? typesData.leaveTypes ?? [];
+        setTypeRows(loadedTypes);
+        setTypes(loadedTypes.map((t: any) => ({ id: t.id, name: t.name })));
+        const { rows: leaveRows, total: leaveTotal } = parseLeaveRequestsPayload(reqData);
+        setRequests(leaveRows);
+        setLeaveRequestsTotal(leaveTotal);
+        if (!leaveTypeId && loadedTypes.length) setLeaveTypeId(loadedTypes[0].id);
       } catch (e: any) {
         if (!cancelled) setError(e?.message || "Failed to load leave data");
       } finally {
@@ -171,12 +218,19 @@ export function ApprovalsContent() {
           page: String(reimbListPage),
           pageSize: String(listPageSize),
         });
-        const res = await fetch(`/api/reimbursements?${params}`);
-        const data = await res.json();
-        if (!res.ok) throw new Error(data?.error || "Failed to load reimbursement claims");
+        const [claimsRes, periodsRes] = await Promise.all([
+          fetch(`/api/reimbursements?${params}`),
+          fetch("/api/payroll/periods"),
+        ]);
+        const data = await claimsRes.json();
+        const periodsData = await periodsRes.json();
+        if (!claimsRes.ok) throw new Error(data?.error || "Failed to load reimbursement claims");
         if (cancelled) return;
-        setReimbClaims(data.claims || []);
-        setReimbClaimsTotal(typeof data.total === "number" ? data.total : (data.claims?.length ?? 0));
+        setReimbClaims(data.claims ?? data.reimbursements ?? []);
+        setReimbClaimsTotal(typeof data.total === "number" ? data.total : (data.claims?.length ?? data.reimbursements?.length ?? 0));
+        if (periodsRes.ok) {
+          setPayrollPeriods(periodsData.periods ?? []);
+        }
       } catch (e: any) {
         if (!cancelled) setError(e?.message || "Failed to load reimbursements");
       } finally {
@@ -189,7 +243,27 @@ export function ApprovalsContent() {
   }, [tab, reimbListPage, listPageSize]);
 
   useEffect(() => {
-    if (!leaveDialogOpen || !canApprove) return;
+    return onHrmsChange(
+      (kind) => {
+        if (tab === "leave" && (kind === "leave" || kind === "leave_policy")) {
+          refreshLeaveData().catch(() => {});
+        }
+
+        if (tab === "reimbursement" && kind === "reimbursement") {
+          refreshReimbursementClaims().catch(() => {});
+        }
+
+        if (tab === "reimbursement" && (kind === "payroll_master" || kind === "payroll_period")) {
+          refreshPayrollPeriods().catch(() => {});
+        }
+      },
+      { kinds: ["leave", "leave_policy", "reimbursement", "payroll_master", "payroll_period"] },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, leaveListPage, reimbListPage, listPageSize]);
+
+  useEffect(() => {
+    if ((!leaveDialogOpen && !reimbDialogOpen) || !canApprove) return;
     let cancelled = false;
     (async () => {
       try {
@@ -198,8 +272,16 @@ export function ApprovalsContent() {
         if (!res.ok) throw new Error(data?.error || "Failed to load employees");
         if (cancelled) return;
         const current = (data.employees || []).filter((e: any) => e.employmentStatus === "current");
-        setCurrentEmployees(current.map((e: any) => ({ id: e.id, name: e.name, email: e.email })));
-        if (!selectedEmployeeId && current.length) setSelectedEmployeeId(current[0].id);
+        const mapped = current
+          .map((e: any) => ({
+            id: String(e.userId ?? e.user_id ?? e.id ?? ""),
+            name: e.name,
+            email: e.email,
+          }))
+          .filter((e: any) => e.id);
+        setCurrentEmployees(mapped);
+        if (!selectedEmployeeId && mapped.length) setSelectedEmployeeId(mapped[0].id);
+        if (!reimbEmployeeId && mapped.length) setReimbEmployeeId(mapped[0].id);
       } catch {
         if (!cancelled) setCurrentEmployees([]);
       }
@@ -207,7 +289,7 @@ export function ApprovalsContent() {
     return () => {
       cancelled = true;
     };
-  }, [leaveDialogOpen, canApprove, selectedEmployeeId]);
+  }, [leaveDialogOpen, reimbDialogOpen, canApprove, selectedEmployeeId, reimbEmployeeId]);
 
   useEffect(() => {
     if (!leaveDialogOpen || totalDays <= 0) {
@@ -284,10 +366,35 @@ export function ApprovalsContent() {
     const reqData = await reqRes.json();
     if (!typesRes.ok) throw new Error(typesData?.error || "Failed to load leave types");
     if (!reqRes.ok) throw new Error(reqData?.error || "Failed to load leave requests");
-    setTypeRows(typesData.types || []);
-    setTypes((typesData.types || []).map((t: any) => ({ id: t.id, name: t.name })));
-    setRequests(reqData.requests || []);
-    setLeaveRequestsTotal(typeof reqData.total === "number" ? reqData.total : (reqData.requests?.length ?? 0));
+    const loadedTypes = typesData.types ?? typesData.leaveTypes ?? [];
+    setTypeRows(loadedTypes);
+    setTypes(loadedTypes.map((t: any) => ({ id: t.id, name: t.name })));
+    const { rows: leaveRows, total: leaveTotal } = parseLeaveRequestsPayload(reqData);
+    setRequests(leaveRows);
+    setLeaveRequestsTotal(leaveTotal);
+  }
+
+  async function refreshReimbursementClaims() {
+    const params = new URLSearchParams({
+      page: String(reimbListPage),
+      pageSize: String(listPageSize),
+    });
+    const res = await fetch(`/api/reimbursements?${params}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || "Failed to load reimbursement claims");
+    setReimbClaims(data.claims ?? data.reimbursements ?? []);
+    setReimbClaimsTotal(
+      typeof data.total === "number"
+        ? data.total
+        : (data.claims?.length ?? data.reimbursements?.length ?? 0),
+    );
+  }
+
+  async function refreshPayrollPeriods() {
+    const res = await fetch("/api/payroll/periods");
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || "Failed to load payroll periods");
+    setPayrollPeriods(data.periods ?? []);
   }
 
   async function submitLeave(e: FormEvent) {
@@ -313,13 +420,15 @@ export function ApprovalsContent() {
       const reqRes = await fetch(`/api/leave/requests?${reqParams}`);
       const reqData = await reqRes.json();
       if (!reqRes.ok) throw new Error(reqData?.error || "Failed to refresh requests");
-      setRequests(reqData.requests || []);
-      setLeaveRequestsTotal(typeof reqData.total === "number" ? reqData.total : (reqData.requests?.length ?? 0));
+      const { rows: leaveRows, total: leaveTotal } = parseLeaveRequestsPayload(reqData);
+      setRequests(leaveRows);
+      setLeaveRequestsTotal(leaveTotal);
       setStartDate("");
       setEndDate("");
       setReason("");
       setLeaveDialogOpen(false);
       showToast("success", canApprove ? "Leave added" : "Request submitted");
+      dispatchHrmsChange("leave");
     } catch (e: any) {
       setError(e?.message || "Failed to submit request");
       showToast("error", e?.message || "Failed to submit request");
@@ -349,7 +458,8 @@ export function ApprovalsContent() {
       const typeData = await typeRes.json();
       if (!typeRes.ok) throw new Error(typeData?.error || "Failed to create leave type");
 
-      const leaveTypeId = typeData?.type?.id as string;
+      const createdType = typeData?.type ?? typeData?.leaveType;
+      const leaveTypeId = createdType?.id as string | undefined;
       if (!leaveTypeId) throw new Error("Leave type created but missing id");
 
       const policyRes = await fetch("/api/leave/policies", {
@@ -378,6 +488,7 @@ export function ApprovalsContent() {
       setNewPayslipSlot("");
       setManageTypesOpen(false);
       showToast("success", "Leave type created");
+      dispatchHrmsChange("leave_policy");
     } catch (e: any) {
       setError(e?.message || "Failed to create leave type");
       showToast("error", e?.message || "Failed to create leave type");
@@ -436,6 +547,7 @@ export function ApprovalsContent() {
       await refreshLeaveData();
       setEditPolicyFor(null);
       showToast("success", "Policy saved");
+      dispatchHrmsChange("leave_policy");
     } catch (e: any) {
       setError(e?.message || "Failed to save policy");
       showToast("error", e?.message || "Failed to save policy");
@@ -466,9 +578,11 @@ export function ApprovalsContent() {
       const reqRes = await fetch(`/api/leave/requests?${reqParams}`);
       const reqData = await reqRes.json();
       if (!reqRes.ok) throw new Error(reqData?.error || "Failed to refresh requests");
-      setRequests(reqData.requests || []);
-      setLeaveRequestsTotal(typeof reqData.total === "number" ? reqData.total : (reqData.requests?.length ?? 0));
+      const { rows: leaveRows, total: leaveTotal } = parseLeaveRequestsPayload(reqData);
+      setRequests(leaveRows);
+      setLeaveRequestsTotal(leaveTotal);
       showToast("success", "Updated successfully");
+      dispatchHrmsChange("leave");
     } catch (e: any) {
       setError(e?.message || "Failed to update request");
       showToast("error", e?.message || "Failed to update request");
@@ -497,8 +611,9 @@ export function ApprovalsContent() {
       const reqRes = await fetch(`/api/leave/requests?${reqParams}`);
       const reqData = await reqRes.json();
       if (!reqRes.ok) throw new Error(reqData?.error || "Failed to refresh requests");
-      setRequests(reqData.requests || []);
-      setLeaveRequestsTotal(typeof reqData.total === "number" ? reqData.total : (reqData.requests?.length ?? 0));
+      const { rows: leaveRows, total: leaveTotal } = parseLeaveRequestsPayload(reqData);
+      setRequests(leaveRows);
+      setLeaveRequestsTotal(leaveTotal);
       setRejectDialog(null);
       showToast("success", "Rejected");
     } catch (e: any) {
@@ -522,16 +637,29 @@ export function ApprovalsContent() {
       if (!cat) throw new Error("Category is required");
       if (!Number.isFinite(amt) || amt <= 0) throw new Error("Enter a valid amount greater than zero");
       if (!reimbClaimDate) throw new Error("Expense / claim date is required");
+      if (isPayrollRunForClaimDate(payrollPeriods, reimbClaimDate)) {
+        throw new Error(
+          `Payroll has already been run for ${reimbPayrollHint ?? "that month"}. Choose a different expense date or contact HR.`,
+        );
+      }
       if (!desc) throw new Error("Description is required");
       if (!reimbFile) throw new Error("Attachment is required (PDF or image, max 8 MB)");
       if (reimbFile.size <= 0) throw new Error("Choose a valid attachment file");
       if (reimbFile.size > REIMB_MAX_BYTES) throw new Error("Attachment must be 8 MB or smaller");
+      if (canApprove && !reimbEmployeeId) throw new Error("Employee is required");
 
       const fd = new FormData();
       fd.append("file", reimbFile);
-      const up = await fetch("/api/reimbursements/upload", { method: "POST", body: fd });
-      const upData = await up.json();
-      if (!up.ok) throw new Error(upData?.error || "Upload failed");
+      const up = await fetch("/api/reimbursements/upload", { method: "POST", body: fd, credentials: "same-origin" });
+      const upData = await up.json().catch(() => ({}));
+      if (!up.ok) {
+        const uploadErr =
+          upData?.error ||
+          upData?.message ||
+          (Array.isArray(upData?.errors?.file) ? upData.errors.file[0] : null) ||
+          "Upload failed";
+        throw new Error(uploadErr);
+      }
       const attachmentUrl = String(upData.url || "");
       if (!attachmentUrl) throw new Error("Upload did not return a file URL");
 
@@ -544,6 +672,7 @@ export function ApprovalsContent() {
           claimDate: reimbClaimDate,
           description: desc,
           attachmentUrl,
+          ...(canApprove ? { employeeUserId: reimbEmployeeId } : {}),
         }),
       });
       const data = await res.json();
@@ -560,8 +689,10 @@ export function ApprovalsContent() {
       setReimbClaimDate("");
       setReimbDesc("");
       setReimbFile(null);
+      setReimbEmployeeId("");
       setReimbDialogOpen(false);
       showToast("success", "Reimbursement claim submitted");
+      dispatchHrmsChange("reimbursement");
     } catch (err: any) {
       setError(err?.message || "Failed to submit");
       showToast("error", err?.message || "Failed to submit");
@@ -594,6 +725,7 @@ export function ApprovalsContent() {
       setReimbClaims(listData.claims || []);
       setReimbClaimsTotal(typeof listData.total === "number" ? listData.total : (listData.claims?.length ?? 0));
       showToast("success", "Claim approved");
+      dispatchHrmsChange("reimbursement");
     } catch (err: any) {
       showToast("error", err?.message || "Failed");
     } finally {
@@ -624,6 +756,7 @@ export function ApprovalsContent() {
       setReimbClaimsTotal(typeof listData.total === "number" ? listData.total : (listData.claims?.length ?? 0));
       setReimbRejectDialog(null);
       showToast("success", "Claim rejected");
+      dispatchHrmsChange("reimbursement");
     } catch (err: any) {
       showToast("error", err?.message || "Failed");
     } finally {
@@ -659,6 +792,7 @@ export function ApprovalsContent() {
 
       {tab === "leave" && (
         <div className="space-y-4">
+          {(!canApprove || typeRows.length > 0) && (
           <div className="card">
             <h2 className="mb-1 text-lg font-semibold text-slate-900">{canApprove ? "Add leave" : "Request leave"}</h2>
             <p className="muted">
@@ -683,8 +817,23 @@ export function ApprovalsContent() {
               </button>
             </div>
           </div>
+          )}
 
-          {canApprove && (
+          {canApprove && typeRows.length === 0 && (
+            <div className="card">
+              <h2 className="mb-1 text-lg font-semibold text-slate-900">Leave types & policy</h2>
+              <p className="muted">
+                Add at least one leave type and policy before recording leave or showing balances on payslips.
+              </p>
+              <div className="mt-4">
+                <button type="button" className="btn btn-primary" onClick={() => setManageTypesOpen(true)}>
+                  Add leave type
+                </button>
+              </div>
+            </div>
+          )}
+
+          {canApprove && typeRows.length > 0 && (
             <div className="card">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
@@ -713,7 +862,10 @@ export function ApprovalsContent() {
                   </thead>
                   <tbody>
                     {typeRows.map((t: any) => {
-                      const p = Array.isArray(t.HRMS_leave_policies) ? t.HRMS_leave_policies[0] : t.HRMS_leave_policies;
+                      const p =
+                        Array.isArray(t.HRMS_leave_policies)
+                          ? t.HRMS_leave_policies[0]
+                          : t.leavePolicies?.[0] ?? t.HRMS_leave_policies;
                       return (
                         <tr key={t.id} className="border-t border-slate-200">
                           <td className="px-3 py-2">{t.name}</td>
@@ -1234,7 +1386,8 @@ export function ApprovalsContent() {
             <h2 className="mb-1 text-lg font-semibold text-slate-900">Request reimbursement</h2>
             <p className="muted">
               Submit an expense claim with category, amount, date, description, and proof attachment (max 8 MB). Payroll
-              period follows your expense date. Super Admin, Admin, or HR must approve before it is paid in payroll.
+              period follows your expense date. Claims are not accepted for a calendar month after payroll has been run
+              for that month. Super Admin, Admin, or HR must approve before it is paid in payroll.
             </p>
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
               {error && tab === "reimbursement" && !reimbDialogOpen && <p className="text-sm text-red-600">{error}</p>}
@@ -1484,6 +1637,27 @@ export function ApprovalsContent() {
                 <form noValidate onSubmit={submitReimbursement} className="p-5">
                   <div className="space-y-4">
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                      {canApprove && (
+                        <div className="sm:col-span-2">
+                          <label className="mb-1 block text-sm font-medium text-slate-700">
+                            Employee <span className="text-red-500">*</span>
+                          </label>
+                          <select
+                            required
+                            value={reimbEmployeeId}
+                            onChange={(e) => setReimbEmployeeId(e.target.value)}
+                            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                          >
+                            <option value="">Select employee</option>
+                            {currentEmployees.map((e) => (
+                              <option key={e.id} value={e.id}>
+                                {e.name ? `${e.name} (${e.email})` : e.email}
+                              </option>
+                            ))}
+                          </select>
+                          <p className="mt-1.5 text-xs text-slate-500">Claim will be created on behalf of this employee.</p>
+                        </div>
+                      )}
                       <div className="sm:col-span-2">
                         <label className="mb-1 block text-sm font-medium text-slate-700">
                           Category <span className="text-red-500">*</span>
@@ -1515,10 +1689,16 @@ export function ApprovalsContent() {
                           Expense / claim date <span className="text-red-500">*</span>
                         </label>
                         <DatePickerField value={reimbClaimDate} onChange={setReimbClaimDate} required className="w-full" />
-                        {reimbPayrollHint && (
+                        {reimbPayrollHint && !reimbClaimMonthLocked && (
                           <p className="mt-1.5 text-xs text-slate-600">
                             Included in the <span className="font-medium text-slate-800">{reimbPayrollHint}</span> payroll
                             when approved (based on this date).
+                          </p>
+                        )}
+                        {reimbClaimMonthLocked && reimbPayrollHint && (
+                          <p className="mt-1.5 text-xs text-red-600">
+                            Payroll for {reimbPayrollHint} has already been run. Choose an expense date in a month that
+                            is still open.
                           </p>
                         )}
                       </div>
@@ -1561,7 +1741,11 @@ export function ApprovalsContent() {
                       >
                         Cancel
                       </button>
-                      <button type="submit" className="btn btn-primary" disabled={reimbSubmitting}>
+                      <button
+                        type="submit"
+                        className="btn btn-primary"
+                        disabled={reimbSubmitting || reimbClaimMonthLocked}
+                      >
                         {reimbSubmitting ? "Submitting…" : "Submit claim"}
                       </button>
                     </div>

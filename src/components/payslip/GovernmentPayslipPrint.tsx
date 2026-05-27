@@ -134,12 +134,21 @@ export const GovernmentPayslipPrint = forwardRef<HTMLDivElement, GovernmentPaysl
               </td>
             </tr>
             <tr>
-              <td className={`${cellClass} p-0 align-top`}>
-                <table className="w-full border-collapse text-sm">
+              <td className="border border-black p-0 align-top text-sm">
+                <table
+                  className="payslip-gross-basic-inner w-full border-collapse text-sm"
+                  style={{ tableLayout: "fixed", width: "100%", borderSpacing: 0 }}
+                >
+                  <colgroup>
+                    <col style={{ width: "55%" }} />
+                    <col style={{ width: "45%" }} />
+                  </colgroup>
                   <tbody>
                     <tr>
-                      <td className="border-b border-black px-2 py-1.5 font-semibold text-slate-900">Gross Basic</td>
-                      <td className="border-b border-l border-black px-2 py-1.5 text-right font-semibold tabular-nums text-slate-900">
+                      <td className="border-b border-r border-black px-2 py-1.5 font-semibold text-slate-900">
+                        Gross Basic
+                      </td>
+                      <td className="border-b border-black px-2 py-1.5 text-right font-semibold tabular-nums text-slate-900">
                         {n(grossBasic)}
                       </td>
                     </tr>
@@ -161,24 +170,20 @@ export const GovernmentPayslipPrint = forwardRef<HTMLDivElement, GovernmentPaysl
                 </div>
               </td>
               <td className={cellClass}>
-                <div className="space-y-1 text-sm text-slate-700">
-                  <div>
-                    <span className="text-slate-600">Leave balance:</span>{" "}
-                    {leavePayslip?.leaveBalanceTotal ?? "—"}
+                {leavePayslip?.lines?.length ? (
+                  <div className="space-y-1 text-sm text-slate-700">
+                    <div>
+                      <span className="text-slate-600">Leave balance:</span> {leavePayslip.leaveBalanceTotal}
+                    </div>
+                    {leavePayslip.lines.map((line) => (
+                      <div key={line.label}>
+                        <span className="text-slate-600">{line.label}:</span> {line.value}
+                      </div>
+                    ))}
                   </div>
-                  <div>
-                    <span className="text-slate-600">Casual leave:</span> {leavePayslip?.casualLeave ?? "—"}
-                  </div>
-                  <div>
-                    <span className="text-slate-600">Earned leave:</span> {leavePayslip?.earnedLeave ?? "—"}
-                  </div>
-                  <div>
-                    <span className="text-slate-600">HPL:</span> {leavePayslip?.hpl ?? "—"}
-                  </div>
-                  <div>
-                    <span className="text-slate-600">HL:</span> {leavePayslip?.hl ?? "—"}
-                  </div>
-                </div>
+                ) : (
+                  <p className="text-sm text-slate-500">—</p>
+                )}
               </td>
             </tr>
             <tr>

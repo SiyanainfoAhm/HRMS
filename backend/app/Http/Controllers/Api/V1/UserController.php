@@ -2,14 +2,17 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Enums\UserRole;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\UserResource;
-use App\Models\HrmsEmployeeBankAccount;
 use App\Models\HrmsEmployeeDocumentSubmission;
 use App\Models\HrmsPayrollMaster;
 use App\Models\HrmsUser;
+use App\Support\BankDetailsService;
+use App\Support\BankDetailsValidator;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 class UserController extends Controller
 {
@@ -25,24 +28,34 @@ class UserController extends Controller
         $body = $request->all();
         $isManagerial = $user->role?->isManagerial() ?? false;
 
-        $prevBank = [
-            'bank_name' => $user->bank_name ?? '',
-            'bank_account_number' => $user->bank_account_number ?? '',
-            'bank_ifsc' => $user->bank_ifsc ?? '',
-        ];
+        $prevBank = BankDetailsValidator::snapshotFromUser($user);
 
         $payload = $this->buildUpdatePayload($body, $isManagerial);
-        $user->update($payload);
+        $payload = $this->applyBankValidationToPayload($body, $payload, $user->name);
+
+        if ($user->role === UserRole::SuperAdmin && array_key_exists('email', $body)) {
+            $email = mb_strtolower(trim((string) $body['email']));
+            $validated = validator(
+                ['email' => $email],
+                ['email' => ['required', 'email', 'max:255', Rule::unique('HRMS_users', 'email')->ignore($user->id)]],
+            )->validate();
+            $payload['email'] = $validated['email'];
+        }
+
+        if ($payload !== []) {
+            $user->update($payload);
+        }
         $user->refresh();
 
-        $nextBank = [
-            'bank_name' => $user->bank_name ?? '',
-            'bank_account_number' => $user->bank_account_number ?? '',
-            'bank_ifsc' => $user->bank_ifsc ?? '',
-        ];
+        $nextBank = BankDetailsValidator::snapshotFromUser($user);
 
         if ($prevBank !== $nextBank && $user->company_id) {
-            $this->recordBankChange($user, $nextBank);
+            BankDetailsService::recordHistory($user, [
+                'bank_name' => $user->bank_name ?? '',
+                'bank_account_holder_name' => $user->bank_account_holder_name ?? '',
+                'bank_account_number' => $user->bank_account_number ?? '',
+                'bank_ifsc' => $user->bank_ifsc ?? '',
+            ], $user->id);
         }
 
         return response()->json(['user' => new UserResource($user)]);
@@ -94,10 +107,24 @@ class UserController extends Controller
         }
 
         $target = HrmsUser::findOrFail($id);
-        $payload = $this->buildUpdatePayload($request->all(), true);
+        $body = $request->all();
+        $prevBank = BankDetailsValidator::snapshotFromUser($target);
+        $payload = $this->buildUpdatePayload($body, true);
+        $payload = $this->applyBankValidationToPayload($body, $payload, $target->name);
         $target->update($payload);
+        $target->refresh();
 
-        return response()->json(['user' => new UserResource($target->refresh())]);
+        $nextBank = BankDetailsValidator::snapshotFromUser($target);
+        if ($prevBank !== $nextBank && $target->company_id) {
+            BankDetailsService::recordHistory($target, [
+                'bank_name' => $target->bank_name ?? '',
+                'bank_account_holder_name' => $target->bank_account_holder_name ?? '',
+                'bank_account_number' => $target->bank_account_number ?? '',
+                'bank_ifsc' => $target->bank_ifsc ?? '',
+            ], $authUser->id);
+        }
+
+        return response()->json(['user' => new UserResource($target)]);
     }
 
     public function myDocuments(Request $request): JsonResponse
@@ -134,13 +161,16 @@ class UserController extends Controller
             'permanent_address_line1', 'permanent_address_line2', 'permanent_city',
             'permanent_state', 'permanent_country', 'permanent_postal_code',
             'emergency_contact_name', 'emergency_contact_phone',
-            'bank_name', 'bank_account_number', 'bank_ifsc',
+            'bank_name', 'bank_account_holder_name', 'bank_account_number', 'bank_ifsc',
             'aadhaar', 'pan', 'gender',
         ];
 
         foreach ($fields as $snakeField) {
             $camelField = lcfirst(str_replace('_', '', ucwords($snakeField, '_')));
-            if (array_key_exists($camelField, $body)) {
+            if (array_key_exists($snakeField, $body)) {
+                $val = is_string($body[$snakeField]) ? trim($body[$snakeField]) : $body[$snakeField];
+                $payload[$snakeField] = $val === '' ? null : $val;
+            } elseif (array_key_exists($camelField, $body)) {
                 $val = is_string($body[$camelField]) ? trim($body[$camelField]) : $body[$camelField];
                 $payload[$snakeField] = $val === '' ? null : $val;
             }
@@ -177,23 +207,41 @@ class UserController extends Controller
         return $payload;
     }
 
-    private function recordBankChange(HrmsUser $user, array $bank): void
+    /**
+     * When any bank field is sent, validate the full set and normalize digits / IFSC.
+     *
+     * @param  array<string, mixed>  $body
+     * @param  array<string, mixed>  $payload
+     * @return array<string, mixed>
+     */
+    private function applyBankValidationToPayload(array $body, array $payload, ?string $legalName): array
     {
-        HrmsEmployeeBankAccount::where('user_id', $user->id)
-            ->where('is_active', true)
-            ->update(['is_active' => false, 'effective_to' => now()]);
-
-        if ($bank['bank_name'] || $bank['bank_account_number'] || $bank['bank_ifsc']) {
-            HrmsEmployeeBankAccount::create([
-                'company_id' => $user->company_id,
-                'user_id' => $user->id,
-                'bank_name' => $bank['bank_name'] ?: null,
-                'bank_account_number' => $bank['bank_account_number'] ?: null,
-                'bank_ifsc' => $bank['bank_ifsc'] ?: null,
-                'is_active' => true,
-                'effective_from' => now(),
-                'created_by' => $user->id,
-            ]);
+        $bankKeys = ['bank_name', 'bank_account_holder_name', 'bank_account_number', 'bank_ifsc'];
+        $camelKeys = ['bankName', 'bankAccountHolderName', 'bankAccountNumber', 'bankIfsc'];
+        $touched = false;
+        foreach ([...$bankKeys, ...$camelKeys] as $key) {
+            if (array_key_exists($key, $body) || array_key_exists($key, $payload)) {
+                $touched = true;
+                break;
+            }
         }
+        if (! $touched) {
+            return $payload;
+        }
+
+        $merged = [];
+        foreach ($bankKeys as $i => $snake) {
+            $camel = $camelKeys[$i];
+            $merged[$snake] = $payload[$snake] ?? $body[$snake] ?? $body[$camel] ?? '';
+        }
+
+        $hasAny = array_filter($merged, fn ($v) => $v !== null && $v !== '');
+        if ($hasAny === []) {
+            return $payload;
+        }
+
+        $normalized = BankDetailsValidator::normalizeAndValidate($merged, $legalName, true);
+
+        return array_merge($payload, $normalized);
     }
 }

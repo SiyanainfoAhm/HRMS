@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
 import { FormEvent, useEffect, useState, useRef, useMemo, Suspense } from "react";
 import { useToast } from "@/components/ToastProvider";
+import { dispatchHrmsChange, onHrmsChange } from "@/lib/hrmsChangeBus";
 import { SkeletonTable, SkeletonText } from "@/components/Skeleton";
 import { DatePickerField } from "@/components/ui/DatePickerField";
 import { computePayrollFromGross, defaultSalaryBreakup } from "@/lib/payrollCalc";
@@ -20,6 +21,11 @@ import { GovernmentRunPreviewTable, type GovernmentRunPreviewRow } from "@/compo
 import { GovernmentPayslipPrint } from "@/components/payslip/GovernmentPayslipPrint";
 import type { GovernmentMonthlySlip } from "@/lib/governmentPayslipLayout";
 import type { GovernmentLeavePayslipDisplay } from "@/lib/leaveBalancesCompute";
+import {
+  normalizeDigits,
+  normalizeIfscInput,
+  validateBankDetails,
+} from "@/lib/employeeValidators";
 
 type MasterGridRow = {
   employeeUserId: string;
@@ -555,8 +561,10 @@ function PayrollPageContent() {
   const [editSaving, setEditSaving] = useState(false);
   const [editMasterTab, setEditMasterTab] = useState<"structure" | "bank">("structure");
   const [editBankName, setEditBankName] = useState("");
+  const [editBankAccountHolderName, setEditBankAccountHolderName] = useState("");
   const [editBankAccountNumber, setEditBankAccountNumber] = useState("");
   const [editBankIfsc, setEditBankIfsc] = useState("");
+  const [editBankError, setEditBankError] = useState<string | null>(null);
   const [editPayrollMode, setEditPayrollMode] = useState<"private" | "government">("private");
   const [editGrossBasic, setEditGrossBasic] = useState("");
   const [editDaPercent, setEditDaPercent] = useState("53");
@@ -804,10 +812,20 @@ function PayrollPageContent() {
           const list = raw.filter(
             (e: any) => String(e.employmentStatus ?? "preboarding") !== "preboarding",
           );
-          setEmployees(list.map((e: any) => ({ id: e.id, name: e.name, email: e.email })));
+          setEmployees(
+            list.map((e: any) => ({
+              id: String(e.userId ?? e.user_id ?? e.id),
+              name: e.name,
+              email: e.email,
+            })),
+          );
           if (list.length) {
-            if (!selectedEmployeeId || !list.some((e: any) => e.id === selectedEmployeeId)) {
-              setSelectedEmployeeId(list[0].id);
+            const firstUserId = String(list[0].userId ?? list[0].user_id ?? list[0].id);
+            if (
+              !selectedEmployeeId ||
+              !list.some((e: any) => String(e.userId ?? e.user_id ?? e.id) === selectedEmployeeId)
+            ) {
+              setSelectedEmployeeId(firstUserId);
             }
           } else {
             setSelectedEmployeeId("");
@@ -830,7 +848,11 @@ function PayrollPageContent() {
       setSlipsLoading(true);
       setSlipsError(null);
       try {
-        const res = await fetch(`/api/payslips/employee?employeeUserId=${encodeURIComponent(selectedEmployeeId)}`);
+        const qs = new URLSearchParams({
+          user_id: selectedEmployeeId,
+          employeeUserId: selectedEmployeeId,
+        });
+        const res = await fetch(`/api/payslips/employee?${qs.toString()}`);
         const data = await res.json();
         if (!res.ok) throw new Error(data?.error || "Failed to load payslips");
         if (!cancelled) {
@@ -1082,6 +1104,69 @@ function PayrollPageContent() {
       cancelled = true;
     };
   }, [canManage]);
+
+  useEffect(() => {
+    if (!canManage) return;
+    return onHrmsChange(
+      (kind) => {
+        if (kind !== "payroll_master" && kind !== "employee") return;
+
+        if (kind === "employee" && tab === "slips") {
+          setEmployeesLoading(true);
+          (async () => {
+            try {
+              const res = await fetch("/api/employees");
+              const data = await res.json();
+              const raw = data.employees ?? [];
+              const list = raw.filter(
+                (e: any) => String(e.employmentStatus ?? "preboarding") !== "preboarding",
+              );
+              setEmployees(
+                list.map((e: any) => ({
+                  id: String(e.userId ?? e.user_id ?? e.id),
+                  name: e.name,
+                  email: e.email,
+                })),
+              );
+              if (list.length) {
+                const firstUserId = String(list[0].userId ?? list[0].user_id ?? list[0].id);
+                if (
+                  !selectedEmployeeId ||
+                  !list.some((e: any) => String(e.userId ?? e.user_id ?? e.id) === selectedEmployeeId)
+                ) {
+                  setSelectedEmployeeId(firstUserId);
+                }
+              } else {
+                setSelectedEmployeeId("");
+              }
+            } catch {
+              setEmployees([]);
+              setSelectedEmployeeId("");
+            } finally {
+              setEmployeesLoading(false);
+            }
+          })();
+        }
+
+        if (kind === "payroll_master" || kind === "employee") {
+          setMastersLoading(true);
+          (async () => {
+            try {
+              const res = await fetch("/api/payroll/master");
+              const data = await res.json();
+              if (!res.ok) throw new Error(data?.error || "Failed to load masters");
+              setMasters(data.masters || []);
+            } catch {
+              setMasters([]);
+            } finally {
+              setMastersLoading(false);
+            }
+          })();
+        }
+      },
+      { kinds: ["payroll_master", "employee"] },
+    );
+  }, [canManage, tab, selectedEmployeeId]);
 
   useEffect(() => {
     if (!canManage) return;
@@ -1351,8 +1436,12 @@ function PayrollPageContent() {
           : defaultSalaryBreakup(gross);
     setEditMasterTab("structure");
     setEditBankName(String(apiRow?.bankName ?? ""));
+    setEditBankAccountHolderName(
+      String(apiRow?.bankAccountHolderName ?? apiRow?.employeeName ?? gridRow.employeeName ?? ""),
+    );
     setEditBankAccountNumber(String(apiRow?.bankAccountNumber ?? ""));
     setEditBankIfsc(String(apiRow?.bankIfsc ?? ""));
+    setEditBankError(null);
     setEditMasterOpen({
       employeeUserId: gridRow.employeeUserId,
       employeeName: gridRow.employeeName,
@@ -1458,6 +1547,7 @@ function PayrollPageContent() {
         const data = await res.json();
         if (!res.ok) throw new Error(data?.error || "Failed to update");
         showToast("success", "Payroll master updated");
+        dispatchHrmsChange("payroll_master");
         const refresh = await fetch("/api/payroll/master");
         const refreshData = await refresh.json();
         if (refresh.ok) setMasters(refreshData.masters || []);
@@ -1488,6 +1578,7 @@ function PayrollPageContent() {
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to update");
       showToast("success", "Payroll master updated");
+      dispatchHrmsChange("payroll_master");
       const refresh = await fetch("/api/payroll/master");
       const refreshData = await refresh.json();
       if (refresh.ok) setMasters(refreshData.masters || []);
@@ -1500,7 +1591,20 @@ function PayrollPageContent() {
 
   async function saveEditMasterBank() {
     if (!editMasterOpen) return;
+    const bankErr = validateBankDetails({
+      bankName: editBankName,
+      bankAccountHolderName: editBankAccountHolderName,
+      bankAccountNumber: normalizeDigits(editBankAccountNumber),
+      bankIfsc: editBankIfsc,
+      legalName: editMasterOpen.employeeName ?? "",
+    });
+    if (bankErr) {
+      setEditBankError(bankErr);
+      showToast("error", bankErr);
+      return;
+    }
     setEditSaving(true);
+    setEditBankError(null);
     try {
       const res = await fetch("/api/payroll/master", {
         method: "PATCH",
@@ -1508,14 +1612,16 @@ function PayrollPageContent() {
         body: JSON.stringify({
           employeeUserId: editMasterOpen.employeeUserId,
           updateBankOnly: true,
-          bankName: editBankName,
-          bankAccountNumber: editBankAccountNumber,
-          bankIfsc: editBankIfsc,
+          bankName: editBankName.trim(),
+          bankAccountHolderName: editBankAccountHolderName.trim(),
+          bankAccountNumber: normalizeDigits(editBankAccountNumber),
+          bankIfsc: normalizeIfscInput(editBankIfsc),
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to save bank details");
       showToast("success", "Bank details updated");
+      dispatchHrmsChange("payroll_master");
       setEditMasterOpen(null);
       setEditMasterTab("structure");
       const refresh = await fetch("/api/payroll/master");
@@ -1578,6 +1684,7 @@ function PayrollPageContent() {
         const data = await res.json();
         if (!res.ok) throw new Error(data?.error || "Failed to update");
         showToast("success", "Payroll master updated");
+      dispatchHrmsChange("payroll_master");
         setEditMasterOpen(null);
         const refresh = await fetch("/api/payroll/master");
         const refreshData = await refresh.json();
@@ -1617,6 +1724,7 @@ function PayrollPageContent() {
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to update");
       showToast("success", "Payroll master updated");
+      dispatchHrmsChange("payroll_master");
       setEditMasterOpen(null);
       const refresh = await fetch("/api/payroll/master");
       const refreshData = await refresh.json();
@@ -1680,13 +1788,20 @@ function PayrollPageContent() {
         ),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || "Failed to run payroll");
+      if (!res.ok) {
+        const firstFieldError =
+          data?.errors && typeof data.errors === "object"
+            ? Object.values(data.errors as Record<string, string[]>).flat()[0]
+            : undefined;
+        throw new Error(data?.message || firstFieldError || data?.error || "Failed to run payroll");
+      }
       showToast(
         "success",
         useCompleteMissing
           ? `Added ${data.payslipsGenerated} missing payslip(s). Excel updated.`
           : `Payroll generated: ${data.payslipsGenerated} payslips. Excel saved to storage.`,
       );
+      dispatchHrmsChange("payroll_period");
       // Stay on Run tab and refetch preview to show generated records + Download Excel
       const refreshRes = await fetch(
         `/api/payroll/run?year=${runYear}&month=${runMonth}&runDay=${runDay}`
@@ -2401,14 +2516,31 @@ function PayrollPageContent() {
               {editMasterTab === "bank" ? (
                 <div className="space-y-4">
                   <p className="text-sm text-slate-600">
-                    Update salary credit details for this employee. These values are used on payslips and payroll export. Saving here does not create a new payroll master row.
+                    Update salary credit details for this employee. These values are used on payslips and payroll export. Account holder name must match the employee&apos;s legal name.
                   </p>
                   <div>
                     <label className="mb-1 block text-sm font-medium text-slate-700">Bank name</label>
                     <input
                       type="text"
                       value={editBankName}
-                      onChange={(e) => setEditBankName(e.target.value)}
+                      onChange={(e) => {
+                        setEditBankError(null);
+                        setEditBankName(e.target.value);
+                      }}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      autoComplete="off"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700">Account holder name</label>
+                    <input
+                      type="text"
+                      value={editBankAccountHolderName}
+                      onChange={(e) => {
+                        setEditBankError(null);
+                        setEditBankAccountHolderName(e.target.value);
+                      }}
+                      placeholder="Must match employee name"
                       className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                       autoComplete="off"
                     />
@@ -2417,8 +2549,13 @@ function PayrollPageContent() {
                     <label className="mb-1 block text-sm font-medium text-slate-700">Account number</label>
                     <input
                       type="text"
+                      inputMode="numeric"
                       value={editBankAccountNumber}
-                      onChange={(e) => setEditBankAccountNumber(e.target.value)}
+                      onChange={(e) => {
+                        setEditBankError(null);
+                        setEditBankAccountNumber(normalizeDigits(e.target.value));
+                      }}
+                      placeholder="9–18 digits"
                       className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono"
                       autoComplete="off"
                     />
@@ -2428,11 +2565,16 @@ function PayrollPageContent() {
                     <input
                       type="text"
                       value={editBankIfsc}
-                      onChange={(e) => setEditBankIfsc(e.target.value.toUpperCase())}
+                      onChange={(e) => {
+                        setEditBankError(null);
+                        setEditBankIfsc(normalizeIfscInput(e.target.value));
+                      }}
+                      placeholder="e.g. SBIN0001234"
                       className="w-full max-w-xs rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono uppercase"
                       autoComplete="off"
                     />
                   </div>
+                  {editBankError && <p className="text-sm text-red-600">{editBankError}</p>}
                 </div>
               ) : (
               <>
@@ -2919,7 +3061,7 @@ function PayrollPageContent() {
                     <GovernmentRunPreviewTable
                       rows={editableRows as GovernmentRunPreviewRow[]}
                       daysInMonth={preview.daysInMonth}
-                      effectiveRunDay={preview.daysInMonth}
+                      effectiveRunDay={preview.effectiveRunDay ?? preview.workingDaysThroughRunDay ?? preview.daysInMonth}
                       readOnly={!!preview?.alreadyRun}
                       onUpdate={updateEditableRow}
                     />

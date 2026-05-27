@@ -3,8 +3,10 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
-use App\Models\HrmsEmployee;
 use App\Models\HrmsReimbursement;
+use App\Models\HrmsUser;
+use App\Support\EmployeeRecordService;
+use App\Support\PayrollRunGuard;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -31,9 +33,26 @@ class ReimbursementController extends Controller
             $query->where('payroll_month', $request->input('payroll_month'));
         }
 
-        $items = $query->orderBy('created_at', 'desc')->get();
+        $page = max(1, (int) ($request->query('page') ?? 1));
+        $pageSize = max(1, min(200, (int) ($request->query('page_size') ?? $request->query('pageSize') ?? 20)));
 
-        return response()->json(['reimbursements' => $items]);
+        $total = (clone $query)->count();
+        $items = $query
+            ->with(['employeeUser', 'approverUser'])
+            ->orderBy('created_at', 'desc')
+            ->skip(($page - 1) * $pageSize)
+            ->take($pageSize)
+            ->get()
+            ->map(function (HrmsReimbursement $r) {
+                return array_merge($r->toArray(), [
+                    'employeeName' => $r->employeeUser?->name,
+                    'employeeEmail' => $r->employeeUser?->email,
+                    'approverName' => $r->approverUser?->name,
+                    'approverEmail' => $r->approverUser?->email,
+                ]);
+            });
+
+        return response()->json(['claims' => $items, 'total' => $total]);
     }
 
     public function store(Request $request): JsonResponse
@@ -46,16 +65,42 @@ class ReimbursementController extends Controller
             'claim_date' => ['required', 'date'],
             'description' => ['nullable', 'string'],
             'attachment_url' => ['nullable', 'string'],
+            'employee_user_id' => ['nullable', 'uuid'],
         ]);
 
-        $employee = HrmsEmployee::where('user_id', $user->id)->first();
+        if (! $user->company_id) {
+            return response()->json(['error' => 'Company is required to submit a reimbursement claim'], 422);
+        }
+
+        $subjectUser = $user;
+        $targetUserId = $data['employee_user_id'] ?? null;
+        if ($targetUserId && $targetUserId !== $user->id) {
+            if (! $user->role?->isManagerial()) {
+                return response()->json(['error' => 'Forbidden'], 403);
+            }
+            $target = HrmsUser::where('id', $targetUserId)
+                ->where('company_id', $user->company_id)
+                ->first();
+            if (! $target) {
+                return response()->json(['error' => 'Employee user not found'], 404);
+            }
+            $subjectUser = $target;
+        }
+
+        $employee = EmployeeRecordService::forUser($subjectUser);
         $claimDate = Carbon::parse($data['claim_date']);
+
+        if (PayrollRunGuard::isPayrollRunForDate($user->company_id, $claimDate)) {
+            return response()->json([
+                'error' => PayrollRunGuard::blockMessageForMonth((int) $claimDate->year, (int) $claimDate->month),
+            ], 422);
+        }
 
         $reimb = HrmsReimbursement::create([
             'company_id' => $user->company_id,
-            'employee_id' => $employee?->id,
-            'employee_user_id' => $user->id,
-            'department_id' => $employee?->department_id ?? $user->department_id,
+            'employee_id' => $employee->id,
+            'employee_user_id' => $subjectUser->id,
+            'department_id' => $employee->department_id ?? $subjectUser->department_id,
             'category' => $data['category'],
             'amount' => $data['amount'],
             'currency' => $data['currency'] ?? 'INR',
@@ -67,7 +112,16 @@ class ReimbursementController extends Controller
             'payroll_month' => $claimDate->month,
         ]);
 
-        return response()->json(['reimbursement' => $reimb], 201);
+        $reimb->load(['employeeUser', 'approverUser']);
+
+        return response()->json([
+            'reimbursement' => array_merge($reimb->toArray(), [
+                'employeeName' => $reimb->employeeUser?->name,
+                'employeeEmail' => $reimb->employeeUser?->email,
+                'approverName' => $reimb->approverUser?->name,
+                'approverEmail' => $reimb->approverUser?->email,
+            ]),
+        ], 201);
     }
 
     public function update(Request $request, string $id): JsonResponse
@@ -107,7 +161,7 @@ class ReimbursementController extends Controller
 
     public function upload(Request $request): JsonResponse
     {
-        $request->validate(['file' => ['required', 'file', 'max:5120']]);
+        $request->validate(['file' => ['required', 'file', 'max:8192']]);
 
         $path = $request->file('file')->store('reimbursements', 'public');
         $url = Storage::disk('public')->url($path);

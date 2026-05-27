@@ -50,6 +50,7 @@ function transformEmployeeBody(body: Record<string, any>): Record<string, any> {
     emergencyContactName: "emergency_contact_name",
     emergencyContactPhone: "emergency_contact_phone",
     bankName: "bank_name",
+    bankAccountHolderName: "bank_account_holder_name",
     bankAccountNumber: "bank_account_number",
     bankIfsc: "bank_ifsc",
     grossBasic: "gross_salary",
@@ -142,6 +143,7 @@ function flattenEmployee(emp: any): any {
     flat.grossSalary = u.gross_salary ?? emp.gross_salary ?? null;
     flat.incomeTaxMonthly = u.tds_monthly ?? u.tds ?? emp.tds_monthly ?? null;
     flat.bankName = u.bank_name || emp.bank_name || null;
+    flat.bankAccountHolderName = u.bank_account_holder_name || null;
     flat.bankAccountNumber = u.bank_account_number || emp.bank_account_number || null;
     flat.bankIfsc = u.bank_ifsc || emp.bank_ifsc || null;
     flat.currentAddressLine1 = u.current_address_line1 || emp.current_address_line1 || null;
@@ -158,6 +160,12 @@ function flattenEmployee(emp: any): any {
     flat.permanentPostalCode = u.permanent_postal_code || emp.permanent_postal_code || null;
     flat.emergencyContactName = u.emergency_contact_name || emp.emergency_contact_name || null;
     flat.emergencyContactPhone = u.emergency_contact_phone || emp.emergency_contact_phone || null;
+  }
+
+  if (emp.user_id) {
+    flat.userId = emp.user_id;
+  } else if (emp.user?.id) {
+    flat.userId = emp.user.id;
   }
 
   if (!flat.name) {

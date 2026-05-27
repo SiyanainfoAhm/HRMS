@@ -52,3 +52,62 @@ export function validatePanNormalized(pan: string): string | null {
 export function normalizePanInput(raw: string): string {
   return raw.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 10);
 }
+
+export function normalizeIfscInput(raw: string): string {
+  return raw.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 11);
+}
+
+export function validateIfscCode(ifsc: string): string | null {
+  const code = normalizeIfscInput(ifsc);
+  if (!code) return "IFSC is required";
+  if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(code)) {
+    return "IFSC must be 11 characters (e.g. SBIN0001234)";
+  }
+  return null;
+}
+
+export function validateBankAccountDigits(digits: string): string | null {
+  if (!digits) return "Account number is required";
+  if (!/^\d{9,18}$/.test(digits)) return "Account number must be 9–18 digits";
+  return null;
+}
+
+export function validateBankName(name: string): string | null {
+  const n = name.trim();
+  if (!n) return "Bank name is required";
+  if (n.length < 2) return "Bank name is too short";
+  return null;
+}
+
+/** Account holder should match legal full name when provided (invite / profile). */
+export function validateBankAccountHolderName(holder: string, legalName?: string): string | null {
+  const h = holder.trim();
+  if (!h) return "Account holder name is required";
+  if (h.length < 2) return "Account holder name is too short";
+  if (!/^[a-zA-Z\s.'-]+$/.test(h)) return "Account holder name has invalid characters";
+  if (legalName?.trim()) {
+    const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
+    if (norm(h) !== norm(legalName)) {
+      return "Account holder name should match your full name";
+    }
+  }
+  return null;
+}
+
+export type BankDetailsInput = {
+  bankName: string;
+  bankAccountHolderName?: string;
+  bankAccountNumber: string;
+  bankIfsc: string;
+  legalName?: string;
+};
+
+/** Returns first error message, or null when valid. */
+export function validateBankDetails(input: BankDetailsInput): string | null {
+  return (
+    validateBankName(input.bankName) ??
+    validateBankAccountHolderName(input.bankAccountHolderName ?? "", input.legalName) ??
+    validateBankAccountDigits(normalizeDigits(input.bankAccountNumber)) ??
+    validateIfscCode(input.bankIfsc)
+  );
+}

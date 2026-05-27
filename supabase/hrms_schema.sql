@@ -251,9 +251,19 @@ create table if not exists "HRMS_leave_types" (
   description text,
   is_paid boolean not null default true,
   annual_quota numeric(5,2),
+  payslip_slot text,
   created_at timestamptz not null default now(),
   unique (company_id, name)
 );
+
+do $$
+begin
+  alter table "HRMS_leave_types"
+    add constraint hrms_leave_types_payslip_slot_chk
+    check (payslip_slot is null or payslip_slot in ('CL', 'EL', 'HPL', 'HL'));
+exception
+  when duplicate_object then null;
+end $$;
 
 do $$
 begin

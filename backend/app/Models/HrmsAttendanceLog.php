@@ -22,7 +22,7 @@ class HrmsAttendanceLog extends Model
         'lunch_check_out_at', 'lunch_check_in_at',
         'tea_check_out_at', 'tea_check_in_at',
         'lunch_break_started_at', 'tea_break_started_at',
-        'break_minutes',
+        'break_minutes', 'lunch_break_minutes', 'tea_break_minutes',
     ];
 
     protected function casts(): array
@@ -39,6 +39,8 @@ class HrmsAttendanceLog extends Model
             'tea_break_started_at' => 'datetime',
             'total_hours' => 'decimal:2',
             'break_minutes' => 'integer',
+            'lunch_break_minutes' => 'integer',
+            'tea_break_minutes' => 'integer',
             'created_at' => 'datetime',
             'updated_at' => 'datetime',
         ];

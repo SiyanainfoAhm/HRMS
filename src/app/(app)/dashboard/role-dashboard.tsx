@@ -6,6 +6,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useEffect, useState } from "react";
 import { Skeleton } from "@/components/Skeleton";
 import { useToast } from "@/components/ToastProvider";
+import { onHrmsChange } from "@/lib/hrmsChangeBus";
 
 const TEAL = "#0d9488";
 
@@ -63,11 +64,54 @@ function AvatarUrl({ userId, gender }: { userId: string; gender: string | null }
   return `${base}&hair=bald,buzzcut,shortCombover,fade,mohawk,balding&facialHairProbability=50`;
 }
 
+type LeaveBalanceRow = {
+  leaveTypeId: string;
+  leaveTypeName: string;
+  used: number;
+  remaining: number | null;
+  isPaid: boolean;
+};
+
+function parseTodayAttendancePayload(data: Record<string, unknown>): {
+  hasEmployee: boolean;
+  workDate: string;
+  log: AttendanceLog | null;
+} {
+  const rawLog = (data.log ?? data.attendance) as AttendanceLog | null | undefined;
+
+  return {
+    hasEmployee: data.hasEmployee !== false,
+    workDate: String(data.workDate ?? data.work_date ?? ""),
+    log: rawLog ?? null,
+  };
+}
+
+function normalizeLeaveBalanceRow(b: Record<string, unknown>, index: number): LeaveBalanceRow {
+  const leaveTypeId = String(b.leaveTypeId ?? b.leave_type_id ?? `leave-${index}`);
+  const leaveTypeName = String(
+    b.leaveTypeName ?? b.leave_type_name ?? b.leave_type_code ?? "Leave",
+  );
+  const used = Number(b.used ?? 0);
+  const remainingRaw = b.remaining ?? b.balance;
+  const remaining =
+    remainingRaw != null && remainingRaw !== ""
+      ? Number(remainingRaw)
+      : null;
+
+  return {
+    leaveTypeId,
+    leaveTypeName,
+    used: Number.isFinite(used) ? used : 0,
+    remaining: remaining != null && Number.isFinite(remaining) ? remaining : null,
+    isPaid: Boolean(b.isPaid ?? b.is_paid ?? true),
+  };
+}
+
 export function DashboardContent() {
   const { role, name, id } = useAuth();
   const { showToast } = useToast();
   const [user, setUser] = useState<{ gender: string | null } | null>(null);
-  const [leaveBalances, setLeaveBalances] = useState<{ leaveTypeName: string; used: number; remaining: number | null; isPaid: boolean }[]>([]);
+  const [leaveBalances, setLeaveBalances] = useState<LeaveBalanceRow[]>([]);
   const [payslips, setPayslips] = useState<{ periodFormatted: string; generatedAt: string; payDays: number | null }[]>([]);
   const [upcomingHolidays, setUpcomingHolidays] = useState<
     { id: string; name: string; holiday_date: string; holiday_end_date: string | null }[]
@@ -103,14 +147,29 @@ export function DashboardContent() {
     const res = await fetch("/api/attendance");
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      setAttendance(null);
+      if (data?.hasEmployee === false) {
+        setAttendance({ hasEmployee: false, workDate: "", log: null });
+      }
       return;
     }
-    setAttendance({
-      hasEmployee: data.hasEmployee === true,
-      workDate: String(data.workDate ?? ""),
-      log: (data.log as AttendanceLog) ?? null,
-    });
+    setAttendance(parseTodayAttendancePayload(data));
+  }
+
+  async function refreshLeaveBalancesAndPayslips() {
+    const [balanceRes, payslipRes] = await Promise.all([fetch("/api/leave/balance"), fetch("/api/payslips/me")]);
+
+    if (balanceRes.ok) {
+      const d = await balanceRes.json();
+      const balances = (d.balances ?? [])
+        .slice(0, 3)
+        .map((b: Record<string, unknown>, i: number) => normalizeLeaveBalanceRow(b, i));
+      setLeaveBalances(balances);
+    }
+
+    if (payslipRes.ok) {
+      const d = await payslipRes.json();
+      setPayslips((d.payslips ?? []).slice(0, 1));
+    }
   }
 
   useEffect(() => {
@@ -130,12 +189,9 @@ export function DashboardContent() {
         }
         if (!cancelled && balanceRes.ok) {
           const d = await balanceRes.json();
-          const balances = (d.balances ?? []).slice(0, 3).map((b: any) => ({
-            leaveTypeName: b.leaveTypeName,
-            used: b.used ?? 0,
-            remaining: b.remaining != null ? b.remaining : null,
-            isPaid: b.isPaid ?? true,
-          }));
+          const balances = (d.balances ?? [])
+            .slice(0, 3)
+            .map((b: Record<string, unknown>, i: number) => normalizeLeaveBalanceRow(b, i));
           setLeaveBalances(balances);
         }
         if (!cancelled && payslipRes.ok) {
@@ -162,13 +218,12 @@ export function DashboardContent() {
         }
         if (!cancelled && attRes.ok) {
           const d = await attRes.json();
-          setAttendance({
-            hasEmployee: d.hasEmployee === true,
-            workDate: String(d.workDate ?? ""),
-            log: (d.log as AttendanceLog) ?? null,
-          });
+          setAttendance(parseTodayAttendancePayload(d));
         } else if (!cancelled) {
-          setAttendance(null);
+          const d = await attRes.json().catch(() => ({}));
+          if (d?.hasEmployee === false) {
+            setAttendance({ hasEmployee: false, workDate: "", log: null });
+          }
         }
       } catch {
         // ignore
@@ -180,6 +235,21 @@ export function DashboardContent() {
       }
     })();
     return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    return onHrmsChange(
+      (kind) => {
+        if (kind === "employee") {
+          refreshAttendance();
+        }
+        if (kind === "leave" || kind === "leave_policy" || kind === "payroll_master" || kind === "payroll_period") {
+          refreshLeaveBalancesAndPayslips();
+        }
+      },
+      { kinds: ["leave", "leave_policy", "payroll_master", "payroll_period", "employee"] },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /** 1s clock while punched in (for live elapsed + break counters) */
@@ -213,9 +283,20 @@ export function DashboardContent() {
         body: JSON.stringify({ action: "break", kind }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(typeof data?.error === "string" ? data.error : "Request failed");
-      if (data.log) {
-        setAttendance((prev) => (prev ? { ...prev, log: data.log as AttendanceLog } : null));
+      if (!res.ok) {
+        const msg =
+          typeof data?.error === "string"
+            ? data.error
+            : typeof data?.message === "string"
+              ? data.message
+              : "Request failed";
+        throw new Error(msg);
+      }
+      const nextLog = (data.log ?? data.attendance) as AttendanceLog | undefined;
+      if (nextLog) {
+        setAttendance((prev) =>
+          prev ? { ...prev, log: nextLog } : parseTodayAttendancePayload({ hasEmployee: true, log: nextLog }),
+        );
       } else {
         await refreshAttendance();
       }
@@ -244,11 +325,20 @@ export function DashboardContent() {
         }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(typeof data?.error === "string" ? data.error : "Request failed");
+      if (!res.ok) {
+        const msg =
+          typeof data?.error === "string"
+            ? data.error
+            : typeof data?.message === "string"
+              ? data.message
+              : "Request failed";
+        throw new Error(msg);
+      }
       showToast("success", action === "in" ? "Punched in successfully" : "Punched out successfully");
-      if (data.log) {
+      const nextLog = (data.log ?? data.attendance) as AttendanceLog | undefined;
+      if (nextLog) {
         setAttendance((prev) =>
-          prev ? { ...prev, log: data.log as AttendanceLog } : null
+          prev ? { ...prev, log: nextLog } : parseTodayAttendancePayload({ hasEmployee: true, log: nextLog }),
         );
       } else {
         await refreshAttendance();
@@ -377,7 +467,7 @@ export function DashboardContent() {
                 ) : leaveBalances.length > 0 ? (
                   leaveBalances.map((b) => (
                     <div
-                      key={b.leaveTypeName}
+                      key={b.leaveTypeId}
                       className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50/50 px-4 py-3"
                     >
                       <div className="flex items-center gap-3">
@@ -444,10 +534,22 @@ export function DashboardContent() {
                     <Skeleton className="h-12 flex-1 rounded-xl" />
                     <Skeleton className="h-12 flex-1 rounded-xl" />
                   </div>
-                ) : !attendance?.hasEmployee ? (
+                ) : attendance != null && !attendance.hasEmployee ? (
                   <p className="text-sm text-slate-600">
                     Your account is not linked to an employee profile yet. Ask HR to complete your employee record, then you can punch in and out here.
                   </p>
+                ) : attendance == null ? (
+                  <div className="space-y-2 text-sm text-slate-600">
+                    <p>Could not load today&apos;s attendance.</p>
+                    <button
+                      type="button"
+                      className="text-sm font-medium underline"
+                      style={{ color: TEAL }}
+                      onClick={() => void refreshAttendance()}
+                    >
+                      Retry
+                    </button>
+                  </div>
                 ) : (
                   <div className="space-y-4">
                     <p className="text-xs text-slate-500">{attDateLabel}</p>

@@ -16,9 +16,20 @@ function MenuIcon() {
   );
 }
 
+function brandingFromApiCompany(company: Record<string, unknown> | null | undefined): CompanyBranding | null {
+  if (!company) return null;
+  const name = String(company.name ?? "").trim();
+  const logoUrl =
+    (company.logo_url != null && String(company.logo_url)) ||
+    (company.logoUrl != null && String(company.logoUrl)) ||
+    null;
+  if (!name && !logoUrl) return null;
+  return { name: name || "Company", logoUrl };
+}
+
 export function AppShell({
   user,
-  companyBranding,
+  companyBranding: initialBranding,
   children,
 }: {
   user: SessionUser;
@@ -26,9 +37,33 @@ export function AppShell({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const [companyBranding, setCompanyBranding] = useState<CompanyBranding | null>(initialBranding);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [isDesktop, setIsDesktop] = useState(true);
+
+  useEffect(() => {
+    setCompanyBranding(initialBranding);
+  }, [initialBranding]);
+
+  useEffect(() => {
+    if (initialBranding) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/company/me");
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        const next = brandingFromApiCompany(data.company);
+        if (!cancelled && next) setCompanyBranding(next);
+      } catch {
+        // keep server/default branding
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [initialBranding]);
 
   useEffect(() => {
     const mq = window.matchMedia("(min-width: 768px)");

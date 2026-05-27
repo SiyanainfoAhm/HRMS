@@ -7,6 +7,11 @@ import { ToastProvider, useToast } from "@/components/ToastProvider";
 import { DatePickerField } from "@/components/ui/DatePickerField";
 import { PasswordField } from "@/components/PasswordField";
 import { GoogleAuthButton } from "@/components/GoogleAuthButton";
+import {
+  normalizeDigits,
+  normalizeIfscInput,
+  validateBankDetails,
+} from "@/lib/employeeValidators";
 
 type Doc = {
   id: string;
@@ -66,6 +71,7 @@ function InvitePageInner() {
   const [bankAccountHolderName, setBankAccountHolderName] = useState("");
   const [bankAccountNumber, setBankAccountNumber] = useState("");
   const [bankIfsc, setBankIfsc] = useState("");
+  const [bankError, setBankError] = useState<string | null>(null);
 
   const countryOptions = [
     { iso: "in", alpha2: "IN", code: "+91" },
@@ -75,10 +81,6 @@ function InvitePageInner() {
     { iso: "ae", alpha2: "AE", code: "+971" },
   ] as const;
   const selectedCountry = countryOptions.find((c) => c.code === countryCode) ?? countryOptions[0];
-
-  function normalizeDigits(s: string): string {
-    return (s || "").replace(/\D+/g, "");
-  }
 
   function validatePhoneDigits(v: string): string | null {
     const digits = normalizeDigits(v);
@@ -266,10 +268,15 @@ function InvitePageInner() {
       const pcErr = validatePostal(currentPostalCode);
       setPostalError(pcErr);
       if (pcErr) requiredMissing.push("Postal code");
-      if (!bankName.trim()) requiredMissing.push("Bank name");
-      if (!bankAccountHolderName.trim()) requiredMissing.push("Account holder name");
-      if (!bankAccountNumber.trim()) requiredMissing.push("Bank account number");
-      if (!bankIfsc.trim()) requiredMissing.push("IFSC");
+      const bankErr = validateBankDetails({
+        bankName,
+        bankAccountHolderName,
+        bankAccountNumber: normalizeDigits(bankAccountNumber),
+        bankIfsc,
+        legalName: name,
+      });
+      setBankError(bankErr);
+      if (bankErr) requiredMissing.push("Bank details");
       if (requiredMissing.length) throw new Error(`Please fill all required fields: ${requiredMissing.join(", ")}`);
       if (mandatoryMissing.length) {
         throw new Error(`Please complete mandatory documents first: ${mandatoryMissing.map((m) => m.name).join(", ")}`);
@@ -299,15 +306,21 @@ function InvitePageInner() {
             permanentPostalCode: normalizeDigits(permanentPostalCode),
             aadhaar,
             pan,
-            bankName,
-            bankAccountHolderName,
-            bankAccountNumber,
-            bankIfsc,
+            bankName: bankName.trim(),
+            bankAccountHolderName: bankAccountHolderName.trim(),
+            bankAccountNumber: normalizeDigits(bankAccountNumber),
+            bankIfsc: normalizeIfscInput(bankIfsc),
           },
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || "Failed to complete onboarding");
+      if (!res.ok) {
+        const msg =
+          data?.errors && typeof data.errors === "object"
+            ? Object.values(data.errors as Record<string, string[]>).flat()[0]
+            : data?.error;
+        throw new Error(msg || "Failed to complete onboarding");
+      }
       showToast("success", "Onboarding completed. An admin will activate your account.");
       await refresh();
     } catch (e: any) {
@@ -665,13 +678,22 @@ function InvitePageInner() {
             />
           </div>
 
+          <div className="sm:col-span-2">
+            <h3 className="text-sm font-semibold text-slate-900">Bank details (salary account)</h3>
+            <p className="mt-1 text-xs text-slate-500">
+              Account holder name must match your full name above. IFSC is 11 characters (e.g. SBIN0001234).
+            </p>
+          </div>
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700">Bank name</label>
             <input
               type="text"
               required
               value={bankName}
-              onChange={(e) => setBankName(e.target.value)}
+              onChange={(e) => {
+                setBankName(e.target.value);
+                setBankError(null);
+              }}
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
             />
           </div>
@@ -681,7 +703,11 @@ function InvitePageInner() {
               type="text"
               required
               value={bankAccountHolderName}
-              onChange={(e) => setBankAccountHolderName(e.target.value)}
+              onChange={(e) => {
+                setBankAccountHolderName(e.target.value);
+                setBankError(null);
+              }}
+              placeholder="Same as full name"
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
             />
           </div>
@@ -692,8 +718,11 @@ function InvitePageInner() {
               inputMode="numeric"
               required
               value={bankAccountNumber}
-              onChange={(e) => setBankAccountNumber(e.target.value.replace(/\D/g, ""))}
-              placeholder="Numbers only"
+              onChange={(e) => {
+                setBankAccountNumber(normalizeDigits(e.target.value));
+                setBankError(null);
+              }}
+              placeholder="9–18 digits"
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
             />
           </div>
@@ -703,11 +732,17 @@ function InvitePageInner() {
               type="text"
               required
               value={bankIfsc}
-              onChange={(e) => setBankIfsc(e.target.value.toUpperCase())}
+              onChange={(e) => {
+                setBankIfsc(normalizeIfscInput(e.target.value));
+                setBankError(null);
+              }}
               placeholder="e.g. SBIN0001234"
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono uppercase focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
             />
           </div>
+          {bankError && (
+            <p className="sm:col-span-2 text-sm text-red-600">{bankError}</p>
+          )}
         </div>
       </div>
 

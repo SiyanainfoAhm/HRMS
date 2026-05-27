@@ -38,6 +38,7 @@ class UserResource extends JsonResource
             'emergencyContactName' => $this->emergency_contact_name ?? '',
             'emergencyContactPhone' => $this->emergency_contact_phone ?? '',
             'bankName' => $this->bank_name ?? '',
+            'bankAccountHolderName' => $this->bank_account_holder_name ?? '',
             'bankAccountNumber' => $this->bank_account_number ?? '',
             'bankIfsc' => $this->bank_ifsc ?? '',
             'employmentStatus' => $this->employment_status?->value ?? $this->employment_status ?? 'preboarding',

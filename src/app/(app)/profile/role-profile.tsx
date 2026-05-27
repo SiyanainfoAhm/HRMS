@@ -8,6 +8,15 @@ import { DatePickerField } from "@/components/ui/DatePickerField";
 import { PasswordField } from "@/components/PasswordField";
 import { upload as apiUpload } from "@/lib/api";
 import { fmtDmy } from "@/lib/dateFormat";
+import {
+  normalizeDigits,
+  normalizePanInput,
+  validateAadhaarDigits,
+  validateBankDetails,
+  validateIndianMobileDigits,
+  validateIndianMobileInteractive,
+  normalizeIfscInput,
+} from "@/lib/employeeValidators";
 import { GovernmentPayslipPrint } from "@/components/payslip/GovernmentPayslipPrint";
 import type { GovernmentMonthlySlip } from "@/lib/governmentPayslipLayout";
 import type { GovernmentLeavePayslipDisplay } from "@/lib/leaveBalancesCompute";
@@ -26,6 +35,11 @@ export function ProfileContent() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+
+  const [phoneError, setPhoneError] = useState<string | null>(null);
+  const [emergencyPhoneError, setEmergencyPhoneError] = useState<string | null>(null);
+  const [aadhaarError, setAadhaarError] = useState<string | null>(null);
+  const [bankError, setBankError] = useState<string | null>(null);
 
   const [passwordSaving, setPasswordSaving] = useState(false);
   const [passwordError, setPasswordError] = useState<string | null>(null);
@@ -68,6 +82,7 @@ export function ProfileContent() {
     emergencyContactName: "",
     emergencyContactPhone: "",
     bankName: "",
+    bankAccountHolderName: "",
     bankAccountNumber: "",
     bankIfsc: "",
     employmentStatus: "preboarding" as "preboarding" | "current" | "past",
@@ -227,15 +242,15 @@ export function ProfileContent() {
           email: u?.email ?? "",
           name: u?.name ?? "",
           employeeCode: u?.employeeCode ?? "",
-          phone: u?.phone ?? "",
+          phone: normalizeDigits(String(u?.phone ?? "")).slice(-10),
           gender: (["male", "female", "other"].includes(u?.gender) ? u.gender : "") as "" | "male" | "female" | "other",
           designation: u?.designation ?? "",
           designationId: u?.designationId ?? "",
           departmentId: u?.departmentId ?? "",
           divisionId: u?.divisionId ?? "",
           shiftId: u?.shiftId ?? "",
-          aadhaar: u?.aadhaar ?? "",
-          pan: u?.pan ?? "",
+          aadhaar: normalizeDigits(String(u?.aadhaar ?? "")).slice(0, 12),
+          pan: normalizePanInput(String(u?.pan ?? "")),
           uanNumber: u?.uanNumber ?? "",
           pfNumber: u?.pfNumber ?? "",
           esicNumber: u?.esicNumber ?? "",
@@ -246,18 +261,22 @@ export function ProfileContent() {
           currentCity: u?.currentCity ?? "",
           currentState: u?.currentState ?? "",
           currentCountry: u?.currentCountry ?? "",
-          currentPostalCode: u?.currentPostalCode ?? "",
+          currentPostalCode: normalizeDigits(String(u?.currentPostalCode ?? "")).slice(0, 6),
           permanentAddressLine1: u?.permanentAddressLine1 ?? "",
           permanentAddressLine2: u?.permanentAddressLine2 ?? "",
           permanentCity: u?.permanentCity ?? "",
           permanentState: u?.permanentState ?? "",
           permanentCountry: u?.permanentCountry ?? "",
-          permanentPostalCode: u?.permanentPostalCode ?? "",
+          permanentPostalCode: normalizeDigits(String(u?.permanentPostalCode ?? "")).slice(0, 6),
           emergencyContactName: u?.emergencyContactName ?? "",
-          emergencyContactPhone: u?.emergencyContactPhone ?? "",
+          emergencyContactPhone: normalizeDigits(String(u?.emergencyContactPhone ?? "")).slice(-10),
           bankName: u?.bankName ?? "",
-          bankAccountNumber: u?.bankAccountNumber ?? "",
-          bankIfsc: u?.bankIfsc ?? "",
+          bankAccountHolderName: u?.bankAccountHolderName ?? "",
+          bankAccountNumber: normalizeDigits(String(u?.bankAccountNumber ?? "")),
+          bankIfsc: String(u?.bankIfsc ?? "")
+            .toUpperCase()
+            .replace(/[^A-Z0-9]/g, "")
+            .slice(0, 11),
           employmentStatus: u?.employmentStatus ?? "preboarding",
           ctc: u?.ctc ?? null,
         } as any);
@@ -382,14 +401,86 @@ export function ProfileContent() {
     setSaving(true);
     setError(null);
     setSuccess(null);
+    setPhoneError(null);
+    setEmergencyPhoneError(null);
+    setAadhaarError(null);
+    setBankError(null);
+
+    const phoneDigits = normalizeDigits(form.phone);
+    if (phoneDigits) {
+      const phErr = validateIndianMobileDigits(phoneDigits);
+      if (phErr) {
+        setPhoneError(phErr);
+        setError(phErr);
+        setSaving(false);
+        return;
+      }
+    }
+    const emergencyDigits = normalizeDigits(form.emergencyContactPhone);
+    if (emergencyDigits) {
+      const emErr = validateIndianMobileDigits(emergencyDigits);
+      if (emErr) {
+        setEmergencyPhoneError(emErr);
+        setError(`Emergency contact: ${emErr}`);
+        setSaving(false);
+        return;
+      }
+    }
+    const aadhaarDigits = normalizeDigits(form.aadhaar);
+    if (aadhaarDigits) {
+      const aErr = validateAadhaarDigits(aadhaarDigits);
+      if (aErr) {
+        setAadhaarError(aErr);
+        setError(aErr);
+        setSaving(false);
+        return;
+      }
+    }
+
+    const bankDigits = normalizeDigits(form.bankAccountNumber);
+    const bankIfscNorm = normalizeIfscInput(form.bankIfsc);
+    const hasAnyBank =
+      form.bankName.trim() ||
+      form.bankAccountHolderName.trim() ||
+      bankDigits ||
+      bankIfscNorm;
+    if (hasAnyBank) {
+      const bErr = validateBankDetails({
+        bankName: form.bankName,
+        bankAccountHolderName: form.bankAccountHolderName,
+        bankAccountNumber: bankDigits,
+        bankIfsc: bankIfscNorm,
+        legalName: form.name,
+      });
+      if (bErr) {
+        setBankError(bErr);
+        setError(bErr);
+        setSaving(false);
+        return;
+      }
+    }
+
     try {
       const res = await fetch("/api/me", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        body: JSON.stringify({
+          ...form,
+          phone: phoneDigits,
+          emergencyContactPhone: emergencyDigits,
+          aadhaar: aadhaarDigits,
+          bankAccountNumber: bankDigits,
+          bankIfsc: bankIfscNorm,
+          bankAccountHolderName: form.bankAccountHolderName.trim(),
+          currentPostalCode: normalizeDigits(form.currentPostalCode),
+          permanentPostalCode: normalizeDigits(form.permanentPostalCode),
+        }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || "Failed to save profile");
+      if (!res.ok) {
+        const emailErr = data?.errors?.email?.[0];
+        throw new Error(emailErr || data?.message || data?.error || "Failed to save profile");
+      }
       setSuccess("Saved");
       router.refresh();
     } catch (e: any) {
@@ -554,10 +645,11 @@ export function ProfileContent() {
                   <input
                     type="email"
                     value={form.email}
-                    readOnly
-                    disabled
-                    className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600"
+                    required
+                    onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                   />
+                  <p className="mt-0.5 text-xs text-slate-500">Used to sign in. Must be unique.</p>
                 </div>
                 )}
                 <div>
@@ -572,11 +664,33 @@ export function ProfileContent() {
                 <div>
                   <label className="mb-1 block text-sm font-medium text-slate-700">Phone</label>
                   <input
-                    type="text"
+                    type="tel"
+                    inputMode="numeric"
+                    maxLength={10}
+                    autoComplete="tel"
                     value={form.phone}
-                    onChange={(e) => setForm((p) => ({ ...p, phone: e.target.value }))}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    onChange={(e) => {
+                      const d = normalizeDigits(e.target.value).slice(0, 10);
+                      setForm((p) => ({ ...p, phone: d }));
+                      setPhoneError(d.length === 10 ? validateIndianMobileDigits(d) : null);
+                    }}
+                    onBlur={() =>
+                      setPhoneError(
+                        form.phone ? validateIndianMobileInteractive(normalizeDigits(form.phone)) : null,
+                      )
+                    }
+                    placeholder="10-digit mobile (starts 6–9)"
+                    aria-invalid={Boolean(phoneError)}
+                    className={`w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-1 ${
+                      phoneError
+                        ? "border-red-500 focus:border-red-500 focus:ring-red-500"
+                        : "border-slate-300 focus:border-emerald-500 focus:ring-emerald-500"
+                    }`}
                   />
+                  {phoneError && <p className="mt-1 text-xs text-red-600">{phoneError}</p>}
+                  {!phoneError && form.phone.length > 0 && form.phone.length < 10 && (
+                    <p className="mt-1 text-xs text-slate-500">{form.phone.length}/10 digits</p>
+                  )}
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-slate-700">Gender</label>
@@ -692,20 +806,36 @@ export function ProfileContent() {
                   <label className="mb-1 block text-sm font-medium text-slate-700">Aadhaar</label>
                   <input
                     type="text"
+                    inputMode="numeric"
+                    maxLength={12}
                     value={form.aadhaar}
-                    onChange={(e) => setForm((p) => ({ ...p, aadhaar: e.target.value }))}
-                    placeholder="12-digit Aadhaar"
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    onChange={(e) => {
+                      const d = normalizeDigits(e.target.value).slice(0, 12);
+                      setForm((p) => ({ ...p, aadhaar: d }));
+                      setAadhaarError(d.length === 12 ? validateAadhaarDigits(d) : null);
+                    }}
+                    placeholder="12 digits"
+                    aria-invalid={Boolean(aadhaarError)}
+                    className={`w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-1 ${
+                      aadhaarError
+                        ? "border-red-500 focus:border-red-500 focus:ring-red-500"
+                        : "border-slate-300 focus:border-emerald-500 focus:ring-emerald-500"
+                    }`}
                   />
+                  {aadhaarError && <p className="mt-1 text-xs text-red-600">{aadhaarError}</p>}
+                  {!aadhaarError && form.aadhaar.length > 0 && form.aadhaar.length < 12 && (
+                    <p className="mt-1 text-xs text-slate-500">{form.aadhaar.length}/12 digits</p>
+                  )}
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-slate-700">PAN</label>
                   <input
                     type="text"
+                    maxLength={10}
                     value={form.pan}
-                    onChange={(e) => setForm((p) => ({ ...p, pan: e.target.value }))}
-                    placeholder="e.g. ABCD1234E"
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    onChange={(e) => setForm((p) => ({ ...p, pan: normalizePanInput(e.target.value) }))}
+                    placeholder="e.g. ABCDE1234F"
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm uppercase focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                   />
                 </div>
                 <div>
@@ -848,9 +978,16 @@ export function ProfileContent() {
                       />
                       <input
                         type="text"
-                        placeholder="Postal code"
+                        inputMode="numeric"
+                        maxLength={6}
+                        placeholder="PIN (6 digits)"
                         value={form.currentPostalCode}
-                        onChange={(e) => setForm((p) => ({ ...p, currentPostalCode: e.target.value }))}
+                        onChange={(e) =>
+                          setForm((p) => ({
+                            ...p,
+                            currentPostalCode: normalizeDigits(e.target.value).slice(0, 6),
+                          }))
+                        }
                         className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                       />
                     </div>
@@ -899,9 +1036,16 @@ export function ProfileContent() {
                         />
                         <input
                           type="text"
-                          placeholder="Postal code"
+                          placeholder="PIN (6 digits)"
+                          inputMode="numeric"
+                          maxLength={6}
                           value={form.permanentPostalCode}
-                          onChange={(e) => setForm((p) => ({ ...p, permanentPostalCode: e.target.value }))}
+                          onChange={(e) =>
+                            setForm((p) => ({
+                              ...p,
+                              permanentPostalCode: normalizeDigits(e.target.value).slice(0, 6),
+                            }))
+                          }
                           className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                         />
                       </div>
@@ -919,39 +1063,91 @@ export function ProfileContent() {
                         className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                       />
                       <input
-                        type="text"
-                        placeholder="Phone"
+                        type="tel"
+                        inputMode="numeric"
+                        maxLength={10}
+                        placeholder="10-digit mobile"
                         value={form.emergencyContactPhone}
-                        onChange={(e) => setForm((p) => ({ ...p, emergencyContactPhone: e.target.value }))}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                        onChange={(e) => {
+                          const d = normalizeDigits(e.target.value).slice(0, 10);
+                          setForm((p) => ({ ...p, emergencyContactPhone: d }));
+                          setEmergencyPhoneError(d.length === 10 ? validateIndianMobileDigits(d) : null);
+                        }}
+                        onBlur={() =>
+                          setEmergencyPhoneError(
+                            form.emergencyContactPhone
+                              ? validateIndianMobileInteractive(normalizeDigits(form.emergencyContactPhone))
+                              : null,
+                          )
+                        }
+                        aria-invalid={Boolean(emergencyPhoneError)}
+                        className={`w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-1 ${
+                          emergencyPhoneError
+                            ? "border-red-500 focus:border-red-500 focus:ring-red-500"
+                            : "border-slate-300 focus:border-emerald-500 focus:ring-emerald-500"
+                        }`}
                       />
+                      {emergencyPhoneError && (
+                        <p className="text-xs text-red-600">{emergencyPhoneError}</p>
+                      )}
                     </div>
                   </div>
 
                   <div>
                     <h3 className="text-sm font-semibold text-slate-900">Bank details</h3>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Account holder name must match your profile name. IFSC: 11 characters (e.g. SBIN0001234).
+                    </p>
                     <div className="mt-3 space-y-3">
                       <input
                         type="text"
                         placeholder="Bank name"
                         value={form.bankName}
-                        onChange={(e) => setForm((p) => ({ ...p, bankName: e.target.value }))}
+                        onChange={(e) => {
+                          setBankError(null);
+                          setForm((p) => ({ ...p, bankName: e.target.value }));
+                        }}
                         className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                       />
                       <input
                         type="text"
-                        placeholder="Account number"
+                        placeholder="Account holder name (same as profile name)"
+                        value={form.bankAccountHolderName}
+                        onChange={(e) => {
+                          setBankError(null);
+                          setForm((p) => ({ ...p, bankAccountHolderName: e.target.value }));
+                        }}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                      />
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        placeholder="Account number (9–18 digits)"
                         value={form.bankAccountNumber}
-                        onChange={(e) => setForm((p) => ({ ...p, bankAccountNumber: e.target.value }))}
+                        onChange={(e) => {
+                          setBankError(null);
+                          setForm((p) => ({
+                            ...p,
+                            bankAccountNumber: normalizeDigits(e.target.value),
+                          }));
+                        }}
                         className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                       />
                       <input
                         type="text"
                         placeholder="IFSC"
+                        maxLength={11}
                         value={form.bankIfsc}
-                        onChange={(e) => setForm((p) => ({ ...p, bankIfsc: e.target.value }))}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                        onChange={(e) => {
+                          setBankError(null);
+                          setForm((p) => ({
+                            ...p,
+                            bankIfsc: normalizeIfscInput(e.target.value),
+                          }));
+                        }}
+                        className="w-full max-w-xs rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono uppercase focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                       />
+                      {bankError && <p className="text-xs text-red-600">{bankError}</p>}
                     </div>
                   </div>
                 </div>

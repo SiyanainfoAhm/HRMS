@@ -45,8 +45,27 @@ export async function proxyToLaravel(
   const fetchOptions: RequestInit = { method, headers };
   if (method !== "GET" && method !== "HEAD") {
     if (contentType?.includes("multipart/form-data")) {
-      delete headers["Content-Type"];
+      // Keep boundary in Content-Type so Laravel can parse uploaded files.
       fetchOptions.body = await request.arrayBuffer();
+      if (contentType) {
+        headers["Content-Type"] = contentType;
+      }
+    } else if (
+      method === "POST" &&
+      !contentType &&
+      laravelPath.includes("/upload")
+    ) {
+      const formData = await request.formData();
+      const outbound = new FormData();
+      for (const [key, value] of formData.entries()) {
+        if (value instanceof Blob) {
+          const name = value instanceof File ? value.name : "upload";
+          outbound.append(key, value, name);
+        } else {
+          outbound.append(key, value);
+        }
+      }
+      fetchOptions.body = outbound;
     } else {
       try {
         const body = await request.text();

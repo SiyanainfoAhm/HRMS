@@ -99,6 +99,7 @@ Route::prefix('v1')->group(function () {
         Route::delete('settings/roles/{id}', [RoleController::class, 'destroy']);
 
         // Attendance
+        Route::get('attendance', [AttendanceController::class, 'today']);
         Route::get('attendance/me', [AttendanceController::class, 'me']);
         Route::post('attendance', [AttendanceController::class, 'punch']);
         Route::get('attendance/company', [AttendanceController::class, 'company']);

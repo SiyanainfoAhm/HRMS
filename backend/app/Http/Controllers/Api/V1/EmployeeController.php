@@ -9,6 +9,8 @@ use App\Models\HrmsEmployeeDocumentSubmission;
 use App\Models\HrmsEmployeeInvite;
 use App\Models\HrmsPayrollMaster;
 use App\Models\HrmsUser;
+use App\Support\BankDetailsService;
+use App\Support\BankDetailsValidator;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -101,6 +103,7 @@ class EmployeeController extends Controller
             'emergency_contact_name' => ['nullable', 'string'],
             'emergency_contact_phone' => ['nullable', 'string'],
             'bank_name' => ['nullable', 'string'],
+            'bank_account_holder_name' => ['nullable', 'string'],
             'bank_account_number' => ['nullable', 'string'],
             'bank_ifsc' => ['nullable', 'string'],
             'requested_document_ids' => ['nullable', 'array'],
@@ -154,6 +157,7 @@ class EmployeeController extends Controller
                 'emergency_contact_name' => $data['emergency_contact_name'] ?? null,
                 'emergency_contact_phone' => $data['emergency_contact_phone'] ?? null,
                 'bank_name' => $data['bank_name'] ?? null,
+                'bank_account_holder_name' => $data['bank_account_holder_name'] ?? null,
                 'bank_account_number' => $data['bank_account_number'] ?? null,
                 'bank_ifsc' => $data['bank_ifsc'] ?? null,
             ]);
@@ -245,23 +249,89 @@ class EmployeeController extends Controller
             'bank_account_number', 'bank_ifsc',
         ]));
 
-        // Also update HrmsUser fields if provided
+        // Also update HrmsUser fields if provided (accept camelCase from API proxy)
         $targetUser = HrmsUser::find($employee->user_id);
         if ($targetUser) {
-            $userFields = $request->only([
-                'employment_status', 'date_of_joining', 'date_of_leaving',
-                'government_pay_level', 'gross_salary', 'tds_monthly',
-                'gender', 'designation', 'phone',
-                'current_address_line1', 'current_address_line2', 'current_city',
-                'current_state', 'current_country', 'current_postal_code',
-                'permanent_address_line1', 'permanent_address_line2', 'permanent_city',
-                'permanent_state', 'permanent_country', 'permanent_postal_code',
-                'bank_name', 'bank_account_holder_name', 'bank_account_number', 'bank_ifsc',
-                'aadhaar', 'pan', 'uan_number', 'pf_number', 'cpf_number',
-            ]);
-            $filtered = array_filter($userFields, fn ($v) => $v !== null);
-            if (! empty($filtered)) {
-                $targetUser->update($filtered);
+            $body = $request->all();
+            $pick = static function (string $snake, string $camel) use ($body, $request): mixed {
+                if (array_key_exists($snake, $body)) {
+                    return $body[$snake];
+                }
+                if (array_key_exists($camel, $body)) {
+                    return $body[$camel];
+                }
+
+                return $request->input($snake);
+            };
+
+            $userFields = [];
+            $scalarMap = [
+                'employment_status' => 'employmentStatus',
+                'date_of_joining' => 'dateOfJoining',
+                'date_of_leaving' => 'dateOfLeaving',
+                'government_pay_level' => 'governmentPayLevel',
+                'gross_salary' => 'grossSalary',
+                'tds_monthly' => 'tdsMonthly',
+                'gender' => 'gender',
+                'designation' => 'designation',
+                'phone' => 'phone',
+                'current_address_line1' => 'currentAddressLine1',
+                'current_address_line2' => 'currentAddressLine2',
+                'current_city' => 'currentCity',
+                'current_state' => 'currentState',
+                'current_country' => 'currentCountry',
+                'current_postal_code' => 'currentPostalCode',
+                'permanent_address_line1' => 'permanentAddressLine1',
+                'permanent_address_line2' => 'permanentAddressLine2',
+                'permanent_city' => 'permanentCity',
+                'permanent_state' => 'permanentState',
+                'permanent_country' => 'permanentCountry',
+                'permanent_postal_code' => 'permanentPostalCode',
+                'aadhaar' => 'aadhaar',
+                'pan' => 'pan',
+                'uan_number' => 'uanNumber',
+                'pf_number' => 'pfNumber',
+                'cpf_number' => 'cpfNumber',
+            ];
+            foreach ($scalarMap as $snake => $camel) {
+                $val = $pick($snake, $camel);
+                if ($val !== null) {
+                    $userFields[$snake] = is_string($val) ? trim($val) : $val;
+                }
+            }
+
+            $bankTouched = false;
+            foreach (['bank_name', 'bank_account_holder_name', 'bank_account_number', 'bank_ifsc'] as $snake) {
+                $camel = lcfirst(str_replace('_', '', ucwords($snake, '_')));
+                if (array_key_exists($snake, $body) || array_key_exists($camel, $body)) {
+                    $bankTouched = true;
+                    break;
+                }
+            }
+
+            $prevBank = BankDetailsValidator::snapshotFromUser($targetUser);
+
+            if ($bankTouched) {
+                $merged = [
+                    'bank_name' => $pick('bank_name', 'bankName') ?? $targetUser->bank_name ?? '',
+                    'bank_account_holder_name' => $pick('bank_account_holder_name', 'bankAccountHolderName') ?? $targetUser->bank_account_holder_name ?? '',
+                    'bank_account_number' => $pick('bank_account_number', 'bankAccountNumber') ?? $targetUser->bank_account_number ?? '',
+                    'bank_ifsc' => $pick('bank_ifsc', 'bankIfsc') ?? $targetUser->bank_ifsc ?? '',
+                ];
+                $legalName = trim((string) ($pick('name', 'name') ?? $targetUser->name ?? ''));
+                $normalized = BankDetailsValidator::normalizeAndValidate(
+                    $merged,
+                    $legalName !== '' ? $legalName : null,
+                    true,
+                );
+                unset($userFields['bank_name'], $userFields['bank_account_holder_name'], $userFields['bank_account_number'], $userFields['bank_ifsc']);
+                if (! empty($userFields)) {
+                    $targetUser->update($userFields);
+                    $targetUser->refresh();
+                }
+                BankDetailsService::applyToUser($targetUser, $normalized, $request->user()->id);
+            } elseif (! empty($userFields)) {
+                $targetUser->update($userFields);
             }
         }
 

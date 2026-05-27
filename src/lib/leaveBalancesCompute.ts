@@ -72,12 +72,26 @@ export function computeLeaveBalanceRows(
   });
 }
 
+export type GovernmentLeavePayslipLine = {
+  label: string;
+  value: string;
+};
+
 export type GovernmentLeavePayslipDisplay = {
   leaveBalanceTotal: string;
-  casualLeave: string;
-  earnedLeave: string;
-  hpl: string;
-  hl: string;
+  lines: GovernmentLeavePayslipLine[];
+  /** @deprecated Use lines — kept for callers that still read fixed slots */
+  casualLeave?: string;
+  earnedLeave?: string;
+  hpl?: string;
+  hl?: string;
+};
+
+const PAYSLIP_SLOT_LABELS: Record<string, string> = {
+  CL: "Casual leave",
+  EL: "Earned leave",
+  HPL: "HPL",
+  HL: "HL",
 };
 
 function fmtLeaveNum(n: number | null): string {
@@ -87,21 +101,42 @@ function fmtLeaveNum(n: number | null): string {
   return rounded.toFixed(2).replace(/\.?0+$/, "");
 }
 
-/** Sum remaining days shown on government payslip (CL + EL + HPL + HL slots). */
-export function formatGovernmentLeavePayslipDisplay(rows: LeaveBalanceComputedRow[]): GovernmentLeavePayslipDisplay {
-  const bySlot = (slot: string) => rows.find((x) => x.payslipSlot === slot)?.remaining ?? null;
-  const cl = bySlot("CL");
-  const el = bySlot("EL");
-  const hpl = bySlot("HPL");
-  const hl = bySlot("HL");
-  const nums = [cl, el, hpl, hl].filter((x): x is number => x != null && Number.isFinite(x));
+/** Build payslip leave block from company policies; null when no leave types/policies configured. */
+export function formatGovernmentLeavePayslipDisplay(
+  rows: LeaveBalanceComputedRow[],
+): GovernmentLeavePayslipDisplay | null {
+  if (!rows?.length) return null;
+
+  const lines: GovernmentLeavePayslipLine[] = [];
+  const seenSlots = new Set<string>();
+
+  for (const row of rows) {
+    const slot = row.payslipSlot?.trim().toUpperCase() ?? "";
+    const label = slot
+      ? (PAYSLIP_SLOT_LABELS[slot] ?? row.leaveTypeName) || slot
+      : row.leaveTypeName?.trim() || "";
+    if (!label) continue;
+    if (slot && seenSlots.has(slot)) continue;
+    if (slot) seenSlots.add(slot);
+    lines.push({ label, value: fmtLeaveNum(row.remaining) });
+  }
+
+  if (lines.length === 0) return null;
+
+  const nums = rows
+    .map((r) => r.remaining)
+    .filter((x): x is number => x != null && Number.isFinite(x));
   const total = nums.length ? nums.reduce((a, b) => a + b, 0) : null;
+
+  const bySlot = (s: string) => rows.find((x) => x.payslipSlot?.toUpperCase() === s)?.remaining ?? null;
+
   return {
     leaveBalanceTotal: fmtLeaveNum(total),
-    casualLeave: fmtLeaveNum(cl),
-    earnedLeave: fmtLeaveNum(el),
-    hpl: fmtLeaveNum(hpl),
-    hl: fmtLeaveNum(hl),
+    lines,
+    casualLeave: fmtLeaveNum(bySlot("CL")),
+    earnedLeave: fmtLeaveNum(bySlot("EL")),
+    hpl: fmtLeaveNum(bySlot("HPL")),
+    hl: fmtLeaveNum(bySlot("HL")),
   };
 }
 

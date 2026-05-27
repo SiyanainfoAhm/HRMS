@@ -7,6 +7,7 @@ import { SkeletonTable } from "@/components/Skeleton";
 import { useResponsivePageSize } from "@/hooks/useResponsivePageSize";
 import { DatePickerField } from "@/components/ui/DatePickerField";
 import { useAuth } from "@/contexts/AuthContext";
+import { dispatchHrmsChange } from "@/lib/hrmsChangeBus";
 import { fmtDmy } from "@/lib/dateFormat";
 import {
   computeGovernmentMonthlyPayroll,
@@ -585,6 +586,7 @@ export default function EmployeesPage() {
           showToast("success", "Employee added. Invite link generated.");
         }
       }
+        dispatchHrmsChange("employee");
       resetForm();
       setRequestedDocIds([]);
       setIsDialogOpen(false);
@@ -699,6 +701,7 @@ export default function EmployeesPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to update employee");
       showToast("success", "Employee updated");
+      dispatchHrmsChange("employee");
       setListRefresh((n) => n + 1);
       setIsDialogOpen(false);
       resetForm();

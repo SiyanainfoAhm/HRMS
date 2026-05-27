@@ -5,5 +5,5 @@ export function getMyPayslips() {
 }
 
 export function getEmployeePayslips(userId: string) {
-  return get("/payslips/employee", { user_id: userId });
+  return get("/payslips/employee", { user_id: userId, employeeUserId: userId });
 }

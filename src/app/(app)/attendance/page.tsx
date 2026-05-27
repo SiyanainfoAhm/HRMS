@@ -6,7 +6,7 @@ import { PaginationBar } from "@/components/PaginationBar";
 import { SkeletonTable } from "@/components/Skeleton";
 import { useResponsivePageSize } from "@/hooks/useResponsivePageSize";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { fmtDmy } from "@/lib/dateFormat";
+import { fmtDmy, formatMinutesAsHours } from "@/lib/dateFormat";
 
 type Row = {
   logId: string;
@@ -45,13 +45,6 @@ function formatTimeIST(iso: string | null | undefined): string {
   }
 }
 
-function fmtHoursMin(min: number | null): string {
-  if (min == null) return "—";
-  const h = Math.floor(min / 60);
-  const m = min % 60;
-  return `${h}h ${m}m`;
-}
-
 function formatDayHeading(ymd: string): string {
   // Keep it consistent dd-mm-yyyy (no locale variations)
   return fmtDmy(ymd);
@@ -88,13 +81,13 @@ function AttendanceRow({
       <td className="px-3 py-3 tabular-nums text-slate-800">{formatTimeIST(r.lunchCheckOutAt)}</td>
       <td className="px-3 py-3 tabular-nums text-slate-800">{formatTimeIST(r.lunchCheckInAt)}</td>
       <td className="px-3 py-3 tabular-nums text-slate-800">{formatTimeIST(r.checkOutAt)}</td>
-      <td className="px-3 py-3 font-medium text-slate-800">{fmtHoursMin(r.grossMinutes)}</td>
-      <td className="px-3 py-3 font-medium text-slate-800">{fmtHoursMin(r.activeMinutes)}</td>
+      <td className="px-3 py-3 font-medium text-slate-800">{formatMinutesAsHours(r.grossMinutes)}</td>
+      <td className="px-3 py-3 font-medium text-slate-800">{formatMinutesAsHours(r.activeMinutes)}</td>
       <td className="px-3 py-3 text-xs text-slate-600">
-        {fmtHoursMin(idleLunch)} / {fmtHoursMin(idleTea)}
+        {formatMinutesAsHours(idleLunch)} / {formatMinutesAsHours(idleTea)}
       </td>
       <td className="px-3 py-3 text-xs text-slate-600">
-        {fmtHoursMin(idleTotal)}
+        {formatMinutesAsHours(idleTotal)}
       </td>
       <td className="px-3 py-3">
         {r.checkOutAt ? (
@@ -155,21 +148,21 @@ function AttendanceMobileCard({
         </div>
         <div>
           <dt className="text-xs text-slate-500">Gross</dt>
-          <dd className="font-medium text-slate-800">{fmtHoursMin(r.grossMinutes)}</dd>
+          <dd className="font-medium text-slate-800">{formatMinutesAsHours(r.grossMinutes)}</dd>
         </div>
         <div>
           <dt className="text-xs text-slate-500">Active</dt>
-          <dd className="font-medium text-slate-800">{fmtHoursMin(r.activeMinutes)}</dd>
+          <dd className="font-medium text-slate-800">{formatMinutesAsHours(r.activeMinutes)}</dd>
         </div>
         <div className="col-span-2">
           <dt className="text-xs text-slate-500">Idle lunch / tea</dt>
           <dd className="text-slate-800">
-            {fmtHoursMin(idleLunch)} / {fmtHoursMin(idleTea)}
+            {formatMinutesAsHours(idleLunch)} / {formatMinutesAsHours(idleTea)}
           </dd>
         </div>
         <div className="col-span-2">
           <dt className="text-xs text-slate-500">Total idle</dt>
-          <dd className="text-xs text-slate-600">{fmtHoursMin(idleTotal)}</dd>
+          <dd className="text-xs text-slate-600">{formatMinutesAsHours(idleTotal)}</dd>
         </div>
         <div>
           <dt className="text-xs text-slate-500">≥8h</dt>

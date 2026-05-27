@@ -8,18 +8,55 @@ use App\Models\HrmsLeavePolicy;
 use App\Models\HrmsLeaveRequest;
 use App\Models\HrmsLeaveType;
 use App\Models\HrmsUser;
+use App\Support\EmployeeRecordService;
+use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class LeaveController extends Controller
 {
+    /** @return array<string, mixed> */
+    private function formatLeaveRequest(HrmsLeaveRequest $leave): array
+    {
+        $leave->loadMissing(['leaveType', 'employeeUser']);
+
+        return array_merge($leave->toArray(), [
+            'leaveTypeId' => $leave->leave_type_id,
+            'leaveTypeName' => $leave->leaveType?->name,
+            'startDate' => $leave->start_date?->format('Y-m-d'),
+            'endDate' => $leave->end_date?->format('Y-m-d'),
+            'totalDays' => (float) $leave->total_days,
+            'employeeUserId' => $leave->employee_user_id,
+            'employeeName' => $leave->employeeUser?->name,
+            'employeeEmail' => $leave->employeeUser?->email,
+            'createdAt' => $leave->created_at?->toIso8601String(),
+        ]);
+    }
+
     public function types(Request $request): JsonResponse
     {
-        $types = HrmsLeaveType::where('company_id', $request->user()->company_id)
+        $companyId = $request->user()->company_id;
+        $types = HrmsLeaveType::where('company_id', $companyId)
             ->orderBy('name')
             ->get();
 
-        return response()->json(['leaveTypes' => $types]);
+        $policiesByType = HrmsLeavePolicy::where('company_id', $companyId)
+            ->get()
+            ->groupBy('leave_type_id');
+
+        $formatted = $types->map(function (HrmsLeaveType $type) use ($policiesByType) {
+            $policies = ($policiesByType->get($type->id) ?? collect())->values()->all();
+
+            return array_merge($type->toArray(), [
+                'HRMS_leave_policies' => $policies,
+                'leavePolicies' => $policies,
+            ]);
+        })->values()->all();
+
+        return response()->json([
+            'types' => $formatted,
+            'leaveTypes' => $formatted,
+        ]);
     }
 
     public function storeType(Request $request): JsonResponse
@@ -35,12 +72,16 @@ class LeaveController extends Controller
             'description' => ['nullable', 'string'],
             'is_paid' => ['nullable', 'boolean'],
             'annual_quota' => ['nullable', 'numeric'],
+            'payslip_slot' => ['nullable', 'string', 'in:CL,EL,HPL,HL'],
         ]);
 
         $data['company_id'] = $user->company_id;
+        if (isset($data['payslip_slot']) && $data['payslip_slot'] === '') {
+            $data['payslip_slot'] = null;
+        }
         $type = HrmsLeaveType::create($data);
 
-        return response()->json(['leaveType' => $type], 201);
+        return response()->json(['leaveType' => $type, 'type' => $type], 201);
     }
 
     public function updateType(Request $request, string $id): JsonResponse
@@ -50,10 +91,28 @@ class LeaveController extends Controller
             return response()->json(['error' => 'Forbidden'], 403);
         }
 
-        $type = HrmsLeaveType::findOrFail($id);
-        $type->update($request->only(['name', 'code', 'description', 'is_paid', 'annual_quota', 'payslip_slot']));
+        $type = HrmsLeaveType::where('id', $id)
+            ->where('company_id', $user->company_id)
+            ->firstOrFail();
 
-        return response()->json(['type' => $type->refresh()]);
+        $data = $request->validate([
+            'name' => ['sometimes', 'string', 'max:255'],
+            'code' => ['nullable', 'string', 'max:20'],
+            'description' => ['nullable', 'string'],
+            'is_paid' => ['sometimes', 'boolean'],
+            'annual_quota' => ['nullable', 'numeric'],
+            'payslip_slot' => ['nullable', 'string', 'in:CL,EL,HPL,HL'],
+        ]);
+
+        if (array_key_exists('payslip_slot', $data) && ($data['payslip_slot'] === '' || $data['payslip_slot'] === null)) {
+            $data['payslip_slot'] = null;
+        }
+
+        $type->update($data);
+
+        $refreshed = $type->refresh();
+
+        return response()->json(['type' => $refreshed, 'leaveType' => $refreshed]);
     }
 
     public function policies(Request $request): JsonResponse
@@ -149,15 +208,33 @@ class LeaveController extends Controller
 
         if (! $user->role?->isManagerial()) {
             $query->where('employee_user_id', $user->id);
+        } elseif ($request->filled('employee_user_id') || $request->filled('employeeUserId')) {
+            $empUid = $request->input('employee_user_id') ?? $request->input('employeeUserId');
+            $query->where('employee_user_id', $empUid);
         }
 
         if ($request->filled('status')) {
             $query->where('status', $request->input('status'));
         }
 
-        $leaves = $query->orderBy('created_at', 'desc')->get();
+        $page = max(1, (int) ($request->query('page') ?? 1));
+        $pageSize = max(1, min(200, (int) ($request->query('page_size') ?? $request->query('pageSize') ?? 20)));
 
-        return response()->json(['leaveRequests' => $leaves]);
+        $total = (clone $query)->count();
+        $leaves = $query
+            ->orderBy('created_at', 'desc')
+            ->skip(($page - 1) * $pageSize)
+            ->take($pageSize)
+            ->get()
+            ->map(fn (HrmsLeaveRequest $leave) => $this->formatLeaveRequest($leave))
+            ->values()
+            ->all();
+
+        return response()->json([
+            'requests' => $leaves,
+            'leaveRequests' => $leaves,
+            'total' => $total,
+        ]);
     }
 
     public function storeRequest(Request $request): JsonResponse
@@ -165,8 +242,10 @@ class LeaveController extends Controller
         $user = $request->user();
 
         $targetUserId = $user->id;
-        if ($request->filled('employee_user_id') && $user->role?->isManagerial()) {
-            $targetUserId = $request->input('employee_user_id');
+        if ($user->role?->isManagerial()) {
+            $targetUserId = $request->input('employee_user_id')
+                ?? $request->input('employeeUserId')
+                ?? $user->id;
         }
 
         $data = $request->validate([
@@ -178,52 +257,78 @@ class LeaveController extends Controller
             'employee_user_id' => ['nullable', 'uuid'],
         ]);
 
-        $totalDays = $data['total_days']
-            ?? ((\Carbon\Carbon::parse($data['start_date'])->diffInDays(\Carbon\Carbon::parse($data['end_date']))) + 1);
+        $start = Carbon::parse($data['start_date']);
+        $end = Carbon::parse($data['end_date']);
+        $totalDays = $data['total_days'] ?? ($start->diffInDays($end) + 1);
 
-        $employee = HrmsEmployee::where('user_id', $targetUserId)->first();
+        $subjectUser = HrmsUser::where('id', $targetUserId)
+            ->where('company_id', $user->company_id)
+            ->first();
+        if (! $subjectUser) {
+            return response()->json(['error' => 'Employee user not found'], 404);
+        }
+
+        $employee = EmployeeRecordService::forUser($subjectUser);
+        $autoApprove = (bool) $user->role?->isManagerial();
 
         $leaveRequest = HrmsLeaveRequest::create([
             'company_id' => $user->company_id,
-            'employee_id' => $employee?->id,
-            'employee_user_id' => $targetUserId,
-            'manager_id' => $employee?->manager_id,
-            'department_id' => $employee?->department_id ?? $user->department_id,
+            'employee_id' => $employee->id,
+            'employee_user_id' => $subjectUser->id,
+            'manager_id' => $employee->manager_id,
+            'department_id' => $employee->department_id ?? $user->department_id,
             'leave_type_id' => $data['leave_type_id'],
             'start_date' => $data['start_date'],
             'end_date' => $data['end_date'],
             'total_days' => $totalDays,
             'reason' => $data['reason'] ?? null,
-            'status' => 'pending',
+            'status' => $autoApprove ? 'approved' : 'pending',
+            'approver_user_id' => $autoApprove ? $user->id : null,
+            'approved_at' => $autoApprove ? now() : null,
         ]);
 
-        return response()->json(['leaveRequest' => $leaveRequest->load('leaveType')], 201);
+        $formatted = $this->formatLeaveRequest($leaveRequest->load(['leaveType', 'employeeUser']));
+
+        return response()->json([
+            'request' => $formatted,
+            'leaveRequest' => $formatted,
+        ], 201);
     }
 
     public function updateRequest(Request $request, string $id): JsonResponse
     {
         $user = $request->user();
-        $leave = HrmsLeaveRequest::findOrFail($id);
+        $leave = HrmsLeaveRequest::where('id', $id)
+            ->where('company_id', $user->company_id)
+            ->firstOrFail();
 
         $data = $request->validate([
-            'status' => ['sometimes', 'in:approved,rejected,cancelled'],
+            'status' => ['sometimes', 'in:approved,rejected,cancelled,pending'],
             'rejection_reason' => ['nullable', 'string'],
         ]);
 
-        if (isset($data['status']) && in_array($data['status'], ['approved', 'rejected'])) {
+        if (isset($data['status']) && in_array($data['status'], ['approved', 'rejected'], true)) {
             if (! $user->role?->isManagerial()) {
                 return response()->json(['error' => 'Forbidden'], 403);
             }
             $data['approver_user_id'] = $user->id;
             if ($data['status'] === 'approved') {
                 $data['approved_at'] = now();
+                $data['rejected_at'] = null;
+                $data['rejection_reason'] = null;
             } else {
                 $data['rejected_at'] = now();
+                $data['approved_at'] = null;
             }
         }
 
         $leave->update($data);
 
-        return response()->json(['leaveRequest' => $leave->refresh()->load('leaveType')]);
+        $formatted = $this->formatLeaveRequest($leave->refresh()->load(['leaveType', 'employeeUser']));
+
+        return response()->json([
+            'request' => $formatted,
+            'leaveRequest' => $formatted,
+        ]);
     }
 }
