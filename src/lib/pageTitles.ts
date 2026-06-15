@@ -1,6 +1,7 @@
 /** Map route prefixes to display titles for the app topbar. */
 const TITLES: Record<string, string> = {
   "/payroll": "Payroll",
+  "/payroll/master": "Payroll Master",
   "/profile": "My Salary Slips",
   "/settings": "Settings",
   "/employees": "Employees",
@@ -29,5 +30,5 @@ export function breadcrumbForPathname(pathname: string): { label: string; href?:
   if (pathname.startsWith("/profile")) {
     return [{ label: "My Salary Slips" }];
   }
-  return [{ label: "Home", href: "/payroll?tab=master" }, { label: title }];
+  return [{ label: "Home", href: "/payroll/master" }, { label: title }];
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
 import { FormEvent, useEffect, useState, useRef, useMemo, Suspense } from "react";
@@ -18,7 +18,6 @@ import {
   type GovernmentOptionalMonthlyEarnings,
 } from "@/lib/governmentPayroll";
 import { GovernmentRunPreviewTable, type GovernmentRunPreviewRow } from "@/components/payroll/GovernmentRunPreviewTable";
-import { PayrollMasterScreen } from "@/components/payroll/PayrollMasterScreen";
 import { isAdminRole } from "@/lib/roles";
 import { GovernmentPayslipPrint } from "@/components/payslip/GovernmentPayslipPrint";
 import type { GovernmentMonthlySlip } from "@/lib/governmentPayslipLayout";
@@ -535,7 +534,14 @@ function PayrollPageContent() {
   const { role } = useAuth();
   const { showToast } = useToast();
   const params = useSearchParams();
-  const tab = params.get("tab") || "master";
+  const router = useRouter();
+  const tab = params.get("tab") || "run";
+
+  useEffect(() => {
+    if (params.get("tab") === "master") {
+      router.replace("/payroll/master");
+    }
+  }, [params, router]);
 
   const canManage = isAdminRole(role);
 
@@ -1830,14 +1836,11 @@ function PayrollPageContent() {
     );
   }
 
-  const payrollPageTitle =
-    tab === "run" ? "Run Payroll" : tab === "slips" ? "Salary Slips" : "Payroll Master";
+  const payrollPageTitle = tab === "run" ? "Run Payroll" : "Salary Slips";
   const payrollPageSubtitle =
     tab === "run"
       ? "Preview and generate monthly payroll for the selected period."
-      : tab === "slips"
-        ? "View and print employee salary slips."
-        : "Manage employee salary structures and payroll master data.";
+      : "View and print employee salary slips.";
 
   return (
     <section className="space-y-6">
@@ -1845,9 +1848,6 @@ function PayrollPageContent() {
         <h1 className="page-title">{payrollPageTitle}</h1>
         <p className="muted">{payrollPageSubtitle}</p>
       </div>
-      {tab === "master" && (
-        <PayrollMasterScreen canManage={isAdminRole(role)} />
-      )}
 
       {tab === "run" && (
         <div className="space-y-4">

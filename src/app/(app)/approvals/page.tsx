@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
 
 export default function ApprovalsPage() {
-  redirect("/payroll?tab=master");
+  redirect("/payroll/master");
 }

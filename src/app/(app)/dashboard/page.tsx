@@ -16,7 +16,7 @@ export default async function DashboardPage() {
   }
 
   if (isAdminRole(session.role)) {
-    redirect("/payroll?tab=master");
+    redirect("/payroll/master");
   }
 
   redirect("/profile?tab=pay");

@@ -70,7 +70,7 @@ export function Sidebar({
   const nav: NavItem[] = isPayrollAdmin
     ? [
         ...(isPayrollMasterAdmin
-          ? [{ href: "/payroll?tab=master", label: "Payroll Master", icon: <Wallet className={iconCls} /> }]
+          ? [{ href: "/payroll/master", label: "Payroll Master", icon: <Wallet className={iconCls} /> }]
           : []),
         { href: "/payroll?tab=run", label: "Run Payroll", icon: <PlayCircle className={iconCls} /> },
         { href: "/payroll?tab=slips", label: "Salary Slips", icon: <FileText className={iconCls} /> },
@@ -93,9 +93,12 @@ export function Sidebar({
   const closeMobile = () => onMobileClose?.();
 
   function isNavActive(href: string): boolean {
+    if (href === "/payroll/master") {
+      return pathname === "/payroll/master";
+    }
     if (href.startsWith("/payroll")) {
-      const tab = new URL(href, "http://local").searchParams.get("tab") || "master";
-      return pathname === "/payroll" && (searchParams.get("tab") || "master") === tab;
+      const tab = new URL(href, "http://local").searchParams.get("tab") || "run";
+      return pathname === "/payroll" && (searchParams.get("tab") || "run") === tab;
     }
     if (href.startsWith("/profile")) {
       return pathname === "/profile";
@@ -134,7 +137,7 @@ export function Sidebar({
             )}
           >
             <Link
-              href={isPayrollMasterAdmin ? "/payroll?tab=master" : "/payroll?tab=run"}
+              href={isPayrollMasterAdmin ? "/payroll/master" : "/payroll?tab=run"}
               title={collapsed ? `${brandName} — ${APP_NAME}` : APP_NAME}
               aria-label={`${brandName} — ${APP_NAME}`}
               onClick={closeMobile}
