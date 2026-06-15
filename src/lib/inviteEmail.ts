@@ -1,4 +1,5 @@
 import type { NextRequest } from "next/server";
+import { APP_NAME } from "@/lib/appBranding";
 
 export function getRequestAppBaseUrl(request: NextRequest): string {
   const envBase = (process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_SITE_URL || "").replace(/\/$/, "");
@@ -16,7 +17,7 @@ function escapeHtml(s: string): string {
 
 export function inviteEmailSubject(companyName: string | null | undefined): string {
   const n = companyName?.trim();
-  return n ? `${n} — complete your onboarding` : "HRMS — complete your onboarding";
+  return n ? `${n} — complete your onboarding` : `${APP_NAME} — complete your onboarding`;
 }
 
 /** HTML email body with a primary “click here” CTA for the invite link. */
@@ -40,13 +41,13 @@ export function buildInviteEmailHtml(opts: {
       <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#ffffff;border-radius:14px;border:1px solid #e2e8f0;box-shadow:0 10px 40px rgba(15,23,42,0.06);">
         <tr><td style="padding:32px 28px 28px;">
           <p style="margin:0 0 14px;font-size:16px;">${greeting}</p>
-          <p style="margin:0 0 22px;font-size:15px;color:#334155;">${org} has invited you to complete your preboarding in <strong>HRMS</strong>. Use the secure link below to upload documents and confirm your details. This link is valid for <strong>48 hours</strong>.</p>
+          <p style="margin:0 0 22px;font-size:15px;color:#334155;">${org} has invited you to complete your preboarding in <strong>${escapeHtml(APP_NAME)}</strong>. Use the secure link below to upload documents and confirm your details. This link is valid for <strong>48 hours</strong>.</p>
           <p style="margin:0 0 26px;text-align:center;">
             <a href="${url}" style="display:inline-block;background:#047857;color:#ffffff !important;text-decoration:none;padding:14px 28px;border-radius:10px;font-weight:600;font-size:15px;">Click here to open your invite</a>
           </p>
           <p style="margin:0;font-size:13px;color:#64748b;line-height:1.5;">If the button does not work, copy and paste this link into your browser:</p>
           <p style="margin:8px 0 0;font-size:12px;word-break:break-all;color:#0f766e;">${url}</p>
-          <p style="margin:24px 0 0;font-size:12px;color:#94a3b8;">This is an automated message from HRMS.</p>
+          <p style="margin:24px 0 0;font-size:12px;color:#94a3b8;">This is an automated message from ${escapeHtml(APP_NAME)}.</p>
         </td></tr>
       </table>
     </td></tr>

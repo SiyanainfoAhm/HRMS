@@ -10,7 +10,7 @@ class HrmsPayslip extends Model
 {
     use HasUuids;
 
-    protected $table = 'HRMS_payslips';
+    protected $table = 'cirt_payslips';
     protected $keyType = 'string';
     public $incrementing = false;
     public $timestamps = false;

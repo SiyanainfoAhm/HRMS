@@ -10,17 +10,16 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v
 function brandingFromCompany(company: Record<string, unknown> | null | undefined): CompanyBranding | null {
   if (!company) return null;
   const name = String(company.name ?? "").trim();
-  const logoUrl =
-    (company.logo_url != null && String(company.logo_url)) ||
-    (company.logoUrl != null && String(company.logoUrl)) ||
-    null;
-  if (!name && !logoUrl) return null;
-  return { name: name || "Company", logoUrl };
+  if (!name) return null;
+  return { name };
 }
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const cookieStore = await cookies();
-  const session = await getValidatedSession(cookieStore.get(COOKIE_NAME)?.value);
+  const session = await getValidatedSession(
+    cookieStore.get(COOKIE_NAME)?.value,
+    cookieStore.get(TOKEN_COOKIE_NAME)?.value,
+  );
   if (!session) redirect("/auth/login");
 
   const token = cookieStore.get(TOKEN_COOKIE_NAME)?.value;

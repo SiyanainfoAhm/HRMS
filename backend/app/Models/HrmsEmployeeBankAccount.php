@@ -10,7 +10,7 @@ class HrmsEmployeeBankAccount extends Model
 {
     use HasUuids;
 
-    protected $table = 'HRMS_employee_bank_accounts';
+    protected $table = 'cirt_employee_bank_accounts';
     protected $keyType = 'string';
     public $incrementing = false;
 

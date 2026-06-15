@@ -11,7 +11,7 @@ class HrmsEmployee extends Model
 {
     use HasUuids;
 
-    protected $table = 'HRMS_employees';
+    protected $table = 'cirt_employees';
     protected $keyType = 'string';
     public $incrementing = false;
 
@@ -43,9 +43,6 @@ class HrmsEmployee extends Model
     public function division(): BelongsTo { return $this->belongsTo(HrmsDivision::class, 'division_id'); }
     public function department(): BelongsTo { return $this->belongsTo(HrmsDepartment::class, 'department_id'); }
     public function designation(): BelongsTo { return $this->belongsTo(HrmsDesignation::class, 'designation_id'); }
-    public function shift(): BelongsTo { return $this->belongsTo(HrmsShift::class, 'shift_id'); }
     public function manager(): BelongsTo { return $this->belongsTo(self::class, 'manager_id'); }
     public function role(): BelongsTo { return $this->belongsTo(HrmsRole::class, 'role_id'); }
-
-    public function attendanceLogs(): HasMany { return $this->hasMany(HrmsAttendanceLog::class, 'employee_id'); }
 }

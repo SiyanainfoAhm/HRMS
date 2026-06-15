@@ -1,4 +1,4 @@
-import { get, post, put, del, upload } from "./client";
+import { get, post, put, del } from "./client";
 
 export function getMyCompany() {
   return get("/company/me");
@@ -10,12 +10,6 @@ export function setupCompany(data: Record<string, any>) {
 
 export function updateMyCompany(data: Record<string, any>) {
   return put("/company/me", data);
-}
-
-export function uploadCompanyLogo(file: File) {
-  const formData = new FormData();
-  formData.append("logo", file);
-  return upload("/company/logo", formData);
 }
 
 export function getCompanyDocuments() {

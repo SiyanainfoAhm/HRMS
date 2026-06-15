@@ -4,9 +4,10 @@ import type { SessionUser } from "@/lib/auth";
 import { Sidebar, type CompanyBranding } from "./Sidebar";
 import { Topbar } from "./ui/Topbar";
 import { ToastProvider } from "./ToastProvider";
-import { startTransition, useEffect, useState } from "react";
+import { Suspense, startTransition, useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { Menu } from "lucide-react";
+import { APP_NAME } from "@/lib/appBranding";
 import { titleForPathname } from "@/lib/pageTitles";
 
 export type { CompanyBranding };
@@ -14,12 +15,8 @@ export type { CompanyBranding };
 function brandingFromApiCompany(company: Record<string, unknown> | null | undefined): CompanyBranding | null {
   if (!company) return null;
   const name = String(company.name ?? "").trim();
-  const logoUrl =
-    (company.logo_url != null && String(company.logo_url)) ||
-    (company.logoUrl != null && String(company.logoUrl)) ||
-    null;
-  if (!name && !logoUrl) return null;
-  return { name: name || "Company", logoUrl };
+  if (!name) return null;
+  return { name };
 }
 
 export function AppShell({
@@ -98,7 +95,7 @@ export function AppShell({
     });
   }
 
-  const brandName = companyBranding?.name?.trim() || "CIRT HRMS";
+  const brandName = companyBranding?.name?.trim() || APP_NAME;
   const effectiveCollapsed = sidebarCollapsed && isDesktop;
   const mobileTitle = titleForPathname(pathname);
 
@@ -113,14 +110,16 @@ export function AppShell({
             onClick={() => setMobileNavOpen(false)}
           />
         )}
-        <Sidebar
-          user={user}
-          companyBranding={companyBranding}
-          collapsed={effectiveCollapsed}
-          onToggle={toggleSidebar}
-          mobileOpen={mobileNavOpen}
-          onMobileClose={() => setMobileNavOpen(false)}
-        />
+        <Suspense fallback={null}>
+          <Sidebar
+            user={user}
+            companyBranding={companyBranding}
+            collapsed={effectiveCollapsed}
+            onToggle={toggleSidebar}
+            mobileOpen={mobileNavOpen}
+            onMobileClose={() => setMobileNavOpen(false)}
+          />
+        </Suspense>
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <header className="flex shrink-0 items-center gap-3 border-b border-brand-border bg-white px-3 py-2.5 shadow-sm md:hidden">
             <button
@@ -133,7 +132,7 @@ export function AppShell({
             </button>
             <div className="min-w-0 flex-1">
               <div className="truncate text-sm font-bold text-slate-900">{mobileTitle}</div>
-              <div className="truncate text-xs text-brand-muted">{brandName} HRMS</div>
+              <div className="truncate text-xs text-brand-muted">{APP_NAME}</div>
             </div>
           </header>
           <Topbar user={user} />

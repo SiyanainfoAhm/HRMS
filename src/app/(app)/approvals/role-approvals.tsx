@@ -1,10 +1,12 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
-import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { PaginationBar } from "@/components/PaginationBar";
+import { FilterCard } from "@/components/ui/FilterCard";
+import { SectionTabs } from "@/components/ui/SectionTabs";
+import { RecordCard } from "@/components/ui/RecordCard";
+import { ListPagination } from "@/components/ui/ListPagination";
 import { DatePickerField } from "@/components/ui/DatePickerField";
 import { useResponsivePageSize } from "@/hooks/useResponsivePageSize";
 import { fmtDmy } from "@/lib/dateFormat";
@@ -496,7 +498,7 @@ export function ApprovalsContent() {
   }
 
   function openEditPolicy(t: any) {
-    const p = Array.isArray(t.HRMS_leave_policies) ? t.HRMS_leave_policies[0] : t.HRMS_leave_policies;
+    const p = Array.isArray(t.leavePolicies) ? t.leavePolicies[0] : t.leavePolicies;
     setEditPolicyFor({ leaveTypeId: t.id, name: t.name });
     setEditTypeName(String(t.name ?? ""));
     const ps = t.payslip_slot != null && String(t.payslip_slot).trim() ? String(t.payslip_slot).trim().toUpperCase() : "";
@@ -773,20 +775,15 @@ export function ApprovalsContent() {
         </p>
       </div>
 
-      <div className="flex flex-wrap gap-2">
-        <Link
-          href="/approvals?tab=leave"
-          className={`btn ${tab === "leave" ? "btn-primary" : "btn-outline"}`}
-        >
-          Leave
-        </Link>
-        <Link
-          href="/approvals?tab=reimbursement"
-          className={`btn ${tab === "reimbursement" ? "btn-primary" : "btn-outline"}`}
-        >
-          Reimbursement
-        </Link>
-      </div>
+      <FilterCard label="Request type">
+        <SectionTabs
+          items={[
+            { key: "leave", label: "Leave", href: "/approvals?tab=leave" },
+            { key: "reimbursement", label: "Reimbursement", href: "/approvals?tab=reimbursement" },
+          ]}
+          activeKey={tab}
+        />
+      </FilterCard>
 
       {tab === "leave" && (
         <div className="space-y-4">
@@ -861,9 +858,9 @@ export function ApprovalsContent() {
                   <tbody>
                     {typeRows.map((t: any) => {
                       const p =
-                        Array.isArray(t.HRMS_leave_policies)
-                          ? t.HRMS_leave_policies[0]
-                          : t.leavePolicies?.[0] ?? t.HRMS_leave_policies;
+                        Array.isArray(t.leavePolicies)
+                          ? t.leavePolicies[0]
+                          : t.leavePolicies?.[0];
                       return (
                         <tr key={t.id} className="border-t border-slate-200">
                           <td className="px-3 py-2">{t.name}</td>
@@ -900,16 +897,15 @@ export function ApprovalsContent() {
                 return (
                   <>
                 {leaveRequestsTotal > listPageSize && (
-                  <div className="mb-4 md:hidden">
-                    <PaginationBar
-                      page={leaveListPage}
-                      total={leaveRequestsTotal}
-                      pageSize={listPageSize}
-                      onPageChange={setLeaveListPage}
-                    />
-                  </div>
+                  <ListPagination
+                    position="top"
+                    page={leaveListPage}
+                    total={leaveRequestsTotal}
+                    pageSize={listPageSize}
+                    onPageChange={setLeaveListPage}
+                  />
                 )}
-                <div className="hidden overflow-x-auto md:block">
+                <div className="table-panel overflow-x-auto">
                   <table className="w-full text-left text-sm">
                     <thead className="text-slate-600">
                       <tr>
@@ -958,47 +954,38 @@ export function ApprovalsContent() {
                     </tbody>
                   </table>
                 </div>
-                <div className="space-y-3 md:hidden">
+                <div className="records-stack">
                   {requests.map((r) => (
-                    <div key={r.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                      <p className="font-semibold text-slate-900">{r.leaveTypeName || "—"}</p>
-                      <p className="mt-1 text-sm text-slate-700">
-                        {fmtDmy(r.startDate)} → {fmtDmy(r.endDate)} · {r.totalDays} day(s)
-                      </p>
-                      <p className="mt-2 text-sm capitalize text-slate-600">Status: {r.status}</p>
-                      {r.reason && r.reason !== "-" && <p className="mt-2 text-sm text-slate-600">Reason: {r.reason}</p>}
-                      {hasPendingActions && r.status === "pending" && (
-                        <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-100 pt-3">
-                          <button
-                            type="button"
-                            className="btn btn-primary text-sm"
-                            disabled={actionLoadingId === r.id}
-                            onClick={() => act(r.id, "approve")}
-                          >
-                            Approve
-                          </button>
-                          <button
-                            type="button"
-                            className="btn btn-outline text-sm"
-                            disabled={actionLoadingId === r.id}
-                            onClick={() => act(r.id, "reject")}
-                          >
-                            Reject
-                          </button>
-                        </div>
-                      )}
-                    </div>
+                    <RecordCard
+                      key={r.id}
+                      title={r.leaveTypeName || "—"}
+                      subtitle={`${fmtDmy(r.startDate)} → ${fmtDmy(r.endDate)} · ${r.totalDays} day(s)`}
+                      actions={
+                        hasPendingActions && r.status === "pending" ? (
+                          <>
+                            <button type="button" className="btn btn-primary text-sm" disabled={actionLoadingId === r.id} onClick={() => act(r.id, "approve")}>
+                              Approve
+                            </button>
+                            <button type="button" className="btn btn-outline text-sm" disabled={actionLoadingId === r.id} onClick={() => act(r.id, "reject")}>
+                              Reject
+                            </button>
+                          </>
+                        ) : undefined
+                      }
+                    >
+                      <p className="capitalize text-slate-600">Status: {r.status}</p>
+                      {r.reason && r.reason !== "-" && <p className="mt-2 text-slate-600">Reason: {r.reason}</p>}
+                    </RecordCard>
                   ))}
                 </div>
                 {leaveRequestsTotal > listPageSize && (
-                  <div className="mt-4 hidden border-t border-slate-200 pt-4 md:block">
-                    <PaginationBar
-                      page={leaveListPage}
-                      total={leaveRequestsTotal}
-                      pageSize={listPageSize}
-                      onPageChange={setLeaveListPage}
-                    />
-                  </div>
+                  <ListPagination
+                    position="bottom"
+                    page={leaveListPage}
+                    total={leaveRequestsTotal}
+                    pageSize={listPageSize}
+                    onPageChange={setLeaveListPage}
+                  />
                 )}
                   </>
                 );
@@ -1412,16 +1399,15 @@ export function ApprovalsContent() {
             ) : (
               <>
                 {reimbClaimsTotal > listPageSize && (
-                  <div className="mb-4 md:hidden">
-                    <PaginationBar
-                      page={reimbListPage}
-                      total={reimbClaimsTotal}
-                      pageSize={listPageSize}
-                      onPageChange={setReimbListPage}
-                    />
-                  </div>
+                  <ListPagination
+                    position="top"
+                    page={reimbListPage}
+                    total={reimbClaimsTotal}
+                    pageSize={listPageSize}
+                    onPageChange={setReimbListPage}
+                  />
                 )}
-                <div className="mt-3 hidden overflow-x-auto md:block">
+                <div className="table-panel mt-3 overflow-x-auto">
                   <table className="w-full min-w-[960px] text-left text-sm">
                     <thead className="text-slate-600">
                       <tr>
@@ -1516,12 +1502,26 @@ export function ApprovalsContent() {
                     </tbody>
                   </table>
                 </div>
-                <div className="mt-3 space-y-3 md:hidden">
+                <div className="records-stack mt-3">
                   {reimbClaims.map((c: any) => (
-                    <div key={c.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                      <p className="font-semibold text-slate-900">{c.employeeName || "—"}</p>
-                      <p className="text-xs text-slate-500 break-all">{c.employeeEmail || ""}</p>
-                      <dl className="mt-3 space-y-2 text-sm">
+                    <RecordCard
+                      key={c.id}
+                      title={c.employeeName || "—"}
+                      subtitle={c.employeeEmail || ""}
+                      actions={
+                        canApprove && c.status === "pending" ? (
+                          <>
+                            <button type="button" className="btn btn-primary text-sm" disabled={reimbActionId === c.id} onClick={() => actReimbursement(c.id, "approve")}>
+                              Approve
+                            </button>
+                            <button type="button" className="btn btn-outline text-sm" disabled={reimbActionId === c.id} onClick={() => actReimbursement(c.id, "reject")}>
+                              Reject
+                            </button>
+                          </>
+                        ) : undefined
+                      }
+                    >
+                      <dl className="space-y-2 text-sm">
                         <div className="flex justify-between gap-2">
                           <dt className="text-slate-500">Category</dt>
                           <dd>{c.category}</dd>
@@ -1567,7 +1567,7 @@ export function ApprovalsContent() {
                             href={c.attachment_url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-sm font-medium text-emerald-700 underline"
+                            className="text-sm font-medium text-[var(--brand-primary)] underline"
                           >
                             View attachment
                           </a>
@@ -1575,38 +1575,17 @@ export function ApprovalsContent() {
                           <span className="text-sm text-slate-400">No attachment</span>
                         )}
                       </div>
-                      {canApprove && c.status === "pending" && (
-                        <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-100 pt-3">
-                          <button
-                            type="button"
-                            className="btn btn-primary text-sm"
-                            disabled={reimbActionId === c.id}
-                            onClick={() => actReimbursement(c.id, "approve")}
-                          >
-                            Approve
-                          </button>
-                          <button
-                            type="button"
-                            className="btn btn-outline text-sm"
-                            disabled={reimbActionId === c.id}
-                            onClick={() => actReimbursement(c.id, "reject")}
-                          >
-                            Reject
-                          </button>
-                        </div>
-                      )}
-                    </div>
+                    </RecordCard>
                   ))}
                 </div>
                 {reimbClaimsTotal > listPageSize && (
-                  <div className="mt-4 hidden border-t border-slate-200 pt-4 md:block">
-                    <PaginationBar
-                      page={reimbListPage}
-                      total={reimbClaimsTotal}
-                      pageSize={listPageSize}
-                      onPageChange={setReimbListPage}
-                    />
-                  </div>
+                  <ListPagination
+                    position="bottom"
+                    page={reimbListPage}
+                    total={reimbClaimsTotal}
+                    pageSize={listPageSize}
+                    onPageChange={setReimbListPage}
+                  />
                 )}
               </>
             )}

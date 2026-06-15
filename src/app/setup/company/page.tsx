@@ -2,11 +2,12 @@
 
 import { FormEvent, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { INSTITUTE_LABEL, PAYSLIP_INSTITUTE_NAME } from "@/lib/appBranding";
 
 export default function CompanySetupPage() {
   const router = useRouter();
-  const [name, setName] = useState("");
-  const [code, setCode] = useState("");
+  const [name, setName] = useState(PAYSLIP_INSTITUTE_NAME);
+  const [code, setCode] = useState("CIRT");
   const [loading, setLoading] = useState(false);
   const [checking, setChecking] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -28,7 +29,7 @@ export default function CompanySetupPage() {
     e.preventDefault();
     setError(null);
     if (!name.trim()) {
-      setError("Company name is required");
+      setError(`${INSTITUTE_LABEL} name is required`);
       return;
     }
     setLoading(true);
@@ -40,14 +41,14 @@ export default function CompanySetupPage() {
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data?.error || "Failed to create company");
+        setError(data?.error || `Failed to create ${INSTITUTE_LABEL.toLowerCase()} record`);
         setLoading(false);
         return;
       }
       router.push("/dashboard");
       router.refresh();
     } catch {
-      setError("Failed to create company");
+      setError(`Failed to create ${INSTITUTE_LABEL.toLowerCase()} record`);
       setLoading(false);
     }
   }
@@ -64,12 +65,14 @@ export default function CompanySetupPage() {
     <div className="flex min-h-screen flex-col items-center justify-center px-4">
       <div className="w-full max-w-md space-y-6">
         <div className="text-center">
-          <h1 className="page-title">Set up your organization</h1>
-          <p className="mt-1 text-sm text-slate-500">Create your organization to continue</p>
+          <h1 className="page-title">Set up {INSTITUTE_LABEL}</h1>
+          <p className="mt-1 text-sm text-slate-500">
+            One-time setup for payroll (name, address, and tax settings). CIRT Payroll uses a single institute record.
+          </p>
         </div>
         <form onSubmit={handleSubmit} className="card space-y-4">
           <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">Company name</label>
+            <label className="mb-1 block text-sm font-medium text-slate-700">Institute name</label>
             <input
               type="text"
               required
@@ -79,7 +82,7 @@ export default function CompanySetupPage() {
             />
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">Company code (optional)</label>
+            <label className="mb-1 block text-sm font-medium text-slate-700">Institute code (optional)</label>
             <input
               type="text"
               value={code}
@@ -89,11 +92,10 @@ export default function CompanySetupPage() {
           </div>
           {error && <p className="text-sm text-red-600">{error}</p>}
           <button type="submit" className="btn btn-primary w-full" disabled={loading}>
-            {loading ? "Creating..." : "Create company"}
+            {loading ? "Saving..." : "Continue"}
           </button>
         </form>
       </div>
     </div>
   );
 }
-

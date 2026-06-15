@@ -10,7 +10,7 @@ class HrmsRole extends Model
 {
     use HasUuids;
 
-    protected $table = 'HRMS_roles';
+    protected $table = 'cirt_roles';
     protected $keyType = 'string';
     public $incrementing = false;
     public $timestamps = false;

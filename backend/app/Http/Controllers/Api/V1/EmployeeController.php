@@ -3,10 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
-use App\Models\HrmsCompanyDocument;
 use App\Models\HrmsEmployee;
-use App\Models\HrmsEmployeeDocumentSubmission;
-use App\Models\HrmsEmployeeInvite;
 use App\Models\HrmsPayrollMaster;
 use App\Models\HrmsUser;
 use App\Support\BankDetailsService;
@@ -21,7 +18,7 @@ class EmployeeController extends Controller
     {
         $user = $request->user();
         $query = HrmsEmployee::where('company_id', $user->company_id)
-            ->with(['user', 'division', 'department', 'designation', 'shift', 'role'])
+            ->with(['user', 'division', 'department', 'designation', 'role'])
             ->orderBy('first_name');
 
         $employmentStatus = $request->query('employmentStatus') ?? $request->query('employment_status');
@@ -38,11 +35,11 @@ class EmployeeController extends Controller
 
     public function show(Request $request, string $id): JsonResponse
     {
-        $employee = HrmsEmployee::with(['user', 'division', 'department', 'designation', 'shift', 'role', 'manager'])
+        $employee = HrmsEmployee::with(['user', 'division', 'department', 'designation', 'role', 'manager'])
             ->find($id);
 
         if (! $employee) {
-            $employee = HrmsEmployee::with(['user', 'division', 'department', 'designation', 'shift', 'role', 'manager'])
+            $employee = HrmsEmployee::with(['user', 'division', 'department', 'designation', 'role', 'manager'])
                 ->where('user_id', $id)
                 ->first();
         }
@@ -493,82 +490,5 @@ class EmployeeController extends Controller
             ->update(['effective_end_date' => $lastWorkingDate ?? now()->toDateString()]);
 
         return response()->json(['message' => 'Converted to past', 'user' => $targetUser->refresh()]);
-    }
-
-    public function onboarding(Request $request, string $id): JsonResponse
-    {
-        $authUser = $request->user();
-        $targetUser = HrmsUser::find($id);
-        if (! $targetUser) {
-            $employee = HrmsEmployee::find($id);
-            if ($employee) {
-                $targetUser = HrmsUser::find($employee->user_id);
-            }
-        }
-        if (! $targetUser) {
-            return response()->json(['error' => 'User not found'], 404);
-        }
-
-        $invite = HrmsEmployeeInvite::where('user_id', $targetUser->id)
-            ->orderBy('created_at', 'desc')
-            ->first();
-
-        $documents = [];
-        if ($invite && $invite->requested_document_ids) {
-            $docs = HrmsCompanyDocument::whereIn('id', $invite->requested_document_ids)->get();
-            $subs = HrmsEmployeeDocumentSubmission::where('user_id', $targetUser->id)
-                ->whereIn('document_id', $invite->requested_document_ids)
-                ->get()
-                ->keyBy('document_id');
-
-            foreach ($docs as $doc) {
-                $documents[] = [
-                    'document' => $doc,
-                    'submission' => $subs->get($doc->id),
-                ];
-            }
-        }
-
-        $master = HrmsPayrollMaster::where('employee_user_id', $targetUser->id)
-            ->whereNull('effective_end_date')
-            ->first();
-
-        $empRecord = HrmsEmployee::where('user_id', $targetUser->id)->first();
-
-        $employee = array_merge(
-            $empRecord ? $empRecord->toArray() : [],
-            [
-                'id' => $targetUser->id,
-                'employee_record_id' => $empRecord?->id,
-                'name' => $targetUser->name ?? trim(($empRecord->first_name ?? '').' '.($empRecord->last_name ?? '')) ?: null,
-                'email' => $targetUser->email,
-                'phone' => $targetUser->phone ?? $empRecord?->phone,
-                'gender' => $targetUser->gender,
-                'date_of_birth' => $empRecord?->date_of_birth ?? $targetUser->date_of_birth,
-                'date_of_joining' => $empRecord?->date_of_joining ?? $targetUser->date_of_joining,
-                'current_address_line1' => $targetUser->current_address_line1,
-                'current_address_line2' => $targetUser->current_address_line2,
-                'current_city' => $targetUser->current_city,
-                'current_state' => $targetUser->current_state,
-                'bank_name' => $targetUser->bank_name,
-                'bank_account_number' => $targetUser->bank_account_number,
-                'bank_ifsc' => $targetUser->bank_ifsc,
-                'aadhaar' => $targetUser->aadhaar,
-                'pan' => $targetUser->pan,
-                'uan_number' => $targetUser->uan_number,
-                'pf_number' => $targetUser->pf_number,
-                'gross_salary' => $targetUser->gross_salary,
-                'tds_monthly' => $targetUser->tds_monthly,
-                'government_pay_level' => $targetUser->government_pay_level,
-            ]
-        );
-
-        return response()->json([
-            'employee' => $employee,
-            'user' => $targetUser,
-            'invite' => $invite,
-            'documents' => $documents,
-            'payrollMaster' => $master,
-        ]);
     }
 }

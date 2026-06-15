@@ -10,7 +10,7 @@ class HrmsPayrollPeriod extends Model
 {
     use HasUuids;
 
-    protected $table = 'HRMS_payroll_periods';
+    protected $table = 'cirt_payroll_periods';
     protected $keyType = 'string';
     public $incrementing = false;
 

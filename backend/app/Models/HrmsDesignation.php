@@ -10,7 +10,7 @@ class HrmsDesignation extends Model
 {
     use HasUuids;
 
-    protected $table = 'HRMS_designations';
+    protected $table = 'cirt_designations';
     protected $keyType = 'string';
     public $incrementing = false;
 

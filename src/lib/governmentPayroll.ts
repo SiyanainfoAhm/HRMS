@@ -72,7 +72,7 @@ export type GovernmentMonthlyInput = {
   hraPercent: number;
   medicalFixed: number;
   transportDaPercent: number;
-  /** From HRMS_users.government_pay_level */
+  /** From cirt_users.government_pay_level */
   payLevel: number;
   daysInMonth: number;
   unpaidDays: number;

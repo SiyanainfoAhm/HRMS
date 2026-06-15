@@ -18,7 +18,7 @@ class HrmsUser extends Authenticatable
     use HasUuids;
     use Notifiable;
 
-    protected $table = 'HRMS_users';
+    protected $table = 'cirt_users';
     protected $keyType = 'string';
     public $incrementing = false;
 
@@ -70,6 +70,16 @@ class HrmsUser extends Authenticatable
         return (string) $this->password_hash;
     }
 
+    public function hasManagerialRole(): bool
+    {
+        $role = $this->role;
+        if ($role instanceof UserRole) {
+            return $role->isManagerial();
+        }
+
+        return UserRole::isManagerialValue(is_string($role) ? $role : null);
+    }
+
     public function employee(): HasOne
     {
         return $this->hasOne(HrmsEmployee::class, 'user_id');
@@ -85,23 +95,8 @@ class HrmsUser extends Authenticatable
         return $this->hasMany(HrmsPayslip::class, 'employee_user_id');
     }
 
-    public function leaveRequests(): HasMany
-    {
-        return $this->hasMany(HrmsLeaveRequest::class, 'employee_user_id');
-    }
-
-    public function reimbursements(): HasMany
-    {
-        return $this->hasMany(HrmsReimbursement::class, 'employee_user_id');
-    }
-
     public function bankAccounts(): HasMany
     {
         return $this->hasMany(HrmsEmployeeBankAccount::class, 'user_id');
-    }
-
-    public function documentSubmissions(): HasMany
-    {
-        return $this->hasMany(HrmsEmployeeDocumentSubmission::class, 'user_id');
     }
 }

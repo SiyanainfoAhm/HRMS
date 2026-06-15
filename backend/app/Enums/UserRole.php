@@ -14,4 +14,9 @@ enum UserRole: string
     {
         return in_array($this, [self::SuperAdmin, self::Admin, self::Hr], true);
     }
+
+    public static function isManagerialValue(?string $role): bool
+    {
+        return in_array($role, [self::SuperAdmin->value, self::Admin->value, self::Hr->value], true);
+    }
 }

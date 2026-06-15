@@ -10,7 +10,7 @@ class HrmsCompany extends Model
 {
     use HasUuids;
 
-    protected $table = 'HRMS_companies';
+    protected $table = 'cirt_companies';
     protected $keyType = 'string';
     public $incrementing = false;
 
@@ -35,8 +35,5 @@ class HrmsCompany extends Model
     public function divisions(): HasMany { return $this->hasMany(HrmsDivision::class, 'company_id'); }
     public function departments(): HasMany { return $this->hasMany(HrmsDepartment::class, 'company_id'); }
     public function designations(): HasMany { return $this->hasMany(HrmsDesignation::class, 'company_id'); }
-    public function shifts(): HasMany { return $this->hasMany(HrmsShift::class, 'company_id'); }
     public function roles(): HasMany { return $this->hasMany(HrmsRole::class, 'company_id'); }
-    public function holidays(): HasMany { return $this->hasMany(HrmsHoliday::class, 'company_id'); }
-    public function documents(): HasMany { return $this->hasMany(HrmsCompanyDocument::class, 'company_id'); }
 }

@@ -79,15 +79,6 @@ export const GovernmentPayslipPrint = forwardRef<HTMLDivElement, GovernmentPaysl
           <tbody>
             <tr>
               <td colSpan={2} className="border border-black px-3 py-3 text-center">
-                {company?.logoUrl ? (
-                  <div className="mb-2 flex justify-center border-b border-black/20 pb-2 print:mb-1 print:pb-1">
-                    <img
-                      src={company.logoUrl}
-                      alt=""
-                      className="h-14 max-h-[64px] w-auto max-w-[min(100%,260px)] object-contain"
-                    />
-                  </div>
-                ) : null}
                 {company?.address ? (
                   <div className="text-xs uppercase leading-snug text-slate-700">{company.address}</div>
                 ) : null}

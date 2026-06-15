@@ -142,25 +142,27 @@ export function AttendanceDateFilter({
   }
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center gap-2">
-        {PRESETS.map((p) => {
-          const active =
-            p.id === "custom" ? preset === "custom" || customOpen : preset === p.id && !customOpen;
-          return (
-            <button
-              key={p.id}
-              type="button"
-              onClick={() => applyPreset(p.id)}
-              className={`filter-pill ${active ? "filter-pill-active" : "filter-pill-inactive"}`}
-            >
-              {p.label}
-            </button>
-          );
-        })}
+    <div className="flex w-full min-w-0 flex-col gap-3">
+      <div className="filter-scroll">
+        <div className="flex min-w-max gap-2 sm:min-w-0 sm:flex-wrap">
+          {PRESETS.map((p) => {
+            const active =
+              p.id === "custom" ? preset === "custom" || customOpen : preset === p.id && !customOpen;
+            return (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => applyPreset(p.id)}
+                className={`filter-pill shrink-0 ${active ? "filter-pill-active" : "filter-pill-inactive"}`}
+              >
+                {p.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200/80 bg-gradient-to-r from-slate-50/90 to-white px-4 py-3 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-brand-border bg-slate-50/80 px-4 py-3">
         <div>
           <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Selected period (IST)</p>
           <p className="text-sm font-semibold text-slate-900">{formatRangeLabel(startDate, endDate)}</p>

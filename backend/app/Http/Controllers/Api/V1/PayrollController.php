@@ -348,15 +348,15 @@ class PayrollController extends Controller
             }
 
             $payrollMode = $m->payroll_mode ?? 'government';
-            $grossBasic = (float) ($m->gross_basic ?? 0);
+            $grossBasic = (float) ($m->gross_basic_pay ?? $m->gross_basic ?? 0);
             $daPercent = (float) ($m->da_percent ?? 53);
             $hraPercent = (float) ($m->hra_percent ?? 30);
-            $medicalFixed = (float) ($m->medical_fixed ?? 3000);
+            $medicalFixed = (float) ($m->medical_fixed ?? $m->medical ?? 3000);
             $transportDaPercent = (float) ($m->transport_da_percent ?? 48.06);
-            $tds = (float) ($m->tds ?? 0);
-            $ptDefault = (float) ($m->pt_default ?? 200);
-            $advanceBonus = (float) ($m->advance_bonus ?? 0);
-            $payLevel = (int) ($empUser->government_pay_level ?? 5);
+            $tds = (float) ($m->income_tax ?? $m->tds ?? 0);
+            $ptDefault = (float) ($m->professional_tax ?? $m->pt_default ?? $m->pt ?? 200);
+            $advanceBonus = (float) ($m->advance ?? $m->advance_bonus ?? 0);
+            $payLevel = (int) ($m->pay_level ?? $empUser->government_pay_level ?? 5);
 
             $row = [
                 'employeeUserId' => $m->employee_user_id,
@@ -922,7 +922,7 @@ class PayrollController extends Controller
         ];
     }
 
-    /** HRMS_payslips.created_by references HRMS_employees.id, not HRMS_users.id. */
+    /** cirt_payslips.created_by references cirt_employees.id, not cirt_users.id. */
     private function employeeRecordIdForUser(string $userId, string $companyId): ?string
     {
         return HrmsEmployee::where('user_id', $userId)

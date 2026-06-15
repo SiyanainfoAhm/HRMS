@@ -10,7 +10,7 @@ class HrmsDepartment extends Model
 {
     use HasUuids;
 
-    protected $table = 'HRMS_departments';
+    protected $table = 'cirt_departments';
     protected $keyType = 'string';
     public $incrementing = false;
 

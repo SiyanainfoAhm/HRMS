@@ -10,7 +10,7 @@ class HrmsDivision extends Model
 {
     use HasUuids;
 
-    protected $table = 'HRMS_divisions';
+    protected $table = 'cirt_divisions';
     protected $keyType = 'string';
     public $incrementing = false;
 

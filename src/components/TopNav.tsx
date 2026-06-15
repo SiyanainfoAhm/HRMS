@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { APP_NAME } from "@/lib/appBranding";
 import type { SessionUser } from "@/lib/auth";
 
 function getInitials(name: string | null, email: string): string {
@@ -50,7 +51,7 @@ export function TopNav({
   async function handleLogout() {
     const ok = await confirmAction({
       title: "Logout now?",
-      message: "You will be signed out of HRMS on this device.",
+      message: `You will be signed out of ${APP_NAME} on this device.`,
       confirmText: "Logout",
     });
     if (!ok) return;
@@ -96,7 +97,7 @@ export function TopNav({
         >
           {sidebarCollapsed ? "☰" : "⟨⟩"}
         </button>
-        <div className="text-sm text-slate-500">HRMS</div>
+        <div className="text-sm text-slate-500">{APP_NAME}</div>
       </div>
       <div className="flex items-center gap-3">
         <span className="text-sm text-slate-600">{roleLabel(user.role)}</span>

@@ -16,7 +16,7 @@ export type LeavePolicyWithTypeRow = {
   reset_day: number | null;
   allow_carryover: boolean | null;
   carryover_limit: number | null;
-  HRMS_leave_types?: { name?: string; is_paid?: boolean; code?: string | null; payslip_slot?: string | null } | null;
+  leaveType?: { name?: string; is_paid?: boolean; code?: string | null; payslip_slot?: string | null } | null;
 };
 
 export type LeaveBalanceComputedRow = {
@@ -62,9 +62,9 @@ export function computeLeaveBalanceRows(
 
     return {
       leaveTypeId: p.leave_type_id,
-      leaveTypeName: p.HRMS_leave_types?.name ?? "",
-      payslipSlot: (p.HRMS_leave_types?.payslip_slot as string | null) ?? null,
-      isPaid: Boolean(p.HRMS_leave_types?.is_paid),
+      leaveTypeName: p.leaveType?.name ?? "",
+      payslipSlot: (p.leaveType?.payslip_slot as string | null) ?? null,
+      isPaid: Boolean(p.leaveType?.is_paid),
       entitled,
       used,
       remaining,

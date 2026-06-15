@@ -1,5 +1,6 @@
 "use client";
 
+import { APP_NAME } from "@/lib/appBranding";
 import Image from "next/image";
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
@@ -799,7 +800,7 @@ export function DashboardContent() {
     <section className="space-y-6">
       <PageHeader
         title="Dashboard"
-        description={`Welcome back — ${role.replace("_", " ")} workspace for CIRT HRMS .`}
+        description={`Welcome back — ${role.replace("_", " ")} workspace for ${APP_NAME}.`}
       />
 
       <div className="mb-6 rounded-2xl bg-gradient-to-r from-brand-navy to-brand-blue px-4 py-4 text-white shadow-md sm:px-6">

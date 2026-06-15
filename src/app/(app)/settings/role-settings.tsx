@@ -1,17 +1,14 @@
 "use client";
 
+import { INSTITUTE_LABEL } from "@/lib/appBranding";
 import { useAuth } from "@/contexts/AuthContext";
-import { type ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useToast } from "@/components/ToastProvider";
 import { SkeletonList, SkeletonTable, SkeletonText } from "@/components/Skeleton";
 
 export function SettingsContent() {
   const { role } = useAuth();
   const { showToast } = useToast();
-  const router = useRouter();
-  const logoFileRef = useRef<HTMLInputElement>(null);
-  const [logoBusy, setLogoBusy] = useState(false);
   const canManage = useMemo(() => role === "super_admin" || role === "admin" || role === "hr", [role]);
   const isSuperAdmin = role === "super_admin";
   const canViewCompanySettings = useMemo(
@@ -19,7 +16,7 @@ export function SettingsContent() {
     [role]
   );
 
-  const [activeTab, setActiveTab] = useState<"company" | "shifts" | "roles" | "org" | "designations">("company");
+  const [activeTab, setActiveTab] = useState<"company" | "roles" | "org" | "designations">("company");
 
   const [company, setCompany] = useState<any | null>(null);
   const [loading, setLoading] = useState(false);
@@ -101,45 +98,6 @@ export function SettingsContent() {
     return (hh || 0) * 60 + (mm || 0);
   }
 
-  async function onLogoFileSelected(e: ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file || !isSuperAdmin) return;
-    setLogoBusy(true);
-    try {
-      const fd = new FormData();
-      fd.append("file", file);
-      const res = await fetch("/api/company/logo", { method: "POST", body: fd });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || "Upload failed");
-      setCompany(data.company);
-      showToast("success", "Company logo updated");
-      router.refresh();
-    } catch (err: unknown) {
-      showToast("error", err instanceof Error ? err.message : "Upload failed");
-    } finally {
-      setLogoBusy(false);
-    }
-  }
-
-  async function removeCompanyLogo() {
-    if (!isSuperAdmin) return;
-    if (!window.confirm("Remove the company logo from the sidebar?")) return;
-    setLogoBusy(true);
-    try {
-      const res = await fetch("/api/company/logo", { method: "DELETE" });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || "Failed to remove logo");
-      setCompany(data.company);
-      showToast("success", "Logo removed");
-      router.refresh();
-    } catch (err: unknown) {
-      showToast("error", err instanceof Error ? err.message : "Failed to remove logo");
-    } finally {
-      setLogoBusy(false);
-    }
-  }
-
   const [shiftForm, setShiftForm] = useState({
     id: "",
     name: "",
@@ -159,7 +117,6 @@ export function SettingsContent() {
       setModuleTabLoading(true);
       setModuleError(null);
       try {
-        if (activeTab === "shifts") await refreshShifts();
         if (activeTab === "roles") await refreshRoles();
         if (activeTab === "designations") await refreshDesignations();
         if (activeTab === "org") await refreshOrg();
@@ -552,7 +509,7 @@ export function SettingsContent() {
       <div>
         <h1 className="page-title">Settings</h1>
         <p className="muted">
-          Company profile (name, address, professional tax, logo) can be changed by Super Admin only. Shifts, org structure,
+          {INSTITUTE_LABEL} profile (name, address, professional tax) can be changed by Super Admin only. Org structure,
           roles, and designations can be managed by Admin and HR.
         </p>
       </div>
@@ -565,14 +522,7 @@ export function SettingsContent() {
               onClick={() => setActiveTab("company")}
               className={`btn ${activeTab === "company" ? "btn-primary" : "btn-outline"}`}
             >
-              Company
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab("shifts")}
-              className={`btn ${activeTab === "shifts" ? "btn-primary" : "btn-outline"}`}
-            >
-              Shifts
+              Institute
             </button>
             <button
               type="button"
@@ -603,8 +553,7 @@ export function SettingsContent() {
             <div className="card">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <h2 className="mb-1 text-lg font-semibold text-slate-900">Company profile</h2>
-                  <p className="muted">Update company name, address, industry and contact details.</p>
+                  <h2 className="mb-1 text-lg font-semibold text-slate-900">{INSTITUTE_LABEL} profile</h2>
                 </div>
                 {isSuperAdmin && (
                   <button type="button" className="btn btn-primary" onClick={openCompanyDialog} disabled={loading}>
@@ -666,61 +615,12 @@ export function SettingsContent() {
                       ? Number(company.professional_tax_monthly).toLocaleString("en-IN")
                       : "—"}
                   </p>
-                  <div className="mt-6 border-t border-slate-200 pt-4">
-                    <h3 className="text-sm font-semibold text-slate-900">Company logo</h3>
-                    <p className="mt-1 text-xs text-slate-500">
-                      Appears at the top of the sidebar for everyone. Super Admin can upload or remove it (PNG, JPEG,
-                      WebP, GIF, or SVG, max 2&nbsp;MB).
-                    </p>
-                    <div className="mt-3 flex flex-wrap items-center gap-4">
-                      <div className="flex h-20 w-40 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 p-2">
-                        {company?.logo_url ? (
-                          <img
-                            src={String(company.logo_url)}
-                            alt=""
-                            className="max-h-full max-w-full object-contain"
-                          />
-                        ) : (
-                          <span className="text-xs text-slate-400">No logo</span>
-                        )}
-                      </div>
-                      {isSuperAdmin && (
-                        <div className="flex flex-col gap-2">
-                          <input
-                            ref={logoFileRef}
-                            type="file"
-                            accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
-                            className="hidden"
-                            onChange={onLogoFileSelected}
-                          />
-                          <button
-                            type="button"
-                            className="btn btn-primary"
-                            disabled={logoBusy || loading}
-                            onClick={() => logoFileRef.current?.click()}
-                          >
-                            {logoBusy ? "Working…" : "Upload logo"}
-                          </button>
-                          {company?.logo_url ? (
-                            <button
-                              type="button"
-                              className="btn btn-outline text-red-700 hover:bg-red-50"
-                              disabled={logoBusy || loading}
-                              onClick={removeCompanyLogo}
-                            >
-                              Remove logo
-                            </button>
-                          ) : null}
-                        </div>
-                      )}
-                    </div>
-                  </div>
                 </div>
               )}
             </div>
           )}
 
-          {activeTab === "shifts" && (
+          {false && (
             <div className="card space-y-3">
               <div className="flex items-start justify-between gap-4">
                 <div>
@@ -1017,7 +917,7 @@ export function SettingsContent() {
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <h2 className="mb-1 text-lg font-semibold text-slate-900">Divisions</h2>
-                    <p className="muted">Divisions for this company.</p>
+                    <p className="muted">Divisions for {INSTITUTE_LABEL}.</p>
                   </div>
                   {canManage && (
                     <button
@@ -1091,7 +991,7 @@ export function SettingsContent() {
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <h2 className="mb-1 text-lg font-semibold text-slate-900">Departments</h2>
-                    <p className="muted">Departments for this company.</p>
+                    <p className="muted">Departments for {INSTITUTE_LABEL}.</p>
                   </div>
                   {canManage && (
                     <button
@@ -1188,8 +1088,8 @@ export function SettingsContent() {
           >
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-5 py-4">
               <div>
-                <h2 className="text-lg font-semibold text-slate-900">Company profile</h2>
-                <p className="text-sm text-slate-500">Update your company details.</p>
+                <h2 className="text-lg font-semibold text-slate-900">{INSTITUTE_LABEL} profile</h2>
+                <p className="text-sm text-slate-500">Update institute details for CIRT Payroll.</p>
               </div>
               <button type="button" className="btn btn-outline" onClick={() => setIsCompanyDialogOpen(false)}>
                 Close
@@ -1199,7 +1099,7 @@ export function SettingsContent() {
             <form onSubmit={saveCompany} className="max-h-[75vh] overflow-y-auto p-5">
               <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                 <div className="md:col-span-2">
-                  <label className="mb-1 block text-sm font-medium text-slate-700">Company name</label>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Institute name</label>
                   <input
                     type="text"
                     required
@@ -1387,7 +1287,7 @@ export function SettingsContent() {
         </div>
       )}
 
-      {isShiftsDialogOpen && canManage && (
+      {false && canManage && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <button type="button" className="absolute inset-0 bg-black/40" onClick={() => setIsShiftsDialogOpen(false)} />
           <div className="relative z-10 w-full max-w-4xl rounded-xl border border-slate-200 bg-white shadow-xl">

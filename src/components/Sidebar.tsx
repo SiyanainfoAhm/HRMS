@@ -1,15 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
-  LayoutDashboard,
-  Users,
-  Clock,
-  CalendarDays,
-  BadgeCheck,
   Wallet,
+  PlayCircle,
+  FileText,
   UserCircle,
   Settings,
   ChevronLeft,
@@ -19,9 +16,10 @@ import {
 import { useAuth } from "@/contexts/AuthContext";
 import type { SessionUser } from "@/lib/auth";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { APP_NAME } from "@/lib/appBranding";
 import { cn } from "@/lib/cn";
 
-export type CompanyBranding = { name: string; logoUrl: string | null };
+export type CompanyBranding = { name: string };
 
 type NavItem = { href: string; label: string; icon: React.ReactNode };
 
@@ -60,40 +58,30 @@ export function Sidebar({
   onMobileClose?: () => void;
 }) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const { role } = useAuth();
   const router = useRouter();
 
-  const nav: NavItem[] = [
-    { href: "/dashboard", label: "Dashboard", icon: <LayoutDashboard className={iconCls} /> },
-    ...(role === "super_admin" || role === "admin" || role === "hr"
-      ? ([
-          { href: "/employees", label: "Employees", icon: <Users className={iconCls} /> },
-          { href: "/attendance", label: "Attendance", icon: <Clock className={iconCls} /> },
-        ] as const)
-      : []),
-    ...(role === "employee" || role === "manager"
-      ? ([{ href: "/attendance", label: "Attendance", icon: <Clock className={iconCls} /> }] as const)
-      : []),
-    { href: "/holidays", label: "Holidays", icon: <CalendarDays className={iconCls} /> },
-    ...(role === "super_admin" || role === "admin" || role === "hr"
-      ? ([{ href: "/payroll", label: "Payroll", icon: <Wallet className={iconCls} /> }] as const)
-      : []),
-    { href: "/approvals", label: "Approvals", icon: <BadgeCheck className={iconCls} /> },
-    { href: "/profile", label: "Profile", icon: <UserCircle className={iconCls} /> },
-    ...(role === "super_admin" || role === "admin" || role === "hr"
-      ? ([{ href: "/settings", label: "Settings", icon: <Settings className={iconCls} /> }] as const)
-      : []),
-  ];
+  const isPayrollAdmin = role === "super_admin" || role === "admin" || role === "hr";
+  const isPayrollMasterAdmin = role === "super_admin" || role === "admin";
+  const isEmployee = role === "employee" || role === "manager";
+
+  const nav: NavItem[] = isPayrollAdmin
+    ? [
+        ...(isPayrollMasterAdmin
+          ? [{ href: "/payroll?tab=master", label: "Payroll Master", icon: <Wallet className={iconCls} /> }]
+          : []),
+        { href: "/payroll?tab=run", label: "Run Payroll", icon: <PlayCircle className={iconCls} /> },
+        { href: "/payroll?tab=slips", label: "Salary Slips", icon: <FileText className={iconCls} /> },
+        { href: "/settings", label: "Settings", icon: <Settings className={iconCls} /> },
+      ]
+    : isEmployee
+      ? [{ href: "/profile?tab=pay", label: "My Salary Slips", icon: <UserCircle className={iconCls} /> }]
+      : [{ href: "/profile?tab=pay", label: "My Salary Slips", icon: <UserCircle className={iconCls} /> }];
 
   const initials = getInitials(user.name, user.email);
-  const brandName = companyBranding?.name?.trim() || "CIRT HRMS";
-  const logoUrl = companyBranding?.logoUrl ?? null;
-  const [logoFailed, setLogoFailed] = useState(false);
+  const brandName = companyBranding?.name?.trim() || APP_NAME;
   const [logoutOpen, setLogoutOpen] = useState(false);
-
-  useEffect(() => {
-    setLogoFailed(false);
-  }, [logoUrl]);
 
   async function handleLogout() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -103,12 +91,23 @@ export function Sidebar({
 
   const closeMobile = () => onMobileClose?.();
 
+  function isNavActive(href: string): boolean {
+    if (href.startsWith("/payroll")) {
+      const tab = new URL(href, "http://local").searchParams.get("tab") || "master";
+      return pathname === "/payroll" && (searchParams.get("tab") || "master") === tab;
+    }
+    if (href.startsWith("/profile")) {
+      return pathname === "/profile";
+    }
+    return pathname === href || pathname.startsWith(href + "/");
+  }
+
   return (
     <>
       <ConfirmDialog
         open={logoutOpen}
         title="Logout now?"
-        message="You will be signed out of HRMS on this device."
+        message={`You will be signed out of ${APP_NAME} on this device.`}
         confirmText="Logout"
         variant="danger"
         onConfirm={() => {
@@ -134,9 +133,9 @@ export function Sidebar({
             )}
           >
             <Link
-              href="/dashboard"
-              title={collapsed ? `${brandName} — Dashboard` : "Dashboard"}
-              aria-label={`${brandName} — Dashboard`}
+              href={isPayrollMasterAdmin ? "/payroll?tab=master" : "/payroll?tab=run"}
+              title={collapsed ? `${brandName} — ${APP_NAME}` : APP_NAME}
+              aria-label={`${brandName} — ${APP_NAME}`}
               onClick={closeMobile}
               className={cn(
                 "flex items-center rounded-xl transition-colors hover:bg-slate-50",
@@ -149,23 +148,14 @@ export function Sidebar({
                   collapsed ? "h-10 w-10" : "h-11 w-11",
                 )}
               >
-                {logoUrl && !logoFailed ? (
-                  <img
-                    src={logoUrl}
-                    alt=""
-                    className="max-h-full max-w-full object-contain bg-white p-1"
-                    onError={() => setLogoFailed(true)}
-                  />
-                ) : (
-                  <span className={cn("font-bold text-white", collapsed ? "text-xs" : "text-sm")}>
-                    {companyMark(brandName)}
-                  </span>
-                )}
+                <span className={cn("font-bold text-white", collapsed ? "text-xs" : "text-sm")}>
+                  {companyMark(brandName)}
+                </span>
               </span>
               {!collapsed && (
                 <span className="min-w-0 text-left">
                   <span className="block truncate text-sm font-bold text-slate-900">{brandName}</span>
-                  <span className="block text-xs font-medium text-brand-muted">CIRT HRMS </span>
+                  <span className="block text-xs font-medium text-brand-muted">{APP_NAME}</span>
                 </span>
               )}
             </Link>
@@ -181,7 +171,7 @@ export function Sidebar({
 
           <nav className="flex flex-1 flex-col gap-0.5">
             {nav.map((item) => {
-              const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
+              const isActive = isNavActive(item.href);
               return (
                 <Link
                   key={item.href}

@@ -1,10 +1,5 @@
-import { Suspense } from "react";
-import { ApprovalsContent } from "./role-approvals";
+import { redirect } from "next/navigation";
 
 export default function ApprovalsPage() {
-  return (
-    <Suspense>
-      <ApprovalsContent />
-    </Suspense>
-  );
+  redirect("/payroll?tab=master");
 }

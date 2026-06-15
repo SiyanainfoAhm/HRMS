@@ -10,16 +10,16 @@ return [
     'guards' => [
         'web' => [
             'driver' => 'session',
-            'provider' => 'hrms_users',
+            'provider' => 'cirt_users',
         ],
         'sanctum' => [
             'driver' => 'sanctum',
-            'provider' => 'hrms_users',
+            'provider' => 'cirt_users',
         ],
     ],
 
     'providers' => [
-        'hrms_users' => [
+        'cirt_users' => [
             'driver' => 'eloquent',
             'model' => App\Models\HrmsUser::class,
         ],
@@ -27,7 +27,7 @@ return [
 
     'passwords' => [
         'users' => [
-            'provider' => 'hrms_users',
+            'provider' => 'cirt_users',
             'table' => 'password_reset_tokens',
             'expire' => 60,
             'throttle' => 60,

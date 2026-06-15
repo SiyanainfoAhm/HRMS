@@ -34,6 +34,8 @@ export type PasswordFieldProps = {
   placeholder?: string;
   /** Extra classes on the outer wrapper */
   className?: string;
+  error?: string | null;
+  onBlur?: () => void;
 };
 
 export function PasswordField({
@@ -46,6 +48,8 @@ export function PasswordField({
   id: idProp,
   placeholder,
   className = "",
+  error = null,
+  onBlur,
 }: PasswordFieldProps) {
   const reactId = useId();
   const id = idProp ?? `password-${reactId}`;
@@ -66,7 +70,10 @@ export function PasswordField({
           placeholder={placeholder}
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          className="password-field-input input-field !pr-10"
+          onBlur={onBlur}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? `${id}-error` : undefined}
+          className={`password-field-input input-field !pr-10 ${error ? "!border-red-400 focus:!border-red-500 focus:!ring-red-500/30" : ""}`}
         />
         <button
           type="button"
@@ -78,6 +85,11 @@ export function PasswordField({
           {visible ? <EyeOffIcon className="h-5 w-5" /> : <EyeIcon className="h-5 w-5" />}
         </button>
       </div>
+      {error && (
+        <p id={`${id}-error`} className="mt-1 text-xs text-red-600" role="alert">
+          {error}
+        </p>
+      )}
     </div>
   );
 }

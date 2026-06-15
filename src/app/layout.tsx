@@ -8,9 +8,11 @@ const fontSans = Plus_Jakarta_Sans({
   display: "swap",
 });
 
+import { APP_NAME } from "@/lib/appBranding";
+
 export const metadata = {
-  title: "CIRT HRMS ",
-  description: "Human Resource Management System for CIRT HRMS",
+  title: APP_NAME,
+  description: `Payroll management for ${APP_NAME}`,
 };
 
 export const viewport = {

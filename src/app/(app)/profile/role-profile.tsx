@@ -17,6 +17,7 @@ import {
   validateIndianMobileInteractive,
   normalizeIfscInput,
 } from "@/lib/employeeValidators";
+import { PASSWORD_COMPLEXITY_HINT, validatePasswordComplexity } from "@/lib/passwordValidators";
 import { GovernmentPayslipPrint } from "@/components/payslip/GovernmentPayslipPrint";
 import type { GovernmentMonthlySlip } from "@/lib/governmentPayslipLayout";
 import type { GovernmentLeavePayslipDisplay } from "@/lib/leaveBalancesCompute";
@@ -24,8 +25,15 @@ import type { GovernmentLeavePayslipDisplay } from "@/lib/leaveBalancesCompute";
 export function ProfileContent() {
   const { role } = useAuth();
   const params = useSearchParams();
-  const tab = params.get("tab") || "profile";
   const router = useRouter();
+  const isEmployeeSelfService = role === "employee" || role === "manager";
+  const tab = params.get("tab") || (isEmployeeSelfService ? "pay" : "profile");
+
+  useEffect(() => {
+    if (isEmployeeSelfService && tab !== "pay") {
+      router.replace("/profile?tab=pay");
+    }
+  }, [isEmployeeSelfService, tab, router]);
 
   const canEditEmployment = useMemo(() => role === "super_admin" || role === "admin" || role === "hr", [role]);
   const canEditOrgFields = useMemo(() => role === "super_admin" || role === "admin" || role === "hr", [role]);
@@ -47,7 +55,13 @@ export function ProfileContent() {
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [newPasswordTouched, setNewPasswordTouched] = useState(false);
   const [authProvider, setAuthProvider] = useState<"password" | "google">("password");
+
+  const newPasswordError = useMemo(() => {
+    if (!newPasswordTouched && !newPassword) return null;
+    return validatePasswordComplexity(newPassword);
+  }, [newPassword, newPasswordTouched]);
 
   const [form, setForm] = useState({
     email: "",
@@ -520,6 +534,16 @@ export function ProfileContent() {
     e.preventDefault();
     setPasswordError(null);
     setPasswordSuccess(null);
+    setNewPasswordTouched(true);
+    if (!currentPassword) {
+      setPasswordError("Current password is required");
+      return;
+    }
+    const complexityErr = validatePasswordComplexity(newPassword);
+    if (complexityErr) {
+      setPasswordError(complexityErr);
+      return;
+    }
     if (newPassword !== confirmPassword) {
       setPasswordError("New password and confirmation do not match");
       return;
@@ -605,14 +629,17 @@ export function ProfileContent() {
 
     <section className="space-y-4">
       <div>
-        <h1 className="page-title">Profile</h1>
+        <h1 className="page-title">{isEmployeeSelfService ? "My Salary Slips" : "Profile"}</h1>
         <p className="muted">
-          {isSuperAdmin
-            ? "You are the master admin. Manage companies and edit company details—employee fields do not apply to you."
-            : "For employees this shows personal, bank and emergency contact information."}
+          {isEmployeeSelfService
+            ? "View and download your salary slips."
+            : isSuperAdmin
+              ? "You are the master admin. Manage companies and edit company details—employee fields do not apply to you."
+              : "For employees this shows personal, bank and emergency contact information."}
         </p>
       </div>
 
+      {!isEmployeeSelfService && (
       <div className="flex flex-wrap gap-2">
         <Link
           href="/profile?tab=profile"
@@ -621,22 +648,15 @@ export function ProfileContent() {
           My Profile
         </Link>
         {!isSuperAdmin && (
-          <>
             <Link
               href="/profile?tab=pay"
               className={`btn ${tab === "pay" ? "btn-primary" : "btn-outline"}`}
             >
               My Pay
             </Link>
-            <Link
-              href="/profile?tab=documents"
-              className={`btn ${tab === "documents" ? "btn-primary" : "btn-outline"}`}
-            >
-              My Documents
-            </Link>
-          </>
         )}
       </div>
+      )}
 
       {tab === "profile" && (
         <>
@@ -1189,7 +1209,7 @@ export function ProfileContent() {
               <div>
                 <h2 className="mb-1 text-lg font-semibold text-slate-900">Change password</h2>
                 <p className="muted text-sm">
-                  Enter your current password, then a new one (at least 8 characters). This applies to your next sign-in.
+                  {PASSWORD_COMPLEXITY_HINT} This applies to your next sign-in.
                 </p>
               </div>
               <button type="submit" className="btn btn-primary shrink-0" disabled={passwordSaving || loading}>
@@ -1210,6 +1230,8 @@ export function ProfileContent() {
                 autoComplete="new-password"
                 value={newPassword}
                 onChange={setNewPassword}
+                onBlur={() => setNewPasswordTouched(true)}
+                error={newPasswordError}
               />
               <PasswordField
                 label="Confirm new password"
@@ -1341,15 +1363,6 @@ export function ProfileContent() {
                         <tbody>
                           <tr>
                             <td colSpan={2} className="border border-black px-4 py-4 text-center">
-                              {company?.logoUrl ? (
-                                <div className="payslip-logo-banner mb-3 flex justify-center border-b border-black/15 pb-3 print:mb-2 print:pb-2">
-                                  <img
-                                    src={company.logoUrl}
-                                    alt=""
-                                    className="h-16 max-h-[72px] w-auto max-w-[min(100%,280px)] object-contain object-center"
-                                  />
-                                </div>
-                              ) : null}
                               <div className="text-base font-bold text-slate-900">{company?.name || "Company"}</div>
                               {company?.address && (
                                 <div className="mt-0.5 text-sm text-slate-600">{company.address}</div>

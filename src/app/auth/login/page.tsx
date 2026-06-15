@@ -1,13 +1,13 @@
 "use client";
 
-import { FormEvent, useState, Suspense } from "react";
+import { FormEvent, useMemo, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import Link from "next/link";
 import { motion } from "framer-motion";
 import { Building2, Shield } from "lucide-react";
 import { PasswordField } from "@/components/PasswordField";
-import { GoogleAuthButton } from "@/components/GoogleAuthButton";
 import { setToken } from "@/lib/api";
+import { APP_NAME } from "@/lib/appBranding";
+import { validateLoginEmail, validateLoginPassword } from "@/lib/loginValidators";
 import { fadeInUp, staggerContainer, staggerItem } from "@/lib/motion";
 
 function LoginForm() {
@@ -15,18 +15,43 @@ function LoginForm() {
   const params = useSearchParams();
   const [email, setEmail] = useState(params.get("email") ?? "");
   const [password, setPassword] = useState("");
+  const [emailTouched, setEmailTouched] = useState(false);
+  const [passwordTouched, setPasswordTouched] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const showEmailValidation = emailTouched || email.length > 0;
+  const showPasswordValidation = passwordTouched || password.length > 0;
+
+  const emailError = useMemo(
+    () => (showEmailValidation ? validateLoginEmail(email) : null),
+    [email, showEmailValidation],
+  );
+  const passwordError = useMemo(
+    () => (showPasswordValidation ? validateLoginPassword(password) : null),
+    [password, showPasswordValidation],
+  );
+
+  const canSubmit = !emailError && !passwordError && email.trim() !== "" && password !== "";
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    setEmailTouched(true);
+    setPasswordTouched(true);
+    const eErr = validateLoginEmail(email);
+    const pErr = validateLoginPassword(password);
+    if (eErr || pErr) {
+      setError(eErr || pErr);
+      return;
+    }
+
     setError(null);
     setLoading(true);
     try {
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -67,20 +92,20 @@ function LoginForm() {
           <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/15 backdrop-blur">
             <Building2 className="h-7 w-7" aria-hidden />
           </div>
-          <h1 className="mt-8 text-3xl font-bold tracking-tight">CIRT HRMS </h1>
+          <h1 className="mt-8 text-3xl font-bold tracking-tight">{APP_NAME}</h1>
           <p className="mt-3 max-w-sm text-sm leading-relaxed text-blue-100/90">
-            Human Resource Management for Centre for Industry Readiness &amp; Training. Secure attendance,
-            leave, payroll, and employee services in one place.
+            Payroll management for Central Institute of Road Transport. Run payroll, manage employee
+            master data, and access salary slips securely.
           </p>
         </div>
         <ul className="relative z-10 space-y-4 text-sm text-blue-50/90">
           <li className="flex gap-3">
             <Shield className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
-            Role-based access for employees, HR, and administrators
+            Role-based access for employees and administrators
           </li>
           <li className="flex gap-3">
             <Shield className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
-            Attendance, leave balances, payslips, and reimbursements
+            Payroll master, monthly payroll runs, and salary slips
           </li>
         </ul>
         <div
@@ -97,12 +122,12 @@ function LoginForm() {
           className="w-full max-w-md space-y-8"
         >
           <motion.div variants={staggerItem} className="text-center lg:text-left">
-            <p className="text-xs font-semibold uppercase tracking-wider text-brand-blue lg:hidden">CIRT HRMS </p>
+            <p className="text-xs font-semibold uppercase tracking-wider text-brand-blue lg:hidden">{APP_NAME}</p>
             <h2 className="page-title mt-1">Welcome back</h2>
-            <p className="muted mt-2">Sign in with your institutional account</p>
+            <p className="muted mt-2">Sign in with your CIRT institutional account</p>
           </motion.div>
 
-          <motion.form variants={staggerItem} onSubmit={handleSubmit} className="card space-y-5 shadow-card">
+          <motion.form variants={staggerItem} onSubmit={handleSubmit} className="card space-y-5 shadow-card" noValidate>
             <div>
               <label htmlFor="email" className="label-field">
                 Email address
@@ -110,20 +135,28 @@ function LoginForm() {
               <input
                 id="email"
                 type="email"
-                required
                 autoComplete="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="input-field"
+                onBlur={() => setEmailTouched(true)}
+                aria-invalid={emailError ? true : undefined}
+                aria-describedby={emailError ? "email-error" : undefined}
+                className={`input-field ${emailError ? "!border-red-400 focus:!border-red-500 focus:!ring-red-500/30" : ""}`}
                 placeholder="you@cirtpune.org"
               />
+              {emailError && (
+                <p id="email-error" className="mt-1 text-xs text-red-600" role="alert">
+                  {emailError}
+                </p>
+              )}
             </div>
             <PasswordField
               label="Password"
-              required
               autoComplete="current-password"
               value={password}
               onChange={setPassword}
+              onBlur={() => setPasswordTouched(true)}
+              error={passwordError}
             />
 
             {error && (
@@ -132,23 +165,12 @@ function LoginForm() {
               </p>
             )}
 
-            <button type="submit" className="btn btn-primary w-full !py-3" disabled={loading}>
+            <button type="submit" className="btn btn-primary w-full !py-3" disabled={loading || !canSubmit}>
               {loading ? "Signing in…" : "Sign in"}
             </button>
 
-            <div className="relative flex items-center gap-3 py-1">
-              <span className="h-px flex-1 bg-brand-border" />
-              <span className="text-xs font-medium text-brand-muted">or</span>
-              <span className="h-px flex-1 bg-brand-border" />
-            </div>
-
-            <GoogleAuthButton mode="login" onSuccessRedirect="/dashboard" />
-
-            <p className="text-center text-sm text-brand-muted">
-              Don&apos;t have an account?{" "}
-              <Link href="/auth/signup" className="font-semibold text-brand-navy hover:text-brand-blue">
-                Sign up
-              </Link>
+            <p className="text-center text-xs text-brand-muted">
+              Access is provisioned by CIRT administration. Contact your administrator if you need an account.
             </p>
           </motion.form>
         </motion.div>

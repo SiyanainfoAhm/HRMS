@@ -5,6 +5,10 @@ export async function GET(request: NextRequest) {
   return proxyToLaravel(request, "/payroll/master");
 }
 
+export async function POST(request: NextRequest) {
+  return proxyToLaravel(request, "/payroll/master");
+}
+
 export async function PATCH(request: NextRequest) {
   return proxyToLaravel(request, "/payroll/master");
 }

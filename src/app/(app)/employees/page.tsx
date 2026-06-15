@@ -2,8 +2,11 @@
 
 import { useEffect, useMemo, useState, FormEvent } from "react";
 import { useToast } from "@/components/ToastProvider";
-import { PaginationBar } from "@/components/PaginationBar";
 import { SkeletonTable } from "@/components/Skeleton";
+import { FilterCard } from "@/components/ui/FilterCard";
+import { SectionTabs } from "@/components/ui/SectionTabs";
+import { RecordCard } from "@/components/ui/RecordCard";
+import { ListPagination } from "@/components/ui/ListPagination";
 import { useResponsivePageSize } from "@/hooks/useResponsivePageSize";
 import { DatePickerField } from "@/components/ui/DatePickerField";
 import { useAuth } from "@/contexts/AuthContext";
@@ -276,21 +279,19 @@ export default function EmployeesPage() {
     let cancelled = false;
     (async () => {
       try {
-        const [desRes, depRes, divRes, shiftRes] = await Promise.all([
+        const [desRes, depRes, divRes] = await Promise.all([
           fetch("/api/settings/designations"),
           fetch("/api/settings/departments"),
           fetch("/api/settings/divisions"),
-          fetch("/api/settings/shifts"),
         ]);
         if (cancelled) return;
         const desData = await desRes.json();
         const depData = await depRes.json();
         const divData = await divRes.json();
-        const shiftData = await shiftRes.json();
         if (desRes.ok) setDesignations((desData.designations ?? []).filter((d: any) => d.is_active !== false).map((d: any) => ({ id: d.id, title: d.title })));
         if (depRes.ok) setDepartments((depData.departments ?? []).filter((d: any) => d.is_active !== false).map((d: any) => ({ id: d.id, name: d.name, division_id: d.division_id })));
         if (divRes.ok) setDivisions((divData.divisions ?? []).filter((d: any) => d.is_active !== false).map((d: any) => ({ id: d.id, name: d.name })));
-        if (shiftRes.ok) setShifts((shiftData.shifts ?? []).filter((d: any) => d.is_active !== false).map((d: any) => ({ id: d.id, name: d.name })));
+        setShifts([]);
       } catch {
         // keep empty
       }
@@ -492,8 +493,8 @@ export default function EmployeesPage() {
       setDepartmentError(departmentErr);
       const divisionErr = !divisionId ? "Please select a division" : null;
       setDivisionError(divisionErr);
-      const shiftErr = !shiftId ? "Please select a shift" : null;
-      setShiftError(shiftErr);
+      const shiftErr = null;
+      setShiftError(null);
       const pl = parseInt(governmentPayLevel.trim(), 10);
       const payLvErr =
         !governmentPayLevel.trim() || !Number.isFinite(pl) || pl < 1
@@ -622,8 +623,8 @@ export default function EmployeesPage() {
       setDepartmentError(departmentErr);
       const divisionErr = !divisionId ? "Please select a division" : null;
       setDivisionError(divisionErr);
-      const shiftErr = !shiftId ? "Please select a shift" : null;
-      setShiftError(shiftErr);
+      const shiftErr = null;
+      setShiftError(null);
       const plU = parseInt(governmentPayLevel.trim(), 10);
       const payLvErrU =
         !governmentPayLevel.trim() || !Number.isFinite(plU) || plU < 1
@@ -976,60 +977,45 @@ export default function EmployeesPage() {
         <p className="muted">Manage employees for your company.</p>
       </div>
 
-      <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={() => {
-            setActiveTab("preboarding");
-            setEmployeePage(1);
-          }}
-          className={`btn ${activeTab === "preboarding" ? "btn-primary" : "btn-outline"}`}
-        >
-          Preboarding
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setActiveTab("current");
-            setEmployeePage(1);
-          }}
-          className={`btn ${activeTab === "current" ? "btn-primary" : "btn-outline"}`}
-        >
-          Current
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setActiveTab("past");
-            setEmployeePage(1);
-          }}
-          className={`btn ${activeTab === "past" ? "btn-primary" : "btn-outline"}`}
-        >
-          Past
-        </button>
-        <div className="flex-1" />
-        <button
-          type="button"
-          className="btn btn-outline"
-          onClick={() => {
-            setDocsDialogOpen(true);
-            loadDocuments();
-          }}
-        >
-          Company documents
-        </button>
-        <button
-          type="button"
-          className="btn btn-primary"
-          onClick={() => {
-            resetForm();
-            loadCompanyDocsForInvite();
-            setIsDialogOpen(true);
-          }}
-        >
-          Add employee
-        </button>
-      </div>
+      <FilterCard label="Employee list">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <SectionTabs
+            items={[
+              { key: "preboarding", label: "Preboarding" },
+              { key: "current", label: "Current" },
+              { key: "past", label: "Past" },
+            ]}
+            activeKey={activeTab}
+            onChange={(key) => {
+              setActiveTab(key as Employee["employmentStatus"]);
+              setEmployeePage(1);
+            }}
+          />
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+            <button
+              type="button"
+              className="btn btn-outline w-full sm:w-auto"
+              onClick={() => {
+                setDocsDialogOpen(true);
+                loadDocuments();
+              }}
+            >
+              Company documents
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary w-full sm:w-auto"
+              onClick={() => {
+                resetForm();
+                loadCompanyDocsForInvite();
+                setIsDialogOpen(true);
+              }}
+            >
+              Add employee
+            </button>
+          </div>
+        </div>
+      </FilterCard>
 
       {designationAddPrompt && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
@@ -1231,8 +1217,10 @@ export default function EmployeesPage() {
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                   />
                 </div>
-                <div className="md:col-span-1">
-                  <label className="mb-1 block text-sm font-medium text-slate-700">Monthly gross (basic + DA + HRA + medical + TA)</label>
+                <div className="md:col-span-2">
+                  <label className="mb-1 block text-sm font-medium leading-snug text-slate-700 md:whitespace-nowrap">
+                    Monthly gross (basic + DA + HRA + medical + TA)
+                  </label>
                   <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
                     {calculatedMonthlyGross > 0 ? calculatedMonthlyGross.toLocaleString("en-IN") : "—"}
                   </div>
@@ -1969,89 +1957,88 @@ export default function EmployeesPage() {
         ) : (
           <>
           {employeeTotal > pageSize && (
-            <div className="mb-4 md:hidden">
-              <PaginationBar
-                page={employeePage}
-                total={employeeTotal}
-                pageSize={pageSize}
-                loading={loading}
-                onPageChange={setEmployeePage}
-              />
-            </div>
+            <ListPagination
+              position="top"
+              page={employeePage}
+              total={employeeTotal}
+              pageSize={pageSize}
+              loading={loading}
+              onPageChange={setEmployeePage}
+            />
           )}
-          <div className="hidden overflow-x-auto md:block">
-            <table className="w-full min-w-[920px] table-fixed border-collapse text-left text-[11px] leading-tight text-slate-800">
-              <thead className="text-slate-600">
+          <div className="table-panel overflow-x-auto">
+            <table className="w-full min-w-[1080px] table-fixed border-collapse text-left text-sm text-slate-800">
+              <thead className="bg-slate-50/80 text-slate-600">
                 <tr>
-                  <th className="w-[10%] px-1.5 py-1.5 font-medium whitespace-nowrap">Name</th>
-                  <th className="w-[9%] px-1.5 py-1.5 font-medium whitespace-nowrap">Designation</th>
-                  <th className="w-[9%] px-1.5 py-1.5 font-medium whitespace-nowrap">Department</th>
-                  <th className="w-[8%] px-1.5 py-1.5 font-medium whitespace-nowrap">Shift</th>
-                  <th className="w-[7%] px-1.5 py-1.5 font-medium whitespace-nowrap">Monthly gross</th>
-                  <th className="w-[18%] px-1.5 py-1.5 font-medium whitespace-nowrap">Email</th>
-                  <th className="w-[10%] px-1.5 py-1.5 font-medium whitespace-nowrap">Phone</th>
-                  <th className="w-[8%] px-1.5 py-1.5 font-medium whitespace-nowrap">DOJ</th>
+                  <th className="w-[11%] px-3 py-3 font-medium whitespace-nowrap">Name</th>
+                  <th className="w-[10%] px-3 py-3 font-medium whitespace-nowrap">Designation</th>
+                  <th className="w-[10%] px-3 py-3 font-medium whitespace-nowrap">Department</th>
+                  <th className="w-[8%] px-3 py-3 font-medium whitespace-nowrap">Shift</th>
+                  <th className="w-[9%] px-3 py-3 font-medium whitespace-nowrap">Monthly gross</th>
+                  <th className="w-[17%] px-3 py-3 font-medium whitespace-nowrap">Email</th>
+                  <th className="w-[11%] px-3 py-3 font-medium whitespace-nowrap">Phone</th>
+                  <th className="w-[9%] px-3 py-3 font-medium whitespace-nowrap">DOJ</th>
                   {activeTab === "past" && (
-                    <th className="w-[8%] px-1.5 py-1.5 font-medium whitespace-nowrap">Last working</th>
+                    <th className="w-[9%] px-3 py-3 font-medium whitespace-nowrap">Last working</th>
                   )}
                   {activeTab === "past" && (
-                    <th className="w-[8%] px-1.5 py-1.5 font-medium whitespace-nowrap">Status</th>
+                    <th className="w-[8%] px-3 py-3 font-medium whitespace-nowrap">Status</th>
                   )}
                   {activeTab === "preboarding" && (
-                    <th className="w-[13%] px-1.5 py-1.5 font-medium whitespace-nowrap">Actions</th>
+                    <th className="w-[16%] min-w-[10.5rem] px-3 py-3 font-medium whitespace-nowrap text-right">Actions</th>
                   )}
                   {activeTab === "current" && (
-                    <th className="w-[10%] px-1.5 py-1.5 font-medium whitespace-nowrap">Actions</th>
+                    <th className="w-[15%] min-w-[10rem] px-3 py-3 font-medium whitespace-nowrap text-right">Actions</th>
                   )}
                   {activeTab === "past" && (
-                    <th className="w-[8%] px-1.5 py-1.5 font-medium whitespace-nowrap">Actions</th>
+                    <th className="w-[12%] min-w-[7rem] px-3 py-3 font-medium whitespace-nowrap text-right">Actions</th>
                   )}
                 </tr>
               </thead>
               <tbody>
                 {employees.map((e) => (
                   <tr key={e.id} className="border-t border-slate-200">
-                    <td className="max-w-0 px-1.5 py-1 whitespace-nowrap">{e.name || "—"}</td>
+                    <td className="max-w-0 px-3 py-2.5 whitespace-nowrap">{e.name || "—"}</td>
                     <td
-                      className="max-w-0 truncate px-1.5 py-1"
+                      className="max-w-0 truncate px-3 py-2.5"
                       title={e.designation || undefined}
                     >
                       {e.designation || "—"}
                     </td>
                     <td
-                      className="max-w-0 truncate px-1.5 py-1"
+                      className="max-w-0 truncate px-3 py-2.5"
                       title={e.departmentName || undefined}
                     >
                       {e.departmentName || "—"}
                     </td>
                     <td
-                      className="max-w-0 truncate px-1.5 py-1"
+                      className="max-w-0 truncate px-3 py-2.5"
                       title={e.shiftName || undefined}
                     >
                       {e.shiftName || "—"}
                     </td>
-                    <td className="whitespace-nowrap px-1.5 py-1 tabular-nums">
+                    <td className="whitespace-nowrap px-3 py-2.5 tabular-nums">
                       {e.ctc != null ? Number(e.ctc).toLocaleString("en-IN") : "—"}
                     </td>
-                    <td className="max-w-0 truncate px-1.5 py-1" title={e.email}>
+                    <td className="max-w-0 truncate px-3 py-2.5" title={e.email}>
                       {e.email}
                     </td>
-                    <td className="whitespace-nowrap px-1.5 py-1">{e.phone || "—"}</td>
-                    <td className="whitespace-nowrap px-1.5 py-1">{e.dateOfJoining ? fmtDmy(e.dateOfJoining) : "—"}</td>
+                    <td className="whitespace-nowrap px-3 py-2.5">{e.phone || "—"}</td>
+                    <td className="whitespace-nowrap px-3 py-2.5">{e.dateOfJoining ? fmtDmy(e.dateOfJoining) : "—"}</td>
                     {activeTab === "past" && (
-                      <td className="whitespace-nowrap px-1.5 py-1">{(e as any).dateOfLeaving ? fmtDmy((e as any).dateOfLeaving) : "—"}</td>
+                      <td className="whitespace-nowrap px-3 py-2.5">{(e as any).dateOfLeaving ? fmtDmy((e as any).dateOfLeaving) : "—"}</td>
                     )}
                     {activeTab === "past" && (
-                      <td className="whitespace-nowrap px-1.5 py-1">
+                      <td className="whitespace-nowrap px-3 py-2.5">
                         {getPastStatus(e)}
                       </td>
                     )}
                     {activeTab === "preboarding" && (
-                      <td className="px-1.5 py-1">
-                        <div className="flex flex-nowrap items-center gap-1">
+                      <td className="px-3 py-2.5">
+                        <div className="flex flex-nowrap items-center justify-end gap-2">
                           <button
                             type="button"
-                            className="btn btn-outline !min-h-0 shrink-0 !px-1.5 !py-0.5 !text-[11px] leading-none"
+                            className="btn btn-outline !h-8 !w-8 !min-h-0 shrink-0 !p-0 !text-sm leading-none"
                             onClick={() => openDetails(e.id)}
                             title={
                               e.preboardingDocsComplete
@@ -2070,7 +2057,7 @@ export default function EmployeesPage() {
                           </button>
                           <button
                             type="button"
-                            className="btn btn-outline !min-h-0 shrink-0 !px-1.5 !py-0.5 !text-[11px] leading-none"
+                            className="btn btn-outline !h-8 !w-8 !min-h-0 shrink-0 !p-0 !text-sm leading-none"
                             onClick={() => void openEdit(e.id)}
                             title="Edit"
                           >
@@ -2078,7 +2065,7 @@ export default function EmployeesPage() {
                           </button>
                           <button
                             type="button"
-                            className="btn btn-primary !min-h-0 shrink-0 !px-1.5 !py-0.5 !text-[11px] leading-none"
+                            className="btn btn-primary !h-8 !w-8 !min-h-0 shrink-0 !p-0 !text-sm leading-none"
                             onClick={() => {
                               setConvertTarget(e);
                               setConvertConfirmStatus("current");
@@ -2092,7 +2079,7 @@ export default function EmployeesPage() {
                           {isSuperAdmin && (
                             <button
                               type="button"
-                              className="btn btn-outline !min-h-0 shrink-0 !border-red-300 !px-1.5 !py-0.5 !text-[11px] leading-none text-red-700"
+                              className="btn btn-outline !h-8 !w-8 !min-h-0 shrink-0 !border-red-300 !p-0 !text-sm leading-none text-red-700"
                               onClick={() => setDeleteTarget(e)}
                               title="Delete employee"
                             >
@@ -2103,11 +2090,11 @@ export default function EmployeesPage() {
                       </td>
                     )}
                     {activeTab === "current" && (
-                      <td className="px-1.5 py-1">
-                        <div className="flex flex-nowrap items-center gap-1">
+                      <td className="px-3 py-2.5">
+                        <div className="flex flex-nowrap items-center justify-end gap-2">
                           <button
                             type="button"
-                            className="btn btn-outline !min-h-0 shrink-0 !px-1.5 !py-0.5 !text-[11px] leading-none"
+                            className="btn btn-outline !h-8 !w-8 !min-h-0 shrink-0 !p-0 !text-sm leading-none"
                             onClick={() => openDetails(e.id)}
                             title="View"
                           >
@@ -2115,7 +2102,7 @@ export default function EmployeesPage() {
                           </button>
                           <button
                             type="button"
-                            className="btn btn-outline !min-h-0 shrink-0 !px-1.5 !py-0.5 !text-[11px] leading-none"
+                            className="btn btn-outline !h-8 !w-8 !min-h-0 shrink-0 !p-0 !text-sm leading-none"
                             onClick={() => void openEdit(e.id)}
                             title="Edit"
                           >
@@ -2123,7 +2110,7 @@ export default function EmployeesPage() {
                           </button>
                           <button
                             type="button"
-                            className="btn btn-outline !min-h-0 shrink-0 !px-1.5 !py-0.5 !text-[11px] leading-none"
+                            className="btn btn-outline !h-8 !w-8 !min-h-0 shrink-0 !p-0 !text-sm leading-none"
                             onClick={() => {
                               setConvertTarget(e);
                               setConvertConfirmStatus("past");
@@ -2137,7 +2124,7 @@ export default function EmployeesPage() {
                           {isSuperAdmin && (
                             <button
                               type="button"
-                              className="btn btn-outline !min-h-0 shrink-0 !border-red-300 !px-1.5 !py-0.5 !text-[11px] leading-none text-red-700"
+                              className="btn btn-outline !h-8 !w-8 !min-h-0 shrink-0 !border-red-300 !p-0 !text-sm leading-none text-red-700"
                               onClick={() => setDeleteTarget(e)}
                               title="Delete employee"
                             >
@@ -2148,12 +2135,12 @@ export default function EmployeesPage() {
                       </td>
                     )}
                     {activeTab === "past" && (
-                      <td className="px-1.5 py-1">
-                        <div className="flex flex-nowrap items-center gap-1">
+                      <td className="px-3 py-2.5">
+                        <div className="flex flex-nowrap items-center justify-end gap-2">
                           {isOnNotice(e) ? (
                             <button
                               type="button"
-                              className="btn btn-outline !min-h-0 shrink-0 !px-1.5 !py-0.5 !text-[11px] leading-none"
+                              className="btn btn-outline !h-8 !w-8 !min-h-0 shrink-0 !p-0 !text-sm leading-none"
                               onClick={() => revokeNotice(e)}
                               disabled={converting}
                               title="Revoke notice"
@@ -2161,12 +2148,12 @@ export default function EmployeesPage() {
                               ↩
                             </button>
                           ) : (
-                            <span className="text-slate-400">—</span>
+                            <span className="px-1 text-slate-400">—</span>
                           )}
                           {isSuperAdmin && (
                             <button
                               type="button"
-                              className="btn btn-outline !min-h-0 shrink-0 !border-red-300 !px-1.5 !py-0.5 !text-[11px] leading-none text-red-700"
+                              className="btn btn-outline !h-8 !w-8 !min-h-0 shrink-0 !border-red-300 !p-0 !text-sm leading-none text-red-700"
                               onClick={() => setDeleteTarget(e)}
                               title="Delete employee"
                             >
@@ -2182,11 +2169,91 @@ export default function EmployeesPage() {
             </table>
           </div>
 
-          <div className="space-y-3 md:hidden">
+          <div className="records-stack">
             {employees.map((e) => (
-              <div key={e.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                <p className="font-semibold text-slate-900">{e.name || "—"}</p>
-                <dl className="mt-3 space-y-2 text-sm text-slate-800">
+              <RecordCard
+                key={e.id}
+                title={e.name || "—"}
+                subtitle={e.email}
+                actions={
+                  activeTab === "preboarding" ? (
+                    <>
+                      <button
+                        type="button"
+                        className="btn btn-outline inline-flex items-center gap-1.5 text-sm"
+                        onClick={() => openDetails(e.id)}
+                      >
+                        {e.preboardingDocsComplete ? (
+                          <span className="inline-block size-3 rounded-md bg-brand-navy" aria-hidden />
+                        ) : null}
+                        View
+                      </button>
+                      <button type="button" className="btn btn-outline text-sm" onClick={() => void openEdit(e.id)}>
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-primary text-sm"
+                        onClick={() => {
+                          setConvertTarget(e);
+                          setConvertConfirmStatus("current");
+                          setConvertDate(e.dateOfJoining || new Date().toISOString().slice(0, 10));
+                          setConvertDialogOpen(true);
+                        }}
+                      >
+                        Convert to current
+                      </button>
+                      {isSuperAdmin && (
+                        <button type="button" className="btn btn-outline text-sm !border-red-200 text-red-700" onClick={() => setDeleteTarget(e)}>
+                          Delete
+                        </button>
+                      )}
+                    </>
+                  ) : activeTab === "current" ? (
+                    <>
+                      <button type="button" className="btn btn-outline text-sm" onClick={() => openDetails(e.id)}>
+                        View
+                      </button>
+                      <button type="button" className="btn btn-outline text-sm" onClick={() => void openEdit(e.id)}>
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-outline text-sm"
+                        onClick={() => {
+                          setConvertTarget(e);
+                          setConvertConfirmStatus("past");
+                          setConvertDate(new Date().toISOString().slice(0, 10));
+                          setConvertDialogOpen(true);
+                        }}
+                      >
+                        Convert to past
+                      </button>
+                      {isSuperAdmin && (
+                        <button type="button" className="btn btn-outline text-sm !border-red-200 text-red-700" onClick={() => setDeleteTarget(e)}>
+                          Delete
+                        </button>
+                      )}
+                    </>
+                  ) : isOnNotice(e) ? (
+                    <>
+                      <button type="button" className="btn btn-outline text-sm" onClick={() => revokeNotice(e)} disabled={converting}>
+                        Revoke notice
+                      </button>
+                      {isSuperAdmin && (
+                        <button type="button" className="btn btn-outline text-sm !border-red-200 text-red-700" onClick={() => setDeleteTarget(e)}>
+                          Delete
+                        </button>
+                      )}
+                    </>
+                  ) : isSuperAdmin ? (
+                    <button type="button" className="btn btn-outline text-sm !border-red-200 text-red-700" onClick={() => setDeleteTarget(e)}>
+                      Delete
+                    </button>
+                  ) : null
+                }
+              >
+                <dl className="space-y-2 text-sm text-slate-800">
                   <div className="flex justify-between gap-3">
                     <dt className="text-slate-500">Designation</dt>
                     <dd className="text-right">{e.designation || "—"}</dd>
@@ -2200,12 +2267,8 @@ export default function EmployeesPage() {
                     <dd className="text-right">{e.shiftName || "—"}</dd>
                   </div>
                   <div className="flex justify-between gap-3">
-                    <dt className="text-slate-500">Monthly gross (est.)</dt>
+                    <dt className="text-slate-500">Monthly gross</dt>
                     <dd className="text-right tabular-nums">{e.ctc != null ? Number(e.ctc).toLocaleString("en-IN") : "—"}</dd>
-                  </div>
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-slate-500">Email</dt>
-                    <dd className="break-all text-right text-xs">{e.email}</dd>
                   </div>
                   <div className="flex justify-between gap-3">
                     <dt className="text-slate-500">Phone</dt>
@@ -2213,12 +2276,12 @@ export default function EmployeesPage() {
                   </div>
                   <div className="flex justify-between gap-3">
                     <dt className="text-slate-500">DOJ</dt>
-                    <dd className="text-right">{e.dateOfJoining || "—"}</dd>
+                    <dd className="text-right">{e.dateOfJoining ? fmtDmy(e.dateOfJoining) : "—"}</dd>
                   </div>
                   {activeTab === "past" && (
                     <div className="flex justify-between gap-3">
                       <dt className="text-slate-500">Last working</dt>
-                      <dd className="text-right">{(e as { dateOfLeaving?: string }).dateOfLeaving || "—"}</dd>
+                      <dd className="text-right">{(e as { dateOfLeaving?: string }).dateOfLeaving ? fmtDmy((e as { dateOfLeaving?: string }).dateOfLeaving!) : "—"}</dd>
                     </div>
                   )}
                   {activeTab === "past" && (
@@ -2228,120 +2291,19 @@ export default function EmployeesPage() {
                     </div>
                   )}
                 </dl>
-                {activeTab === "preboarding" && (
-                  <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-100 pt-3">
-                    <button
-                      type="button"
-                      className="btn btn-outline inline-flex items-center gap-1.5 text-xs"
-                      onClick={() => openDetails(e.id)}
-                      title={
-                        e.preboardingDocsComplete
-                          ? "All mandatory documents submitted — open details"
-                          : "View preboarding"
-                      }
-                    >
-                      {e.preboardingDocsComplete ? (
-                        <span
-                          className="inline-block size-3 rounded-md bg-emerald-600 ring-1 ring-emerald-800/35"
-                          aria-hidden
-                        />
-                      ) : null}
-                      View
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-primary text-xs"
-                      onClick={() => {
-                        setConvertTarget(e);
-                        setConvertConfirmStatus("current");
-                        setConvertDate(e.dateOfJoining || new Date().toISOString().slice(0, 10));
-                        setConvertDialogOpen(true);
-                      }}
-                    >
-                      Convert to current
-                    </button>
-                    {isSuperAdmin && (
-                      <button
-                        type="button"
-                        className="btn btn-outline border-red-300 text-xs text-red-700"
-                        onClick={() => setDeleteTarget(e)}
-                      >
-                        Delete
-                      </button>
-                    )}
-                  </div>
-                )}
-                {activeTab === "current" && (
-                  <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-100 pt-3">
-                    <button
-                      type="button"
-                      className="btn btn-outline text-xs"
-                      onClick={() => openDetails(e.id)}
-                    >
-                      View
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-outline text-xs"
-                      onClick={() => {
-                        setConvertTarget(e);
-                        setConvertConfirmStatus("past");
-                        setConvertDate(new Date().toISOString().slice(0, 10));
-                        setConvertDialogOpen(true);
-                      }}
-                    >
-                      Convert to past
-                    </button>
-                    {isSuperAdmin && (
-                      <button
-                        type="button"
-                        className="btn btn-outline border-red-300 text-xs text-red-700"
-                        onClick={() => setDeleteTarget(e)}
-                      >
-                        Delete
-                      </button>
-                    )}
-                  </div>
-                )}
-                {activeTab === "past" && (
-                  <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-100 pt-3">
-                    {isOnNotice(e) ? (
-                      <button
-                        type="button"
-                        className="btn btn-outline text-xs"
-                        onClick={() => revokeNotice(e)}
-                        disabled={converting}
-                      >
-                        Revoke notice
-                      </button>
-                    ) : (
-                      <span className="text-xs text-slate-500">—</span>
-                    )}
-                    {isSuperAdmin && (
-                      <button
-                        type="button"
-                        className="btn btn-outline border-red-300 text-xs text-red-700"
-                        onClick={() => setDeleteTarget(e)}
-                      >
-                        Delete
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
+              </RecordCard>
             ))}
           </div>
 
-          {employeeTotal > 0 && (
-            <div className="mt-3 hidden border-t border-slate-200 pt-3 md:block">
-              <PaginationBar
-                page={employeePage}
-                total={employeeTotal}
-                pageSize={pageSize}
-                loading={loading}
-                onPageChange={setEmployeePage}
-              />
-            </div>
+          {employeeTotal > pageSize && (
+            <ListPagination
+              position="bottom"
+              page={employeePage}
+              total={employeeTotal}
+              pageSize={pageSize}
+              loading={loading}
+              onPageChange={setEmployeePage}
+            />
           )}
           </>
         )}
@@ -2774,7 +2736,7 @@ export default function EmployeesPage() {
                     )}
                   </p>
                   <p className="mt-1 text-xs text-slate-500">
-                    These values are written to <code className="rounded bg-slate-100 px-1">HRMS_payroll_master</code> (new row) when you confirm.
+                    These values are written to <code className="rounded bg-slate-100 px-1">cirt_payroll_master</code> (new row) when you confirm.
                     Employee gross / TDS on the user profile are updated to match.
                   </p>
                 </div>

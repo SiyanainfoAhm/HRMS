@@ -10,7 +10,7 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v
 
 function policyRowsFromApi(leavePolicies: unknown[]): LeavePolicyWithTypeRow[] {
   return (leavePolicies ?? []).map((p: any) => {
-    const lt = p.leaveType ?? p.leave_type ?? p.HRMS_leave_types ?? null;
+    const lt = p.leaveType ?? p.leave_type ?? p.leaveTypes ?? null;
     const typeObj = Array.isArray(lt) ? lt[0] : lt;
     return {
       leave_type_id: String(p.leave_type_id ?? p.leaveTypeId ?? ""),
@@ -22,7 +22,7 @@ function policyRowsFromApi(leavePolicies: unknown[]): LeavePolicyWithTypeRow[] {
       reset_day: p.reset_day ?? p.resetDay ?? 1,
       allow_carryover: p.allow_carryover ?? p.allowCarryover ?? false,
       carryover_limit: p.carryover_limit ?? p.carryoverLimit ?? null,
-      HRMS_leave_types: typeObj
+      leaveType: typeObj
         ? {
             name: typeObj.name,
             is_paid: typeObj.is_paid ?? typeObj.isPaid,

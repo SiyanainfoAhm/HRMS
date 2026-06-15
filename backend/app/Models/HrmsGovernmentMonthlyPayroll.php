@@ -10,7 +10,7 @@ class HrmsGovernmentMonthlyPayroll extends Model
 {
     use HasUuids;
 
-    protected $table = 'HRMS_government_monthly_payroll';
+    protected $table = 'cirt_monthly_payroll';
     protected $keyType = 'string';
     public $incrementing = false;
 

@@ -4,7 +4,6 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Models\HrmsCompany;
-use App\Models\HrmsCompanyDocument;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -78,50 +77,5 @@ class CompanyController extends Controller
         $company->update(['logo_url' => $url]);
 
         return response()->json(['logo_url' => $url]);
-    }
-
-    public function listDocuments(Request $request): JsonResponse
-    {
-        $user = $request->user();
-        $docs = HrmsCompanyDocument::where('company_id', $user->company_id)
-            ->orderBy('name')
-            ->get();
-
-        return response()->json(['documents' => $docs]);
-    }
-
-    public function storeDocument(Request $request): JsonResponse
-    {
-        $user = $request->user();
-        if (! $user->role?->isManagerial()) {
-            return response()->json(['error' => 'Forbidden'], 403);
-        }
-
-        $data = $request->validate([
-            'name' => ['required', 'string', 'max:255'],
-            'kind' => ['required', 'in:upload,digital_signature'],
-            'is_mandatory' => ['nullable', 'boolean'],
-            'content_text' => ['nullable', 'string'],
-        ]);
-
-        $data['company_id'] = $user->company_id;
-        $doc = HrmsCompanyDocument::create($data);
-
-        return response()->json(['document' => $doc], 201);
-    }
-
-    public function updateDocument(Request $request, string $id): JsonResponse
-    {
-        $doc = HrmsCompanyDocument::findOrFail($id);
-        $doc->update($request->only(['name', 'kind', 'is_mandatory', 'content_text']));
-
-        return response()->json(['document' => $doc->refresh()]);
-    }
-
-    public function destroyDocument(Request $request, string $id): JsonResponse
-    {
-        HrmsCompanyDocument::findOrFail($id)->delete();
-
-        return response()->json(['message' => 'Deleted']);
     }
 }

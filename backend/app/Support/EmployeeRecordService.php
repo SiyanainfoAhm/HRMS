@@ -8,7 +8,7 @@ use App\Models\HrmsUser;
 class EmployeeRecordService
 {
     /**
-     * Return the HRMS_employees row for a user, creating a minimal one when missing.
+     * Return the cirt_employees row for a user, creating a minimal one when missing.
      * Required for tables that reference employee_id (reimbursements, payslips, etc.).
      */
     public static function forUser(HrmsUser $user): HrmsEmployee

@@ -5,7 +5,6 @@ namespace App\Http\Controllers\Api\V1;
 use App\Enums\UserRole;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\UserResource;
-use App\Models\HrmsEmployeeDocumentSubmission;
 use App\Models\HrmsPayrollMaster;
 use App\Models\HrmsUser;
 use App\Support\BankDetailsService;
@@ -37,7 +36,7 @@ class UserController extends Controller
             $email = mb_strtolower(trim((string) $body['email']));
             $validated = validator(
                 ['email' => $email],
-                ['email' => ['required', 'email', 'max:255', Rule::unique('HRMS_users', 'email')->ignore($user->id)]],
+                ['email' => ['required', 'email', 'max:255', Rule::unique((new \App\Models\HrmsUser)->getTable(), 'email')->ignore($user->id)]],
             )->validate();
             $payload['email'] = $validated['email'];
         }
@@ -125,36 +124,6 @@ class UserController extends Controller
         }
 
         return response()->json(['user' => new UserResource($target)]);
-    }
-
-    public function myDocuments(Request $request): JsonResponse
-    {
-        $user = $request->user();
-        $submissions = HrmsEmployeeDocumentSubmission::where('user_id', $user->id)
-            ->with('document')
-            ->get();
-
-        $items = $submissions->map(function ($submission) {
-            $doc = $submission->document;
-
-            return [
-                'submission_id' => $submission->id,
-                'document_id' => $submission->document_id,
-                'document_name' => $doc?->name ?? 'Document',
-                'kind' => $doc?->kind ?? 'upload',
-                'status' => $submission->status,
-                'file_url' => $submission->file_url,
-                'signature_name' => $submission->signature_name,
-                'signed_at' => $submission->signed_at?->toIso8601String(),
-                'submitted_at' => $submission->submitted_at?->toIso8601String(),
-                'review_note' => $submission->review_note,
-            ];
-        })->values()->all();
-
-        return response()->json([
-            'documents' => $submissions,
-            'items' => $items,
-        ]);
     }
 
     public function myPayrollMaster(Request $request): JsonResponse
