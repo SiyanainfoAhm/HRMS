@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Casts\UserRoleCast;
 use App\Enums\AuthProvider;
 use App\Enums\EmploymentStatus;
 use App\Enums\UserRole;
@@ -47,7 +48,7 @@ class HrmsUser extends Authenticatable
     protected function casts(): array
     {
         return [
-            'role' => UserRole::class,
+            'role' => UserRoleCast::class,
             'auth_provider' => AuthProvider::class,
             'employment_status' => EmploymentStatus::class,
             'auth_session_version' => 'integer',

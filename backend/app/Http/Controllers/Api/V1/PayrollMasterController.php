@@ -23,7 +23,7 @@ class PayrollMasterController extends Controller
     {
         $role = $user->role;
         $roleKey = $role instanceof UserRole ? $role->value : (is_string($role) ? $role : '');
-        if (! in_array($roleKey, [UserRole::SuperAdmin->value, UserRole::Admin->value], true)) {
+        if (! in_array($roleKey, [UserRole::Admin->value], true)) {
             return response()->json(['error' => 'Forbidden'], 403);
         }
 

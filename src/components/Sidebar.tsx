@@ -18,6 +18,7 @@ import type { SessionUser } from "@/lib/auth";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { APP_NAME } from "@/lib/appBranding";
 import { cn } from "@/lib/cn";
+import { isAdminRole } from "@/lib/roles";
 
 export type CompanyBranding = { name: string };
 
@@ -62,9 +63,9 @@ export function Sidebar({
   const { role } = useAuth();
   const router = useRouter();
 
-  const isPayrollAdmin = role === "super_admin" || role === "admin" || role === "hr";
-  const isPayrollMasterAdmin = role === "super_admin" || role === "admin";
-  const isEmployee = role === "employee" || role === "manager";
+  const isPayrollAdmin = isAdminRole(role);
+  const isPayrollMasterAdmin = isAdminRole(role);
+  const isEmployee = !isAdminRole(role);
 
   const nav: NavItem[] = isPayrollAdmin
     ? [

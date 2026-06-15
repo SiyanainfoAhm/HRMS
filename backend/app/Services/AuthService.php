@@ -85,7 +85,7 @@ class AuthService
                 'password_hash' => null,
                 'auth_provider' => AuthProvider::Google->value,
                 'name' => $name ?: null,
-                'role' => 'super_admin',
+                'role' => 'admin',
                 'auth_session_version' => 0,
                 'employment_status' => 'current',
             ]);

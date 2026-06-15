@@ -32,7 +32,7 @@ class UserController extends Controller
         $payload = $this->buildUpdatePayload($body, $isManagerial);
         $payload = $this->applyBankValidationToPayload($body, $payload, $user->name);
 
-        if ($user->role === UserRole::SuperAdmin && array_key_exists('email', $body)) {
+        if ($user->role === UserRole::Admin && array_key_exists('email', $body)) {
             $email = mb_strtolower(trim((string) $body['email']));
             $validated = validator(
                 ['email' => $email],
@@ -184,6 +184,9 @@ class UserController extends Controller
             foreach ($orgFields as $db => $camel) {
                 if (array_key_exists($camel, $body)) {
                     $val = is_string($body[$camel]) ? trim($body[$camel]) : $body[$camel];
+                    if ($db === 'role' && $val !== null && $val !== '') {
+                        $val = UserRole::fromStored((string) $val)->value;
+                    }
                     $payload[$db] = $val === '' ? null : $val;
                 }
             }

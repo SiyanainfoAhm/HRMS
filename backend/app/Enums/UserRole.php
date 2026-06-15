@@ -4,19 +4,21 @@ namespace App\Enums;
 
 enum UserRole: string
 {
-    case SuperAdmin = 'super_admin';
     case Admin = 'admin';
-    case Hr = 'hr';
-    case Manager = 'manager';
     case Employee = 'employee';
+
+    public static function fromStored(?string $value): self
+    {
+        return $value === self::Employee->value ? self::Employee : self::Admin;
+    }
 
     public function isManagerial(): bool
     {
-        return in_array($this, [self::SuperAdmin, self::Admin, self::Hr], true);
+        return $this === self::Admin;
     }
 
     public static function isManagerialValue(?string $role): bool
     {
-        return in_array($role, [self::SuperAdmin->value, self::Admin->value, self::Hr->value], true);
+        return self::fromStored($role) === self::Admin;
     }
 }

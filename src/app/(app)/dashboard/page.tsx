@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { COOKIE_NAME, TOKEN_COOKIE_NAME } from "@/lib/auth";
 import { getValidatedSession } from "@/lib/authValidate";
+import { isAdminRole } from "@/lib/roles";
 
 export default async function DashboardPage() {
   const cookieStore = await cookies();
@@ -14,15 +15,8 @@ export default async function DashboardPage() {
     redirect("/auth/login");
   }
 
-  const isPayrollAdmin =
-    session.role === "super_admin" || session.role === "admin" || session.role === "hr";
-
-  if (session.role === "super_admin" || session.role === "admin") {
+  if (isAdminRole(session.role)) {
     redirect("/payroll?tab=master");
-  }
-
-  if (isPayrollAdmin) {
-    redirect("/payroll?tab=run");
   }
 
   redirect("/profile?tab=pay");

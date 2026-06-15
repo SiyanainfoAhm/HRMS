@@ -57,7 +57,7 @@ class AuthController extends Controller
             'email' => $email,
             'password_hash' => Hash::make($request->validated('password')),
             'name' => $request->validated('name'),
-            'role' => 'super_admin',
+            'role' => 'admin',
             'auth_provider' => 'password',
             'auth_session_version' => 0,
             'employee_code' => $employeeCode,

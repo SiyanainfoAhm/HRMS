@@ -22,7 +22,7 @@ class RoleController extends Controller
     {
         $user = $request->user();
         $data = $request->validate([
-            'role_key' => ['required', 'in:super_admin,admin,hr,manager,employee'],
+            'role_key' => ['required', 'in:admin,employee'],
             'name' => ['required', 'string', 'max:255'],
             'description' => ['nullable', 'string'],
             'is_default' => ['nullable', 'boolean'],

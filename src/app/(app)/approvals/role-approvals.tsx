@@ -11,6 +11,7 @@ import { DatePickerField } from "@/components/ui/DatePickerField";
 import { useResponsivePageSize } from "@/hooks/useResponsivePageSize";
 import { fmtDmy } from "@/lib/dateFormat";
 import { isPayrollRunForClaimDate, type PayrollPeriodRow } from "@/lib/payrollRunGuard";
+import { isAdminRole } from "@/lib/roles";
 
 function payrollHintFromClaimDate(claimDate: string): string | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(claimDate)) return null;
@@ -88,7 +89,7 @@ export function ApprovalsContent() {
   const tab = params.get("tab") || "leave";
 
   const canApprove = useMemo(
-    () => role === "super_admin" || role === "admin" || role === "hr",
+    () => isAdminRole(role),
     [role]
   );
 
@@ -268,7 +269,7 @@ export function ApprovalsContent() {
         const data = await res.json();
         if (!res.ok) throw new Error(data?.error || "Failed to load employees");
         if (cancelled) return;
-        const allowedRoles = new Set(["employee", "manager"]);
+        const allowedRoles = new Set(["employee"]);
         const current = (data.employees || []).filter(
           (e: any) => e.employmentStatus === "current" && allowedRoles.has(String(e.role ?? "").toLowerCase()),
         );

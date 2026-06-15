@@ -8,6 +8,7 @@ import { PasswordField } from "@/components/PasswordField";
 import { setToken } from "@/lib/api";
 import { APP_NAME } from "@/lib/appBranding";
 import { validateLoginEmail, validateLoginPassword } from "@/lib/loginValidators";
+import { isAdminRole } from "@/lib/roles";
 import { fadeInUp, staggerContainer, staggerItem } from "@/lib/motion";
 
 function LoginForm() {
@@ -62,7 +63,7 @@ function LoginForm() {
       if (data.token) setToken(data.token);
 
       const role = data.user?.role;
-      if (role === "super_admin" || role === "admin") {
+      if (isAdminRole(role)) {
         const companyRes = await fetch("/api/company/me");
         const companyData = await companyRes.json().catch(() => ({}));
         if (!companyData?.company) {

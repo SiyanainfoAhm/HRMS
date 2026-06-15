@@ -1,6 +1,7 @@
 "use client";
 
 import { INSTITUTE_LABEL } from "@/lib/appBranding";
+import { isAdminRole, normalizeRole, type AppRole } from "@/lib/roles";
 import { useAuth } from "@/contexts/AuthContext";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useToast } from "@/components/ToastProvider";
@@ -9,12 +10,9 @@ import { SkeletonList, SkeletonTable, SkeletonText } from "@/components/Skeleton
 export function SettingsContent() {
   const { role } = useAuth();
   const { showToast } = useToast();
-  const canManage = useMemo(() => role === "super_admin" || role === "admin" || role === "hr", [role]);
-  const isSuperAdmin = role === "super_admin";
-  const canViewCompanySettings = useMemo(
-    () => role === "super_admin" || role === "admin" || role === "hr" || role === "manager",
-    [role]
-  );
+  const canManage = useMemo(() => isAdminRole(role), [role]);
+  const isAdmin = isAdminRole(role);
+  const canViewCompanySettings = useMemo(() => isAdminRole(role), [role]);
 
   const [activeTab, setActiveTab] = useState<"company" | "roles" | "org" | "designations">("company");
 
@@ -253,7 +251,7 @@ export function SettingsContent() {
         isNightShift: false,
       });
       setIsShiftsDialogOpen(false);
-      if (isSuperAdmin) showToast("success", "Settings updated successfully");
+      if (isAdmin) showToast("success", "Settings updated successfully");
     } catch (e: any) {
       setModuleError(e?.message || "Failed to save shift");
       showToast("error", e?.message || "Failed to save shift");
@@ -277,7 +275,7 @@ export function SettingsContent() {
       await refreshOrg();
       setDivisionForm({ id: "", name: "", description: "" });
       setIsOrgDialogOpen(false);
-      if (isSuperAdmin) showToast("success", "Settings updated successfully");
+      if (isAdmin) showToast("success", "Settings updated successfully");
     } catch (e: any) {
       setModuleError(e?.message || "Failed to save division");
       showToast("error", e?.message || "Failed to save division");
@@ -301,7 +299,7 @@ export function SettingsContent() {
       await refreshOrg();
       setDepartmentForm({ id: "", name: "", description: "", divisionId: "" });
       setIsOrgDialogOpen(false);
-      if (isSuperAdmin) showToast("success", "Settings updated successfully");
+      if (isAdmin) showToast("success", "Settings updated successfully");
     } catch (e: any) {
       setModuleError(e?.message || "Failed to save department");
       showToast("error", e?.message || "Failed to save department");
@@ -325,7 +323,7 @@ export function SettingsContent() {
       await refreshDesignations();
       setDesignationForm({ id: "", title: "", level: "" });
       setIsDesignationsDialogOpen(false);
-      if (isSuperAdmin) showToast("success", "Settings updated successfully");
+      if (isAdmin) showToast("success", "Settings updated successfully");
     } catch (e: any) {
       setModuleError(e?.message || "Failed to save designation");
       showToast("error", e?.message || "Failed to save designation");
@@ -349,7 +347,7 @@ export function SettingsContent() {
       await refreshRoles();
       setRoleForm({ id: "", roleKey: "employee", name: "", description: "", isDefault: false });
       setIsRolesDialogOpen(false);
-      if (isSuperAdmin) showToast("success", "Settings updated successfully");
+      if (isAdmin) showToast("success", "Settings updated successfully");
     } catch (e: any) {
       setModuleError(e?.message || "Failed to save role");
       showToast("error", e?.message || "Failed to save role");
@@ -440,7 +438,7 @@ export function SettingsContent() {
   }, [isCompanyDialogOpen]);
 
   function openCompanyDialog() {
-    if (!isSuperAdmin) return;
+    if (!isAdmin) return;
     setFormError(null);
     const commonIndustries = [
       "IT / Software",
@@ -476,7 +474,7 @@ export function SettingsContent() {
 
   async function saveCompany(e: FormEvent) {
     e.preventDefault();
-    if (!isSuperAdmin) return;
+    if (!isAdmin) return;
     setSaving(true);
     setFormError(null);
     try {
@@ -555,7 +553,7 @@ export function SettingsContent() {
                 <div>
                   <h2 className="mb-1 text-lg font-semibold text-slate-900">{INSTITUTE_LABEL} profile</h2>
                 </div>
-                {isSuperAdmin && (
+                {isAdmin && (
                   <button type="button" className="btn btn-primary" onClick={openCompanyDialog} disabled={loading}>
                     Edit
                   </button>
@@ -692,7 +690,7 @@ export function SettingsContent() {
                                   Edit
                                 </button>
                               )}
-                              {isSuperAdmin && (
+                              {isAdmin && (
                                 <>
                                   <button
                                     type="button"
@@ -728,7 +726,7 @@ export function SettingsContent() {
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <h2 className="mb-1 text-lg font-semibold text-slate-900">Roles</h2>
-                  <p className="muted">Default roles (Super Admin/Admin/HR/Manager) cannot be deleted.</p>
+                  <p className="muted">System roles are Admin and Employee. Legacy role keys are shown as Admin.</p>
                 </div>
                 {canManage && (
                   <button
@@ -763,10 +761,10 @@ export function SettingsContent() {
                     <tbody>
                       {roles.map((r) => {
                         const isProtected =
-                          r.is_default || r.role_key === "super_admin" || r.role_key === "admin" || r.role_key === "hr" || r.role_key === "manager";
+                          r.is_default || r.role_key === "admin" || r.role_key === "employee" || r.role_key === "super_admin" || r.role_key === "hr" || r.role_key === "manager";
                         return (
                           <tr key={r.id} className="border-t border-slate-200">
-                            <td className="px-3 py-2">{r.role_key}</td>
+                            <td className="px-3 py-2 capitalize">{normalizeRole(r.role_key)}</td>
                             <td className="px-3 py-2">{r.name}</td>
                             <td className="px-3 py-2">{r.is_default ? "Yes" : "No"}</td>
                             <td className="px-3 py-2">{r.is_active === false ? "Inactive" : "Active"}</td>
@@ -779,7 +777,7 @@ export function SettingsContent() {
                                     onClick={() => {
                                       setRoleForm({
                                         id: r.id,
-                                        roleKey: r.role_key,
+                                        roleKey: normalizeRole(r.role_key),
                                         name: r.name,
                                         description: r.description ?? "",
                                         isDefault: Boolean(r.is_default),
@@ -790,7 +788,7 @@ export function SettingsContent() {
                                     Edit
                                   </button>
                                 )}
-                                {isSuperAdmin && (
+                                {isAdmin && (
                                   <>
                                     <button
                                       type="button"
@@ -880,7 +878,7 @@ export function SettingsContent() {
                                   Edit
                                 </button>
                               )}
-                              {isSuperAdmin && (
+                              {isAdmin && (
                                 <>
                                   <button
                                     type="button"
@@ -960,7 +958,7 @@ export function SettingsContent() {
                               Edit
                             </button>
                           )}
-                          {isSuperAdmin && (
+                          {isAdmin && (
                             <>
                               <button
                                 type="button"
@@ -1037,7 +1035,7 @@ export function SettingsContent() {
                               Edit
                             </button>
                           )}
-                          {isSuperAdmin && (
+                          {isAdmin && (
                             <>
                               <button
                                 type="button"
@@ -1582,19 +1580,19 @@ export function SettingsContent() {
               {moduleError && <p className="text-sm text-red-600">{moduleError}</p>}
               <form onSubmit={saveRole} className="card grid grid-cols-1 gap-4 md:grid-cols-4">
                 <div className="md:col-span-1">
-                  <label className="mb-1 block text-sm font-medium text-slate-700">Role key</label>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">User role</label>
                   <select
                     value={roleForm.roleKey}
                     disabled={Boolean(roleForm.id)}
-                    onChange={(e) => setRoleForm((p) => ({ ...p, roleKey: e.target.value }))}
+                    onChange={(e) => setRoleForm((p) => ({ ...p, roleKey: e.target.value as AppRole }))}
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-50"
                   >
-                    <option value="employee">employee</option>
-                    <option value="manager">manager</option>
-                    <option value="hr">hr</option>
-                    <option value="admin">admin</option>
-                    <option value="super_admin">super_admin</option>
+                    <option value="employee">Employee</option>
+                    <option value="admin">Admin</option>
                   </select>
+                  {roleForm.id ? (
+                    <p className="mt-1 text-xs text-slate-500">Role type cannot be changed after creation.</p>
+                  ) : null}
                 </div>
                 <div className="md:col-span-2">
                   <label className="mb-1 block text-sm font-medium text-slate-700">Display name</label>

@@ -17,6 +17,8 @@ import {
   masterRowToDeductionDefaults,
 } from "@/lib/governmentPayroll";
 import { resolveConvertPayrollMasterInput } from "@/lib/convertToCurrentPayroll";
+import type { AppRole } from "@/lib/roles";
+import { isAdminRole } from "@/lib/roles";
 import {
   normalizeDigits,
   normalizePanInput,
@@ -32,7 +34,7 @@ type Employee = {
   id: string;
   email: string;
   name: string | null;
-  role: "super_admin" | "admin" | "hr" | "manager" | "employee";
+  role: AppRole;
   employmentStatus: "preboarding" | "current" | "past";
   employeeCode: string;
   phone: string;
@@ -51,7 +53,7 @@ type Employee = {
 export default function EmployeesPage() {
   const { showToast } = useToast();
   const { role } = useAuth();
-  const isSuperAdmin = role === "super_admin";
+  const isAdmin = isAdminRole(role);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [employeePage, setEmployeePage] = useState(1);
   const [employeeTotal, setEmployeeTotal] = useState(0);
@@ -1250,8 +1252,6 @@ export default function EmployeesPage() {
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                   >
                     <option value="employee">Employee</option>
-                    <option value="manager">Manager</option>
-                    <option value="hr">HR</option>
                     <option value="admin">Admin</option>
                   </select>
                 </div>
@@ -2076,7 +2076,7 @@ export default function EmployeesPage() {
                           >
                             ✅
                           </button>
-                          {isSuperAdmin && (
+                          {isAdmin && (
                             <button
                               type="button"
                               className="btn btn-outline !h-8 !w-8 !min-h-0 shrink-0 !border-red-300 !p-0 !text-sm leading-none text-red-700"
@@ -2121,7 +2121,7 @@ export default function EmployeesPage() {
                           >
                             📴
                           </button>
-                          {isSuperAdmin && (
+                          {isAdmin && (
                             <button
                               type="button"
                               className="btn btn-outline !h-8 !w-8 !min-h-0 shrink-0 !border-red-300 !p-0 !text-sm leading-none text-red-700"
@@ -2150,7 +2150,7 @@ export default function EmployeesPage() {
                           ) : (
                             <span className="px-1 text-slate-400">—</span>
                           )}
-                          {isSuperAdmin && (
+                          {isAdmin && (
                             <button
                               type="button"
                               className="btn btn-outline !h-8 !w-8 !min-h-0 shrink-0 !border-red-300 !p-0 !text-sm leading-none text-red-700"
@@ -2203,7 +2203,7 @@ export default function EmployeesPage() {
                       >
                         Convert to current
                       </button>
-                      {isSuperAdmin && (
+                      {isAdmin && (
                         <button type="button" className="btn btn-outline text-sm !border-red-200 text-red-700" onClick={() => setDeleteTarget(e)}>
                           Delete
                         </button>
@@ -2229,7 +2229,7 @@ export default function EmployeesPage() {
                       >
                         Convert to past
                       </button>
-                      {isSuperAdmin && (
+                      {isAdmin && (
                         <button type="button" className="btn btn-outline text-sm !border-red-200 text-red-700" onClick={() => setDeleteTarget(e)}>
                           Delete
                         </button>
@@ -2240,13 +2240,13 @@ export default function EmployeesPage() {
                       <button type="button" className="btn btn-outline text-sm" onClick={() => revokeNotice(e)} disabled={converting}>
                         Revoke notice
                       </button>
-                      {isSuperAdmin && (
+                      {isAdmin && (
                         <button type="button" className="btn btn-outline text-sm !border-red-200 text-red-700" onClick={() => setDeleteTarget(e)}>
                           Delete
                         </button>
                       )}
                     </>
-                  ) : isSuperAdmin ? (
+                  ) : isAdmin ? (
                     <button type="button" className="btn btn-outline text-sm !border-red-200 text-red-700" onClick={() => setDeleteTarget(e)}>
                       Delete
                     </button>

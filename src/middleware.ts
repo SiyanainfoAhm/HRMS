@@ -8,13 +8,12 @@ import {
   getSessionFromCookie,
   type SessionUser,
 } from "@/lib/auth";
+import { normalizeRole } from "@/lib/roles";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
 
-const SESSION_ROLES = new Set(["super_admin", "admin", "hr", "manager", "employee"]);
-
-function isSessionRole(value: unknown): value is SessionUser["role"] {
-  return typeof value === "string" && SESSION_ROLES.has(value);
+function isSessionRole(value: unknown): boolean {
+  return typeof value === "string";
 }
 
 /** Keep signed session cookie aligned with Laravel token (role / profile). */
@@ -56,12 +55,13 @@ export async function middleware(request: NextRequest) {
       id: String(u.id ?? session.id),
       email: String(u.email ?? session.email),
       name: u.name != null ? String(u.name) : session.name,
-      role: u.role,
+      role: normalizeRole(u.role),
       sv,
     };
 
+    const normalizedSessionRole = normalizeRole(session.role);
     const unchanged =
-      synced.role === session.role &&
+      synced.role === normalizedSessionRole &&
       synced.email === session.email &&
       synced.name === session.name &&
       (synced.sv ?? 0) === (session.sv ?? 0);

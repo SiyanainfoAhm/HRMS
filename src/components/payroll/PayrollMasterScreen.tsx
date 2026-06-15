@@ -16,6 +16,7 @@ import {
   DEFAULT_MEDICAL,
 } from "@/lib/payrollMasterCalc";
 import { GOVERNMENT_DEFAULT_CPF_RATE_ON_TOTAL_EARNINGS } from "@/lib/governmentPayroll";
+import { isAdminRole, normalizeRole, type AppRole } from "@/lib/roles";
 
 export type PayrollMasterRecord = {
   id: string;
@@ -66,6 +67,7 @@ export type PayrollMasterRecord = {
   status?: string | null;
   remarks?: string | null;
   effectiveFrom?: string | null;
+  userRole?: AppRole | string | null;
 };
 
 type MasterFormState = {
@@ -110,6 +112,7 @@ type MasterFormState = {
   advance: string;
   remarks: string;
   effectiveFrom: string;
+  userRole: AppRole;
   password: string;
   confirmPassword: string;
 };
@@ -181,6 +184,7 @@ const emptyForm = (): MasterFormState => ({
   advance: "0",
   remarks: "",
   effectiveFrom: new Date().toISOString().slice(0, 10),
+  userRole: "employee",
   password: "",
   confirmPassword: "",
 });
@@ -228,6 +232,7 @@ function formFromRecord(r: PayrollMasterRecord): MasterFormState {
     advance: String(r.advance ?? 0),
     remarks: r.remarks ?? "",
     effectiveFrom: r.effectiveFrom?.slice(0, 10) ?? new Date().toISOString().slice(0, 10),
+    userRole: normalizeRole(r.userRole ?? "employee"),
     password: "",
     confirmPassword: "",
   };
@@ -276,6 +281,7 @@ function formToPayload(form: MasterFormState) {
     advance: parseFloat(form.advance) || 0,
     remarks: form.remarks.trim() || undefined,
     effectiveFrom: form.effectiveFrom || undefined,
+    role: form.userRole,
     ...(form.password.trim() ? { password: form.password } : {}),
   };
 }
@@ -337,7 +343,7 @@ type Props = { canManage?: boolean };
 export function PayrollMasterScreen({ canManage = false }: Props) {
   const { role } = useAuth();
   const { showToast } = useToast();
-  const canWrite = canManage && (role === "super_admin" || role === "admin");
+  const canWrite = canManage && isAdminRole(role);
 
   const [rows, setRows] = useState<PayrollMasterRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -821,6 +827,21 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                     <div>
                       <label className={labelCls}>Email *</label>
                       <input type="email" className={inputCls} value={form.email} onChange={(e) => patchForm({ email: e.target.value })} required />
+                    </div>
+                    <div>
+                      <label className={labelCls}>User role *</label>
+                      <select
+                        className={inputCls}
+                        value={form.userRole}
+                        onChange={(e) => patchForm({ userRole: e.target.value as AppRole })}
+                        required
+                      >
+                        <option value="employee">Employee</option>
+                        <option value="admin">Admin</option>
+                      </select>
+                      <p className="mt-1 text-xs text-brand-muted">
+                        Admin can manage payroll and settings. Employee can view salary slips only.
+                      </p>
                     </div>
                     <div>
                       <PasswordField

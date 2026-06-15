@@ -611,7 +611,7 @@ class PayrollController extends Controller
                 $empUser = HrmsUser::where('id', $employeeUserId)
                     ->where('company_id', $user->company_id)
                     ->first();
-                if (! $empUser || $empUser->role?->value === 'super_admin') {
+                if (! $empUser || $empUser->role?->value === 'admin') {
                     continue;
                 }
 

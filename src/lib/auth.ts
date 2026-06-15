@@ -1,4 +1,6 @@
 import { createHmac, timingSafeEqual } from "crypto";
+import type { AppRole } from "@/lib/roles";
+import { normalizeRole } from "@/lib/roles";
 
 const COOKIE_NAME = "hrms_session";
 const DEFAULT_SECRET = "hrms-dev-secret-change-in-production";
@@ -11,7 +13,7 @@ export type SessionUser = {
   id: string;
   email: string;
   name: string | null;
-  role: "super_admin" | "admin" | "hr" | "manager" | "employee";
+  role: AppRole;
   /** Incremented on password change; must match cirt_users.auth_session_version. */
   sv?: number;
 };
@@ -36,7 +38,9 @@ export function getSessionFromCookie(cookieValue: string | undefined): SessionUs
       return null;
     }
     const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf-8")) as SessionUser;
-    if (decoded?.id && decoded?.email && decoded?.role) return decoded;
+    if (decoded?.id && decoded?.email && decoded?.role) {
+      return { ...decoded, role: normalizeRole(decoded.role) };
+    }
   } catch {
     return null;
   }

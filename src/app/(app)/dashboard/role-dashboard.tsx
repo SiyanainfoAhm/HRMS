@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/Skeleton";
 import { useToast } from "@/components/ToastProvider";
 import { onHrmsChange } from "@/lib/hrmsChangeBus";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { isAdminRole } from "@/lib/roles";
 
 function getGreeting(): string {
   const h = new Date().getHours();
@@ -810,14 +811,14 @@ export function DashboardContent() {
       </div>
 
       <div className="grid-3">
-        {(role === "super_admin" || role === "admin" || role === "hr" || role === "manager") && (
+        {isAdminRole(role) && (
           <div className="card">
             <h2 className="mb-1 text-lg font-semibold text-slate-900">Attendance overview</h2>
             <p className="muted">
               Employees punch: first in → lunch out → lunch in → final out. Super Admin / Admin / HR can review everyone&apos;s
               punches by date.
             </p>
-            {(role === "super_admin" || role === "admin" || role === "hr") && (
+            {isAdminRole(role) && (
               <Link
                 href="/attendance"
                 className="btn btn-primary mt-3"
@@ -859,20 +860,13 @@ export function DashboardContent() {
           </Link>
         </div>
 
-        {(role === "super_admin" || role === "admin" || role === "hr") && (
+        {isAdminRole(role) && (
           <div className="card">
             <h2 className="mb-1 text-lg font-semibold text-slate-900">Employee Hub</h2>
             <p className="muted">Search, view and manage employee records for the entire company.</p>
             <Link href="/employees" className="btn btn-primary mt-3">
               Go to Employees
             </Link>
-          </div>
-        )}
-
-        {role === "super_admin" && (
-          <div className="card">
-            <h2 className="mb-1 text-lg font-semibold text-slate-900">Companies</h2>
-            <p className="muted">Register companies, configure their business details and onboard HR / Admin users.</p>
           </div>
         )}
       </div>

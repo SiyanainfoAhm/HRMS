@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources;
 
+use App\Enums\UserRole;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -17,7 +18,7 @@ class SessionUserResource extends JsonResource
             'id' => $this->id,
             'email' => $this->email,
             'name' => $this->name,
-            'role' => $this->role?->value ?? $this->role,
+            'role' => ($this->role instanceof UserRole ? $this->role : UserRole::fromStored(is_string($this->role) ? $this->role : null))->value,
             'sv' => (int) ($this->auth_session_version ?? 0),
         ];
     }

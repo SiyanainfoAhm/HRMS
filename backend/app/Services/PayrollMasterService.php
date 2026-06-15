@@ -505,6 +505,16 @@ final class PayrollMasterService
     public function formatRow(HrmsPayrollMaster $m): array
     {
         $userId = $m->user_id ?? $m->employee_user_id;
+        $userRole = UserRole::Employee->value;
+        if ($userId) {
+            $user = HrmsUser::find($userId);
+            if ($user) {
+                $role = $user->role;
+                $userRole = $role instanceof UserRole
+                    ? $role->value
+                    : UserRole::fromStored(is_string($role) ? $role : null)->value;
+            }
+        }
 
         return [
             'id' => $m->id,
@@ -512,6 +522,7 @@ final class PayrollMasterService
             'employeeId' => $m->employee_id,
             'userId' => $userId,
             'employeeUserId' => $userId,
+            'userRole' => $userRole,
             'employeeCode' => $m->employee_code,
             'name' => $m->name,
             'email' => $m->email,
@@ -851,7 +862,7 @@ final class PayrollMasterService
             'email' => $email,
             'password_hash' => $passwordHash,
             'name' => trim((string) ($validated['name'] ?? '')),
-            'role' => UserRole::Employee,
+            'role' => $this->resolveRoleFromPayload($validated),
             'auth_provider' => 'password',
             'auth_session_version' => 0,
             'company_id' => $companyId,
@@ -910,6 +921,7 @@ final class PayrollMasterService
             'phone' => $validated['phone'] ?? $user->phone,
             'gender' => $validated['gender'] ?? $user->gender,
             'designation' => $validated['designation'] ?? $user->designation,
+            'role' => $this->resolveRoleFromPayload($validated)->value,
             'employment_status' => EmploymentStatus::Current,
             'government_pay_level' => $payLevel > 0 ? $payLevel : $user->government_pay_level,
             'gross_salary' => $gross > 0 ? $gross : $user->gross_salary,
@@ -923,6 +935,20 @@ final class PayrollMasterService
         ], fn ($v) => $v !== null && $v !== ''));
 
         $this->applyPasswordToUser($user, $validated);
+    }
+
+    /** @param  array<string, mixed>  $validated */
+    private function resolveRoleFromPayload(array $validated): UserRole
+    {
+        $raw = $validated['role'] ?? $validated['userRole'] ?? $validated['user_role'] ?? null;
+        if ($raw instanceof UserRole) {
+            return $raw;
+        }
+        if ($raw === null || $raw === '') {
+            return UserRole::Employee;
+        }
+
+        return UserRole::fromStored(is_string($raw) ? $raw : null);
     }
 
     /** @return array{0: string, 1: ?string} */

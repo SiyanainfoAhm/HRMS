@@ -19,6 +19,7 @@ import {
 } from "@/lib/governmentPayroll";
 import { GovernmentRunPreviewTable, type GovernmentRunPreviewRow } from "@/components/payroll/GovernmentRunPreviewTable";
 import { PayrollMasterScreen } from "@/components/payroll/PayrollMasterScreen";
+import { isAdminRole } from "@/lib/roles";
 import { GovernmentPayslipPrint } from "@/components/payslip/GovernmentPayslipPrint";
 import type { GovernmentMonthlySlip } from "@/lib/governmentPayslipLayout";
 import type { GovernmentLeavePayslipDisplay } from "@/lib/leaveBalancesCompute";
@@ -536,7 +537,7 @@ function PayrollPageContent() {
   const params = useSearchParams();
   const tab = params.get("tab") || "master";
 
-  const canManage = role === "super_admin" || role === "admin" || role === "hr";
+  const canManage = isAdminRole(role);
 
   const [masters, setMasters] = useState<any[]>([]);
   const [mastersLoading, setMastersLoading] = useState(false);
@@ -810,7 +811,7 @@ function PayrollPageContent() {
         const data = await res.json();
         if (!cancelled && res.ok) {
           const raw = data.employees ?? [];
-          const allowedRoles = new Set(["employee", "manager"]);
+          const allowedRoles = new Set(["employee"]);
           const list = raw.filter(
             (e: any) =>
               String(e.employmentStatus ?? "preboarding") !== "preboarding" &&
@@ -1845,7 +1846,7 @@ function PayrollPageContent() {
         <p className="muted">{payrollPageSubtitle}</p>
       </div>
       {tab === "master" && (
-        <PayrollMasterScreen canManage={role === "super_admin" || role === "admin"} />
+        <PayrollMasterScreen canManage={isAdminRole(role)} />
       )}
 
       {tab === "run" && (

@@ -8,6 +8,7 @@ import { DatePickerField } from "@/components/ui/DatePickerField";
 import { PasswordField } from "@/components/PasswordField";
 import { upload as apiUpload } from "@/lib/api";
 import { fmtDmy } from "@/lib/dateFormat";
+import { isAdminRole } from "@/lib/roles";
 import {
   normalizeDigits,
   normalizePanInput,
@@ -26,7 +27,7 @@ export function ProfileContent() {
   const { role } = useAuth();
   const params = useSearchParams();
   const router = useRouter();
-  const isEmployeeSelfService = role === "employee" || role === "manager";
+  const isEmployeeSelfService = !isAdminRole(role);
   const tab = params.get("tab") || (isEmployeeSelfService ? "pay" : "profile");
 
   useEffect(() => {
@@ -35,9 +36,9 @@ export function ProfileContent() {
     }
   }, [isEmployeeSelfService, tab, router]);
 
-  const canEditEmployment = useMemo(() => role === "super_admin" || role === "admin" || role === "hr", [role]);
-  const canEditOrgFields = useMemo(() => role === "super_admin" || role === "admin" || role === "hr", [role]);
-  const isSuperAdmin = role === "super_admin";
+  const canEditEmployment = useMemo(() => isAdminRole(role), [role]);
+  const canEditOrgFields = useMemo(() => isAdminRole(role), [role]);
+  const isAdmin = isAdminRole(role);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -368,7 +369,7 @@ export function ProfileContent() {
   }, [tab]);
 
   useEffect(() => {
-    if (tab !== "profile" || isSuperAdmin) return;
+    if (tab !== "profile" || isAdmin) return;
     let cancelled = false;
     (async () => {
       try {
@@ -395,7 +396,7 @@ export function ProfileContent() {
       }
     })();
     return () => { cancelled = true; };
-  }, [tab, isSuperAdmin]);
+  }, [tab, isAdmin]);
 
   useEffect(() => {
     if (tab !== "pay") return;
@@ -633,7 +634,7 @@ export function ProfileContent() {
         <p className="muted">
           {isEmployeeSelfService
             ? "View and download your salary slips."
-            : isSuperAdmin
+            : isAdmin
               ? "You are the master admin. Manage companies and edit company details—employee fields do not apply to you."
               : "For employees this shows personal, bank and emergency contact information."}
         </p>
@@ -647,7 +648,7 @@ export function ProfileContent() {
         >
           My Profile
         </Link>
-        {!isSuperAdmin && (
+        {!isAdmin && (
             <Link
               href="/profile?tab=pay"
               className={`btn ${tab === "pay" ? "btn-primary" : "btn-outline"}`}
@@ -664,10 +665,10 @@ export function ProfileContent() {
           <div className="flex items-start justify-between gap-4">
             <div>
               <h2 className="mb-1 text-lg font-semibold text-slate-900">
-                {isSuperAdmin ? "Account details" : "My details"}
+                {isAdmin ? "Account details" : "My details"}
               </h2>
               <p className="muted">
-                {isSuperAdmin
+                {isAdmin
                   ? "Basic account info. You manage companies from the Companies section."
                   : ""}
               </p>
@@ -684,8 +685,8 @@ export function ProfileContent() {
               {error && <p className="text-sm text-red-600">{error}</p>}
               {success && <p className="text-sm text-emerald-700">{success}</p>}
 
-              <div className={`grid grid-cols-1 gap-4 ${isSuperAdmin ? "md:grid-cols-3" : "md:grid-cols-3"}`}>
-                {isSuperAdmin && (
+              <div className={`grid grid-cols-1 gap-4 ${isAdmin ? "md:grid-cols-3" : "md:grid-cols-3"}`}>
+                {isAdmin && (
                 <div>
                   <label className="mb-1 block text-sm font-medium text-slate-700">Email</label>
                   <input
@@ -752,7 +753,7 @@ export function ProfileContent() {
                   </select>
                   <p className="mt-0.5 text-xs text-slate-500">Used for avatar display on dashboard.</p>
                 </div>
-                {!isSuperAdmin && (
+                {!isAdmin && (
                 <>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-slate-700">Employee code</label>
@@ -981,7 +982,7 @@ export function ProfileContent() {
 
               </div>
 
-              {!isSuperAdmin && (
+              {!isAdmin && (
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div>
                   <h3 className="text-sm font-semibold text-slate-900">Current address</h3>

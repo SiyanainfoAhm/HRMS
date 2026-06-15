@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createSessionCookie, getCookieOptions, COOKIE_NAME, TOKEN_COOKIE_NAME, type SessionUser } from "@/lib/auth";
+import { normalizeRole } from "@/lib/roles";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
 
@@ -27,7 +28,7 @@ export async function POST(request: NextRequest) {
       id: u.id,
       email: u.email,
       name: u.name,
-      role: u.role,
+      role: normalizeRole(u.role),
       sv: u.sv ?? 0,
     };
     const cookie = createSessionCookie(session);

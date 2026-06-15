@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { COOKIE_NAME, TOKEN_COOKIE_NAME } from "@/lib/auth";
 import { getValidatedSession } from "@/lib/authValidate";
+import { isAdminRole } from "@/lib/roles";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { AppShell, type CompanyBranding } from "@/components/AppShell";
 
@@ -33,7 +34,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       });
       if (res.ok) {
         const data = await res.json();
-        if ((session.role === "super_admin" || session.role === "admin") && !data.company) {
+        if (isAdminRole(session.role) && !data.company) {
           redirect("/setup/company");
         }
         companyBranding = brandingFromCompany(data.company);
@@ -43,7 +44,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     } catch {
       // If API is unreachable, let them through rather than blocking
     }
-  } else if (session.role === "super_admin" || session.role === "admin") {
+  } else if (isAdminRole(session.role)) {
     redirect("/auth/login");
   }
 
