@@ -6,7 +6,7 @@ import {
 } from "@/lib/leaveBalancesCompute";
 import type { ApprovedLeave } from "@/lib/leavePolicy";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
+import { getApiBaseUrl } from "@/lib/apiBase";
 
 function policyRowsFromApi(leavePolicies: unknown[]): LeavePolicyWithTypeRow[] {
   return (leavePolicies ?? []).map((p: any) => {
@@ -61,8 +61,8 @@ export async function enrichPayslipsWithLeave<T extends { payslips?: any[]; user
   const headers = { Accept: "application/json", Authorization: authHeader };
 
   const [polRes, reqRes] = await Promise.all([
-    fetch(`${API_BASE}/leave/policies`, { headers, cache: "no-store" }),
-    fetch(`${API_BASE}/leave/requests?status=approved&employee_user_id=${encodeURIComponent(employeeUserId)}`, {
+    fetch(`${getApiBaseUrl()}/leave/policies`, { headers, cache: "no-store" }),
+    fetch(`${getApiBaseUrl()}/leave/requests?status=approved&employee_user_id=${encodeURIComponent(employeeUserId)}`, {
       headers,
       cache: "no-store",
     }),

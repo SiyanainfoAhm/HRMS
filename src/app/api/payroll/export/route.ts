@@ -9,7 +9,7 @@ import {
 } from "@/lib/payrollExcelExport";
 import * as XLSX from "xlsx-js-style";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
+import { getApiBaseUrl } from "@/lib/apiBase";
 
 const MONTH_NAMES = [
   "",
@@ -70,7 +70,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const res = await fetch(`${API_BASE}/payroll/export?period_id=${encodeURIComponent(periodId)}`, {
+  const res = await fetch(`${getApiBaseUrl()}/payroll/export?period_id=${encodeURIComponent(periodId)}`, {
     headers: {
       Accept: "application/json",
       Authorization: `Bearer ${token}`,

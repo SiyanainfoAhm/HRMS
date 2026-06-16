@@ -6,7 +6,7 @@ import { isAdminRole } from "@/lib/roles";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { AppShell, type CompanyBranding } from "@/components/AppShell";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
+import { getApiBaseUrl } from "@/lib/apiBase";
 
 function brandingFromCompany(company: Record<string, unknown> | null | undefined): CompanyBranding | null {
   if (!company) return null;
@@ -28,7 +28,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   if (token) {
     try {
-      const res = await fetch(`${API_BASE}/company/me`, {
+      const res = await fetch(`${getApiBaseUrl()}/company/me`, {
         headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
         cache: "no-store",
       });

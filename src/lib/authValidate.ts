@@ -1,7 +1,7 @@
 import { getSessionFromCookie, type SessionUser } from "@/lib/auth";
 import { normalizeRole } from "@/lib/roles";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
+import { getApiBaseUrl } from "@/lib/apiBase";
 
 function isSessionRole(value: unknown): value is SessionUser["role"] {
   return typeof value === "string" && (value === "admin" || value === "employee" || value === "super_admin" || value === "hr" || value === "manager");
@@ -23,7 +23,7 @@ export async function getValidatedSession(
   if (!apiToken) return normalizedSession;
 
   try {
-    const res = await fetch(`${API_BASE}/auth/me`, {
+    const res = await fetch(`${getApiBaseUrl()}/auth/me`, {
       headers: { Authorization: `Bearer ${apiToken}`, Accept: "application/json" },
       cache: "no-store",
     });

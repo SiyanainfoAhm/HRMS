@@ -1,4 +1,4 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
+import { getApiBaseUrl } from "@/lib/apiBase";
 
 let _token: string | null = null;
 
@@ -35,7 +35,7 @@ export async function api<T = any>(
   options: RequestInit & { params?: Record<string, string> } = {},
 ): Promise<T> {
   const { params, ...fetchOpts } = options;
-  let url = `${API_BASE}${path.startsWith("/") ? path : `/${path}`}`;
+  let url = `${getApiBaseUrl()}${path.startsWith("/") ? path : `/${path}`}`;
   if (params) {
     const qs = new URLSearchParams(
       Object.entries(params).filter(([, v]) => v !== undefined && v !== ""),

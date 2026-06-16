@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { TOKEN_COOKIE_NAME } from "@/lib/auth";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
+import { getApiBaseUrl } from "@/lib/apiBase";
 
 function camelToSnake(str: string): string {
   return str.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
@@ -27,7 +26,7 @@ export async function proxyToLaravel(
   const method = options?.method || request.method;
   const url = new URL(request.url);
   const queryString = url.searchParams.toString();
-  const targetUrl = `${API_BASE}${laravelPath}${queryString ? `?${queryString}` : ""}`;
+  const targetUrl = `${getApiBaseUrl()}${laravelPath}${queryString ? `?${queryString}` : ""}`;
 
   const headers: Record<string, string> = { Accept: "application/json" };
   const authHeader = request.headers.get("authorization");
@@ -90,7 +89,16 @@ export async function proxyToLaravel(
       status: res.status,
       headers: { "Content-Type": res.headers.get("content-type") || "application/json" },
     });
-  } catch {
-    return NextResponse.json({ error: "API unavailable" }, { status: 502 });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "fetch failed";
+    return NextResponse.json(
+      {
+        error: "API unavailable",
+        hint: "Check API_URL / NEXT_PUBLIC_API_URL on Vercel and that the Cloudflare tunnel + php artisan serve are running.",
+        apiBase: getApiBaseUrl(),
+        detail: process.env.NODE_ENV === "production" ? undefined : message,
+      },
+      { status: 502 },
+    );
   }
 }

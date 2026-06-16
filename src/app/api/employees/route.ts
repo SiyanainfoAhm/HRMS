@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { proxyToLaravel } from "@/lib/apiProxy";
 import { TOKEN_COOKIE_NAME } from "@/lib/auth";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
+import { getApiBaseUrl } from "@/lib/apiBase";
 
 function splitName(full: string): { first_name: string; last_name: string | null } {
   const parts = full.trim().split(/\s+/);
@@ -200,8 +200,8 @@ export async function GET(request: NextRequest) {
   }
 
   const targetUrl = userId
-    ? `${API_BASE}/employees/${userId}`
-    : `${API_BASE}/employees${url.searchParams.toString() ? `?${url.searchParams.toString()}` : ""}`;
+    ? `${getApiBaseUrl()}/employees/${userId}`
+    : `${getApiBaseUrl()}/employees${url.searchParams.toString() ? `?${url.searchParams.toString()}` : ""}`;
 
   try {
     const res = await fetch(targetUrl, { headers, cache: "no-store" });
@@ -244,7 +244,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const res = await fetch(`${API_BASE}/employees`, {
+    const res = await fetch(`${getApiBaseUrl()}/employees`, {
       method: "POST",
       headers,
       body: JSON.stringify(transformed),
@@ -276,7 +276,7 @@ export async function PUT(request: NextRequest) {
     headers["Authorization"] = `Bearer ${token}`;
   }
 
-  const url = id ? `${API_BASE}/employees/${id}` : `${API_BASE}/employees`;
+  const url = id ? `${getApiBaseUrl()}/employees/${id}` : `${getApiBaseUrl()}/employees`;
   try {
     const res = await fetch(url, {
       method: "PUT",
@@ -310,7 +310,7 @@ export async function PATCH(request: NextRequest) {
   }
 
   const id = transformed.user_id || body.userId;
-  const url = id ? `${API_BASE}/employees/${id}` : `${API_BASE}/employees`;
+  const url = id ? `${getApiBaseUrl()}/employees/${id}` : `${getApiBaseUrl()}/employees`;
   try {
     const res = await fetch(url, {
       method: "PUT",

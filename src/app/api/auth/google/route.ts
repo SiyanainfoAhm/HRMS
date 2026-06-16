@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createSessionCookie, getCookieOptions, COOKIE_NAME, TOKEN_COOKIE_NAME, type SessionUser } from "@/lib/auth";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
+import { getApiBaseUrl } from "@/lib/apiBase";
 
 export async function POST(request: NextRequest) {
   try {
@@ -10,7 +10,7 @@ export async function POST(request: NextRequest) {
     if (!idToken) return NextResponse.json({ error: "idToken is required" }, { status: 400 });
     const mode = body?.mode === "signup" ? "signup" : "login";
 
-    const apiRes = await fetch(`${API_BASE}/auth/google`, {
+    const apiRes = await fetch(`${getApiBaseUrl()}/auth/google`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify({ idToken, mode }),

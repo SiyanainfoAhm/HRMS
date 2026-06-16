@@ -9,8 +9,7 @@ import {
   type SessionUser,
 } from "@/lib/auth";
 import { normalizeRole } from "@/lib/roles";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
+import { getApiBaseUrl } from "@/lib/apiBase";
 
 function isSessionRole(value: unknown): boolean {
   return typeof value === "string";
@@ -26,7 +25,7 @@ export async function middleware(request: NextRequest) {
   }
 
   try {
-    const res = await fetch(`${API_BASE}/auth/me`, {
+    const res = await fetch(`${getApiBaseUrl()}/auth/me`, {
       headers: { Authorization: `Bearer ${apiToken}`, Accept: "application/json" },
       cache: "no-store",
     });

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { TOKEN_COOKIE_NAME } from "@/lib/auth";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
+import { getApiBaseUrl } from "@/lib/apiBase";
 
 export async function proxyBinaryToLaravel(
   request: NextRequest,
@@ -11,7 +10,7 @@ export async function proxyBinaryToLaravel(
   const method = options?.method || request.method;
   const url = new URL(request.url);
   const queryString = url.searchParams.toString();
-  const targetUrl = `${API_BASE}${laravelPath}${queryString ? `?${queryString}` : ""}`;
+  const targetUrl = `${getApiBaseUrl()}${laravelPath}${queryString ? `?${queryString}` : ""}`;
 
   const headers: Record<string, string> = {};
   const authHeader = request.headers.get("authorization");
