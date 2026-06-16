@@ -89,6 +89,8 @@ Route::prefix('v1')->group(function () {
         Route::post('payroll/master/preview', [PayrollMasterController::class, 'preview']);
         Route::post('payroll/master/{id}/recalculate', [PayrollMasterController::class, 'recalculate']);
         Route::post('payroll/master/{id}/deactivate', [PayrollMasterController::class, 'deactivate']);
+        Route::get('payroll/master/{id}/history', [PayrollMasterController::class, 'history']);
+        Route::get('payroll/master/{id}', [PayrollMasterController::class, 'show']);
         Route::put('payroll/master/{id}', [PayrollMasterController::class, 'update']);
         Route::get('payroll/master', [PayrollMasterController::class, 'index']);
         Route::post('payroll/master', [PayrollMasterController::class, 'store']);

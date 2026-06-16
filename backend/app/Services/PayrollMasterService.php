@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Enums\EmploymentStatus;
 use App\Enums\UserRole;
+use App\Models\HrmsCompany;
 use App\Models\HrmsDepartment;
 use App\Models\HrmsDesignation;
 use App\Models\HrmsDivision;
@@ -11,10 +12,12 @@ use App\Models\HrmsEmployee;
 use App\Models\HrmsPayrollMaster;
 use App\Models\HrmsUser;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
+use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Csv;
@@ -30,12 +33,100 @@ final class PayrollMasterService
     /** @return list<array<string, mixed>> */
     public function listForCompany(?string $companyId): array
     {
-        $query = HrmsPayrollMaster::query()->orderByDesc('created_at');
+        $query = HrmsPayrollMaster::query();
+        $this->scopeCurrentMaster($query);
+        $query->orderByDesc('created_at');
         if ($companyId) {
             $query->where('company_id', $companyId);
         }
 
         return $query->get()->map(fn (HrmsPayrollMaster $m) => $this->formatRow($m))->values()->all();
+    }
+
+    /** @return list<array<string, mixed>> */
+    public function historyForMaster(HrmsPayrollMaster $anchor, ?string $companyId): array
+    {
+        $query = HrmsPayrollMaster::query();
+        if ($companyId) {
+            $query->where('company_id', $companyId);
+        }
+
+        $userId = $anchor->user_id ?? $anchor->employee_user_id;
+        if ($userId) {
+            $query->where(function ($w) use ($userId) {
+                $w->where('user_id', $userId)->orWhere('employee_user_id', $userId);
+            });
+        } elseif ($anchor->employee_code) {
+            $query->where('employee_code', $anchor->employee_code);
+        } else {
+            $query->where('id', $anchor->id);
+        }
+
+        return $query
+            ->orderByDesc('effective_from')
+            ->orderByDesc('effective_start_date')
+            ->orderByDesc('created_at')
+            ->get()
+            ->map(fn (HrmsPayrollMaster $m) => $this->formatRow($m))
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Close current master rows and open new ones with updated institute DA/HRA.
+     *
+     * @return array{revised: int, skipped: int, errors: list<array{employee: string, message: string}>}
+     */
+    public function revisionizeForCompanyDaHraChange(
+        string $companyId,
+        float $newDa,
+        float $newHra,
+        string $effectiveFrom,
+        string $createdBy,
+    ): array {
+        $summary = ['revised' => 0, 'skipped' => 0, 'errors' => []];
+
+        $masters = HrmsPayrollMaster::query()
+            ->where('company_id', $companyId)
+            ->where('status', 'active');
+        $this->scopeCurrentMaster($masters);
+        $masters = $masters->get();
+
+        foreach ($masters as $master) {
+            $currentDa = (float) ($master->da_percent ?? 0);
+            $currentHra = (float) ($master->hra_percent ?? 0);
+            if (abs($currentDa - $newDa) < 0.001 && abs($currentHra - $newHra) < 0.001) {
+                $summary['skipped']++;
+
+                continue;
+            }
+
+            try {
+                DB::transaction(function () use ($master, $newDa, $newHra, $effectiveFrom, $companyId, $createdBy, $currentDa, $currentHra, &$summary) {
+                    $reason = sprintf(
+                        'Institute DA/HRA revision: DA %.2f%% → %.2f%%, HRA %.2f%% → %.2f%%',
+                        $currentDa,
+                        $newDa,
+                        $currentHra,
+                        $newHra,
+                    );
+                    $this->reviseMasterRecord($master, [
+                        'da_percent' => $newDa,
+                        'hra_percent' => $newHra,
+                        'effective_from' => $effectiveFrom,
+                        'reason_for_change' => $reason,
+                    ], $companyId, $createdBy, $reason);
+                    $summary['revised']++;
+                });
+            } catch (\Throwable $e) {
+                $summary['errors'][] = [
+                    'employee' => (string) ($master->name ?? $master->employee_code ?? $master->id),
+                    'message' => $e->getMessage(),
+                ];
+            }
+        }
+
+        return $summary;
     }
 
     public function create(array $payload, string $companyId, string $createdBy, bool $salaryPending = false, bool $provisionUser = true): HrmsPayrollMaster
@@ -44,7 +135,8 @@ final class PayrollMasterService
         if ($provisionUser) {
             $this->provisionIdentityRecords($validated, $companyId, true);
         }
-        $calc = $this->calculator->calculateMaster($validated);
+        $defaults = $this->resolveCompanyPayrollDefaults($companyId);
+        $calc = $this->calculator->calculateMaster($validated, $defaults['da'], $defaults['hra']);
         $attrs = $this->filterExistingColumns($this->mergeCalculated($validated, $calc, $companyId, $createdBy));
 
         return HrmsPayrollMaster::create($attrs);
@@ -62,7 +154,26 @@ final class PayrollMasterService
             $validated['employee_user_id'] = $master->employee_user_id ?? $master->user_id;
         }
         $this->provisionIdentityRecords($validated, $companyId, $needsUser);
-        $calc = $this->calculator->calculateMaster($validated);
+        $validated = $this->mergeExistingMasterDefaults($master, $validated);
+
+        $newDa = $this->pickPercent($validated, 'da_percent', 'daPercent', $master->da_percent);
+        $newHra = $this->pickPercent($validated, 'hra_percent', 'hraPercent', $master->hra_percent);
+        $oldDa = (float) ($master->da_percent ?? 0);
+        $oldHra = (float) ($master->hra_percent ?? 0);
+        $daHraChanged = abs($newDa - $oldDa) >= 0.001 || abs($newHra - $oldHra) >= 0.001;
+
+        if ($daHraChanged && $this->isCurrentMaster($master)) {
+            return $this->reviseMasterRecord(
+                $master,
+                $validated,
+                $companyId,
+                $master->created_by,
+                $validated['reason_for_change'] ?? $validated['reasonForChange'] ?? null,
+            );
+        }
+
+        $defaults = $this->resolveCompanyPayrollDefaults($companyId);
+        $calc = $this->calculator->calculateMaster($validated, $defaults['da'], $defaults['hra']);
         $attrs = $this->filterExistingColumns($this->mergeCalculated($validated, $calc, $companyId, $master->created_by ?? null));
         $master->update($attrs);
 
@@ -71,7 +182,12 @@ final class PayrollMasterService
 
     public function recalculate(HrmsPayrollMaster $master): HrmsPayrollMaster
     {
-        $calc = $this->calculator->calculateMaster($this->masterToCalcInput($master));
+        $defaults = $this->resolveCompanyPayrollDefaults($master->company_id);
+        $calc = $this->calculator->calculateMaster(
+            $this->masterToCalcInput($master),
+            $defaults['da'],
+            $defaults['hra'],
+        );
         $master->update($this->filterExistingColumns($this->calculatedOnly($calc)));
 
         return $master->refresh();
@@ -296,6 +412,13 @@ final class PayrollMasterService
         $header = array_shift($rows);
         $map = $this->normalizeHeaders($header);
         $headers = array_values(array_filter($map));
+        $headerRowIndex = 1;
+        if (! in_array('name', $headers, true) && ! in_array('employee_code', $headers, true) && $rows !== []) {
+            $headerRowIndex = 2;
+            $header = array_shift($rows);
+            $map = $this->normalizeHeaders($header);
+            $headers = array_values(array_filter($map));
+        }
         $requiredHeaders = ['name', 'pay_level', 'gross_basic_pay'];
         $missing = array_values(array_diff($requiredHeaders, $headers));
         if ($missing !== []) {
@@ -305,7 +428,7 @@ final class PayrollMasterService
             ];
         }
 
-        $rowNum = 1;
+        $rowNum = $headerRowIndex;
         foreach ($rows as $rawRow) {
             $rowNum++;
             if ($this->isEmptyRow($rawRow)) {
@@ -363,14 +486,8 @@ final class PayrollMasterService
     public function exportSpreadsheet(?string $companyId, string $format = 'xlsx'): StreamedResponse
     {
         $rows = $this->listForCompany($companyId);
-        $headers = $this->templateHeaders();
         $sheet = new Spreadsheet;
-        $sheet->getActiveSheet()->fromArray($headers, null, 'A1');
-        $i = 2;
-        foreach ($rows as $r) {
-            $sheet->getActiveSheet()->fromArray($this->rowToExport($r), null, 'A'.$i);
-            $i++;
-        }
+        $this->writeSpreadsheetWithGroupedHeaders($sheet, $rows);
 
         $filename = 'cirt_payroll_master_'.date('Ymd_His').'.'.($format === 'csv' ? 'csv' : 'xlsx');
 
@@ -391,11 +508,8 @@ final class PayrollMasterService
 
     public function templateDownload(string $format = 'xlsx'): StreamedResponse
     {
-        $headers = $this->templateHeaders();
-        $sample = $this->sampleTemplateRow();
         $sheet = new Spreadsheet;
-        $sheet->getActiveSheet()->fromArray($headers, null, 'A1');
-        $sheet->getActiveSheet()->fromArray($sample, null, 'A2');
+        $this->writeSpreadsheetWithGroupedHeaders($sheet, [$this->sampleTemplateRowAsRecord()]);
 
         $filename = 'cirt_payroll_master_template.'.($format === 'csv' ? 'csv' : 'xlsx');
 
@@ -421,17 +535,102 @@ final class PayrollMasterService
     }
 
     /** @return list<string> */
-    private function templateHeaders(): array
+    private function templatePreDeductionHeaders(): array
     {
         return [
             'employee_code', 'name', 'email', 'phone', 'gender', 'date_of_birth', 'date_of_joining',
             'designation', 'department', 'division', 'pay_level', 'gross_basic_pay', 'da_percent', 'hra_percent', 'medical',
             'uan', 'cpf_no', 'pan', 'aadhaar', 'bank_name', 'bank_account_number', 'bank_ifsc',
             'status', 'remarks', 'effective_from',
-            'professional_tax', 'income_tax', 'lic', 'mess', 'welfare', 'vpf', 'pf_loan', 'post_office',
+        ];
+    }
+
+    /** @return list<string> */
+    private function templateDefaultDeductionHeaders(): array
+    {
+        return ['cpf_default', 'professional_tax'];
+    }
+
+    /** @return list<string> */
+    private function templateVariableDeductionHeaders(): array
+    {
+        return [
+            'income_tax', 'lic', 'mess', 'welfare', 'vpf', 'pf_loan', 'post_office',
             'credit_society', 'standard_licence_fee', 'electricity', 'water', 'horticulture', 'vehicle_charge',
             'other_deduction', 'advance',
         ];
+    }
+
+    /** @return list<string> */
+    private function templateHeaders(): array
+    {
+        return array_merge(
+            $this->templatePreDeductionHeaders(),
+            $this->templateDefaultDeductionHeaders(),
+            $this->templateVariableDeductionHeaders(),
+        );
+    }
+
+    /** @return list<string> */
+    private function templateGroupHeaderRow(): array
+    {
+        $pre = $this->templatePreDeductionHeaders();
+        $default = $this->templateDefaultDeductionHeaders();
+        $variable = $this->templateVariableDeductionHeaders();
+
+        $row = array_fill(0, count($pre), '');
+        $row = array_merge($row, ['Default deductions'], array_fill(0, count($default) - 1, ''));
+        $row = array_merge($row, ['Variable deductions'], array_fill(0, count($variable) - 1, ''));
+
+        return $row;
+    }
+
+    /** @param  list<array<string, mixed>>  $rows */
+    private function writeSpreadsheetWithGroupedHeaders(Spreadsheet $sheet, array $rows): void
+    {
+        $activeSheet = $sheet->getActiveSheet();
+        $activeSheet->fromArray($this->templateGroupHeaderRow(), null, 'A1');
+        $activeSheet->fromArray($this->templateHeaders(), null, 'A2');
+        $i = 3;
+        foreach ($rows as $r) {
+            $activeSheet->fromArray($this->rowToExport($r), null, 'A'.$i);
+            $i++;
+        }
+        $this->applyTemplateGroupHeaderMerges($activeSheet);
+    }
+
+    private function applyTemplateGroupHeaderMerges(\PhpOffice\PhpSpreadsheet\Worksheet\Worksheet $sheet): void
+    {
+        $preCount = count($this->templatePreDeductionHeaders());
+        $defaultCount = count($this->templateDefaultDeductionHeaders());
+        $variableCount = count($this->templateVariableDeductionHeaders());
+
+        $defaultStart = $preCount + 1;
+        $defaultEnd = $preCount + $defaultCount;
+        $variableStart = $defaultEnd + 1;
+        $variableEnd = $defaultEnd + $variableCount;
+
+        if ($defaultCount > 1) {
+            $sheet->mergeCells(
+                Coordinate::stringFromColumnIndex($defaultStart).'1:'.Coordinate::stringFromColumnIndex($defaultEnd).'1'
+            );
+        }
+        if ($variableCount > 1) {
+            $sheet->mergeCells(
+                Coordinate::stringFromColumnIndex($variableStart).'1:'.Coordinate::stringFromColumnIndex($variableEnd).'1'
+            );
+        }
+    }
+
+    /** @return array<string, mixed> */
+    private function sampleTemplateRowAsRecord(): array
+    {
+        $record = [];
+        foreach ($this->sampleTemplateRow() as $i => $value) {
+            $record[$this->templateHeaders()[$i]] = $value;
+        }
+
+        return $record;
     }
 
     /** @return list<string|int|float> */
@@ -463,6 +662,7 @@ final class PayrollMasterService
             'status' => 'active',
             'remarks' => 'Imported from template',
             'effective_from' => '2026-06-01',
+            'cpf_default' => 0,
             'professional_tax' => 200,
             'income_tax' => 0,
             'lic' => 0,
@@ -496,9 +696,65 @@ final class PayrollMasterService
             return (float) $m->take_home;
         }
 
-        $calc = $this->calculator->calculateMaster($this->masterToCalcInput($m));
+        $defaults = $this->resolveCompanyPayrollDefaults($m->company_id);
+        $calc = $this->calculator->calculateMaster(
+            $this->masterToCalcInput($m),
+            $defaults['da'],
+            $defaults['hra'],
+        );
 
         return (float) $calc['take_home'];
+    }
+
+    /** @return array{da: float, hra: float} */
+    private function resolveCompanyPayrollDefaults(?string $companyId): array
+    {
+        if (! $companyId) {
+            return [
+                'da' => PayrollCalculationService::DEFAULT_DA_PERCENT,
+                'hra' => PayrollCalculationService::DEFAULT_HRA_PERCENT,
+            ];
+        }
+
+        static $cache = [];
+        if (! array_key_exists($companyId, $cache)) {
+            $company = HrmsCompany::find($companyId);
+            $cache[$companyId] = [
+                'da' => (float) ($company?->default_da_percent ?? PayrollCalculationService::DEFAULT_DA_PERCENT),
+                'hra' => (float) ($company?->default_hra_percent ?? PayrollCalculationService::DEFAULT_HRA_PERCENT),
+            ];
+        }
+
+        return $cache[$companyId];
+    }
+
+    /** @param  array<string, mixed>  $payload */
+    private function mergeExistingMasterDefaults(HrmsPayrollMaster $master, array $payload): array
+    {
+        if ($this->payloadMissingPercent($payload, 'da_percent', 'daPercent') && $master->da_percent !== null && $master->da_percent !== '') {
+            $payload['da_percent'] = $master->da_percent;
+        }
+        if ($this->payloadMissingPercent($payload, 'hra_percent', 'hraPercent') && $master->hra_percent !== null && $master->hra_percent !== '') {
+            $payload['hra_percent'] = $master->hra_percent;
+        }
+
+        return $payload;
+    }
+
+    /** @param  array<string, mixed>  $payload */
+    private function payloadMissingPercent(array $payload, string $snakeKey, string $camelKey): bool
+    {
+        foreach ([$snakeKey, $camelKey] as $key) {
+            if (! array_key_exists($key, $payload)) {
+                continue;
+            }
+            $value = $payload[$key];
+            if ($value !== null && $value !== '') {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /** @return array<string, mixed> */
@@ -573,8 +829,126 @@ final class PayrollMasterService
             'remarks' => $m->remarks,
             'effectiveFrom' => $m->effective_from?->toDateString() ?? $m->effective_start_date?->toDateString(),
             'effectiveTo' => $m->effective_to?->toDateString() ?? $m->effective_end_date?->toDateString(),
+            'reasonForChange' => $m->reason_for_change,
+            'isCurrent' => $this->isCurrentMaster($m),
             'payrollMode' => $m->payroll_mode ?? 'government',
         ];
+    }
+
+    public function reviseMasterRecord(
+        HrmsPayrollMaster $master,
+        array $validated,
+        string $companyId,
+        ?string $createdBy,
+        ?string $reason = null,
+    ): HrmsPayrollMaster {
+        if ($master->company_id && $master->company_id !== $companyId) {
+            abort(403, 'Forbidden');
+        }
+
+        $effectiveFrom = $validated['effective_from'] ?? $validated['effectiveFrom'] ?? now()->toDateString();
+        $effectiveEnd = Carbon::parse($effectiveFrom)->subDay()->toDateString();
+
+        if ($this->isCurrentMaster($master)) {
+            $master->update([
+                'effective_to' => $effectiveEnd,
+                'effective_end_date' => $effectiveEnd,
+                'updated_at' => now(),
+            ]);
+        }
+
+        $payload = $this->masterToRevisionPayload($master, $validated);
+        $payload['effective_from'] = $effectiveFrom;
+        $payload['effectiveFrom'] = $effectiveFrom;
+        $payload['reason_for_change'] = $reason
+            ?? $validated['reason_for_change']
+            ?? $validated['reasonForChange']
+            ?? 'Payroll structure revision';
+        unset($payload['effective_to'], $payload['effectiveTo'], $payload['effective_end_date'], $payload['effectiveEndDate']);
+
+        return $this->create($payload, $companyId, $createdBy ?? (string) ($master->created_by ?? ''), false, false);
+    }
+
+    /** @param  array<string, mixed>  $overrides */
+    private function masterToRevisionPayload(HrmsPayrollMaster $master, array $overrides = []): array
+    {
+        $userId = $master->user_id ?? $master->employee_user_id;
+
+        return array_merge([
+            'employee_id' => $master->employee_id,
+            'user_id' => $userId,
+            'employee_user_id' => $userId,
+            'employee_code' => $master->employee_code,
+            'name' => $master->name,
+            'email' => $master->email,
+            'phone' => $master->phone,
+            'gender' => $master->gender,
+            'designation' => $master->designation,
+            'department' => $master->department,
+            'division' => $master->division,
+            'pay_level' => $master->pay_level,
+            'gross_basic_pay' => $master->gross_basic_pay ?? $master->gross_basic ?? $master->gross_salary,
+            'da_percent' => $master->da_percent,
+            'hra_percent' => $master->hra_percent,
+            'medical' => $master->medical ?? $master->medical_fixed,
+            'transport_da_percent' => $master->transport_da_percent,
+            'cpf_default' => $master->cpf_default,
+            'da_cpf' => $master->da_cpf ?? $master->da_cpf_default,
+            'professional_tax' => $master->professional_tax ?? $master->pt_default ?? $master->pt,
+            'income_tax' => $master->income_tax ?? $master->income_tax_default ?? $master->tds,
+            'lic' => $master->lic ?? $master->lic_default,
+            'mess' => $master->mess ?? $master->mess_default,
+            'welfare' => $master->welfare ?? $master->welfare_default,
+            'vpf' => $master->vpf ?? $master->vpf_default,
+            'pf_loan' => $master->pf_loan ?? $master->pf_loan_default,
+            'post_office' => $master->post_office ?? $master->post_office_default,
+            'credit_society' => $master->credit_society ?? $master->credit_society_default,
+            'standard_licence_fee' => $master->standard_licence_fee ?? $master->std_licence_fee_default,
+            'electricity' => $master->electricity ?? $master->electricity_default,
+            'water' => $master->water ?? $master->water_default,
+            'horticulture' => $master->horticulture ?? $master->horticulture_default,
+            'vehicle_charge' => $master->vehicle_charge ?? $master->veh_charge_default,
+            'other_deduction' => $master->other_deduction ?? $master->other_deduction_default,
+            'advance' => $master->advance ?? $master->advance_bonus,
+            'uan' => $master->uan,
+            'cpf_no' => $master->cpf_no,
+            'pan' => $master->pan,
+            'aadhaar' => $master->aadhaar,
+            'bank_name' => $master->bank_name,
+            'bank_account_number' => $master->bank_account_number,
+            'bank_ifsc' => $master->bank_ifsc,
+            'date_of_joining' => $master->date_of_joining?->toDateString(),
+            'date_of_birth' => $master->date_of_birth?->toDateString(),
+            'status' => $master->status ?? 'active',
+            'remarks' => $master->remarks,
+        ], $overrides);
+    }
+
+    private function isCurrentMaster(HrmsPayrollMaster $master): bool
+    {
+        return $master->effective_to === null && $master->effective_end_date === null;
+    }
+
+    /** @param  \Illuminate\Database\Eloquent\Builder<HrmsPayrollMaster>  $query */
+    private function scopeCurrentMaster($query)
+    {
+        return $query->whereNull('effective_to')->whereNull('effective_end_date');
+    }
+
+    /** @param  array<string, mixed>  $payload */
+    private function pickPercent(array $payload, string $snakeKey, string $camelKey, mixed $fallback): float
+    {
+        foreach ([$snakeKey, $camelKey] as $key) {
+            if (! array_key_exists($key, $payload)) {
+                continue;
+            }
+            $value = $payload[$key];
+            if ($value !== null && $value !== '') {
+                return (float) $value;
+            }
+        }
+
+        return (float) $fallback;
     }
 
     /** @param  array<string, mixed>  $payload */
@@ -606,6 +980,7 @@ final class PayrollMasterService
             if ($ignoreId) {
                 $q->where('id', '!=', $ignoreId);
             }
+            $this->scopeCurrentMaster($q);
             if ($q->exists()) {
                 abort(422, 'Employee code already exists');
             }
@@ -623,6 +998,7 @@ final class PayrollMasterService
             if ($ignoreId) {
                 $q->where('id', '!=', $ignoreId);
             }
+            $this->scopeCurrentMaster($q);
             if ($q->exists()) {
                 abort(422, ucfirst(str_replace('_', ' ', $col)).' already exists');
             }
@@ -781,6 +1157,7 @@ final class PayrollMasterService
             'date_of_birth' => $validated['date_of_birth'] ?? $validated['dateOfBirth'] ?? null,
             'status' => $validated['status'] ?? 'active',
             'remarks' => $validated['remarks'] ?? null,
+            'reason_for_change' => $validated['reason_for_change'] ?? $validated['reasonForChange'] ?? null,
             'effective_from' => $effectiveFrom,
             'effective_start_date' => $effectiveFrom,
             'effective_to' => $validated['effective_to'] ?? $validated['effectiveTo'] ?? null,
@@ -1111,6 +1488,7 @@ final class PayrollMasterService
     private function findExistingMaster(?string $companyId, array $criteria): ?HrmsPayrollMaster
     {
         $q = HrmsPayrollMaster::query();
+        $this->scopeCurrentMaster($q);
         if ($companyId) {
             $q->where('company_id', $companyId);
         }
@@ -1213,6 +1591,11 @@ final class PayrollMasterService
             'cpf no' => 'cpf_no',
             'gpf no' => 'cpf_no',
             'pf no' => 'cpf_no',
+            'pf' => 'cpf_default',
+            'pf default' => 'cpf_default',
+            'cpf default' => 'cpf_default',
+            'pt' => 'professional_tax',
+            'professional tax' => 'professional_tax',
             'account no' => 'bank_account_number',
             'bank account' => 'bank_account_number',
             'bank account number' => 'bank_account_number',

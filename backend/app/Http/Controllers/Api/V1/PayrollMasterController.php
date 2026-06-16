@@ -53,6 +53,21 @@ class PayrollMasterController extends Controller
         return response()->json(['master' => $this->service->formatRow($master)], 201);
     }
 
+    public function show(Request $request, string $id): JsonResponse
+    {
+        $user = $request->user();
+        if ($denied = $this->assertPayrollMasterAdmin($user)) {
+            return $denied;
+        }
+
+        $master = HrmsPayrollMaster::findOrFail($id);
+        if ($master->company_id !== $user->company_id) {
+            return response()->json(['error' => 'Forbidden'], 403);
+        }
+
+        return response()->json(['master' => $this->service->formatRow($master)]);
+    }
+
     public function update(Request $request, string $id): JsonResponse
     {
         $user = $request->user();
@@ -64,6 +79,23 @@ class PayrollMasterController extends Controller
         $master = $this->service->update($master, $request->all(), (string) $user->company_id);
 
         return response()->json(['master' => $this->service->formatRow($master)]);
+    }
+
+    public function history(Request $request, string $id): JsonResponse
+    {
+        $user = $request->user();
+        if ($denied = $this->assertPayrollMasterAdmin($user)) {
+            return $denied;
+        }
+
+        $master = HrmsPayrollMaster::findOrFail($id);
+        if ($master->company_id !== $user->company_id) {
+            return response()->json(['error' => 'Forbidden'], 403);
+        }
+
+        $history = $this->service->historyForMaster($master, $user->company_id);
+
+        return response()->json(['history' => $history]);
     }
 
     public function recalculate(Request $request, string $id): JsonResponse

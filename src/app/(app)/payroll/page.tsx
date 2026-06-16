@@ -586,7 +586,6 @@ function PayrollPageContent() {
 
   const [runMonth, setRunMonth] = useState(() => String(new Date().getMonth() + 1).padStart(2, "0"));
   const [runYear, setRunYear] = useState(() => String(new Date().getFullYear()));
-  const [runDay, setRunDay] = useState(() => String(new Date().getDate()));
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
   const [preview, setPreview] = useState<{
@@ -1215,30 +1214,7 @@ function PayrollPageContent() {
     parseInt(runMonth, 10),
     0
   ).getDate();
-
-  const lastMonthYearRef = useRef<string>("");
-
-  useEffect(() => {
-    const day = parseInt(runDay, 10) || 1;
-    const key = `${runYear}-${runMonth}`;
-    const monthChanged = lastMonthYearRef.current && lastMonthYearRef.current !== key;
-    lastMonthYearRef.current = key;
-
-    const nowIst = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }); // yyyy-mm-dd
-    const currentKey = `${nowIst.slice(0, 4)}-${nowIst.slice(5, 7)}`;
-    const todayDayIst = String(parseInt(nowIst.slice(8, 10), 10) || 1);
-
-    // When user switches month/year:
-    // - if selecting the current IST month, default to today
-    // - otherwise default to the last day of that month (31/30/28/29).
-    if (monthChanged) {
-      setRunDay(key === currentKey ? todayDayIst : String(daysInSelectedMonth));
-      return;
-    }
-    if (day > daysInSelectedMonth) {
-      setRunDay(String(daysInSelectedMonth));
-    }
-  }, [runMonth, runYear, runDay, daysInSelectedMonth]);
+  const runDay = String(daysInSelectedMonth);
 
   useEffect(() => {
     if (!canManage || tab !== "run") return;
@@ -1261,7 +1237,7 @@ function PayrollPageContent() {
       }
     })();
     return () => { cancelled = true; };
-  }, [canManage, tab, runYear, runMonth, runDay]);
+  }, [canManage, tab, runYear, runMonth, runDay, daysInSelectedMonth]);
 
   useEffect(() => {
     if (!canManage || tab !== "run") return;
@@ -1881,17 +1857,6 @@ function PayrollPageContent() {
                     className="w-20 rounded-lg border border-slate-300 px-3 py-2 text-sm"
                   />
                 </div>
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-slate-700">Run date (day)</label>
-                  <input
-                    type="number"
-                    min="1"
-                    max={daysInSelectedMonth}
-                    value={runDay}
-                    onChange={(e) => setRunDay(e.target.value)}
-                    className="w-20 rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  />
-                </div>
                 <div className="flex flex-wrap items-center gap-2">
                   {preview?.periodName && (
                     <span className="text-lg font-semibold text-slate-800">{preview.periodName}</span>
@@ -1912,12 +1877,9 @@ function PayrollPageContent() {
                 </div>
               </div>
               {runError && <p className="text-sm text-red-600">{runError}</p>}
-              {preview && !previewLoading && (
-                <p className="text-xs text-slate-600">
-                  Days in full month: {preview.daysInMonth}
-                  {preview.effectiveRunDay != null ? ` · Through selected run date: ${preview.effectiveRunDay}` : null}
-                </p>
-              )}
+              {preview && !previewLoading && preview.daysInMonth ? (
+                <p className="text-xs text-slate-600">Days in month: {preview.daysInMonth}</p>
+              ) : null}
               {preview?.alreadyRun && (
                 <div className="flex flex-wrap items-center gap-3">
                   <p className="text-sm text-amber-700">

@@ -67,6 +67,9 @@ export type PayrollMasterRecord = {
   status?: string | null;
   remarks?: string | null;
   effectiveFrom?: string | null;
+  effectiveTo?: string | null;
+  reasonForChange?: string | null;
+  isCurrent?: boolean;
   userRole?: AppRole | string | null;
 };
 
@@ -94,6 +97,7 @@ type MasterFormState = {
   bankName: string;
   bankAccountNumber: string;
   bankIfsc: string;
+  cpfDefault: string;
   professionalTax: string;
   incomeTax: string;
   lic: string;
@@ -142,7 +146,34 @@ type ImportPreview = {
 
 const STATUS_OPTIONS = ["active", "inactive", "retired", "deceased", "resigned"] as const;
 
-const emptyForm = (): MasterFormState => ({
+const DEFAULT_DEDUCTION_FIELDS = [
+  ["cpfDefault", "PF (CPF default)"],
+  ["professionalTax", "Professional Tax (PT)"],
+] as const;
+
+const VARIABLE_DEDUCTION_FIELDS = [
+  ["incomeTax", "Income Tax"],
+  ["lic", "LIC"],
+  ["mess", "Mess"],
+  ["welfare", "Welfare"],
+  ["vpf", "VPF"],
+  ["pfLoan", "PF Loan"],
+  ["postOffice", "Post Office"],
+  ["creditSociety", "Credit Society"],
+  ["standardLicenceFee", "Std Licence Fee"],
+  ["electricity", "Electricity"],
+  ["water", "Water"],
+  ["horticulture", "Horticulture"],
+  ["vehicleCharge", "Vehicle Charge"],
+  ["otherDeduction", "Other Deduction"],
+  ["advance", "Advance"],
+] as const;
+
+const EARNINGS_COLUMN_COUNT = 12;
+const DEFAULT_DEDUCTION_COLUMN_COUNT = 4;
+const VARIABLE_DEDUCTION_COLUMN_COUNT = 15;
+
+const emptyForm = (defaultDa = DEFAULT_DA_PERCENT, defaultHra = DEFAULT_HRA_PERCENT): MasterFormState => ({
   employeeCode: "",
   name: "",
   email: "",
@@ -156,8 +187,8 @@ const emptyForm = (): MasterFormState => ({
   status: "active",
   payLevel: "1",
   grossBasicPay: "",
-  daPercent: String(DEFAULT_DA_PERCENT),
-  hraPercent: String(DEFAULT_HRA_PERCENT),
+  daPercent: String(defaultDa),
+  hraPercent: String(defaultHra),
   medical: String(DEFAULT_MEDICAL),
   uan: "",
   cpfNo: "",
@@ -166,6 +197,7 @@ const emptyForm = (): MasterFormState => ({
   bankName: "",
   bankAccountNumber: "",
   bankIfsc: "",
+  cpfDefault: "0",
   professionalTax: "200",
   incomeTax: "0",
   lic: "0",
@@ -214,6 +246,7 @@ function formFromRecord(r: PayrollMasterRecord): MasterFormState {
     bankName: r.bankName ?? "",
     bankAccountNumber: r.bankAccountNumber ?? "",
     bankIfsc: r.bankIfsc ?? "",
+    cpfDefault: String(r.cpfDefault ?? 0),
     professionalTax: String(r.professionalTax ?? 200),
     incomeTax: String(r.incomeTax ?? 0),
     lic: String(r.lic ?? 0),
@@ -263,6 +296,7 @@ function formToPayload(form: MasterFormState) {
     bankName: form.bankName.trim() || undefined,
     bankAccountNumber: form.bankAccountNumber.trim() || undefined,
     bankIfsc: form.bankIfsc.trim().toUpperCase() || undefined,
+    cpfDefault: parseFloat(form.cpfDefault) || 0,
     professionalTax: parseFloat(form.professionalTax) || 0,
     incomeTax: parseFloat(form.incomeTax) || 0,
     lic: parseFloat(form.lic) || 0,
@@ -351,8 +385,10 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
 
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<PayrollMasterRecord | null>(null);
-  const [form, setForm] = useState<MasterFormState>(emptyForm);
+  const [form, setForm] = useState<MasterFormState>(() => emptyForm());
   const [formSaving, setFormSaving] = useState(false);
+  const [formLoading, setFormLoading] = useState(false);
+  const [masterHistory, setMasterHistory] = useState<PayrollMasterRecord[]>([]);
   const [passwordTouched, setPasswordTouched] = useState(false);
   const [confirmPasswordTouched, setConfirmPasswordTouched] = useState(false);
 
@@ -369,6 +405,8 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
   const importPreviewRequestRef = useRef(0);
 
   const [deactivateTarget, setDeactivateTarget] = useState<PayrollMasterRecord | null>(null);
+  const [companyDefaultDa, setCompanyDefaultDa] = useState(DEFAULT_DA_PERCENT);
+  const [companyDefaultHra, setCompanyDefaultHra] = useState(DEFAULT_HRA_PERCENT);
 
   const loadRows = useCallback(async () => {
     setLoading(true);
@@ -389,6 +427,34 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     if (canManage) loadRows();
   }, [canManage, loadRows]);
 
+  useEffect(() => {
+    if (!canManage) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/company/me");
+        const data = await res.json();
+        if (cancelled) return;
+        const da = data?.company?.default_da_percent;
+        const hra = data?.company?.default_hra_percent;
+        if (da != null && Number.isFinite(Number(da))) {
+          setCompanyDefaultDa(Number(da));
+        }
+        if (hra != null && Number.isFinite(Number(hra))) {
+          setCompanyDefaultHra(Number(hra));
+        }
+      } catch {
+        if (!cancelled) {
+          setCompanyDefaultDa(DEFAULT_DA_PERCENT);
+          setCompanyDefaultHra(DEFAULT_HRA_PERCENT);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [canManage]);
+
   const preview = useMemo(
     () =>
       computePayrollMasterPreview({
@@ -397,6 +463,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
         daPercent: form.daPercent,
         hraPercent: form.hraPercent,
         medical: form.medical,
+        cpfDefault: form.cpfDefault,
         professionalTax: form.professionalTax,
         incomeTax: form.incomeTax,
         lic: form.lic,
@@ -419,18 +486,38 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
 
   function openAdd() {
     setEditing(null);
-    setForm(emptyForm());
+    setMasterHistory([]);
+    setForm(emptyForm(companyDefaultDa, companyDefaultHra));
     setPasswordTouched(false);
     setConfirmPasswordTouched(false);
     setFormOpen(true);
   }
 
-  function openEdit(row: PayrollMasterRecord) {
+  async function openEdit(row: PayrollMasterRecord) {
     setEditing(row);
-    setForm(formFromRecord(row));
     setPasswordTouched(false);
     setConfirmPasswordTouched(false);
     setFormOpen(true);
+    setFormLoading(true);
+    setMasterHistory([]);
+    try {
+      const [masterRes, historyRes] = await Promise.all([
+        fetch(`/api/payroll/master/${row.id}`),
+        fetch(`/api/payroll/master/${row.id}/history`),
+      ]);
+      const masterData = await masterRes.json();
+      const historyData = await historyRes.json();
+      if (!masterRes.ok) throw new Error(masterData?.error || "Failed to load employee");
+      setForm(formFromRecord(masterData.master ?? row));
+      if (historyRes.ok) {
+        setMasterHistory(historyData.history ?? []);
+      }
+    } catch (e: unknown) {
+      setForm(formFromRecord(row));
+      showToast("error", e instanceof Error ? e.message : "Could not refresh employee; showing cached row");
+    } finally {
+      setFormLoading(false);
+    }
   }
 
   function patchForm(patch: Partial<MasterFormState>) {
@@ -678,6 +765,22 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
             <table className="w-full min-w-[3200px] border-collapse text-left text-sm">
               <thead>
                 <tr className="bg-[#0a1628] text-white">
+                  <th colSpan={EARNINGS_COLUMN_COUNT} className={`${th} !text-center`} />
+                  <th
+                    colSpan={DEFAULT_DEDUCTION_COLUMN_COUNT}
+                    className={`${th} !text-center border-l border-white/20`}
+                  >
+                    Default deductions
+                  </th>
+                  <th
+                    colSpan={VARIABLE_DEDUCTION_COLUMN_COUNT}
+                    className={`${th} !text-center border-l border-white/20`}
+                  >
+                    Variable deductions
+                  </th>
+                  <th colSpan={canWrite ? 4 : 3} className={`${th} !text-center border-l border-white/20`} />
+                </tr>
+                <tr className="bg-[#0a1628] text-white">
                   <th className={`${th} !text-left`}>Code</th>
                   <th className={`${th} !text-left`}>Name</th>
                   <th className={th}>Designation</th>
@@ -690,11 +793,11 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                   <th className={th}>Med</th>
                   <th className={th}>Transport</th>
                   <th className={th}>Tot. Earn.</th>
-                  <th className={th}>CPF Def.</th>
-                  <th className={th}>CPF Eff.</th>
+                  <th className={`${th} border-l border-white/20`}>PF Def.</th>
+                  <th className={th}>PF Eff.</th>
                   <th className={th}>DA CPF</th>
                   <th className={th}>PT</th>
-                  <th className={th}>Inc. Tax</th>
+                  <th className={`${th} border-l border-white/20`}>Inc. Tax</th>
                   <th className={th}>LIC</th>
                   <th className={th}>Mess</th>
                   <th className={th}>Welfare</th>
@@ -709,7 +812,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                   <th className={th}>Vehicle</th>
                   <th className={th}>Other</th>
                   <th className={th}>Advance</th>
-                  <th className={th}>Take Home</th>
+                  <th className={`${th} border-l border-white/20`}>Take Home</th>
                   <th className={th}>Effective</th>
                   <th className={th}>Status</th>
                   {canWrite && <th className={th}>Actions</th>}
@@ -805,20 +908,31 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
           <div className="relative flex min-h-full items-center justify-center p-4">
             <form
               onSubmit={handleSave}
-              className="relative z-10 flex max-h-[min(92vh,100dvh)] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl"
+              className="relative z-10 flex max-h-[min(92vh,100dvh)] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl"
             >
               <div className="shrink-0 border-b border-slate-100 px-5 py-4 sm:px-6">
                 <h3 className="text-lg font-semibold text-slate-900">
                   {editing ? "Edit Employee" : "Add Employee"}
                 </h3>
+                <p className="mt-1 text-xs text-slate-500">
+                  Payroll master record — earnings, default deductions (PF &amp; PT), then variable deductions. Scroll for all sections.
+                </p>
               </div>
               <div className="flex-1 space-y-6 overflow-y-auto px-5 py-4 sm:px-6">
+                {formLoading ? (
+                  <p className="py-8 text-center text-sm text-slate-500">Loading payroll master record…</p>
+                ) : (
+                  <>
                 <section>
                   <h4 className="mb-3 text-sm font-semibold text-slate-800">Basic details</h4>
                   <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                     <div>
                       <label className={labelCls}>Employee Code</label>
                       <input className={inputCls} value={form.employeeCode} onChange={(e) => patchForm({ employeeCode: e.target.value })} />
+                    </div>
+                    <div>
+                      <label className={labelCls}>Pay Level *</label>
+                      <input type="number" min={1} className={inputCls} value={form.payLevel} onChange={(e) => patchForm({ payLevel: e.target.value })} required />
                     </div>
                     <div>
                       <label className={labelCls}>Name *</label>
@@ -933,20 +1047,26 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                   <h4 className="mb-3 text-sm font-semibold text-slate-800">Payroll details</h4>
                   <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                     <div>
-                      <label className={labelCls}>Pay Level *</label>
-                      <input type="number" min={1} className={inputCls} value={form.payLevel} onChange={(e) => patchForm({ payLevel: e.target.value })} required />
-                    </div>
-                    <div>
                       <label className={labelCls}>Gross Basic Pay *</label>
                       <input type="number" min={0} step={100} className={inputCls} value={form.grossBasicPay} onChange={(e) => patchForm({ grossBasicPay: e.target.value })} required />
                     </div>
                     <div>
                       <label className={labelCls}>DA %</label>
                       <input type="number" step="0.01" className={inputCls} value={form.daPercent} onChange={(e) => patchForm({ daPercent: e.target.value })} />
+                      <p className="mt-1 text-xs text-slate-500">
+                        {editing
+                          ? "Changing DA creates a new master version from Effective From; previous rates are kept in history below."
+                          : `Pre-filled from institute default (${companyDefaultDa}%).`}
+                      </p>
                     </div>
                     <div>
                       <label className={labelCls}>HRA %</label>
                       <input type="number" step="0.01" className={inputCls} value={form.hraPercent} onChange={(e) => patchForm({ hraPercent: e.target.value })} />
+                      <p className="mt-1 text-xs text-slate-500">
+                        {editing
+                          ? "Changing HRA creates a new master version from Effective From; previous rates are kept in history below."
+                          : `Pre-filled from institute default (${companyDefaultHra}%).`}
+                      </p>
                     </div>
                     <div>
                       <label className={labelCls}>Medical</label>
@@ -976,6 +1096,46 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                 </section>
 
                 <section>
+                  <h4 className="mb-3 text-sm font-semibold text-slate-800">Default deductions</h4>
+                  <p className="mb-3 text-xs text-slate-500">
+                    PF and PT only. Leave PF at 0 to use automatic deduction (
+                    {Math.round(GOVERNMENT_DEFAULT_CPF_RATE_ON_TOTAL_EARNINGS * 100)}% of total earnings).
+                  </p>
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    {DEFAULT_DEDUCTION_FIELDS.map(([key, label]) => (
+                      <div key={key}>
+                        <label className={labelCls}>{label}</label>
+                        <input
+                          type="number"
+                          min={0}
+                          className={inputCls}
+                          value={form[key]}
+                          onChange={(e) => patchForm({ [key]: e.target.value })}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                <section>
+                  <h4 className="mb-3 text-sm font-semibold text-slate-800">Variable deductions</h4>
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    {VARIABLE_DEDUCTION_FIELDS.map(([key, label]) => (
+                      <div key={key}>
+                        <label className={labelCls}>{label}</label>
+                        <input
+                          type="number"
+                          min={0}
+                          className={inputCls}
+                          value={form[key]}
+                          onChange={(e) => patchForm({ [key]: e.target.value })}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                <section>
                   <h4 className="mb-3 text-sm font-semibold text-slate-800">Bank details</h4>
                   <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                     <div>
@@ -993,42 +1153,47 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                   </div>
                 </section>
 
-                <section>
-                  <h4 className="mb-3 text-sm font-semibold text-slate-800">Default deductions</h4>
-                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                    {(
-                      [
-                        ["professionalTax", "Professional Tax"],
-                        ["incomeTax", "Income Tax"],
-                        ["lic", "LIC"],
-                        ["mess", "Mess"],
-                        ["welfare", "Welfare"],
-                        ["vpf", "VPF"],
-                        ["pfLoan", "PF Loan"],
-                        ["postOffice", "Post Office"],
-                        ["creditSociety", "Credit Society"],
-                        ["standardLicenceFee", "Std Licence Fee"],
-                        ["electricity", "Electricity"],
-                        ["water", "Water"],
-                        ["horticulture", "Horticulture"],
-                        ["vehicleCharge", "Vehicle Charge"],
-                        ["otherDeduction", "Other Deduction"],
-                        ["advance", "Advance"],
-                      ] as const
-                    ).map(([key, label]) => (
-                      <div key={key}>
-                        <label className={labelCls}>{label}</label>
-                        <input
-                          type="number"
-                          min={0}
-                          className={inputCls}
-                          value={form[key]}
-                          onChange={(e) => patchForm({ [key]: e.target.value })}
-                        />
-                      </div>
-                    ))}
-                  </div>
-                </section>
+                {editing && masterHistory.length > 0 && (
+                  <section className="rounded-lg border border-slate-200 bg-slate-50/80 p-4">
+                    <h4 className="mb-3 text-sm font-semibold text-slate-800">Payroll master history</h4>
+                    <p className="mb-3 text-xs text-slate-500">
+                      Each row is a version of this employee&apos;s salary master. The current version has no end date.
+                    </p>
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-[640px] border-collapse text-left text-xs">
+                        <thead>
+                          <tr className="border-b border-slate-200 text-slate-600">
+                            <th className="px-2 py-1.5">Effective from</th>
+                            <th className="px-2 py-1.5">Effective to</th>
+                            <th className="px-2 py-1.5">DA %</th>
+                            <th className="px-2 py-1.5">HRA %</th>
+                            <th className="px-2 py-1.5">Gross basic</th>
+                            <th className="px-2 py-1.5">Take home</th>
+                            <th className="px-2 py-1.5">Reason</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {masterHistory.map((h) => (
+                            <tr
+                              key={h.id}
+                              className={`border-b border-slate-100 ${h.isCurrent ? "bg-emerald-50/80 font-medium" : "bg-white"}`}
+                            >
+                              <td className="px-2 py-1.5">{h.effectiveFrom?.slice(0, 10) ?? "—"}</td>
+                              <td className="px-2 py-1.5">{h.effectiveTo?.slice(0, 10) ?? "—"}</td>
+                              <td className="px-2 py-1.5">{h.daPercent ?? "—"}</td>
+                              <td className="px-2 py-1.5">{h.hraPercent ?? "—"}</td>
+                              <td className="px-2 py-1.5">{fmt(h.grossBasicPay)}</td>
+                              <td className="px-2 py-1.5">{fmt(h.takeHome)}</td>
+                              <td className="px-2 py-1.5 max-w-[200px] truncate" title={h.reasonForChange ?? ""}>
+                                {h.reasonForChange || "—"}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </section>
+                )}
 
                 <section className="rounded-lg border border-slate-200 bg-slate-50 p-4">
                   <h4 className="mb-3 text-sm font-semibold text-slate-800">Calculated preview</h4>
@@ -1046,13 +1211,15 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                     </div>
                   </div>
                 </section>
+                  </>
+                )}
               </div>
               <div className="shrink-0 border-t border-slate-100 bg-slate-50/90 px-5 py-3 sm:px-6">
                 <div className="flex justify-end gap-2">
-                  <button type="button" className="btn btn-outline" onClick={() => setFormOpen(false)} disabled={formSaving}>
+                  <button type="button" className="btn btn-outline" onClick={() => setFormOpen(false)} disabled={formSaving || formLoading}>
                     Cancel
                   </button>
-                  <button type="submit" className="btn btn-primary" disabled={formSaving}>
+                  <button type="submit" className="btn btn-primary" disabled={formSaving || formLoading}>
                     {formSaving ? "Saving…" : editing ? "Update" : "Add Employee"}
                   </button>
                 </div>

@@ -54,12 +54,12 @@ final class PayrollCalculationService
      *   advance: float,
      * }
      */
-    public function calculateMaster(array $input, ?float $defaultDaPercent = null): array
+    public function calculateMaster(array $input, ?float $defaultDaPercent = null, ?float $defaultHraPercent = null): array
     {
         $payLevel = max(1, (int) ($input['pay_level'] ?? $input['payLevel'] ?? 1));
         $grossBasic = max(0, (float) ($input['gross_basic_pay'] ?? $input['gross_basic'] ?? $input['grossBasicPay'] ?? 0));
         $daPercent = (float) ($input['da_percent'] ?? $input['daPercent'] ?? $defaultDaPercent ?? self::DEFAULT_DA_PERCENT);
-        $hraPercent = (float) ($input['hra_percent'] ?? $input['hraPercent'] ?? self::DEFAULT_HRA_PERCENT);
+        $hraPercent = (float) ($input['hra_percent'] ?? $input['hraPercent'] ?? $defaultHraPercent ?? self::DEFAULT_HRA_PERCENT);
         $medical = (float) ($input['medical'] ?? $input['medical_fixed'] ?? $input['medicalFixed'] ?? self::DEFAULT_MEDICAL);
         $transportDaPercent = (float) ($input['transport_da_percent'] ?? $input['transportDaPercent'] ?? self::DEFAULT_TRANSPORT_DA_PERCENT);
 

@@ -17,7 +17,7 @@ class HrmsCompany extends Model
     protected $fillable = [
         'name', 'code', 'industry',
         'address_line1', 'address_line2', 'city', 'state', 'country', 'postal_code',
-        'phone', 'professional_tax_annual', 'professional_tax_monthly', 'logo_url',
+        'phone', 'professional_tax_annual', 'professional_tax_monthly', 'default_da_percent', 'default_hra_percent', 'logo_url',
     ];
 
     protected function casts(): array
@@ -25,6 +25,8 @@ class HrmsCompany extends Model
         return [
             'professional_tax_annual' => 'decimal:2',
             'professional_tax_monthly' => 'decimal:2',
+            'default_da_percent' => 'decimal:2',
+            'default_hra_percent' => 'decimal:2',
             'created_at' => 'datetime',
             'updated_at' => 'datetime',
         ];

@@ -37,7 +37,11 @@ export function SettingsContent() {
     postalCode: "",
     professionalTaxAnnual: "200",
     professionalTaxMonthly: "200",
+    defaultDaPercent: "53",
+    defaultHraPercent: "30",
+    payrollRevisionEffectiveFrom: new Date().toISOString().slice(0, 10),
   });
+  const [initialDaHra, setInitialDaHra] = useState({ da: "53", hra: "30" });
 
   // Settings modules
   const [isShiftsDialogOpen, setIsShiftsDialogOpen] = useState(false);
@@ -468,6 +472,13 @@ export function SettingsContent() {
       postalCode: company?.postal_code ?? "",
       professionalTaxAnnual: String(company?.professional_tax_annual ?? 200),
       professionalTaxMonthly: String(company?.professional_tax_monthly ?? 200),
+      defaultDaPercent: String(company?.default_da_percent ?? 53),
+      defaultHraPercent: String(company?.default_hra_percent ?? 30),
+      payrollRevisionEffectiveFrom: new Date().toISOString().slice(0, 10),
+    });
+    setInitialDaHra({
+      da: String(company?.default_da_percent ?? 53),
+      hra: String(company?.default_hra_percent ?? 30),
     });
     setIsCompanyDialogOpen(true);
   }
@@ -483,6 +494,10 @@ export function SettingsContent() {
         industry: form.industry === "Other" ? form.industryOther.trim() : form.industry,
         professionalTaxAnnual: form.professionalTaxAnnual ? parseFloat(form.professionalTaxAnnual) : 200,
         professionalTaxMonthly: form.professionalTaxMonthly ? parseFloat(form.professionalTaxMonthly) : 200,
+        defaultDaPercent: form.defaultDaPercent ? parseFloat(form.defaultDaPercent) : 53,
+        defaultHraPercent: form.defaultHraPercent ? parseFloat(form.defaultHraPercent) : 30,
+        payrollRevisionEffectiveFrom: form.payrollRevisionEffectiveFrom,
+        applyDaHraRevision: true,
       };
       const res = await fetch("/api/company/me", {
         method: "PUT",
@@ -493,7 +508,15 @@ export function SettingsContent() {
       if (!res.ok) throw new Error(data?.error || "Failed to save company profile");
       setCompany(data.company);
       setIsCompanyDialogOpen(false);
-      showToast("success", "Settings updated successfully");
+      const revision = data.payroll_revision;
+      if (revision && (revision.revised > 0 || revision.skipped > 0)) {
+        showToast(
+          "success",
+          `Settings saved. Payroll master revised for ${revision.revised} employee(s)${revision.skipped ? `, ${revision.skipped} already at new rates` : ""}.`,
+        );
+      } else {
+        showToast("success", "Settings updated successfully");
+      }
     } catch (e: any) {
       setFormError(e?.message || "Failed to save company profile");
       showToast("error", e?.message || "Failed to save company profile");
@@ -507,7 +530,7 @@ export function SettingsContent() {
       <div>
         <h1 className="page-title">Settings</h1>
         <p className="muted">
-          {INSTITUTE_LABEL} profile (name, address, professional tax) can be changed by Super Admin only. Org structure,
+          {INSTITUTE_LABEL} profile (name, address, professional tax, default DA/HRA) can be changed by Super Admin only. Org structure,
           roles, and designations can be managed by Admin and HR.
         </p>
       </div>
@@ -612,6 +635,18 @@ export function SettingsContent() {
                     {company?.professional_tax_monthly != null
                       ? Number(company.professional_tax_monthly).toLocaleString("en-IN")
                       : "—"}
+                  </p>
+                  <p>
+                    <span className="text-slate-500">Default DA %:</span>{" "}
+                    {company?.default_da_percent != null ? `${Number(company.default_da_percent)}%` : "53%"}
+                  </p>
+                  <p>
+                    <span className="text-slate-500">Default HRA %:</span>{" "}
+                    {company?.default_hra_percent != null ? `${Number(company.default_hra_percent)}%` : "30%"}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    When DA or HRA is changed here, all current payroll master records are versioned: the old row gets an
+                    effective end date and a new row opens with the updated rates. History is visible in Payroll Master → Edit.
                   </p>
                 </div>
               )}
@@ -1242,6 +1277,58 @@ export function SettingsContent() {
                   />
                   <p className="mt-1 text-xs text-slate-500">Fixed per month, not prorated.</p>
                 </div>
+                <div className="md:col-span-1">
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    Default DA %
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="200"
+                    step="0.01"
+                    value={form.defaultDaPercent}
+                    onChange={(e) => setForm((p) => ({ ...p, defaultDaPercent: e.target.value }))}
+                    placeholder="53"
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  />
+                  <p className="mt-1 text-xs text-slate-500">
+                    Changing this creates a new payroll master version for every current employee when you save.
+                  </p>
+                </div>
+                <div className="md:col-span-1">
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    Default HRA %
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="200"
+                    step="0.01"
+                    value={form.defaultHraPercent}
+                    onChange={(e) => setForm((p) => ({ ...p, defaultHraPercent: e.target.value }))}
+                    placeholder="30"
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  />
+                  <p className="mt-1 text-xs text-slate-500">
+                    Applied together with DA when revising all current payroll master records.
+                  </p>
+                </div>
+                {(form.defaultDaPercent !== initialDaHra.da || form.defaultHraPercent !== initialDaHra.hra) && (
+                  <div className="md:col-span-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+                    <p className="font-medium">DA/HRA change — payroll master revision</p>
+                    <p className="mt-1 text-xs">
+                      Saving will close each employee&apos;s current master row (effective end = day before start date below)
+                      and create a new row with the updated DA/HRA. Previous rows are kept for history.
+                    </p>
+                    <label className="mb-1 mt-3 block text-xs font-medium">Revision effective from</label>
+                    <input
+                      type="date"
+                      value={form.payrollRevisionEffectiveFrom}
+                      onChange={(e) => setForm((p) => ({ ...p, payrollRevisionEffectiveFrom: e.target.value }))}
+                      className="w-full max-w-xs rounded-lg border border-amber-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                    />
+                  </div>
+                )}
 
                 <div className="md:col-span-3 flex flex-wrap items-center justify-between gap-2">
                   {formError && <p className="text-sm text-red-600">{formError}</p>}
