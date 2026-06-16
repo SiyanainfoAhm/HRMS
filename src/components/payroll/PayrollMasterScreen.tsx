@@ -656,8 +656,8 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
       showToast("error", "Select a file to import");
       return;
     }
-    if (!importPreview && !importPreviewing) {
-      showToast("error", "Wait for the file preview to load");
+    if (!importPreview) {
+      showToast("error", importPreviewing ? "Wait for the file preview to load" : "Select a file and wait for preview");
       return;
     }
     if ((importPreview.summary.valid_rows ?? 0) === 0) {
