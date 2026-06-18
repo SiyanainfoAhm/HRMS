@@ -21,8 +21,11 @@ import type { AppRole } from "@/lib/roles";
 import { isAdminRole } from "@/lib/roles";
 import {
   normalizeDigits,
+  normalizeIfscInput,
   normalizePanInput,
+  validateBankAccountInteractive,
   validateEmailField,
+  validateIfscInteractive,
   validateIndianMobileDigits,
   validateIndianMobileInteractive,
   validateAadhaarDigits,
@@ -50,6 +53,23 @@ type Employee = {
   preboardingDocsComplete?: boolean;
 };
 
+function validateEmployeeBankFields(
+  bankName: string,
+  bankAccountNumber: string,
+  bankIfsc: string,
+): { bankAccount: string | null; bankIfsc: string | null } {
+  const accountDigits = normalizeDigits(bankAccountNumber);
+  const ifscNorm = normalizeIfscInput(bankIfsc);
+  const hasAnyBank = Boolean(bankName.trim() || accountDigits || ifscNorm);
+  let bankAccount = validateBankAccountInteractive(accountDigits);
+  let bankIfscErr = validateIfscInteractive(bankIfsc);
+  if (hasAnyBank) {
+    if (!accountDigits) bankAccount = bankAccount ?? "Account number is required";
+    if (!ifscNorm) bankIfscErr = bankIfscErr ?? "IFSC is required";
+  }
+  return { bankAccount, bankIfsc: bankIfscErr };
+}
+
 export default function EmployeesPage() {
   const { showToast } = useToast();
   const { role } = useAuth();
@@ -70,6 +90,8 @@ export default function EmployeesPage() {
   const [email, setEmail] = useState("");
   const [emailError, setEmailError] = useState<string | null>(null);
   const [phoneError, setPhoneError] = useState<string | null>(null);
+  const [bankAccountError, setBankAccountError] = useState<string | null>(null);
+  const [bankIfscError, setBankIfscError] = useState<string | null>(null);
   const [aadhaarError, setAadhaarError] = useState<string | null>(null);
   const [panError, setPanError] = useState<string | null>(null);
   const [nameError, setNameError] = useState<string | null>(null);
@@ -305,6 +327,8 @@ export default function EmployeesPage() {
     setFormError(null);
     setEmailError(null);
     setPhoneError(null);
+    setBankAccountError(null);
+    setBankIfscError(null);
     setAadhaarError(null);
     setPanError(null);
     setNameError(null);
@@ -361,6 +385,9 @@ export default function EmployeesPage() {
     setFormError(null);
     setPayLevelError(null);
     setGrossBasicError(null);
+    setPhoneError(null);
+    setBankAccountError(null);
+    setBankIfscError(null);
     setEditUserId(userId);
     setIsDialogOpen(true);
     setPrefillLoading(true);
@@ -481,6 +508,9 @@ export default function EmployeesPage() {
       const phoneDigits = normalizeDigits(phone);
       const phErr = validateIndianMobileDigits(phoneDigits);
       setPhoneError(phErr);
+      const bankErrs = validateEmployeeBankFields(bankName, bankAccountNumber, bankIfsc);
+      setBankAccountError(bankErrs.bankAccount);
+      setBankIfscError(bankErrs.bankIfsc);
       const aDigits = normalizeDigits(aadhaar);
       const ahErr = validateAadhaarDigits(aDigits);
       setAadhaarError(ahErr);
@@ -512,6 +542,8 @@ export default function EmployeesPage() {
       if (
         eErr ||
         phErr ||
+        bankErrs.bankAccount ||
+        bankErrs.bankIfsc ||
         ahErr ||
         pnErr ||
         nameErr ||
@@ -551,8 +583,8 @@ export default function EmployeesPage() {
           emergencyContactName: emergencyContactName.trim() || undefined,
           emergencyContactPhone: emergencyContactPhone.trim() || undefined,
           bankName: bankName.trim() || undefined,
-          bankAccountNumber: bankAccountNumber.trim() || undefined,
-          bankIfsc: bankIfsc.trim() || undefined,
+          bankAccountNumber: normalizeDigits(bankAccountNumber) || undefined,
+          bankIfsc: normalizeIfscInput(bankIfsc) || undefined,
           grossBasic: gbParsed,
           incomeTaxMonthly: incomeTaxMonthly.trim() ? parseFloat(incomeTaxMonthly.trim()) : undefined,
           gender: gender || undefined,
@@ -611,6 +643,9 @@ export default function EmployeesPage() {
       const phoneDigits = normalizeDigits(phone);
       const phErr = phoneDigits ? validateIndianMobileDigits(phoneDigits) : null;
       setPhoneError(phErr);
+      const bankErrsU = validateEmployeeBankFields(bankName, bankAccountNumber, bankIfsc);
+      setBankAccountError(bankErrsU.bankAccount);
+      setBankIfscError(bankErrsU.bankIfsc);
       const aDigits = normalizeDigits(aadhaar);
       const ahErr = validateAadhaarDigits(aDigits);
       setAadhaarError(ahErr);
@@ -642,6 +677,8 @@ export default function EmployeesPage() {
       if (
         eErr ||
         phErr ||
+        bankErrsU.bankAccount ||
+        bankErrsU.bankIfsc ||
         ahErr ||
         pnErr ||
         nameErr ||
@@ -683,8 +720,8 @@ export default function EmployeesPage() {
           emergencyContactName: emergencyContactName.trim() || undefined,
           emergencyContactPhone: emergencyContactPhone.trim() || undefined,
           bankName: bankName.trim() || undefined,
-          bankAccountNumber: bankAccountNumber.trim() || undefined,
-          bankIfsc: bankIfsc.trim() || undefined,
+          bankAccountNumber: normalizeDigits(bankAccountNumber) || undefined,
+          bankIfsc: normalizeIfscInput(bankIfsc) || undefined,
           grossBasic: gbParsedU,
           incomeTaxMonthly: incomeTaxMonthly.trim() ? parseFloat(incomeTaxMonthly.trim()) : undefined,
           gender: gender || undefined,
@@ -1281,8 +1318,10 @@ export default function EmployeesPage() {
                     onChange={(e) => {
                       const d = e.target.value.replace(/\D/g, "").slice(0, 10);
                       setPhone(d);
-                      if (d.length === 10) setPhoneError(validateIndianMobileDigits(d));
-                      else setPhoneError(null);
+                    }}
+                    onKeyUp={(e) => {
+                      const d = normalizeDigits(e.currentTarget.value).slice(0, 10);
+                      setPhoneError(validateIndianMobileInteractive(d));
                     }}
                     onBlur={() => setPhoneError(validateIndianMobileInteractive(normalizeDigits(phone)))}
                     placeholder="10-digit mobile (starts 6–9)"
@@ -1539,6 +1578,71 @@ export default function EmployeesPage() {
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                   />
                   <p className="mt-1 text-xs text-slate-500">One reference for payslip and records (stored as PF and CPF fields).</p>
+                </div>
+
+                <div className="md:col-span-4">
+                  <div className="rounded-xl border border-slate-200 bg-white p-4">
+                    <h3 className="text-sm font-semibold text-slate-900">Bank details</h3>
+                    <p className="mt-1 text-xs text-slate-500">Optional. IFSC must be 11 characters (e.g. SBIN0001234).</p>
+                    <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-slate-700">Bank name</label>
+                        <input
+                          type="text"
+                          value={bankName}
+                          onChange={(e) => setBankName(e.target.value)}
+                          placeholder="Bank name"
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-slate-700">Account number</label>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          maxLength={18}
+                          value={bankAccountNumber}
+                          aria-invalid={Boolean(bankAccountError)}
+                          placeholder="9–18 digits"
+                          onChange={(e) => setBankAccountNumber(normalizeDigits(e.target.value).slice(0, 18))}
+                          onKeyUp={(e) => {
+                            const d = normalizeDigits(e.currentTarget.value).slice(0, 18);
+                            setBankAccountError(validateBankAccountInteractive(d));
+                          }}
+                          className={`w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-1 ${
+                            bankAccountError
+                              ? "border-red-500 focus:border-red-500 focus:ring-red-500"
+                              : "border-slate-300 focus:border-emerald-500 focus:ring-emerald-500"
+                          }`}
+                        />
+                        {bankAccountError && <p className="mt-1 text-xs text-red-600">{bankAccountError}</p>}
+                        {!bankAccountError && bankAccountNumber.length > 0 && bankAccountNumber.length < 9 && (
+                          <p className="mt-1 text-xs text-slate-500">{bankAccountNumber.length}/9+ digits</p>
+                        )}
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-slate-700">IFSC</label>
+                        <input
+                          type="text"
+                          maxLength={11}
+                          value={bankIfsc}
+                          aria-invalid={Boolean(bankIfscError)}
+                          placeholder="e.g. SBIN0001234"
+                          onChange={(e) => setBankIfsc(normalizeIfscInput(e.target.value))}
+                          onKeyUp={(e) => setBankIfscError(validateIfscInteractive(e.currentTarget.value))}
+                          className={`w-full rounded-lg border px-3 py-2 font-mono text-sm uppercase focus:outline-none focus:ring-1 ${
+                            bankIfscError
+                              ? "border-red-500 focus:border-red-500 focus:ring-red-500"
+                              : "border-slate-300 focus:border-emerald-500 focus:ring-emerald-500"
+                          }`}
+                        />
+                        {bankIfscError && <p className="mt-1 text-xs text-red-600">{bankIfscError}</p>}
+                        {!bankIfscError && bankIfsc.length > 0 && bankIfsc.length < 11 && (
+                          <p className="mt-1 text-xs text-slate-500">{bankIfsc.length}/11 characters</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
                 </div>
 
                 <div className="md:col-span-4">

@@ -33,6 +33,28 @@ export function validateIndianMobileInteractive(digits: string): string | null {
   return validateIndianMobileDigits(digits);
 }
 
+/** Live validation while typing; empty is allowed (optional phone fields). */
+export function validateIndianMobileOptionalInteractive(digits: string): string | null {
+  if (!digits) return null;
+  if (digits.length < 10) return `Enter 10 digits (${digits.length}/10)`;
+  return validateIndianMobileDigits(digits);
+}
+
+/** Live validation while typing; empty is allowed until submit with other bank fields. */
+export function validateBankAccountInteractive(digits: string): string | null {
+  if (!digits) return null;
+  if (digits.length < 9) return `Enter 9–18 digits (${digits.length} entered)`;
+  return validateBankAccountDigits(digits);
+}
+
+/** Live validation while typing; empty is allowed until submit with other bank fields. */
+export function validateIfscInteractive(ifsc: string): string | null {
+  const code = normalizeIfscInput(ifsc);
+  if (!code) return null;
+  if (code.length < 11) return `Enter 11 characters (${code.length}/11)`;
+  return validateIfscCode(code);
+}
+
 export function validateAadhaarInteractive(digits: string): string | null {
   if (!digits) return "Aadhaar is required";
   if (digits.length < 12) return `Enter 12 digits (${digits.length}/12)`;

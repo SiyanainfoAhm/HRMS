@@ -16,6 +16,13 @@ import {
   DEFAULT_MEDICAL,
 } from "@/lib/payrollMasterCalc";
 import { GOVERNMENT_DEFAULT_CPF_RATE_ON_TOTAL_EARNINGS } from "@/lib/governmentPayroll";
+import {
+  normalizeDigits,
+  normalizeIfscInput,
+  validateBankAccountInteractive,
+  validateIfscInteractive,
+  validateIndianMobileOptionalInteractive,
+} from "@/lib/employeeValidators";
 import { isAdminRole, normalizeRole, type AppRole } from "@/lib/roles";
 
 export type PayrollMasterRecord = {
@@ -276,7 +283,7 @@ function formToPayload(form: MasterFormState) {
     employeeCode: form.employeeCode.trim() || undefined,
     name: form.name.trim(),
     email: form.email.trim() || undefined,
-    phone: form.phone.trim() || undefined,
+    phone: normalizeDigits(form.phone) || undefined,
     gender: form.gender || undefined,
     dateOfBirth: form.dateOfBirth || undefined,
     dateOfJoining: form.dateOfJoining || undefined,
@@ -294,8 +301,8 @@ function formToPayload(form: MasterFormState) {
     pan: form.pan.trim().toUpperCase() || undefined,
     aadhaar: form.aadhaar.replace(/\D/g, "") || undefined,
     bankName: form.bankName.trim() || undefined,
-    bankAccountNumber: form.bankAccountNumber.trim() || undefined,
-    bankIfsc: form.bankIfsc.trim().toUpperCase() || undefined,
+    bankAccountNumber: normalizeDigits(form.bankAccountNumber) || undefined,
+    bankIfsc: normalizeIfscInput(form.bankIfsc) || undefined,
     cpfDefault: parseFloat(form.cpfDefault) || 0,
     professionalTax: parseFloat(form.professionalTax) || 0,
     incomeTax: parseFloat(form.incomeTax) || 0,
@@ -342,6 +349,26 @@ function validateForm(form: MasterFormState, editing: PayrollMasterRecord | null
   }
 
   return null;
+}
+
+function contactFieldErrors(form: MasterFormState): {
+  phone: string | null;
+  bankAccount: string | null;
+  bankIfsc: string | null;
+} {
+  const phoneDigits = normalizeDigits(form.phone);
+  const accountDigits = normalizeDigits(form.bankAccountNumber);
+  const ifscNorm = normalizeIfscInput(form.bankIfsc);
+  const hasAnyBank = Boolean(form.bankName.trim() || accountDigits || ifscNorm);
+
+  const phone = validateIndianMobileOptionalInteractive(phoneDigits);
+  let bankAccount = validateBankAccountInteractive(accountDigits);
+  let bankIfsc = validateIfscInteractive(form.bankIfsc);
+  if (hasAnyBank) {
+    if (!accountDigits) bankAccount = bankAccount ?? "Account number is required";
+    if (!ifscNorm) bankIfsc = bankIfsc ?? "IFSC is required";
+  }
+  return { phone, bankAccount, bankIfsc };
 }
 
 function fmt(n: number | null | undefined): string {
@@ -391,6 +418,9 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
   const [masterHistory, setMasterHistory] = useState<PayrollMasterRecord[]>([]);
   const [passwordTouched, setPasswordTouched] = useState(false);
   const [confirmPasswordTouched, setConfirmPasswordTouched] = useState(false);
+  const [phoneError, setPhoneError] = useState<string | null>(null);
+  const [bankAccountError, setBankAccountError] = useState<string | null>(null);
+  const [bankIfscError, setBankIfscError] = useState<string | null>(null);
 
   const [importOpen, setImportOpen] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
@@ -490,6 +520,9 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     setForm(emptyForm(companyDefaultDa, companyDefaultHra));
     setPasswordTouched(false);
     setConfirmPasswordTouched(false);
+    setPhoneError(null);
+    setBankAccountError(null);
+    setBankIfscError(null);
     setFormOpen(true);
   }
 
@@ -497,6 +530,9 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     setEditing(row);
     setPasswordTouched(false);
     setConfirmPasswordTouched(false);
+    setPhoneError(null);
+    setBankAccountError(null);
+    setBankIfscError(null);
     setFormOpen(true);
     setFormLoading(true);
     setMasterHistory([]);
@@ -526,9 +562,14 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
 
   async function handleSave(e: FormEvent) {
     e.preventDefault();
+    const contactErrs = contactFieldErrors(form);
+    setPhoneError(contactErrs.phone);
+    setBankAccountError(contactErrs.bankAccount);
+    setBankIfscError(contactErrs.bankIfsc);
     const err = validateForm(form, editing);
-    if (err) {
-      showToast("error", err);
+    const firstErr = err || contactErrs.phone || contactErrs.bankAccount || contactErrs.bankIfsc;
+    if (firstErr) {
+      showToast("error", firstErr);
       return;
     }
     setFormSaving(true);
@@ -710,6 +751,10 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
 
   const inputCls =
     "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-navy focus:outline-none focus:ring-1 focus:ring-brand-navy/30";
+  const fieldInputCls = (invalid: boolean) =>
+    invalid
+      ? "w-full rounded-lg border border-red-500 px-3 py-2 text-sm focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500/30"
+      : inputCls;
   const labelCls = "mb-1 block text-xs font-medium text-slate-700";
 
   return (
@@ -999,7 +1044,25 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                     </div>
                     <div>
                       <label className={labelCls}>Phone</label>
-                      <input className={inputCls} value={form.phone} onChange={(e) => patchForm({ phone: e.target.value })} />
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={10}
+                        autoComplete="tel"
+                        className={fieldInputCls(Boolean(phoneError))}
+                        value={form.phone}
+                        aria-invalid={Boolean(phoneError)}
+                        placeholder="10-digit mobile (starts 6–9)"
+                        onChange={(e) => patchForm({ phone: normalizeDigits(e.target.value).slice(0, 10) })}
+                        onKeyUp={(e) => {
+                          const d = normalizeDigits(e.currentTarget.value).slice(0, 10);
+                          setPhoneError(validateIndianMobileOptionalInteractive(d));
+                        }}
+                      />
+                      {phoneError && <p className="mt-1 text-xs text-red-600">{phoneError}</p>}
+                      {!phoneError && form.phone.length > 0 && form.phone.length < 10 && (
+                        <p className="mt-1 text-xs text-slate-500">{form.phone.length}/10 digits</p>
+                      )}
                     </div>
                     <div>
                       <label className={labelCls}>Gender</label>
@@ -1144,11 +1207,45 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                     </div>
                     <div>
                       <label className={labelCls}>Account Number</label>
-                      <input className={inputCls} value={form.bankAccountNumber} onChange={(e) => patchForm({ bankAccountNumber: e.target.value })} />
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={18}
+                        className={fieldInputCls(Boolean(bankAccountError))}
+                        value={form.bankAccountNumber}
+                        aria-invalid={Boolean(bankAccountError)}
+                        placeholder="9–18 digits"
+                        onChange={(e) =>
+                          patchForm({ bankAccountNumber: normalizeDigits(e.target.value).slice(0, 18) })
+                        }
+                        onKeyUp={(e) => {
+                          const d = normalizeDigits(e.currentTarget.value).slice(0, 18);
+                          setBankAccountError(validateBankAccountInteractive(d));
+                        }}
+                      />
+                      {bankAccountError && <p className="mt-1 text-xs text-red-600">{bankAccountError}</p>}
+                      {!bankAccountError &&
+                        form.bankAccountNumber.length > 0 &&
+                        form.bankAccountNumber.length < 9 && (
+                          <p className="mt-1 text-xs text-slate-500">{form.bankAccountNumber.length}/9+ digits</p>
+                        )}
                     </div>
                     <div>
                       <label className={labelCls}>IFSC</label>
-                      <input className={inputCls} value={form.bankIfsc} onChange={(e) => patchForm({ bankIfsc: e.target.value })} />
+                      <input
+                        type="text"
+                        maxLength={11}
+                        className={`${fieldInputCls(Boolean(bankIfscError))} font-mono uppercase`}
+                        value={form.bankIfsc}
+                        aria-invalid={Boolean(bankIfscError)}
+                        placeholder="e.g. SBIN0001234"
+                        onChange={(e) => patchForm({ bankIfsc: normalizeIfscInput(e.target.value) })}
+                        onKeyUp={(e) => setBankIfscError(validateIfscInteractive(e.currentTarget.value))}
+                      />
+                      {bankIfscError && <p className="mt-1 text-xs text-red-600">{bankIfscError}</p>}
+                      {!bankIfscError && form.bankIfsc.length > 0 && form.bankIfsc.length < 11 && (
+                        <p className="mt-1 text-xs text-slate-500">{form.bankIfsc.length}/11 characters</p>
+                      )}
                     </div>
                   </div>
                 </section>
