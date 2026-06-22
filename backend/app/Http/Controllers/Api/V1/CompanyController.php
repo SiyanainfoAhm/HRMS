@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Models\HrmsCompany;
+use App\Services\PayrollArrearService;
 use App\Services\PayrollMasterService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -13,6 +14,7 @@ class CompanyController extends Controller
 {
     public function __construct(
         private readonly PayrollMasterService $payrollMasterService,
+        private readonly PayrollArrearService $payrollArrearService,
     ) {}
 
     public function me(Request $request): JsonResponse
@@ -85,6 +87,7 @@ class CompanyController extends Controller
         $daChanged = abs($newDa - $oldDa) >= 0.001;
         $hraChanged = abs($newHra - $oldHra) >= 0.001;
         $payrollRevision = null;
+        $daRevisionEvent = null;
 
         $company->update($payload);
 
@@ -97,11 +100,51 @@ class CompanyController extends Controller
                 $effectiveFrom,
                 $user->id,
             );
+
+            if ($daChanged) {
+                $daRevisionEvent = $this->payrollArrearService->createRevisionEvent(
+                    (string) $user->company_id,
+                    $oldDa,
+                    $newDa,
+                    $effectiveFrom,
+                    sprintf('Institute DA revision: %.2f%% → %.2f%%', $oldDa, $newDa),
+                    $user->id,
+                );
+            }
+        }
+
+        $arrearPreview = null;
+        if ($daRevisionEvent) {
+            $previewRunYear = (int) ($request->input('payroll_run_year') ?? $request->input('payrollRunYear') ?? 0);
+            $previewRunMonth = (int) ($request->input('payroll_run_month') ?? $request->input('payrollRunMonth') ?? 0);
+            $arrearPeriod = null;
+            if ($previewRunYear >= 2000 && $previewRunMonth >= 1 && $previewRunMonth <= 12) {
+                $arrearPeriod = $this->payrollArrearService->arrearPeriodForRevision(
+                    $daRevisionEvent->effective_from->format('Y-m-d'),
+                    $previewRunYear,
+                    $previewRunMonth,
+                );
+            }
+            $arrearPreview = [
+                'revisionEventId' => $daRevisionEvent->id,
+                'oldDaPercent' => $oldDa,
+                'newDaPercent' => $newDa,
+                'effectiveFrom' => $daRevisionEvent->effective_from->format('Y-m-d'),
+                'pendingArrearPeriod' => $arrearPeriod ? [
+                    'from' => $arrearPeriod['from']->format('Y-m-d'),
+                    'to' => $arrearPeriod['to']->format('Y-m-d'),
+                ] : null,
+                'note' => $arrearPeriod === null && ($previewRunYear < 2000 || $previewRunMonth < 1)
+                    ? 'Arrear months are calculated from the month you select on Run Payroll, not today\'s date.'
+                    : null,
+            ];
         }
 
         return response()->json([
             'company' => $company->refresh(),
             'payroll_revision' => $payrollRevision,
+            'da_revision_event' => $daRevisionEvent,
+            'arrear_preview' => $arrearPreview,
         ]);
     }
 

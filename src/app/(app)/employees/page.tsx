@@ -14,6 +14,7 @@ import { dispatchHrmsChange } from "@/lib/hrmsChangeBus";
 import { fmtDmy } from "@/lib/dateFormat";
 import {
   computeGovernmentMonthlyPayroll,
+  getTransportBaseByPayLevel,
   masterRowToDeductionDefaults,
 } from "@/lib/governmentPayroll";
 import { resolveConvertPayrollMasterInput } from "@/lib/convertToCurrentPayroll";
@@ -461,7 +462,6 @@ export default function EmployeesPage() {
         daPercent: 53,
         hraPercent: 30,
         medicalFixed: 3000,
-        transportDaPercent: 48.06,
         payLevel: levelNum,
         daysInMonth: 30,
         unpaidDays: 0,
@@ -475,6 +475,8 @@ export default function EmployeesPage() {
       govPreview = null;
     }
   }
+  const transportBasePreview =
+    Number.isFinite(levelNum) && levelNum >= 1 ? getTransportBaseByPayLevel(levelNum) : 0;
   const calculatedMonthlyGross = govPreview?.totalEarnings ?? 0;
   const calculatedNet = govPreview?.netSalary ?? 0;
 
@@ -1219,7 +1221,9 @@ export default function EmployeesPage() {
                     }`}
                   />
                   {payLevelError && <p className="mt-1 text-xs text-red-600">{payLevelError}</p>}
-                  <p className="mt-1 text-xs text-slate-500">Drives transport allowance slab (same rules as payslip).</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Transport base (auto): ₹{transportBasePreview > 0 ? transportBasePreview.toLocaleString("en-IN") : "—"} (levels 1–2: 1350, 3–8: 3600, 9+: 7200)
+                  </p>
                 </div>
                 <div className="md:col-span-1">
                   <label className="mb-1 block text-sm font-medium text-slate-700">
@@ -1271,7 +1275,11 @@ export default function EmployeesPage() {
                   </div>
                   {govPreview && (
                     <p className="mt-1 text-xs text-slate-500">
-                      Deductions (defaults): PT ₹{govPreview.deductions.pt.toLocaleString("en-IN")}
+                      TA: base ₹{govPreview.transportSlab.transportBase.toLocaleString("en-IN")}
+                      {" · "}DA on TA ₹
+                      {(govPreview.transportPaid - govPreview.transportSlab.transportBase).toLocaleString("en-IN")}
+                      {" · "}total ₹{govPreview.transportPaid.toLocaleString("en-IN")}
+                      {" · "}PT ₹{govPreview.deductions.pt.toLocaleString("en-IN")}
                       {govPreview.deductions.incomeTax > 0 &&
                         ` · IT ₹${govPreview.deductions.incomeTax.toLocaleString("en-IN")}`}
                       {govPreview.deductions.cpf > 0 && ` · CPF ₹${govPreview.deductions.cpf.toLocaleString("en-IN")}`}
@@ -2899,17 +2907,13 @@ export default function EmployeesPage() {
                           />
                         </div>
                         <div>
-                          <label className="mb-1 block text-sm font-medium text-slate-700">Transport DA %</label>
-                          <input
-                            type="number"
-                            step="0.01"
-                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                            value={convertPayrollForm.transport_da_percent}
-                            onChange={(e) => {
-                              const v = Number(e.target.value);
-                              setConvertPayrollForm((p) => (p && Number.isFinite(v) ? { ...p, transport_da_percent: v } : p));
-                            }}
-                          />
+                          <label className="mb-1 block text-sm font-medium text-slate-700">Transport base (from pay level)</label>
+                          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                            {convertPayLevel != null && convertPayLevel >= 1
+                              ? `₹${getTransportBaseByPayLevel(convertPayLevel).toLocaleString("en-IN")}`
+                              : "—"}
+                          </div>
+                          <p className="mt-1 text-xs text-slate-500">Transport DA uses the same DA % as salary.</p>
                         </div>
                         <div>
                           <label className="mb-1 block text-sm font-medium text-slate-700">TDS / income tax (₹ / mo)</label>
@@ -2997,7 +3001,8 @@ export default function EmployeesPage() {
                             <li>DA paid: ₹{convertResolvedPreview.preview.daPaid.toLocaleString("en-IN")}</li>
                             <li>HRA paid: ₹{convertResolvedPreview.preview.hraPaid.toLocaleString("en-IN")}</li>
                             <li>TA paid: ₹{convertResolvedPreview.preview.transportPaid.toLocaleString("en-IN")}</li>
-                            <li>Transport slab: {convertResolvedPreview.slab.transportSlabGroup}</li>
+                            <li>Transport base: ₹{convertResolvedPreview.slab.transportBase.toLocaleString("en-IN")}</li>
+                            <li>Transport DA: ₹{(convertResolvedPreview.preview.transportPaid - convertResolvedPreview.slab.transportBase).toLocaleString("en-IN")}</li>
                             <li>CPF (core): ₹{convertResolvedPreview.preview.deductions.cpf.toLocaleString("en-IN")}</li>
                           </ul>
                         </div>

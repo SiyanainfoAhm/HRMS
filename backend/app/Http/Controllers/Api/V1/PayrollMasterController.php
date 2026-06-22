@@ -7,6 +7,7 @@ use App\Enums\UserRole;
 use App\Models\HrmsPayrollMaster;
 use App\Models\HrmsUser;
 use App\Services\PayrollCalculationService;
+use App\Services\PayrollArrearService;
 use App\Services\PayrollMasterService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -17,6 +18,7 @@ class PayrollMasterController extends Controller
     public function __construct(
         private readonly PayrollMasterService $service,
         private readonly PayrollCalculationService $calculator,
+        private readonly PayrollArrearService $arrearService,
     ) {}
 
     private function assertPayrollMasterAdmin(HrmsUser $user): ?JsonResponse
@@ -96,6 +98,28 @@ class PayrollMasterController extends Controller
         $history = $this->service->historyForMaster($master, $user->company_id);
 
         return response()->json(['history' => $history]);
+    }
+
+    public function arrearHistory(Request $request, string $id): JsonResponse
+    {
+        $user = $request->user();
+        if ($denied = $this->assertPayrollMasterAdmin($user)) {
+            return $denied;
+        }
+
+        $master = HrmsPayrollMaster::findOrFail($id);
+        if ($master->company_id !== $user->company_id) {
+            return response()->json(['error' => 'Forbidden'], 403);
+        }
+
+        $employeeUserId = (string) ($master->employee_user_id ?? $master->user_id ?? '');
+        if ($employeeUserId === '') {
+            return response()->json(['arrearHistory' => []]);
+        }
+
+        return response()->json([
+            'arrearHistory' => $this->arrearService->arrearHistoryForEmployee($employeeUserId),
+        ]);
     }
 
     public function recalculate(Request $request, string $id): JsonResponse

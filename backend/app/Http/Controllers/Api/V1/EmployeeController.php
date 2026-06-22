@@ -363,7 +363,7 @@ class EmployeeController extends Controller
             'da_percent' => $daPercent,
             'hra_percent' => 30,
             'medical_fixed' => 3000,
-            'transport_da_percent' => 48.06,
+            'transport_da_percent' => $daPercent,
             'tds' => (int) ($targetUser->tds_monthly ?? 0),
             'pt_default' => 200,
             'advance_bonus' => 0,

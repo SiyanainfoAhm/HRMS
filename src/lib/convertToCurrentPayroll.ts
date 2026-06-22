@@ -16,7 +16,6 @@ export type ResolvedConvertPayroll = {
   daPercent: number;
   hraPercent: number;
   medicalFixed: number;
-  transportDaPercent: number;
   tdsMonthly: number;
   ptDefault: number;
   advanceBonus: number;
@@ -43,7 +42,6 @@ export function resolveConvertPayrollMasterInput(
   const daPercent = pickNum(o, ["da_percent", "daPercent"], 53);
   const hraPercent = pickNum(o, ["hra_percent", "hraPercent"], 30);
   const medicalFixed = Math.max(0, Math.round(pickNum(o, ["medical_fixed", "medicalFixed"], 3000)));
-  const transportDaPercent = pickNum(o, ["transport_da_percent", "transportDaPercent"], 48.06);
   const tdsMonthly = Math.max(0, Math.round(pickNum(o, ["tds", "income_tax_default"], base.tdsMonthly)));
   const ptDefault = Math.max(0, Math.round(pickNum(o, ["pt_default", "pt"], base.ptMonthly)));
   const advanceBonus = Math.max(0, Math.round(pickNum(o, ["advance_bonus", "advanceBonus"], 0)));
@@ -73,7 +71,6 @@ export function resolveConvertPayrollMasterInput(
     daPercent,
     hraPercent,
     medicalFixed,
-    transportDaPercent,
     payLevel: base.payLevel,
     daysInMonth: 30,
     unpaidDays: 0,
@@ -87,7 +84,6 @@ export function resolveConvertPayrollMasterInput(
     daPercent,
     hraPercent,
     medicalFixed,
-    transportDaPercent,
     tdsMonthly,
     ptDefault,
     advanceBonus,
@@ -104,7 +100,6 @@ export function payrollMasterPayloadForClient(r: ResolvedConvertPayroll) {
     da_percent: r.daPercent,
     hra_percent: r.hraPercent,
     medical_fixed: r.medicalFixed,
-    transport_da_percent: r.transportDaPercent,
     tds: r.tdsMonthly,
     pt_default: r.ptDefault,
     advance_bonus: r.advanceBonus,

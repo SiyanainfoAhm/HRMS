@@ -5,15 +5,25 @@
 
 export type TransportSlab = { transportSlabGroup: string; transportBase: number };
 
+/** Government transport allowance base by pay level (levels 1–2: 1350, 3–8: 3600, 9+: 7200). */
+export function getTransportBaseByPayLevel(payLevel: number): number {
+  const lv = Math.max(0, Math.floor(Number(payLevel) || 0));
+  if (lv >= 9) return 7200;
+  if (lv >= 3) return 3600;
+  if (lv >= 1) return 1350;
+  return 0;
+}
+
 export function deriveTransportSlabFromLevel(level: number | null | undefined): TransportSlab {
   if (level == null || !Number.isFinite(Number(level))) {
     throw new Error("government_pay_level is required for government payroll");
   }
   const lv = Math.floor(Number(level));
   if (lv < 1) throw new Error("government_pay_level must be at least 1");
-  if (lv <= 2) return { transportSlabGroup: "LEVEL_1_2", transportBase: 1350 };
-  if (lv <= 8) return { transportSlabGroup: "LEVEL_3_8", transportBase: 3600 };
-  return { transportSlabGroup: "LEVEL_9_ABOVE", transportBase: 7200 };
+  const transportBase = getTransportBaseByPayLevel(lv);
+  if (lv >= 9) return { transportSlabGroup: "LEVEL_9_ABOVE", transportBase };
+  if (lv >= 3) return { transportSlabGroup: "LEVEL_3_8", transportBase };
+  return { transportSlabGroup: "LEVEL_1_2", transportBase };
 }
 
 export type GovernmentDeductionDefaults = {
@@ -71,7 +81,6 @@ export type GovernmentMonthlyInput = {
   daPercent: number;
   hraPercent: number;
   medicalFixed: number;
-  transportDaPercent: number;
   /** From cirt_users.government_pay_level */
   payLevel: number;
   daysInMonth: number;
@@ -139,8 +148,9 @@ export type GovernmentMonthlyComputed = {
 
 export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): GovernmentMonthlyComputed {
   const slab = deriveTransportSlabFromLevel(input.payLevel);
-  const tda = Number(input.transportDaPercent) || 0;
-  const transportActual = roundRupees(slab.transportBase + (slab.transportBase * tda) / 100);
+  const daPctForTransport = Number(input.daPercent) || 0;
+  const transportDa = roundRupees((slab.transportBase * daPctForTransport) / 100);
+  const transportActual = roundRupees(slab.transportBase + transportDa);
   const transportPaid = transportActual;
 
   const gb = Number(input.grossBasic) || 0;

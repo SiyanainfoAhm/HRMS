@@ -153,10 +153,7 @@ type ImportPreview = {
 
 const STATUS_OPTIONS = ["active", "inactive", "retired", "deceased", "resigned"] as const;
 
-const DEFAULT_DEDUCTION_FIELDS = [
-  ["cpfDefault", "PF (CPF default)"],
-  ["professionalTax", "Professional Tax (PT)"],
-] as const;
+const DEFAULT_DEDUCTION_FIELDS = [["professionalTax", "Professional Tax (PT)"]] as const;
 
 const VARIABLE_DEDUCTION_FIELDS = [
   ["incomeTax", "Income Tax"],
@@ -177,7 +174,7 @@ const VARIABLE_DEDUCTION_FIELDS = [
 ] as const;
 
 const EARNINGS_COLUMN_COUNT = 12;
-const DEFAULT_DEDUCTION_COLUMN_COUNT = 4;
+const DEFAULT_DEDUCTION_COLUMN_COUNT = 3;
 const VARIABLE_DEDUCTION_COLUMN_COUNT = 15;
 
 const emptyForm = (defaultDa = DEFAULT_DA_PERCENT, defaultHra = DEFAULT_HRA_PERCENT): MasterFormState => ({
@@ -253,7 +250,7 @@ function formFromRecord(r: PayrollMasterRecord): MasterFormState {
     bankName: r.bankName ?? "",
     bankAccountNumber: r.bankAccountNumber ?? "",
     bankIfsc: r.bankIfsc ?? "",
-    cpfDefault: String(r.cpfDefault ?? 0),
+    cpfDefault: "0",
     professionalTax: String(r.professionalTax ?? 200),
     incomeTax: String(r.incomeTax ?? 0),
     lic: String(r.lic ?? 0),
@@ -303,7 +300,7 @@ function formToPayload(form: MasterFormState) {
     bankName: form.bankName.trim() || undefined,
     bankAccountNumber: normalizeDigits(form.bankAccountNumber) || undefined,
     bankIfsc: normalizeIfscInput(form.bankIfsc) || undefined,
-    cpfDefault: parseFloat(form.cpfDefault) || 0,
+    cpfDefault: 0,
     professionalTax: parseFloat(form.professionalTax) || 0,
     incomeTax: parseFloat(form.incomeTax) || 0,
     lic: parseFloat(form.lic) || 0,
@@ -416,6 +413,24 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
   const [formSaving, setFormSaving] = useState(false);
   const [formLoading, setFormLoading] = useState(false);
   const [masterHistory, setMasterHistory] = useState<PayrollMasterRecord[]>([]);
+  const [arrearHistory, setArrearHistory] = useState<
+    {
+      batchId: string;
+      revisionEffectiveFrom?: string;
+      oldDaPercent?: number;
+      newDaPercent?: number;
+      arrearFrom?: string;
+      arrearTo?: string;
+      includedInPayrollMonth?: string | null;
+      daArrear: number;
+      transportArrear: number;
+      grossArrear: number;
+      cpfArrear: number;
+      netArrear: number;
+      status: string;
+      monthLines: Array<Record<string, unknown>>;
+    }[]
+  >([]);
   const [passwordTouched, setPasswordTouched] = useState(false);
   const [confirmPasswordTouched, setConfirmPasswordTouched] = useState(false);
   const [phoneError, setPhoneError] = useState<string | null>(null);
@@ -493,7 +508,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
         daPercent: form.daPercent,
         hraPercent: form.hraPercent,
         medical: form.medical,
-        cpfDefault: form.cpfDefault,
+        cpfDefault: 0,
         professionalTax: form.professionalTax,
         incomeTax: form.incomeTax,
         lic: form.lic,
@@ -517,6 +532,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
   function openAdd() {
     setEditing(null);
     setMasterHistory([]);
+    setArrearHistory([]);
     setForm(emptyForm(companyDefaultDa, companyDefaultHra));
     setPasswordTouched(false);
     setConfirmPasswordTouched(false);
@@ -536,17 +552,23 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     setFormOpen(true);
     setFormLoading(true);
     setMasterHistory([]);
+    setArrearHistory([]);
     try {
-      const [masterRes, historyRes] = await Promise.all([
+      const [masterRes, historyRes, arrearRes] = await Promise.all([
         fetch(`/api/payroll/master/${row.id}`),
         fetch(`/api/payroll/master/${row.id}/history`),
+        fetch(`/api/payroll/master/${row.id}/arrear-history`),
       ]);
       const masterData = await masterRes.json();
       const historyData = await historyRes.json();
+      const arrearData = await arrearRes.json();
       if (!masterRes.ok) throw new Error(masterData?.error || "Failed to load employee");
       setForm(formFromRecord(masterData.master ?? row));
       if (historyRes.ok) {
         setMasterHistory(historyData.history ?? []);
+      }
+      if (arrearRes.ok) {
+        setArrearHistory(arrearData.arrearHistory ?? []);
       }
     } catch (e: unknown) {
       setForm(formFromRecord(row));
@@ -803,9 +825,8 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
         ) : (
           <div className="overflow-x-auto rounded-lg border border-slate-800/30 shadow-sm">
             <p className="border-b border-slate-200 bg-amber-50/95 px-3 py-2 text-xs leading-snug text-amber-950">
-              Government payroll: <strong>CPF default 0</strong> uses automatic deduction (
-              {Math.round(GOVERNMENT_DEFAULT_CPF_RATE_ON_TOTAL_EARNINGS * 100)}% of total earnings).{" "}
-              <strong>CPF (eff.)</strong> is the amount actually deducted.
+              Government payroll: <strong>PF (CPF)</strong> is always{" "}
+              {Math.round(GOVERNMENT_DEFAULT_CPF_RATE_ON_TOTAL_EARNINGS * 100)}% of total earnings (auto-calculated).
             </p>
             <table className="w-full min-w-[3200px] border-collapse text-left text-sm">
               <thead>
@@ -838,8 +859,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                   <th className={th}>Med</th>
                   <th className={th}>Transport</th>
                   <th className={th}>Tot. Earn.</th>
-                  <th className={`${th} border-l border-white/20`}>PF Def.</th>
-                  <th className={th}>PF Eff.</th>
+                  <th className={`${th} border-l border-white/20`}>PF (CPF)</th>
                   <th className={th}>DA CPF</th>
                   <th className={th}>PT</th>
                   <th className={`${th} border-l border-white/20`}>Inc. Tax</th>
@@ -880,8 +900,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                     <td className={td}>{fmt(row.medical)}</td>
                     <td className={td}>{fmt(row.transportTotal)}</td>
                     <td className={td}>{fmt(row.totalEarnings)}</td>
-                    <td className={td}>{fmt(row.cpfDefault)}</td>
-                    <td className={td}>{fmt(row.cpfEffective)}</td>
+                    <td className={td}>{fmt(row.cpfEffective ?? row.cpfDefault)}</td>
                     <td className={td}>{fmt(row.daCpf)}</td>
                     <td className={td}>{fmt(row.professionalTax)}</td>
                     <td className={td}>{fmt(row.incomeTax)}</td>
@@ -978,6 +997,9 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                     <div>
                       <label className={labelCls}>Pay Level *</label>
                       <input type="number" min={1} className={inputCls} value={form.payLevel} onChange={(e) => patchForm({ payLevel: e.target.value })} required />
+                      <p className="mt-1 text-xs text-slate-500">
+                        Transport base (auto): {fmt(preview.transportBase)} — levels 1–2: ₹1,350 · 3–8: ₹3,600 · 9+: ₹7,200
+                      </p>
                     </div>
                     <div>
                       <label className={labelCls}>Name *</label>
@@ -1161,10 +1183,23 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                 <section>
                   <h4 className="mb-3 text-sm font-semibold text-slate-800">Default deductions</h4>
                   <p className="mb-3 text-xs text-slate-500">
-                    PF and PT only. Leave PF at 0 to use automatic deduction (
-                    {Math.round(GOVERNMENT_DEFAULT_CPF_RATE_ON_TOTAL_EARNINGS * 100)}% of total earnings).
+                    PF (CPF) is fixed at {Math.round(GOVERNMENT_DEFAULT_CPF_RATE_ON_TOTAL_EARNINGS * 100)}% of total
+                    earnings and updates when you change pay components. Edit PT below.
                   </p>
                   <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    <div>
+                      <label className={labelCls}>
+                        PF (CPF) — {Math.round(GOVERNMENT_DEFAULT_CPF_RATE_ON_TOTAL_EARNINGS * 100)}% of total earnings
+                      </label>
+                      <input
+                        type="text"
+                        readOnly
+                        tabIndex={-1}
+                        className={`${inputCls} cursor-not-allowed bg-slate-100 text-slate-700`}
+                        value={fmt(preview.cpfEffective)}
+                        aria-readonly
+                      />
+                    </div>
                     {DEFAULT_DEDUCTION_FIELDS.map(([key, label]) => (
                       <div key={key}>
                         <label className={labelCls}>{label}</label>
@@ -1292,16 +1327,61 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                   </section>
                 )}
 
+                {editing && arrearHistory.length > 0 && (
+                  <section className="rounded-lg border border-violet-200 bg-violet-50/40 p-4">
+                    <h4 className="mb-3 text-sm font-semibold text-slate-800">DA Arrears History</h4>
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-[720px] border-collapse text-left text-xs">
+                        <thead>
+                          <tr className="border-b border-violet-200 text-slate-600">
+                            <th className="px-2 py-1.5">Effective from</th>
+                            <th className="px-2 py-1.5">Old DA %</th>
+                            <th className="px-2 py-1.5">New DA %</th>
+                            <th className="px-2 py-1.5">Arrear period</th>
+                            <th className="px-2 py-1.5">Payroll month</th>
+                            <th className="px-2 py-1.5 text-right">DA arr.</th>
+                            <th className="px-2 py-1.5 text-right">Tr. arr.</th>
+                            <th className="px-2 py-1.5 text-right">Gross arr.</th>
+                            <th className="px-2 py-1.5 text-right">CPF arr.</th>
+                            <th className="px-2 py-1.5 text-right">Net arr.</th>
+                            <th className="px-2 py-1.5">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {arrearHistory.map((b) => (
+                            <tr key={b.batchId} className="border-b border-violet-100 align-top">
+                              <td className="px-2 py-1.5">{b.revisionEffectiveFrom ?? "—"}</td>
+                              <td className="px-2 py-1.5">{b.oldDaPercent ?? "—"}</td>
+                              <td className="px-2 py-1.5">{b.newDaPercent ?? "—"}</td>
+                              <td className="px-2 py-1.5">
+                                {b.arrearFrom && b.arrearTo ? `${b.arrearFrom} → ${b.arrearTo}` : "—"}
+                              </td>
+                              <td className="px-2 py-1.5">{b.includedInPayrollMonth ?? "—"}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums">{fmt(b.daArrear)}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums">{fmt(b.transportArrear)}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums">{fmt(b.grossArrear)}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums">{Math.round(b.cpfArrear).toLocaleString("en-IN")}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums">{Math.round(b.netArrear).toLocaleString("en-IN")}</td>
+                              <td className="px-2 py-1.5 capitalize">{b.status}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </section>
+                )}
+
                 <section className="rounded-lg border border-slate-200 bg-slate-50 p-4">
                   <h4 className="mb-3 text-sm font-semibold text-slate-800">Calculated preview</h4>
                   <div className="grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                    <div>Pay level: <strong>{form.payLevel}</strong></div>
                     <div>DA amount: <strong>{fmt(preview.daAmount)}</strong></div>
                     <div>HRA amount: <strong>{fmt(preview.hraAmount)}</strong></div>
                     <div>Transport base: <strong>{fmt(preview.transportBase)}</strong></div>
                     <div>Transport DA: <strong>{fmt(preview.transportDa)}</strong></div>
                     <div>Transport total: <strong>{fmt(preview.transportTotal)}</strong></div>
                     <div>Total earnings: <strong>{fmt(preview.totalEarnings)}</strong></div>
-                    <div>CPF effective: <strong>{fmt(preview.cpfEffective)}</strong></div>
+                    <div>PF (CPF): <strong>{fmt(preview.cpfEffective)}</strong></div>
                     <div>Total deductions: <strong>{fmt(preview.totalDeductions)}</strong></div>
                     <div className="sm:col-span-2 lg:col-span-4 text-base font-semibold text-emerald-800">
                       Take home: {fmt(preview.takeHome)}

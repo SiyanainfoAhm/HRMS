@@ -21,6 +21,9 @@ export type GovernmentPreviewMonthly = {
   totalEarnings: number;
   totalDeductions: number;
   netSalary: number;
+  grossArrear?: number;
+  cpfArrear?: number;
+  netArrear?: number;
   deductions: {
     incomeTax: number;
     pt: number;
@@ -253,6 +256,23 @@ export function GovernmentRunPreviewTable({ rows, daysInMonth, effectiveRunDay, 
                           </td>
                         ))}
                       </SingleRowBand>
+                      {(v(g, "grossArrear" as keyof GovernmentPreviewMonthly) > 0 ||
+                        v(g, "daArrearsPaid") > 0 ||
+                        v(g, "transportArrearsPaid") > 0) && (
+                        <SingleRowBand title="DA arrears (auto)" titleClassName="text-violet-900">
+                          {[
+                            { label: "DA ARR.", value: v(g, "daArrearsPaid") },
+                            { label: "TR. ARR.", value: v(g, "transportArrearsPaid") },
+                            { label: "Gross arr.", value: v(g, "grossArrear" as keyof GovernmentPreviewMonthly) },
+                            { label: "CPF arr.", value: v(g, "cpfArrear" as keyof GovernmentPreviewMonthly) },
+                            { label: "Net arr.", value: v(g, "netArrear" as keyof GovernmentPreviewMonthly) },
+                          ].map(({ label, value }) => (
+                            <td key={label} className="border-r border-slate-100 px-2 py-2 align-bottom last:border-r-0">
+                              <FieldChip label={label} readOnly value={value} onChange={() => {}} />
+                            </td>
+                          ))}
+                        </SingleRowBand>
+                      )}
                     </div>
                   </td>
                   <td className={tdNum}>{v(g, "totalEarnings").toLocaleString("en-IN")}</td>

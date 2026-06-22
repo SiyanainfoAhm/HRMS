@@ -11,12 +11,17 @@ use App\Models\HrmsPayslip;
 use App\Models\HrmsUser;
 use App\Support\BankDetailsService;
 use App\Support\BankDetailsValidator;
+use App\Services\PayrollArrearService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class PayrollController extends Controller
 {
+    public function __construct(
+        private readonly PayrollArrearService $arrearService,
+    ) {}
+
     public function periods(Request $request): JsonResponse
     {
         $periods = HrmsPayrollPeriod::where('company_id', $request->user()->company_id)
@@ -129,7 +134,7 @@ class PayrollController extends Controller
                         'daPercent' => $m->da_percent,
                         'hraPercent' => $m->hra_percent,
                         'medicalFixed' => $m->medical_fixed,
-                        'transportDaPercent' => $m->transport_da_percent,
+                        'transportDaPercent' => $m->da_percent ?? $m->transport_da_percent,
                         'transportSlabGroup' => $m->transport_slab_group,
                         'transportBase' => $m->transport_base,
                         'incomeTaxDefault' => $m->income_tax_default ?? $m->tds,
@@ -303,35 +308,42 @@ class PayrollController extends Controller
             return response()->json(['error' => 'Forbidden'], 403);
         }
 
-        $year = (int) $request->query('year', now()->year);
-        $month = (int) $request->query('month', now()->month);
-        $runDay = (int) $request->query('runDay', now()->day);
+        $year = (int) $request->query('year', 0);
+        $month = (int) $request->query('month', 0);
+        $runDay = (int) $request->query('runDay', 0);
+
+        if ($year < 2000 || $month < 1 || $month > 12) {
+            return response()->json(['error' => 'year and month query parameters are required'], 422);
+        }
 
         $periodStart = sprintf('%04d-%02d-01', $year, $month);
         $periodEnd = date('Y-m-t', strtotime($periodStart));
-
-        // Get all active payroll masters for this company
-        $masters = HrmsPayrollMaster::where('company_id', $user->company_id)
-            ->where(function ($q) use ($periodEnd) {
-                $q->whereNull('effective_end_date')
-                  ->orWhere('effective_end_date', '>=', $periodEnd);
-            })
-            ->where('effective_start_date', '<=', $periodEnd)
-            ->get();
-
         $daysInMonth = (int) date('t', strtotime($periodStart));
-        $effectiveRunDay = min(max(1, $runDay), $daysInMonth);
+        $effectiveRunDay = $runDay < 1 || $runDay > $daysInMonth ? $daysInMonth : $runDay;
+
+        $existingPeriod = HrmsPayrollPeriod::where('company_id', $user->company_id)
+            ->whereDate('period_start', $periodStart)
+            ->first();
+
+        $employeeUserIds = $this->collectPayrollEmployeeUserIds((string) $user->company_id);
 
         $employees = [];
-        foreach ($masters as $m) {
-            $empUser = HrmsUser::find($m->employee_user_id);
-            if (! $empUser || $empUser->employment_status?->value !== 'current') {
+        foreach ($employeeUserIds as $employeeUserId) {
+            $m = $this->resolveMasterForPayrollDate((string) $user->company_id, $employeeUserId, $periodEnd)
+                ?? $this->currentMasterForEmployee((string) $user->company_id, $employeeUserId);
+            if (! $m) {
+                continue;
+            }
+
+            $empUser = HrmsUser::find($employeeUserId);
+            if (! $empUser) {
                 continue;
             }
 
             $empRecord = HrmsEmployee::where('user_id', $empUser->id)->first();
             $dateOfJoining = $empUser->date_of_joining?->format('Y-m-d')
-                ?? $empRecord?->date_of_joining?->format('Y-m-d');
+                ?? $empRecord?->date_of_joining?->format('Y-m-d')
+                ?? $m->date_of_joining?->format('Y-m-d');
             $dateOfLeaving = $empUser->date_of_leaving?->format('Y-m-d')
                 ?? $empRecord?->date_of_leaving?->format('Y-m-d');
 
@@ -352,14 +364,13 @@ class PayrollController extends Controller
             $daPercent = (float) ($m->da_percent ?? 53);
             $hraPercent = (float) ($m->hra_percent ?? 30);
             $medicalFixed = (float) ($m->medical_fixed ?? $m->medical ?? 3000);
-            $transportDaPercent = (float) ($m->transport_da_percent ?? 48.06);
             $tds = (float) ($m->income_tax ?? $m->tds ?? 0);
             $ptDefault = (float) ($m->professional_tax ?? $m->pt_default ?? $m->pt ?? 200);
             $advanceBonus = (float) ($m->advance ?? $m->advance_bonus ?? 0);
             $payLevel = (int) ($m->pay_level ?? $empUser->government_pay_level ?? 5);
 
             $row = [
-                'employeeUserId' => $m->employee_user_id,
+                'employeeUserId' => $employeeUserId,
                 'employeeName' => $empUser->name,
                 'employeeEmail' => $empUser->email,
                 'payrollMode' => $payrollMode,
@@ -373,7 +384,6 @@ class PayrollController extends Controller
                 'daPercent' => $daPercent,
                 'hraPercent' => $hraPercent,
                 'medicalFixed' => $medicalFixed,
-                'transportDaPercent' => $transportDaPercent,
                 'tds' => $tds,
                 'ptDefault' => $ptDefault,
                 'advanceBonus' => $advanceBonus,
@@ -387,7 +397,6 @@ class PayrollController extends Controller
                     'daPercent' => $daPercent,
                     'hraPercent' => $hraPercent,
                     'medicalFixed' => $medicalFixed,
-                    'transportDaPercent' => $transportDaPercent,
                     'payLevel' => $payLevel,
                     'deductionDefaults' => [
                         'incomeTax' => $tds,
@@ -458,18 +467,25 @@ class PayrollController extends Controller
             'effectiveRunDay' => $effectiveRunDay,
         ];
 
-        $existingPeriod = HrmsPayrollPeriod::where('company_id', $user->company_id)
-            ->whereDate('period_start', $periodStart)
-            ->first();
-
         if (! $existingPeriod || ! HrmsPayslip::where('payroll_period_id', $existingPeriod->id)->exists()) {
+            $arrearEnriched = $this->enrichPreviewWithArrears(
+                $employees,
+                (string) $user->company_id,
+                $year,
+                $month,
+                $existingPeriod?->id,
+                false,
+            );
+
             return response()->json([
                 'preview' => array_merge($previewBase, [
                     'alreadyRun' => false,
-                    'existingPeriodId' => null,
+                    'existingPeriodId' => $existingPeriod?->id,
                     'payrollComplete' => true,
                     'missingPayslipCount' => 0,
-                    'rows' => $employees,
+                    'rows' => $arrearEnriched['rows'],
+                    'arrearWarnings' => $arrearEnriched['warnings'],
+                    'arrearPeriods' => $arrearEnriched['arrearPeriods'] ?? [],
                 ]),
             ]);
         }
@@ -490,7 +506,6 @@ class PayrollController extends Controller
             ->filter();
         $usersById = HrmsUser::whereIn('id', $slipUserIds)->get()->keyBy('id');
 
-        $freshByUser = collect($employees)->keyBy('employeeUserId');
         $merged = [];
 
         foreach ($employees as $fr) {
@@ -507,17 +522,16 @@ class PayrollController extends Controller
             }
         }
 
-        foreach ($payslips as $uid => $slip) {
-            if (! $freshByUser->has($uid)) {
-                $merged[] = $this->mapSavedPayslipToPreviewRow(
-                    $slip,
-                    $usersById->get($uid),
-                    $govRows->get($uid),
-                );
-            }
-        }
-
         $missingPayslipCount = collect($merged)->where('payslipPending', true)->count();
+
+        $arrearEnriched = $this->enrichPreviewWithArrears(
+            $merged,
+            (string) $user->company_id,
+            $year,
+            $month,
+            $existingPeriod->id,
+            true,
+        );
 
         return response()->json([
             'preview' => array_merge($previewBase, [
@@ -526,7 +540,9 @@ class PayrollController extends Controller
                 'existingPeriodId' => $existingPeriod->id,
                 'payrollComplete' => $missingPayslipCount === 0,
                 'missingPayslipCount' => $missingPayslipCount,
-                'rows' => $merged,
+                'rows' => $arrearEnriched['rows'],
+                'arrearWarnings' => $arrearEnriched['warnings'],
+                'arrearPeriods' => $arrearEnriched['arrearPeriods'] ?? [],
             ]),
         ]);
     }
@@ -553,9 +569,36 @@ class PayrollController extends Controller
         }
 
         if ($completeMissing) {
-            return response()->json([
-                'error' => 'Adding missing payslips is not implemented on the API yet. Re-run with the full employee list.',
-            ], 501);
+            if (! is_array($rows) || $rows === []) {
+                return response()->json(['error' => 'rows are required (pending employee payroll data)'], 422);
+            }
+
+            $periodStart = sprintf('%04d-%02d-01', $year, $month);
+            $existingPeriod = HrmsPayrollPeriod::where('company_id', $user->company_id)
+                ->whereDate('period_start', $periodStart)
+                ->first();
+
+            if (! $existingPeriod) {
+                return response()->json([
+                    'error' => 'No payroll period found for this month. Run full payroll first.',
+                ], 400);
+            }
+
+            if (! HrmsPayslip::where('payroll_period_id', $existingPeriod->id)->exists()) {
+                return response()->json([
+                    'error' => 'No payslips exist yet for this period. Run full payroll first.',
+                ], 400);
+            }
+
+            return $this->executePayrollRun(
+                $user,
+                $existingPeriod,
+                $rows,
+                $year,
+                $month,
+                $runDay,
+                true,
+            );
         }
 
         if (! is_array($rows) || $rows === []) {
@@ -594,10 +637,39 @@ class PayrollController extends Controller
             ]);
         }
 
+        return $this->executePayrollRun(
+            $user,
+            $period,
+            $rows,
+            $year,
+            $month,
+            $runDay,
+            false,
+        );
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $rows
+     */
+    private function executePayrollRun(
+        HrmsUser $user,
+        HrmsPayrollPeriod $period,
+        array $rows,
+        int $year,
+        int $month,
+        int $runDay,
+        bool $completeMissing,
+    ): JsonResponse {
+        $periodStart = $period->period_start?->format('Y-m-d') ?? sprintf('%04d-%02d-01', $year, $month);
+        $daysInMonth = (int) date('t', strtotime($periodStart));
+        $effectiveRunDay = min(max(1, $runDay), $daysInMonth);
+        $periodEnd = sprintf('%04d-%02d-%02d', $year, $month, $effectiveRunDay);
+
         $generated = 0;
         $createdByEmployeeId = $this->employeeRecordIdForUser($user->id, $user->company_id);
+        $masterEmployeeIds = array_flip($this->collectPayrollEmployeeUserIds((string) $user->company_id));
 
-        DB::transaction(function () use ($user, $period, $rows, $year, $month, $daysInMonth, $periodEnd, $createdByEmployeeId, &$generated) {
+        DB::transaction(function () use ($user, $period, $rows, $year, $month, $daysInMonth, $periodEnd, $createdByEmployeeId, $masterEmployeeIds, &$generated) {
             foreach ($rows as $row) {
                 if (! is_array($row)) {
                     continue;
@@ -608,10 +680,14 @@ class PayrollController extends Controller
                     continue;
                 }
 
+                if (! isset($masterEmployeeIds[$employeeUserId])) {
+                    continue;
+                }
+
                 $empUser = HrmsUser::where('id', $employeeUserId)
                     ->where('company_id', $user->company_id)
                     ->first();
-                if (! $empUser || $empUser->role?->value === 'admin') {
+                if (! $empUser) {
                     continue;
                 }
 
@@ -684,8 +760,8 @@ class PayrollController extends Controller
                         $daysInMonth,
                         (int) round($payDays),
                         $gm,
-                        (int) ($empUser->government_pay_level ?? 0),
-                        (float) ($master?->transport_da_percent ?? 48.06),
+                        (int) ($master?->pay_level ?? $empUser->government_pay_level ?? 0),
+                        (float) ($master?->da_percent ?? 53),
                         $periodEnd,
                     );
                 } else {
@@ -730,9 +806,14 @@ class PayrollController extends Controller
 
         if ($generated === 0) {
             return response()->json([
-                'error' => 'No payslips were created. Check pay days, payroll master, and that payroll was not already run.',
+                'error' => $completeMissing
+                    ? 'No missing payslips were created. All listed employees may already have payslips for this period.'
+                    : 'No payslips were created. Check pay days, payroll master, and that payroll was not already run.',
             ], 400);
         }
+
+        $this->arrearService->attachArrearsToPayrollRun($period);
+        $this->arrearService->finalizeArrears($period);
 
         return response()->json([
             'ok' => true,
@@ -741,6 +822,7 @@ class PayrollController extends Controller
             'periodStart' => $period->period_start?->format('Y-m-d'),
             'periodEnd' => $period->period_end?->format('Y-m-d'),
             'payslipsGenerated' => $generated,
+            'completeMissing' => $completeMissing,
         ]);
     }
 
@@ -895,6 +977,9 @@ class PayrollController extends Controller
             'educationAllowancePaid' => $num($gov->education_allowance_paid),
             'daArrearsPaid' => $num($gov->da_arrears_paid),
             'transportArrearsPaid' => $num($gov->transport_arrears_paid),
+            'grossArrear' => $num($gov->gross_arrear ?? 0),
+            'cpfArrear' => $num($gov->cpf_arrear ?? 0),
+            'netArrear' => $num($gov->net_arrear ?? 0),
             'encashmentPaid' => $num($gov->encashment_paid),
             'encashmentDaPaid' => $num($gov->encashment_da_paid),
             'totalEarnings' => $num($gov->total_earnings),
@@ -945,7 +1030,7 @@ class PayrollController extends Controller
         int $payDays,
         array $gm,
         int $payLevel,
-        float $transportDaPercent,
+        float $daPercent,
         string $periodEnd,
     ): void {
         if (! $masterId) {
@@ -974,7 +1059,7 @@ class PayrollController extends Controller
             'pay_level' => $payLevel,
             'transport_slab_group' => $slab['transportSlabGroup'] ?? $slab['transport_slab_group'] ?? null,
             'transport_base' => $num($slab['transportBase'] ?? $slab['transport_base'] ?? 0),
-            'transport_da_percent' => $transportDaPercent,
+            'transport_da_percent' => $daPercent,
             'basic_actual' => $num($gm['basicActual'] ?? $gm['basic_actual'] ?? 0),
             'basic_paid' => $num($gm['basicPaid'] ?? $gm['basic_paid'] ?? 0),
             'sp_pay_actual' => $num($gm['spPayActual'] ?? $gm['sp_pay_actual'] ?? 0),
@@ -1023,7 +1108,186 @@ class PayrollController extends Controller
             'total_earnings' => $num($gm['totalEarnings'] ?? $gm['total_earnings'] ?? 0),
             'total_deductions' => $num($gm['totalDeductions'] ?? $gm['total_deductions'] ?? 0),
             'net_salary' => $num($gm['netSalary'] ?? $gm['net_salary'] ?? 0),
+            'gross_arrear' => $num($gm['grossArrear'] ?? $gm['gross_arrear'] ?? 0),
+            'cpf_arrear' => $num($gm['cpfArrear'] ?? $gm['cpf_arrear'] ?? ($gm['arrearDeductions']['cpfArrear'] ?? 0)),
+            'net_arrear' => $num($gm['netArrear'] ?? $gm['net_arrear'] ?? 0),
+            'arrear_batch_id' => $gm['arrearBatchId'] ?? $gm['arrear_batch_id'] ?? null,
         ]);
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $rows
+     * @return array{rows: list<array<string, mixed>>, warnings: list<string>}
+     */
+    private function enrichPreviewWithArrears(
+        array $rows,
+        string $companyId,
+        int $year,
+        int $month,
+        ?string $periodId,
+        bool $alreadyRun,
+    ): array {
+        if ($alreadyRun) {
+            return [
+                'rows' => $this->mergeSavedArrearsIntoRows($rows, $periodId),
+                'warnings' => [],
+                'arrearPeriods' => [],
+            ];
+        }
+
+        $result = $this->arrearService->generateOrUpdateDraftArrearBatch(
+            $companyId,
+            $year,
+            $month,
+            $periodId,
+        );
+
+        $arrearPeriods = array_map(function ($batch) {
+            $from = $batch->arrear_from;
+            $to = $batch->arrear_to;
+
+            return [
+                'revisionEventId' => $batch->da_revision_event_id,
+                'from' => $from?->format('Y-m-d'),
+                'to' => $to?->format('Y-m-d'),
+                'status' => $batch->status,
+                'monthCount' => ($from && $to)
+                    ? $this->arrearService->countEligibleArrearMonths($from, $to)
+                    : 0,
+                'periodLabel' => ($from && $to)
+                    ? $from->format('M Y').' to '.$to->format('M Y')
+                    : null,
+            ];
+        }, $result['batches']);
+
+        return [
+            'rows' => $this->mergeArrearTotalsIntoRows($rows, $result['employeeTotals']),
+            'warnings' => $result['warnings'],
+            'arrearPeriods' => $arrearPeriods,
+        ];
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $rows
+     * @param  array<string, array<string, mixed>>  $employeeTotals
+     * @return list<array<string, mixed>>
+     */
+    private function mergeArrearTotalsIntoRows(array $rows, array $employeeTotals): array
+    {
+        return array_map(function (array $row) use ($employeeTotals) {
+            $uid = (string) ($row['employeeUserId'] ?? '');
+            $totals = $employeeTotals[$uid] ?? null;
+            if (! $totals || ($row['payrollMode'] ?? '') !== 'government') {
+                return $row;
+            }
+
+            return array_merge($row, [
+                'daArrear' => round((float) $totals['daArrear'], 2),
+                'transportArrear' => round((float) $totals['transportArrear'], 2),
+                'grossArrear' => round((float) $totals['grossArrear'], 2),
+                'cpfArrear' => round((float) $totals['cpfArrear'], 2),
+                'netArrear' => round((float) $totals['netArrear'], 2),
+                'arrearLines' => $totals['lines'] ?? [],
+            ]);
+        }, $rows);
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $rows
+     * @return list<array<string, mixed>>
+     */
+    private function mergeSavedArrearsIntoRows(array $rows, ?string $periodId): array
+    {
+        if (! $periodId) {
+            return $rows;
+        }
+
+        $govByUser = HrmsGovernmentMonthlyPayroll::query()
+            ->where('payroll_period_id', $periodId)
+            ->get()
+            ->keyBy('employee_user_id');
+
+        return array_map(function (array $row) use ($govByUser) {
+            $gov = $govByUser->get($row['employeeUserId'] ?? '');
+            if (! $gov) {
+                return $row;
+            }
+
+            return array_merge($row, [
+                'daArrear' => (float) ($gov->da_arrears_paid ?? 0),
+                'transportArrear' => (float) ($gov->transport_arrears_paid ?? 0),
+                'grossArrear' => (float) ($gov->gross_arrear ?? 0),
+                'cpfArrear' => (float) ($gov->cpf_arrear ?? 0),
+                'netArrear' => (float) ($gov->net_arrear ?? 0),
+            ]);
+        }, $rows);
+    }
+
+    /**
+     * Employees on the current payroll master list (same scope as Payroll Master screen).
+     *
+     * @return list<string>
+     */
+    private function collectPayrollEmployeeUserIds(string $companyId): array
+    {
+        return HrmsPayrollMaster::query()
+            ->where('company_id', $companyId)
+            ->whereNull('effective_to')
+            ->whereNull('effective_end_date')
+            ->get()
+            ->map(fn (HrmsPayrollMaster $m) => $m->employee_user_id ?? $m->user_id)
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Payroll master version that was effective on a calendar date (supports effective_from/to fallbacks).
+     */
+    private function resolveMasterForPayrollDate(string $companyId, string $employeeUserId, string $asOfDate): ?HrmsPayrollMaster
+    {
+        return HrmsPayrollMaster::query()
+            ->where('company_id', $companyId)
+            ->where(function ($q) use ($employeeUserId) {
+                $q->where('employee_user_id', $employeeUserId)
+                    ->orWhere('user_id', $employeeUserId);
+            })
+            ->where(function ($q) use ($asOfDate) {
+                $q->where(function ($q2) use ($asOfDate) {
+                    $q2->whereDate('effective_start_date', '<=', $asOfDate)
+                        ->orWhere(function ($q3) use ($asOfDate) {
+                            $q3->whereNull('effective_start_date')
+                                ->whereDate('effective_from', '<=', $asOfDate);
+                        });
+                });
+            })
+            ->where(function ($q) use ($asOfDate) {
+                $q->where(function ($q2) {
+                    $q2->whereNull('effective_end_date')->whereNull('effective_to');
+                })
+                    ->orWhereDate('effective_end_date', '>=', $asOfDate)
+                    ->orWhereDate('effective_to', '>=', $asOfDate);
+            })
+            ->orderByDesc('effective_start_date')
+            ->orderByDesc('effective_from')
+            ->first();
+    }
+
+    /** Current (open) payroll master row for an employee. */
+    private function currentMasterForEmployee(string $companyId, string $employeeUserId): ?HrmsPayrollMaster
+    {
+        return HrmsPayrollMaster::query()
+            ->where('company_id', $companyId)
+            ->where(function ($q) use ($employeeUserId) {
+                $q->where('employee_user_id', $employeeUserId)
+                    ->orWhere('user_id', $employeeUserId);
+            })
+            ->whereNull('effective_end_date')
+            ->whereNull('effective_to')
+            ->orderByDesc('effective_start_date')
+            ->orderByDesc('effective_from')
+            ->first();
     }
 
     /**

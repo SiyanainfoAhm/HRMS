@@ -17,6 +17,7 @@ import {
   type GovernmentEarningPaidOverrides,
   type GovernmentOptionalMonthlyEarnings,
 } from "@/lib/governmentPayroll";
+import { applyAutoArrearsToGovernmentMonthly } from "@/lib/payrollArrearCalc";
 import { GovernmentRunPreviewTable, type GovernmentRunPreviewRow } from "@/components/payroll/GovernmentRunPreviewTable";
 import { isAdminRole } from "@/lib/roles";
 import { GovernmentPayslipPrint } from "@/components/payslip/GovernmentPayslipPrint";
@@ -60,7 +61,6 @@ type MasterGridRow = {
   daPercent: number;
   hraPercent: number;
   medicalFixed: number;
-  transportDaPercent: number;
   cpfDefault: number;
   daCpfDefault: number;
   /** Monthly rupee defaults (government); mirrored on pay slip deduction side. */
@@ -181,7 +181,6 @@ type GovRecalcPayload = {
   daPercent: number;
   hraPercent: number;
   medicalFixed: number;
-  transportDaPercent: number;
   payLevel: number;
   deductionDefaults: GovernmentDeductionDefaults;
   /** Run-preview overrides for paid earning lines (optional). */
@@ -226,7 +225,6 @@ function computeGovernmentMasterDerived(row: MasterGridRow): Partial<MasterGridR
       daPercent: row.daPercent,
       hraPercent: row.hraPercent,
       medicalFixed: row.medicalFixed,
-      transportDaPercent: row.transportDaPercent,
       payLevel: row.governmentPayLevel,
       daysInMonth: 30,
       unpaidDays: 0,
@@ -341,7 +339,6 @@ function emptyGovFields(): Pick<
   | "daPercent"
   | "hraPercent"
   | "medicalFixed"
-  | "transportDaPercent"
   | "cpfDefault"
   | "daCpfDefault"
   | "licDefault"
@@ -367,7 +364,6 @@ function emptyGovFields(): Pick<
     daPercent: 0,
     hraPercent: 0,
     medicalFixed: 0,
-    transportDaPercent: 0,
     cpfDefault: 0,
     daCpfDefault: 0,
     licDefault: 0,
@@ -391,6 +387,44 @@ function emptyGovFields(): Pick<
   };
 }
 
+/** Salary slip picker: employees plus anyone on payroll master (e.g. superadmin with pay structure). */
+function buildPayslipEmployeeOptions(
+  rawEmployees: any[],
+  payrollMasters: any[],
+): { id: string; name: string | null; email: string }[] {
+  const masterUserIds = new Set(
+    payrollMasters
+      .map((m) => String(m.employeeUserId ?? m.employee_user_id ?? m.userId ?? m.user_id ?? ""))
+      .filter(Boolean),
+  );
+  const byId = new Map<string, { id: string; name: string | null; email: string }>();
+
+  for (const e of rawEmployees) {
+    const status = String(e.employmentStatus ?? "preboarding");
+    if (status === "preboarding") continue;
+    const role = String(e.role ?? "").toLowerCase();
+    const id = String(e.userId ?? e.user_id ?? e.id);
+    if (!id) continue;
+    if (role === "employee" || masterUserIds.has(id)) {
+      byId.set(id, { id, name: e.name ?? null, email: e.email ?? "" });
+    }
+  }
+
+  for (const m of payrollMasters) {
+    const id = String(m.employeeUserId ?? m.employee_user_id ?? m.userId ?? m.user_id ?? "");
+    if (!id || byId.has(id)) continue;
+    byId.set(id, {
+      id,
+      name: m.name ?? m.employeeName ?? null,
+      email: m.email ?? m.employeeEmail ?? "",
+    });
+  }
+
+  return Array.from(byId.values()).sort((a, b) =>
+    (a.name ?? a.email ?? "").localeCompare(b.name ?? b.email ?? "", undefined, { sensitivity: "base" }),
+  );
+}
+
 function buildMasterGridRow(apiRow: any, companyPt: number): MasterGridRow | null {
   const m = apiRow.master;
   if (!m) return null;
@@ -409,7 +443,6 @@ function buildMasterGridRow(apiRow: any, companyPt: number): MasterGridRow | nul
     const daPercent = Number(m.daPercent) || 53;
     const hraPercent = Number(m.hraPercent) || 30;
     const medicalFixed = Number(m.medicalFixed) || 3000;
-    const transportDaPercent = Number(m.transportDaPercent) || 48.06;
     const cpfDefault = Number(m.cpfDefault) || 0;
     const daCpfDefault = Number(m.daCpfDefault) || 0;
     const licDefault = Number(m.licDefault) || 0;
@@ -442,7 +475,6 @@ function buildMasterGridRow(apiRow: any, companyPt: number): MasterGridRow | nul
       daPercent,
       hraPercent,
       medicalFixed,
-      transportDaPercent,
       cpfDefault,
       daCpfDefault,
       licDefault,
@@ -578,7 +610,6 @@ function PayrollPageContent() {
   const [editDaPercent, setEditDaPercent] = useState("53");
   const [editHraPercent, setEditHraPercent] = useState("30");
   const [editMedicalFixed, setEditMedicalFixed] = useState("3000");
-  const [editTransportDaPercent, setEditTransportDaPercent] = useState("48.06");
   const [editGovPtDefault, setEditGovPtDefault] = useState("200");
   const [editCpfDefault, setEditCpfDefault] = useState("0");
   const [editDaCpfDefault, setEditDaCpfDefault] = useState("0");
@@ -600,6 +631,14 @@ function PayrollPageContent() {
     existingPeriodId: string | null;
     payrollComplete?: boolean;
     missingPayslipCount?: number;
+    arrearWarnings?: string[];
+    arrearPeriods?: {
+      from?: string | null;
+      to?: string | null;
+      status?: string;
+      monthCount?: number;
+      periodLabel?: string | null;
+    }[];
     rows: {
       employeeUserId: string;
       employeeName: string | null;
@@ -771,18 +810,26 @@ function PayrollPageContent() {
             const dim = Math.max(1, Math.floor(Number(denom) || 30));
             const payDays = Number(r.payDays ?? dim);
             const unpaidDays = Math.max(0, dim - payDays);
-            const comp = computeGovernmentMonthlyPayroll({
-              grossBasic: gr.grossBasic,
-              daPercent: gr.daPercent,
-              hraPercent: gr.hraPercent,
-              medicalFixed: gr.medicalFixed,
-              transportDaPercent: gr.transportDaPercent,
-              payLevel: gr.payLevel,
-              daysInMonth: dim,
-              unpaidDays,
-              deductionDefaults: gr.deductionDefaults,
-              earningPaidOverrides: gr.earningPaidOverrides,
-            });
+            const comp = applyAutoArrearsToGovernmentMonthly(
+              computeGovernmentMonthlyPayroll({
+                grossBasic: gr.grossBasic,
+                daPercent: gr.daPercent,
+                hraPercent: gr.hraPercent,
+                medicalFixed: gr.medicalFixed,
+                payLevel: gr.payLevel,
+                daysInMonth: dim,
+                unpaidDays,
+                deductionDefaults: gr.deductionDefaults,
+                earningPaidOverrides: gr.earningPaidOverrides,
+              }),
+              {
+                daArrear: r.daArrear,
+                transportArrear: r.transportArrear,
+                cpfArrear: r.cpfArrear,
+                grossArrear: r.grossArrear,
+                netArrear: r.netArrear,
+              },
+            );
             base.governmentMonthly = comp;
             base.grossMonthly = gr.grossBasic;
             base.grossPay = comp.totalEarnings;
@@ -816,25 +863,11 @@ function PayrollPageContent() {
         const data = await res.json();
         if (!cancelled && res.ok) {
           const raw = data.employees ?? [];
-          const allowedRoles = new Set(["employee"]);
-          const list = raw.filter(
-            (e: any) =>
-              String(e.employmentStatus ?? "preboarding") !== "preboarding" &&
-              allowedRoles.has(String(e.role ?? "").toLowerCase()),
-          );
-          setEmployees(
-            list.map((e: any) => ({
-              id: String(e.userId ?? e.user_id ?? e.id),
-              name: e.name,
-              email: e.email,
-            })),
-          );
+          const list = buildPayslipEmployeeOptions(raw, masters);
+          setEmployees(list);
           if (list.length) {
-            const firstUserId = String(list[0].userId ?? list[0].user_id ?? list[0].id);
-            if (
-              !selectedEmployeeId ||
-              !list.some((e: any) => String(e.userId ?? e.user_id ?? e.id) === selectedEmployeeId)
-            ) {
+            const firstUserId = list[0].id;
+            if (!selectedEmployeeId || !list.some((e) => e.id === selectedEmployeeId)) {
               setSelectedEmployeeId(firstUserId);
             }
           } else {
@@ -846,7 +879,7 @@ function PayrollPageContent() {
       }
     })();
     return () => { cancelled = true; };
-  }, [tab, canManage, selectedEmployeeId]);
+  }, [tab, canManage, selectedEmployeeId, masters]);
 
   useEffect(() => {
     if (tab !== "slips" || !selectedEmployeeId) {
@@ -944,19 +977,27 @@ function PayrollPageContent() {
             const unpaidDays = Math.max(0, dim - capped);
             const gm = row.governmentMonthly as Record<string, unknown> | null | undefined;
             const optionalEarnings = govOptionalFromComputedMonthly(gm);
-            const comp = computeGovernmentMonthlyPayroll({
-              grossBasic: gr.grossBasic,
-              daPercent: gr.daPercent,
-              hraPercent: gr.hraPercent,
-              medicalFixed: gr.medicalFixed,
-              transportDaPercent: gr.transportDaPercent,
-              payLevel: gr.payLevel,
-              daysInMonth: dim,
-              unpaidDays,
-              deductionDefaults: gr.deductionDefaults,
-              optionalEarnings,
-              earningPaidOverrides: gr.earningPaidOverrides,
-            });
+            const comp = applyAutoArrearsToGovernmentMonthly(
+              computeGovernmentMonthlyPayroll({
+                grossBasic: gr.grossBasic,
+                daPercent: gr.daPercent,
+                hraPercent: gr.hraPercent,
+                medicalFixed: gr.medicalFixed,
+                payLevel: gr.payLevel,
+                daysInMonth: dim,
+                unpaidDays,
+                deductionDefaults: gr.deductionDefaults,
+                optionalEarnings,
+                earningPaidOverrides: gr.earningPaidOverrides,
+              }),
+              {
+                daArrear: (row as { daArrear?: number }).daArrear,
+                transportArrear: (row as { transportArrear?: number }).transportArrear,
+                cpfArrear: (row as { cpfArrear?: number }).cpfArrear,
+                grossArrear: (row as { grossArrear?: number }).grossArrear,
+                netArrear: (row as { netArrear?: number }).netArrear,
+              },
+            );
             return { comp, capped, unpaidDays };
           };
 
@@ -1128,22 +1169,11 @@ function PayrollPageContent() {
               const res = await fetch("/api/employees");
               const data = await res.json();
               const raw = data.employees ?? [];
-              const list = raw.filter(
-                (e: any) => String(e.employmentStatus ?? "preboarding") !== "preboarding",
-              );
-              setEmployees(
-                list.map((e: any) => ({
-                  id: String(e.userId ?? e.user_id ?? e.id),
-                  name: e.name,
-                  email: e.email,
-                })),
-              );
+              const list = buildPayslipEmployeeOptions(raw, masters);
+              setEmployees(list);
               if (list.length) {
-                const firstUserId = String(list[0].userId ?? list[0].user_id ?? list[0].id);
-                if (
-                  !selectedEmployeeId ||
-                  !list.some((e: any) => String(e.userId ?? e.user_id ?? e.id) === selectedEmployeeId)
-                ) {
+                const firstUserId = list[0].id;
+                if (!selectedEmployeeId || !list.some((e) => e.id === selectedEmployeeId)) {
                   setSelectedEmployeeId(firstUserId);
                 }
               } else {
@@ -1176,7 +1206,7 @@ function PayrollPageContent() {
       },
       { kinds: ["payroll_master", "employee"] },
     );
-  }, [canManage, tab, selectedEmployeeId]);
+  }, [canManage, tab, selectedEmployeeId, masters]);
 
   useEffect(() => {
     if (!canManage) return;
@@ -1270,7 +1300,6 @@ function PayrollPageContent() {
       const da = parseFloat(editDaPercent) || 0;
       const hra = parseFloat(editHraPercent) || 0;
       const med = parseFloat(editMedicalFixed) || 0;
-      const tda = parseFloat(editTransportDaPercent) || 0;
       const pt = parseFloat(editGovPtDefault) || 0;
       const cpf = parseFloat(editCpfDefault) || 0;
       const daCpf = parseFloat(editDaCpfDefault) || 0;
@@ -1282,7 +1311,6 @@ function PayrollPageContent() {
           daPercent: da,
           hraPercent: hra,
           medicalFixed: med,
-          transportDaPercent: tda,
           payLevel: editGovLevel,
           daysInMonth: 30,
           unpaidDays: 0,
@@ -1349,7 +1377,6 @@ function PayrollPageContent() {
     editDaPercent,
     editHraPercent,
     editMedicalFixed,
-    editTransportDaPercent,
     editGovPtDefault,
     editCpfDefault,
     editDaCpfDefault,
@@ -1463,7 +1490,6 @@ function PayrollPageContent() {
       setEditDaPercent(String(gridRow.daPercent));
       setEditHraPercent(String(gridRow.hraPercent));
       setEditMedicalFixed(String(gridRow.medicalFixed));
-      setEditTransportDaPercent(String(gridRow.transportDaPercent));
       setEditGovPtDefault(String(gridRow.pt));
       setEditCpfDefault(String(gridRow.cpfDefault));
       setEditDaCpfDefault(String(gridRow.daCpfDefault));
@@ -1473,7 +1499,6 @@ function PayrollPageContent() {
       setEditDaPercent(String(m?.daPercent ?? 53));
       setEditHraPercent(String(m?.hraPercent ?? 30));
       setEditMedicalFixed(String(m?.medicalFixed ?? 3000));
-      setEditTransportDaPercent(String(m?.transportDaPercent ?? 48.06));
       setEditGovPtDefault(String(m?.ptDefault ?? m?.pt ?? 200));
       setEditCpfDefault(String(m?.cpfDefault ?? 0));
       setEditDaCpfDefault(String(m?.daCpfDefault ?? 0));
@@ -1505,7 +1530,6 @@ function PayrollPageContent() {
             daPercent: row.daPercent,
             hraPercent: row.hraPercent,
             medicalFixed: row.medicalFixed,
-            transportDaPercent: row.transportDaPercent,
             pfEligible: true,
             esicEligible: false,
             effectiveStartDate: row.effectiveStartDate,
@@ -1655,7 +1679,6 @@ function PayrollPageContent() {
             daPercent: parseFloat(editDaPercent) || 53,
             hraPercent: parseFloat(editHraPercent) || 30,
             medicalFixed: parseFloat(editMedicalFixed) || 3000,
-            transportDaPercent: parseFloat(editTransportDaPercent) || 48.06,
             pfEligible: true,
             esicEligible: false,
             effectiveStartDate: editEffectiveDate,
@@ -1729,7 +1752,13 @@ function PayrollPageContent() {
     setRunning(true);
     try {
       const useCompleteMissing = Boolean(preview?.alreadyRun && preview?.payrollComplete === false);
-      const rowsPayload = editableRows.map((r) => ({
+      const sourceRows = useCompleteMissing
+        ? editableRows.filter((r) => r.payslipPending)
+        : editableRows;
+      if (useCompleteMissing && sourceRows.length === 0) {
+        throw new Error("No pending employees to add payslips for.");
+      }
+      const rowsPayload = sourceRows.map((r) => ({
         employeeUserId: r.employeeUserId,
         payDays: r.payDays,
         grossPay: r.grossPay,
@@ -1765,6 +1794,7 @@ function PayrollPageContent() {
                 month: parseInt(runMonth, 10),
                 runDay: parseInt(runDay, 10),
                 completeMissingPayslips: true,
+                rows: rowsPayload,
               }
             : {
                 year: parseInt(runYear, 10),
@@ -1877,6 +1907,30 @@ function PayrollPageContent() {
                 </div>
               </div>
               {runError && <p className="text-sm text-red-600">{runError}</p>}
+              {preview && !previewLoading && preview.arrearPeriods?.length ? (
+                <div className="rounded-lg border border-violet-200 bg-violet-50/70 px-3 py-2 text-sm text-violet-950">
+                  {preview.arrearPeriods.map((ap, i) => (
+                    <p key={i}>
+                      <span className="font-medium">DA arrear period</span>
+                      {ap.periodLabel ? `: ${ap.periodLabel}` : ap.from && ap.to ? `: ${ap.from} to ${ap.to}` : ""}
+                      {typeof ap.monthCount === "number" && ap.monthCount > 0 ? (
+                        <span className="text-violet-800">
+                          {" "}
+                          · {ap.monthCount} month{ap.monthCount === 1 ? "" : "s"}
+                        </span>
+                      ) : null}
+                      {ap.status ? <span className="text-violet-700"> ({ap.status})</span> : null}
+                    </p>
+                  ))}
+                </div>
+              ) : null}
+              {preview?.arrearWarnings?.length ? (
+                <div className="rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs text-amber-900">
+                  {preview.arrearWarnings.map((w, i) => (
+                    <p key={i}>{w}</p>
+                  ))}
+                </div>
+              ) : null}
               {preview && !previewLoading && preview.daysInMonth ? (
                 <p className="text-xs text-slate-600">Days in month: {preview.daysInMonth}</p>
               ) : null}
@@ -1917,6 +1971,7 @@ function PayrollPageContent() {
                         ? "Government payroll: preview matches the pay slip earnings and deduction columns. Paid days use the calendar month (see Days column max). Changing days recomputes Basic, DA, HRA, CPF, and totals."
                         : "Edit values before generating. Changing pay days will recalculate gross, PF, ESIC and deductions."}
                   </p>
+
                   {previewAllGovernment && preview?.daysInMonth ? (
                     <GovernmentRunPreviewTable
                       rows={editableRows as GovernmentRunPreviewRow[]}

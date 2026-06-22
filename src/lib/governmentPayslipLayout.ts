@@ -71,6 +71,7 @@ export function governmentPayslipDeductionPairs(gov: GovernmentMonthlySlip): [st
     ["LIC", gnum(gov, "lic_amount")],
     ["CPF", gnum(gov, "cpf_amount")],
     ["DA CPF", gnum(gov, "da_cpf_amount")],
+    ["CPF on DA/Transport Arrears", gnum(gov, "cpf_arrear")],
     ["VPF", gnum(gov, "vpf_amount")],
     ["PF Loan", gnum(gov, "pf_loan_amount")],
     ["Post Office", gnum(gov, "post_office_amount")],

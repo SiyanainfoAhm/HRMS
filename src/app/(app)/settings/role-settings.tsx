@@ -42,6 +42,7 @@ export function SettingsContent() {
     payrollRevisionEffectiveFrom: new Date().toISOString().slice(0, 10),
   });
   const [initialDaHra, setInitialDaHra] = useState({ da: "53", hra: "30" });
+  const [daRevisionConfirmOpen, setDaRevisionConfirmOpen] = useState(false);
 
   // Settings modules
   const [isShiftsDialogOpen, setIsShiftsDialogOpen] = useState(false);
@@ -483,8 +484,8 @@ export function SettingsContent() {
     setIsCompanyDialogOpen(true);
   }
 
-  async function saveCompany(e: FormEvent) {
-    e.preventDefault();
+  async function saveCompany(e?: FormEvent) {
+    e?.preventDefault();
     if (!isAdmin) return;
     setSaving(true);
     setFormError(null);
@@ -508,12 +509,17 @@ export function SettingsContent() {
       if (!res.ok) throw new Error(data?.error || "Failed to save company profile");
       setCompany(data.company);
       setIsCompanyDialogOpen(false);
+      setDaRevisionConfirmOpen(false);
       const revision = data.payroll_revision;
+      const arrearPreview = data.arrear_preview;
       if (revision && (revision.revised > 0 || revision.skipped > 0)) {
-        showToast(
-          "success",
-          `Settings saved. Payroll master revised for ${revision.revised} employee(s)${revision.skipped ? `, ${revision.skipped} already at new rates` : ""}.`,
-        );
+        let msg = `Settings saved. Payroll master revised for ${revision.revised} employee(s)${revision.skipped ? `, ${revision.skipped} already at new rates` : ""}.`;
+        if (arrearPreview?.pendingArrearPeriod) {
+          msg += ` Pending DA arrears: ${arrearPreview.pendingArrearPeriod.from} to ${arrearPreview.pendingArrearPeriod.to} (based on the payroll month you run).`;
+        } else if (arrearPreview?.note) {
+          msg += ` ${arrearPreview.note}`;
+        }
+        showToast("success", msg);
       } else {
         showToast("success", "Settings updated successfully");
       }
@@ -523,6 +529,17 @@ export function SettingsContent() {
     } finally {
       setSaving(false);
     }
+  }
+
+  function handleCompanyFormSubmit(e: FormEvent) {
+    e.preventDefault();
+    const daChanged = form.defaultDaPercent !== initialDaHra.da;
+    const hraChanged = form.defaultHraPercent !== initialDaHra.hra;
+    if (daChanged || hraChanged) {
+      setDaRevisionConfirmOpen(true);
+      return;
+    }
+    void saveCompany(e);
   }
 
   return (
@@ -1129,7 +1146,7 @@ export function SettingsContent() {
               </button>
             </div>
 
-            <form onSubmit={saveCompany} className="max-h-[75vh] overflow-y-auto p-5">
+            <form onSubmit={handleCompanyFormSubmit} className="max-h-[75vh] overflow-y-auto p-5">
               <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                 <div className="md:col-span-2">
                   <label className="mb-1 block text-sm font-medium text-slate-700">Institute name</label>
@@ -1319,6 +1336,12 @@ export function SettingsContent() {
                     <p className="mt-1 text-xs">
                       Saving will close each employee&apos;s current master row (effective end = day before start date below)
                       and create a new row with the updated DA/HRA. Previous rows are kept for history.
+                      {form.defaultDaPercent !== initialDaHra.da && (
+                        <span className="mt-1 block">
+                          If the effective date is before a payroll month you run, pending DA arrears for finalized
+                          prior months are included in that selected payroll run (not based on today&apos;s date).
+                        </span>
+                      )}
                     </p>
                     <label className="mb-1 mt-3 block text-xs font-medium">Revision effective from</label>
                     <input
@@ -1343,6 +1366,38 @@ export function SettingsContent() {
                 </div>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {daRevisionConfirmOpen && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center p-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/40"
+            aria-label="Close dialog"
+            onClick={() => setDaRevisionConfirmOpen(false)}
+          />
+          <div role="dialog" aria-modal="true" className="relative z-10 w-full max-w-lg rounded-xl border border-slate-200 bg-white shadow-xl">
+            <div className="border-b border-slate-200 px-5 py-4">
+              <h3 className="text-base font-semibold text-slate-900">Confirm DA/HRA revision</h3>
+              <p className="mt-2 text-sm text-slate-600">
+                DA changed from {initialDaHra.da}% to {form.defaultDaPercent}% and HRA from {initialDaHra.hra}% to{" "}
+                {form.defaultHraPercent}%, effective from {form.payrollRevisionEffectiveFrom}.
+              </p>
+              <p className="mt-2 text-sm text-slate-600">
+                This will create payroll master revisions for all current employees. Pending DA arrears for already
+                processed months (if any) will be included in the next payroll run—not immediately.
+              </p>
+            </div>
+            <div className="flex justify-end gap-2 px-5 py-4">
+              <button type="button" className="btn btn-outline" onClick={() => setDaRevisionConfirmOpen(false)} disabled={saving}>
+                Cancel
+              </button>
+              <button type="button" className="btn btn-primary" onClick={() => void saveCompany()} disabled={saving}>
+                {saving ? "Saving..." : "Confirm & save"}
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -15,8 +15,6 @@ final class PayrollCalculationService
 
     public const DEFAULT_MEDICAL = 3000.0;
 
-    public const DEFAULT_TRANSPORT_DA_PERCENT = 48.06;
-
     /**
      * @return array{
      *   pay_level: int,
@@ -61,11 +59,9 @@ final class PayrollCalculationService
         $daPercent = (float) ($input['da_percent'] ?? $input['daPercent'] ?? $defaultDaPercent ?? self::DEFAULT_DA_PERCENT);
         $hraPercent = (float) ($input['hra_percent'] ?? $input['hraPercent'] ?? $defaultHraPercent ?? self::DEFAULT_HRA_PERCENT);
         $medical = (float) ($input['medical'] ?? $input['medical_fixed'] ?? $input['medicalFixed'] ?? self::DEFAULT_MEDICAL);
-        $transportDaPercent = (float) ($input['transport_da_percent'] ?? $input['transportDaPercent'] ?? self::DEFAULT_TRANSPORT_DA_PERCENT);
-
-        $slab = $this->deriveTransportSlab($payLevel, $grossBasic);
+        $slab = $this->deriveTransportSlab($payLevel);
         $transportBase = $slab['base'];
-        $transportDa = $this->roundRupees($transportBase * $transportDaPercent / 100);
+        $transportDa = $this->roundRupees($transportBase * $daPercent / 100);
         $transportTotal = $this->roundRupees($transportBase + $transportDa);
 
         $daAmount = $this->roundRupees($grossBasic * $daPercent / 100);
@@ -104,7 +100,7 @@ final class PayrollCalculationService
             'transport_da' => $transportDa,
             'transport_total' => $transportTotal,
             'transport_slab_group' => $slab['group'],
-            'transport_da_percent' => $transportDaPercent,
+            'transport_da_percent' => $daPercent,
             'da_amount' => $daAmount,
             'hra_amount' => $hraAmount,
             'total_earnings' => $totalEarnings,
@@ -132,8 +128,23 @@ final class PayrollCalculationService
         ];
     }
 
+    public function getTransportBaseByPayLevel(int $payLevel): float
+    {
+        if ($payLevel >= 9) {
+            return 7200.0;
+        }
+        if ($payLevel >= 3) {
+            return 3600.0;
+        }
+        if ($payLevel >= 1) {
+            return 1350.0;
+        }
+
+        return 0.0;
+    }
+
     /** @return array{group: string, base: float} */
-    public function deriveTransportSlab(int $payLevel, float $grossBasic): array
+    public function deriveTransportSlab(int $payLevel, float $grossBasic = 0): array
     {
         if ($payLevel >= 9) {
             return ['group' => 'LEVEL_9_ABOVE', 'base' => 7200.0];
@@ -141,11 +152,11 @@ final class PayrollCalculationService
         if ($payLevel >= 3) {
             return ['group' => 'LEVEL_3_8', 'base' => 3600.0];
         }
-        if ($grossBasic >= 24200) {
-            return ['group' => 'LEVEL_1_2_HIGH', 'base' => 3600.0];
+        if ($payLevel >= 1) {
+            return ['group' => 'LEVEL_1_2', 'base' => 1350.0];
         }
 
-        return ['group' => 'LEVEL_1_2', 'base' => 1350.0];
+        return ['group' => 'UNKNOWN', 'base' => 0.0];
     }
 
     /** @return array<string, float> */
