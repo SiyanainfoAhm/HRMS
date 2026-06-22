@@ -1907,30 +1907,6 @@ function PayrollPageContent() {
                 </div>
               </div>
               {runError && <p className="text-sm text-red-600">{runError}</p>}
-              {preview && !previewLoading && preview.arrearPeriods?.length ? (
-                <div className="rounded-lg border border-violet-200 bg-violet-50/70 px-3 py-2 text-sm text-violet-950">
-                  {preview.arrearPeriods.map((ap, i) => (
-                    <p key={i}>
-                      <span className="font-medium">DA arrear period</span>
-                      {ap.periodLabel ? `: ${ap.periodLabel}` : ap.from && ap.to ? `: ${ap.from} to ${ap.to}` : ""}
-                      {typeof ap.monthCount === "number" && ap.monthCount > 0 ? (
-                        <span className="text-violet-800">
-                          {" "}
-                          · {ap.monthCount} month{ap.monthCount === 1 ? "" : "s"}
-                        </span>
-                      ) : null}
-                      {ap.status ? <span className="text-violet-700"> ({ap.status})</span> : null}
-                    </p>
-                  ))}
-                </div>
-              ) : null}
-              {preview?.arrearWarnings?.length ? (
-                <div className="rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs text-amber-900">
-                  {preview.arrearWarnings.map((w, i) => (
-                    <p key={i}>{w}</p>
-                  ))}
-                </div>
-              ) : null}
               {preview && !previewLoading && preview.daysInMonth ? (
                 <p className="text-xs text-slate-600">Days in month: {preview.daysInMonth}</p>
               ) : null}
