@@ -21,7 +21,8 @@ class HrmsPayrollArrearLine extends Model
         'old_transport_amount', 'new_transport_amount', 'transport_arrear',
         'gross_arrear', 'cpf_rate', 'cpf_arrear', 'net_arrear',
         'source_monthly_payroll_id', 'old_payroll_master_id', 'new_payroll_master_id',
-        'is_locked',
+        'is_locked', 'status',
+        'paid_in_payroll_id', 'paid_in_period_id', 'paid_in_month', 'paid_at', 'paid_by',
     ];
 
     protected function casts(): array
@@ -42,7 +43,23 @@ class HrmsPayrollArrearLine extends Model
             'cpf_arrear' => 'float',
             'net_arrear' => 'float',
             'is_locked' => 'boolean',
+            'paid_in_month' => 'date',
+            'paid_at' => 'datetime',
         ];
+    }
+
+    public function isPaid(): bool
+    {
+        if ($this->status === 'paid') {
+            return true;
+        }
+
+        return $this->is_locked && $this->batch?->isFinalized();
+    }
+
+    public function isUnpaid(): bool
+    {
+        return ! $this->isPaid() && $this->status !== 'reversed';
     }
 
     public function batch(): BelongsTo

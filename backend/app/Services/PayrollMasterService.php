@@ -10,11 +10,13 @@ use App\Models\HrmsDesignation;
 use App\Models\HrmsDivision;
 use App\Models\HrmsEmployee;
 use App\Models\HrmsPayrollMaster;
+use App\Models\HrmsPayrollMasterHistory;
 use App\Models\HrmsUser;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
@@ -33,49 +35,215 @@ final class PayrollMasterService
     /** @return list<array<string, mixed>> */
     public function listForCompany(?string $companyId): array
     {
-        $query = HrmsPayrollMaster::query();
-        $this->scopeCurrentMaster($query);
-        $query->orderByDesc('created_at');
+        $query = HrmsPayrollMaster::query()->orderBy('created_at');
+
         if ($companyId) {
             $query->where('company_id', $companyId);
         }
 
-        return $query->get()->map(fn (HrmsPayrollMaster $m) => $this->formatRow($m))->values()->all();
+        if (config('app.debug')) {
+            Log::debug('payroll_master.list', [
+                'company_id' => $companyId,
+                'total_in_table' => HrmsPayrollMaster::query()->when($companyId, fn ($q) => $q->where('company_id', $companyId))->count(),
+            ]);
+        }
+
+        $masters = $query->get();
+
+        if (config('app.debug')) {
+            Log::debug('payroll_master.list_result', [
+                'company_id' => $companyId,
+                'returned' => $masters->count(),
+                'sample_da' => $masters->take(5)->map(fn (HrmsPayrollMaster $m) => [
+                    'id' => $m->id,
+                    'name' => $m->name,
+                    'da_percent' => $m->da_percent,
+                ])->values()->all(),
+            ]);
+        }
+
+        return $masters->map(fn (HrmsPayrollMaster $m) => $this->formatRow($m))->values()->all();
     }
 
     /** @return list<array<string, mixed>> */
     public function historyForMaster(HrmsPayrollMaster $anchor, ?string $companyId): array
     {
-        $query = HrmsPayrollMaster::query();
-        if ($companyId) {
-            $query->where('company_id', $companyId);
-        }
-
         $userId = $anchor->user_id ?? $anchor->employee_user_id;
+        $rows = [];
+
+        $currentQuery = HrmsPayrollMaster::query();
+        if ($companyId) {
+            $currentQuery->where('company_id', $companyId);
+        }
         if ($userId) {
-            $query->where(function ($w) use ($userId) {
+            $currentQuery->where(function ($w) use ($userId) {
                 $w->where('user_id', $userId)->orWhere('employee_user_id', $userId);
             });
         } elseif ($anchor->employee_code) {
-            $query->where('employee_code', $anchor->employee_code);
+            $currentQuery->where('employee_code', $anchor->employee_code);
         } else {
-            $query->where('id', $anchor->id);
+            $currentQuery->where('id', $anchor->id);
+        }
+        $current = $currentQuery->first();
+        if ($current) {
+            $rows[] = $this->formatRow($current, 'CURRENT');
         }
 
-        return $query
-            ->orderByDesc('effective_from')
-            ->orderByDesc('effective_start_date')
-            ->orderByDesc('created_at')
-            ->get()
-            ->map(fn (HrmsPayrollMaster $m) => $this->formatRow($m))
-            ->values()
-            ->all();
+        if (Schema::hasTable('cirt_payroll_master_history')) {
+            $historyQuery = HrmsPayrollMasterHistory::query();
+            if ($companyId) {
+                $historyQuery->where('company_id', $companyId);
+            }
+            if ($userId) {
+                $historyQuery->where(function ($w) use ($userId) {
+                    $w->where('user_id', $userId)->orWhere('employee_user_id', $userId);
+                });
+            } elseif ($anchor->employee_code) {
+                $historyQuery->where('employee_code', $anchor->employee_code);
+            } else {
+                $historyQuery->where('original_master_id', $anchor->id);
+            }
+
+            foreach ($historyQuery->get() as $history) {
+                $rows[] = $this->formatHistoryRow($history);
+            }
+        }
+
+        usort($rows, function (array $a, array $b) {
+            $fromCmp = strcmp((string) ($b['effectiveFrom'] ?? ''), (string) ($a['effectiveFrom'] ?? ''));
+            if ($fromCmp !== 0) {
+                return $fromCmp;
+            }
+            $archivedCmp = strcmp((string) ($b['archivedAt'] ?? ''), (string) ($a['archivedAt'] ?? ''));
+            if ($archivedCmp !== 0) {
+                return $archivedCmp;
+            }
+
+            return strcmp((string) ($b['updatedAt'] ?? ''), (string) ($a['updatedAt'] ?? ''));
+        });
+
+        return array_values($rows);
     }
 
     /**
-     * Close current master rows and open new ones with updated institute DA/HRA.
+     * Apply institute default DA/HRA change to all current payroll master rows (in-place update).
      *
-     * @return array{revised: int, skipped: int, errors: list<array{employee: string, message: string}>}
+     * @return array{revised: int, skipped: int, errors: list<array{employee: string, message: string}>, samples?: list<array<string, mixed>>}
+     */
+    public function applyInstituteDaHraRevisionToPayrollMasters(
+        string $companyId,
+        float $newDaPercent,
+        float $newHraPercent,
+        string $effectiveFrom,
+        ?string $reason,
+        string $updatedBy,
+    ): array {
+        $summary = ['revised' => 0, 'skipped' => 0, 'errors' => []];
+        $samples = [];
+
+        if (config('app.debug')) {
+            Log::debug('payroll_master.institute_revision_start', [
+                'company_id' => $companyId,
+                'new_da_percent' => $newDaPercent,
+                'new_hra_percent' => $newHraPercent,
+                'effective_from' => $effectiveFrom,
+            ]);
+        }
+
+        try {
+            DB::transaction(function () use ($companyId, $newDaPercent, $newHraPercent, $effectiveFrom, $reason, $updatedBy, &$summary, &$samples) {
+                $masters = HrmsPayrollMaster::query()
+                    ->where('company_id', $companyId)
+                    ->whereNull('effective_to')
+                    ->orderBy('employee_code')
+                    ->lockForUpdate()
+                    ->get();
+
+                $historyEffectiveTo = Carbon::parse($effectiveFrom)->subDay()->toDateString();
+
+                foreach ($masters as $master) {
+                    $currentDa = (float) ($master->da_percent ?? 0);
+                    $currentHra = (float) ($master->hra_percent ?? 0);
+                    if (abs($currentDa - $newDaPercent) < 0.001 && abs($currentHra - $newHraPercent) < 0.001) {
+                        $summary['skipped']++;
+
+                        continue;
+                    }
+
+                    $revisionReason = $reason ?? sprintf(
+                        'Institute DA/HRA revision: DA %.2f%% → %.2f%%, HRA %.2f%% → %.2f%%',
+                        $currentDa,
+                        $newDaPercent,
+                        $currentHra,
+                        $newHraPercent,
+                    );
+
+                    if (Schema::hasTable('cirt_payroll_master_history')) {
+                        $this->archiveMasterToHistory(
+                            $master,
+                            'INSTITUTE_DA_HRA_REVISION',
+                            $revisionReason,
+                            true,
+                            $updatedBy,
+                            $master->id,
+                            $historyEffectiveTo,
+                        );
+                    }
+
+                    $validated = $this->masterToRevisionPayload($master, [
+                        'da_percent' => $newDaPercent,
+                        'hra_percent' => $newHraPercent,
+                        'effective_from' => $effectiveFrom,
+                        'effectiveFrom' => $effectiveFrom,
+                        'reason_for_change' => $revisionReason,
+                        'reasonForChange' => $revisionReason,
+                    ]);
+
+                    $calc = $this->calculator->calculateMaster($validated, null, null);
+                    $attrs = $this->filterExistingColumns(
+                        $this->mergeCalculated($validated, $calc, $companyId, $master->created_by ?? $updatedBy, true),
+                    );
+                    $master->update($attrs);
+                    $master->refresh();
+
+                    $summary['revised']++;
+                    if (count($samples) < 5) {
+                        $samples[] = [
+                            'employee' => (string) ($master->name ?? $master->employee_code ?? $master->id),
+                            'da_before' => $currentDa,
+                            'da_after' => (float) $master->da_percent,
+                            'hra_before' => $currentHra,
+                            'hra_after' => (float) $master->hra_percent,
+                        ];
+                    }
+                }
+            });
+        } catch (\Throwable $e) {
+            $summary['errors'][] = [
+                'employee' => '*',
+                'message' => $e->getMessage(),
+            ];
+        }
+
+        if (config('app.debug')) {
+            Log::debug('payroll_master.institute_revision_done', [
+                'company_id' => $companyId,
+                'revised' => $summary['revised'],
+                'skipped' => $summary['skipped'],
+                'error_count' => count($summary['errors']),
+                'samples' => $samples,
+            ]);
+        }
+
+        if ($samples !== []) {
+            $summary['samples'] = $samples;
+        }
+
+        return $summary;
+    }
+
+    /**
+     * @return array{revised: int, skipped: int, errors: list<array{employee: string, message: string}>, samples?: list<array<string, mixed>>}
      */
     public function revisionizeForCompanyDaHraChange(
         string $companyId,
@@ -84,109 +252,139 @@ final class PayrollMasterService
         string $effectiveFrom,
         string $createdBy,
     ): array {
-        $summary = ['revised' => 0, 'skipped' => 0, 'errors' => []];
-
-        $masters = HrmsPayrollMaster::query()
-            ->where('company_id', $companyId)
-            ->where('status', 'active');
-        $this->scopeCurrentMaster($masters);
-        $masters = $masters->get();
-
-        foreach ($masters as $master) {
-            $currentDa = (float) ($master->da_percent ?? 0);
-            $currentHra = (float) ($master->hra_percent ?? 0);
-            if (abs($currentDa - $newDa) < 0.001 && abs($currentHra - $newHra) < 0.001) {
-                $summary['skipped']++;
-
-                continue;
-            }
-
-            try {
-                DB::transaction(function () use ($master, $newDa, $newHra, $effectiveFrom, $companyId, $createdBy, $currentDa, $currentHra, &$summary) {
-                    $reason = sprintf(
-                        'Institute DA/HRA revision: DA %.2f%% → %.2f%%, HRA %.2f%% → %.2f%%',
-                        $currentDa,
-                        $newDa,
-                        $currentHra,
-                        $newHra,
-                    );
-                    $this->reviseMasterRecord($master, [
-                        'da_percent' => $newDa,
-                        'hra_percent' => $newHra,
-                        'effective_from' => $effectiveFrom,
-                        'reason_for_change' => $reason,
-                    ], $companyId, $createdBy, $reason);
-                    $summary['revised']++;
-                });
-            } catch (\Throwable $e) {
-                $summary['errors'][] = [
-                    'employee' => (string) ($master->name ?? $master->employee_code ?? $master->id),
-                    'message' => $e->getMessage(),
-                ];
-            }
-        }
-
-        return $summary;
+        return $this->applyInstituteDaHraRevisionToPayrollMasters(
+            $companyId,
+            $newDa,
+            $newHra,
+            $effectiveFrom,
+            null,
+            $createdBy,
+        );
     }
 
     public function create(array $payload, string $companyId, string $createdBy, bool $salaryPending = false, bool $provisionUser = true): HrmsPayrollMaster
     {
-        $validated = $this->validatePayload($payload, null, $companyId, $salaryPending);
-        if ($provisionUser) {
-            $this->provisionIdentityRecords($validated, $companyId, true);
-        }
-        $defaults = $this->resolveCompanyPayrollDefaults($companyId);
-        $calc = $this->calculator->calculateMaster($validated, $defaults['da'], $defaults['hra']);
-        $attrs = $this->filterExistingColumns($this->mergeCalculated($validated, $calc, $companyId, $createdBy));
-
-        return HrmsPayrollMaster::create($attrs);
+        return $this->createOrUpdatePayrollMasterRevision($payload, $companyId, $createdBy, null, $salaryPending, $provisionUser);
     }
 
     public function update(HrmsPayrollMaster $master, array $payload, string $companyId): HrmsPayrollMaster
     {
-        if ($master->company_id && $master->company_id !== $companyId) {
-            abort(403, 'Forbidden');
-        }
-        $validated = $this->validatePayload($payload, $master->id, $companyId);
-        $needsUser = ! ($master->employee_user_id ?? $master->user_id);
-        if (! $needsUser) {
-            $validated['user_id'] = $master->user_id ?? $master->employee_user_id;
-            $validated['employee_user_id'] = $master->employee_user_id ?? $master->user_id;
-        }
-        $this->provisionIdentityRecords($validated, $companyId, $needsUser);
-        $validated = $this->mergeExistingMasterDefaults($master, $validated);
+        return $this->createOrUpdatePayrollMasterRevision(
+            $payload,
+            $companyId,
+            (string) ($master->created_by ?? ''),
+            $master,
+            false,
+            false,
+        );
+    }
 
-        $newDa = $this->pickPercent($validated, 'da_percent', 'daPercent', $master->da_percent);
-        $newHra = $this->pickPercent($validated, 'hra_percent', 'hraPercent', $master->hra_percent);
-        $oldDa = (float) ($master->da_percent ?? 0);
-        $oldHra = (float) ($master->hra_percent ?? 0);
-        $daHraChanged = abs($newDa - $oldDa) >= 0.001 || abs($newHra - $oldHra) >= 0.001;
+    /**
+     * Centralized payroll master create/update/revision with history archival.
+     */
+    public function createOrUpdatePayrollMasterRevision(
+        array $payload,
+        string $companyId,
+        string $createdBy,
+        ?HrmsPayrollMaster $existingMaster = null,
+        bool $salaryPending = false,
+        bool $provisionUser = true,
+    ): HrmsPayrollMaster {
+        return DB::transaction(function () use ($payload, $companyId, $createdBy, $existingMaster, $salaryPending, $provisionUser) {
+            if ($existingMaster) {
+                if ($existingMaster->company_id && $existingMaster->company_id !== $companyId) {
+                    abort(403, 'Forbidden');
+                }
+                $existingMaster = HrmsPayrollMaster::query()
+                    ->where('id', $existingMaster->id)
+                    ->lockForUpdate()
+                    ->firstOrFail();
+            } else {
+                $userId = $payload['employee_user_id'] ?? $payload['employeeUserId'] ?? $payload['user_id'] ?? $payload['userId'] ?? null;
+                if ($userId) {
+                    $existingMaster = HrmsPayrollMaster::query()
+                        ->where('company_id', $companyId)
+                        ->where(function ($q) use ($userId) {
+                            $q->where('employee_user_id', $userId)->orWhere('user_id', $userId);
+                        })
+                        ->lockForUpdate()
+                        ->first();
+                }
+            }
 
-        if ($daHraChanged && $this->isCurrentMaster($master)) {
-            return $this->reviseMasterRecord(
-                $master,
-                $validated,
-                $companyId,
-                $master->created_by,
-                $validated['reason_for_change'] ?? $validated['reasonForChange'] ?? null,
-            );
-        }
+            if (! $existingMaster) {
+                $validated = $this->validatePayload($payload, null, $companyId, $salaryPending);
+                if ($provisionUser) {
+                    $this->provisionIdentityRecords($validated, $companyId, true);
+                }
+                $defaults = $this->resolveCompanyPayrollDefaults($companyId);
+                $calc = $this->calculator->calculateMaster($validated, $defaults['da'], $defaults['hra']);
+                $attrs = $this->filterExistingColumns($this->mergeCalculated($validated, $calc, $companyId, $createdBy, true));
 
-        $defaults = $this->resolveCompanyPayrollDefaults($companyId);
-        $calc = $this->calculator->calculateMaster($validated, $defaults['da'], $defaults['hra']);
-        $attrs = $this->filterExistingColumns($this->mergeCalculated($validated, $calc, $companyId, $master->created_by ?? null));
-        $master->update($attrs);
+                return HrmsPayrollMaster::create($attrs);
+            }
 
-        return $master->refresh();
+            $validated = $this->validatePayload($payload, $existingMaster->id, $companyId);
+            $needsUser = ! ($existingMaster->employee_user_id ?? $existingMaster->user_id);
+            if (! $needsUser) {
+                $validated['user_id'] = $existingMaster->user_id ?? $existingMaster->employee_user_id;
+                $validated['employee_user_id'] = $existingMaster->employee_user_id ?? $existingMaster->user_id;
+            }
+            $this->provisionIdentityRecords($validated, $companyId, $needsUser);
+            $validated = $this->mergeExistingMasterDefaults($existingMaster, $validated);
+
+            $reason = $validated['reason_for_change'] ?? $validated['reasonForChange'] ?? null;
+            $newEffectiveFrom = $validated['effective_from'] ?? $validated['effectiveFrom'] ?? null;
+            $currentEffectiveFrom = ($existingMaster->effective_from ?? $existingMaster->effective_start_date)?->toDateString();
+            $effectiveFromChanged = $newEffectiveFrom && $currentEffectiveFrom && $newEffectiveFrom !== $currentEffectiveFrom;
+            $structureChanged = $this->salaryStructureChanged($existingMaster, $validated);
+
+            if ($effectiveFromChanged) {
+                $this->requireRevisionReason($reason, $structureChanged);
+
+                return $this->reviseMasterRecord(
+                    $existingMaster,
+                    $validated,
+                    $companyId,
+                    $createdBy ?: $existingMaster->created_by,
+                    $reason,
+                );
+            }
+
+            [$defaultDa, $defaultHra] = $this->resolveCalcDefaults($companyId, $validated);
+            if (config('app.debug')) {
+                Log::debug('payroll_master.update', [
+                    'master_id' => $existingMaster->id,
+                    'employee_user_id' => $existingMaster->employee_user_id ?? $existingMaster->user_id,
+                    'da_before' => $existingMaster->da_percent,
+                    'da_in_payload' => $validated['da_percent'] ?? $validated['daPercent'] ?? null,
+                    'structure_changed' => $structureChanged,
+                ]);
+            }
+
+            $calc = $this->calculator->calculateMaster($validated, $defaultDa, $defaultHra);
+            $attrs = $this->filterExistingColumns($this->mergeCalculated($validated, $calc, $companyId, $existingMaster->created_by ?? null, true));
+            $existingMaster->update($attrs);
+            $existingMaster->refresh();
+
+            if (config('app.debug')) {
+                Log::debug('payroll_master.update_result', [
+                    'master_id' => $existingMaster->id,
+                    'da_after' => $existingMaster->da_percent,
+                    'hra_after' => $existingMaster->hra_percent,
+                ]);
+            }
+
+            return $existingMaster;
+        });
     }
 
     public function recalculate(HrmsPayrollMaster $master): HrmsPayrollMaster
     {
-        $defaults = $this->resolveCompanyPayrollDefaults($master->company_id);
         $calc = $this->calculator->calculateMaster(
             $this->masterToCalcInput($master),
-            $defaults['da'],
-            $defaults['hra'],
+            null,
+            null,
         );
         $master->update($this->filterExistingColumns($this->calculatedOnly($calc)));
 
@@ -526,8 +724,6 @@ final class PayrollMasterService
     {
         $master->update([
             'status' => 'inactive',
-            'effective_to' => now()->toDateString(),
-            'effective_end_date' => now()->toDateString(),
             'updated_at' => now(),
         ]);
 
@@ -728,6 +924,25 @@ final class PayrollMasterService
         return $cache[$companyId];
     }
 
+    /** @return array{0: ?float, 1: ?float} */
+    private function resolveCalcDefaults(?string $companyId, array $payload): array
+    {
+        $defaults = $this->resolveCompanyPayrollDefaults($companyId);
+        $defaultDa = $this->payloadMissingPercent($payload, 'da_percent', 'daPercent') ? $defaults['da'] : null;
+        $defaultHra = $this->payloadMissingPercent($payload, 'hra_percent', 'hraPercent') ? $defaults['hra'] : null;
+
+        return [$defaultDa, $defaultHra];
+    }
+
+    private function formatPercentField(mixed $value, float $fallback): float
+    {
+        if ($value !== null && $value !== '') {
+            return (float) $value;
+        }
+
+        return $fallback;
+    }
+
     /** @param  array<string, mixed>  $payload */
     private function mergeExistingMasterDefaults(HrmsPayrollMaster $master, array $payload): array
     {
@@ -758,7 +973,7 @@ final class PayrollMasterService
     }
 
     /** @return array<string, mixed> */
-    public function formatRow(HrmsPayrollMaster $m): array
+    public function formatRow(HrmsPayrollMaster $m, ?string $rowType = null): array
     {
         $userId = $m->user_id ?? $m->employee_user_id;
         $userRole = UserRole::Employee->value;
@@ -780,7 +995,7 @@ final class PayrollMasterService
             'employeeUserId' => $userId,
             'userRole' => $userRole,
             'employeeCode' => $m->employee_code,
-            'name' => $m->name,
+            'name' => $m->name ?: ($userId ? 'Employee ID: '.$userId : '—'),
             'email' => $m->email,
             'phone' => $m->phone,
             'gender' => $m->gender,
@@ -789,8 +1004,8 @@ final class PayrollMasterService
             'division' => $m->division,
             'payLevel' => $m->pay_level ?? $m->getAttributes()['pay_level'] ?? null,
             'grossBasicPay' => (float) ($m->gross_basic_pay ?? $m->gross_basic ?? $m->gross_salary ?? 0),
-            'daPercent' => (float) ($m->da_percent ?? PayrollCalculationService::DEFAULT_DA_PERCENT),
-            'hraPercent' => (float) ($m->hra_percent ?? PayrollCalculationService::DEFAULT_HRA_PERCENT),
+            'daPercent' => $this->formatPercentField($m->da_percent, PayrollCalculationService::DEFAULT_DA_PERCENT),
+            'hraPercent' => $this->formatPercentField($m->hra_percent, PayrollCalculationService::DEFAULT_HRA_PERCENT),
             'medical' => (float) ($m->medical ?? $m->medical_fixed ?? PayrollCalculationService::DEFAULT_MEDICAL),
             'transportBase' => (float) ($m->transport_base ?? 0),
             'transportDa' => (float) ($m->transport_da ?? 0),
@@ -831,8 +1046,143 @@ final class PayrollMasterService
             'effectiveTo' => $m->effective_to?->toDateString() ?? $m->effective_end_date?->toDateString(),
             'reasonForChange' => $m->reason_for_change,
             'isCurrent' => $this->isCurrentMaster($m),
+            'rowType' => $rowType ?? ($this->isCurrentMaster($m) ? 'CURRENT' : 'HISTORY'),
+            'archivedAt' => null,
+            'updatedAt' => $m->updated_at?->toIso8601String(),
             'payrollMode' => $m->payroll_mode ?? 'government',
         ];
+    }
+
+    /** @return array<string, mixed> */
+    public function formatHistoryRow(HrmsPayrollMasterHistory $h): array
+    {
+        $row = [
+            'id' => (string) $h->history_id,
+            'historyId' => (string) $h->history_id,
+            'originalMasterId' => $h->original_master_id,
+            'employeeUserId' => $h->employee_user_id ?? $h->user_id,
+            'employeeCode' => $h->employee_code,
+            'name' => $h->name,
+            'email' => $h->email,
+            'payLevel' => $h->pay_level,
+            'grossBasicPay' => (float) ($h->gross_basic_pay ?? $h->gross_basic ?? $h->gross_salary ?? 0),
+            'daPercent' => (float) ($h->da_percent ?? PayrollCalculationService::DEFAULT_DA_PERCENT),
+            'hraPercent' => (float) ($h->hra_percent ?? PayrollCalculationService::DEFAULT_HRA_PERCENT),
+            'takeHome' => (float) ($h->take_home ?? 0),
+            'effectiveFrom' => $h->effective_from?->toDateString() ?? $h->effective_start_date?->toDateString(),
+            'effectiveTo' => $h->effective_to?->toDateString() ?? $h->effective_end_date?->toDateString(),
+            'reasonForChange' => $h->archive_reason ?? $h->reason_for_change,
+            'isCurrent' => false,
+            'rowType' => $h->is_superseded ? 'SUPERSEDED' : 'HISTORY',
+            'archiveAction' => $h->archive_action,
+            'archivedAt' => $h->archived_at?->toIso8601String(),
+            'updatedAt' => $h->updated_at?->toIso8601String(),
+            'payrollMode' => $h->payroll_mode ?? 'government',
+        ];
+
+        return $row;
+    }
+
+    public function getPayrollMasterForDate(string $companyId, string $employeeUserId, string $payrollDate): ?HrmsPayrollMaster
+    {
+        $current = HrmsPayrollMaster::query()
+            ->where('company_id', $companyId)
+            ->where(function ($q) use ($employeeUserId) {
+                $q->where('employee_user_id', $employeeUserId)->orWhere('user_id', $employeeUserId);
+            })
+            ->where(function ($q) use ($payrollDate) {
+                $q->whereDate('effective_from', '<=', $payrollDate)
+                    ->orWhere(function ($q2) use ($payrollDate) {
+                        $q2->whereNull('effective_from')->whereDate('effective_start_date', '<=', $payrollDate);
+                    });
+            })
+            ->whereNull('effective_to')
+            ->orderByDesc('effective_from')
+            ->orderByDesc('effective_start_date')
+            ->get();
+
+        if ($current->count() > 1) {
+            Log::warning('Multiple current payroll masters for employee on date lookup', [
+                'company_id' => $companyId,
+                'employee_user_id' => $employeeUserId,
+                'payroll_date' => $payrollDate,
+            ]);
+        }
+        if ($current->isNotEmpty()) {
+            return $current->first();
+        }
+
+        if (! Schema::hasTable('cirt_payroll_master_history')) {
+            return null;
+        }
+
+        $historyRows = HrmsPayrollMasterHistory::query()
+            ->where('company_id', $companyId)
+            ->where('is_superseded', false)
+            ->where(function ($q) use ($employeeUserId) {
+                $q->where('employee_user_id', $employeeUserId)->orWhere('user_id', $employeeUserId);
+            })
+            ->where(function ($q) use ($payrollDate) {
+                $q->whereDate('effective_from', '<=', $payrollDate)
+                    ->orWhere(function ($q2) use ($payrollDate) {
+                        $q2->whereNull('effective_from')->whereDate('effective_start_date', '<=', $payrollDate);
+                    });
+            })
+            ->where(function ($q) use ($payrollDate) {
+                $q->whereNull('effective_to')
+                    ->orWhereNull('effective_end_date')
+                    ->orWhereDate('effective_to', '>=', $payrollDate)
+                    ->orWhereDate('effective_end_date', '>=', $payrollDate);
+            })
+            ->orderByDesc('effective_from')
+            ->orderByDesc('effective_start_date')
+            ->orderByDesc('archived_at')
+            ->get();
+
+        if ($historyRows->count() > 1) {
+            Log::warning('Multiple payroll master history rows matched for date', [
+                'company_id' => $companyId,
+                'employee_user_id' => $employeeUserId,
+                'payroll_date' => $payrollDate,
+            ]);
+        }
+
+        $history = $historyRows->first();
+
+        return $history ? $this->historyToMasterModel($history) : null;
+    }
+
+    public function historyToMasterModel(HrmsPayrollMasterHistory $history): HrmsPayrollMaster
+    {
+        $master = new HrmsPayrollMaster;
+        $attrs = $history->getAttributes();
+        unset($attrs['history_id'], $attrs['original_master_id'], $attrs['archive_action'], $attrs['archive_reason'],
+            $attrs['is_superseded'], $attrs['archived_at'], $attrs['archived_by'], $attrs['replaced_by_master_id']);
+        $attrs['id'] = $history->original_master_id ?? $history->history_id;
+        $master->forceFill($attrs);
+        $master->exists = false;
+
+        return $master;
+    }
+
+    public function findMasterOrHistoryById(string $id): ?HrmsPayrollMaster
+    {
+        $current = HrmsPayrollMaster::find($id);
+        if ($current) {
+            return $current;
+        }
+
+        if (! Schema::hasTable('cirt_payroll_master_history')) {
+            return null;
+        }
+
+        $history = HrmsPayrollMasterHistory::query()
+            ->where('history_id', $id)
+            ->orWhere('original_master_id', $id)
+            ->orderByDesc('archived_at')
+            ->first();
+
+        return $history ? $this->historyToMasterModel($history) : null;
     }
 
     public function reviseMasterRecord(
@@ -847,26 +1197,141 @@ final class PayrollMasterService
         }
 
         $effectiveFrom = $validated['effective_from'] ?? $validated['effectiveFrom'] ?? now()->toDateString();
-        $effectiveEnd = Carbon::parse($effectiveFrom)->subDay()->toDateString();
+        $oldEffectiveFrom = ($master->effective_from ?? $master->effective_start_date)?->toDateString() ?? $effectiveFrom;
+        $newFrom = Carbon::parse($effectiveFrom);
+        $oldFrom = Carbon::parse($oldEffectiveFrom);
+        $isSuperseded = $newFrom->lte($oldFrom);
+        $effectiveTo = $isSuperseded
+            ? ($master->effective_to?->toDateString() ?? $master->effective_end_date?->toDateString())
+            : $newFrom->copy()->subDay()->toDateString();
 
-        if ($this->isCurrentMaster($master)) {
-            $master->update([
-                'effective_to' => $effectiveEnd,
-                'effective_end_date' => $effectiveEnd,
-                'updated_at' => now(),
-            ]);
-        }
+        $revisionReason = $reason
+            ?? $validated['reason_for_change']
+            ?? $validated['reasonForChange']
+            ?? 'Payroll master revision';
 
         $payload = $this->masterToRevisionPayload($master, $validated);
         $payload['effective_from'] = $effectiveFrom;
         $payload['effectiveFrom'] = $effectiveFrom;
-        $payload['reason_for_change'] = $reason
-            ?? $validated['reason_for_change']
-            ?? $validated['reasonForChange']
-            ?? 'Payroll structure revision';
+        $payload['reason_for_change'] = $revisionReason;
         unset($payload['effective_to'], $payload['effectiveTo'], $payload['effective_end_date'], $payload['effectiveEndDate']);
 
-        return $this->create($payload, $companyId, $createdBy ?? (string) ($master->created_by ?? ''), false, false);
+        if (Schema::hasTable('cirt_payroll_master_history')) {
+            $this->archiveMasterToHistory(
+                $master,
+                'REVISION',
+                $revisionReason,
+                $isSuperseded,
+                $createdBy,
+                null,
+                $effectiveTo,
+            );
+        }
+
+        $master->delete();
+
+        $validatedInner = $this->validatePayload($payload, null, $companyId);
+        $validatedInner['user_id'] = $payload['user_id'] ?? $payload['employee_user_id'] ?? null;
+        $validatedInner['employee_user_id'] = $payload['employee_user_id'] ?? $payload['user_id'] ?? null;
+        $defaults = $this->resolveCompanyPayrollDefaults($companyId);
+        [$defaultDa, $defaultHra] = $this->resolveCalcDefaults($companyId, $validatedInner);
+        $calc = $this->calculator->calculateMaster($validatedInner, $defaultDa, $defaultHra);
+        $attrs = $this->filterExistingColumns($this->mergeCalculated($validatedInner, $calc, $companyId, $createdBy, true));
+
+        return HrmsPayrollMaster::create($attrs);
+    }
+
+    public function archiveMasterToHistory(
+        HrmsPayrollMaster $master,
+        string $archiveAction,
+        ?string $archiveReason,
+        bool $isSuperseded,
+        ?string $archivedBy,
+        ?string $replacedByMasterId,
+        ?string $effectiveToOverride = null,
+    ): HrmsPayrollMasterHistory {
+        $attrs = $master->getAttributes();
+        $originalId = $attrs['id'];
+        unset($attrs['id']);
+
+        $effectiveFrom = $attrs['effective_from'] ?? $attrs['effective_start_date'] ?? now()->toDateString();
+        $effectiveTo = $effectiveToOverride;
+        if ($effectiveTo === null && ! $isSuperseded) {
+            $effectiveTo = $attrs['effective_to'] ?? $attrs['effective_end_date'] ?? null;
+        }
+
+        $attrs['history_id'] = (string) Str::uuid();
+        $attrs['original_master_id'] = $originalId;
+        $attrs['effective_from'] = $effectiveFrom;
+        $attrs['effective_start_date'] = $effectiveFrom;
+        $attrs['effective_to'] = $effectiveTo;
+        $attrs['effective_end_date'] = $effectiveTo;
+        $attrs['archive_action'] = $archiveAction;
+        $attrs['archive_reason'] = $archiveReason ?? ($attrs['reason_for_change'] ?? null);
+        $attrs['is_superseded'] = $isSuperseded;
+        $attrs['archived_at'] = now();
+        $attrs['archived_by'] = $archivedBy;
+        $attrs['replaced_by_master_id'] = $replacedByMasterId;
+        $attrs['updated_at'] = now();
+
+        $filtered = $this->filterExistingHistoryColumns($attrs);
+
+        return HrmsPayrollMasterHistory::create($filtered);
+    }
+
+    /** @param  array<string, mixed>  $attrs */
+    private function filterExistingHistoryColumns(array $attrs): array
+    {
+        if (! Schema::hasTable('cirt_payroll_master_history')) {
+            return $attrs;
+        }
+        $columns = Schema::getColumnListing('cirt_payroll_master_history');
+
+        return array_intersect_key($attrs, array_flip($columns));
+    }
+
+    /** @param  array<string, mixed>  $validated */
+    private function salaryStructureChanged(HrmsPayrollMaster $master, array $validated): bool
+    {
+        $newDa = $this->pickPercent($validated, 'da_percent', 'daPercent', $master->da_percent);
+        $newHra = $this->pickPercent($validated, 'hra_percent', 'hraPercent', $master->hra_percent);
+        $oldDa = (float) ($master->da_percent ?? 0);
+        $oldHra = (float) ($master->hra_percent ?? 0);
+        if (abs($newDa - $oldDa) >= 0.001 || abs($newHra - $oldHra) >= 0.001) {
+            return true;
+        }
+
+        $newGross = (float) ($validated['gross_basic_pay'] ?? $validated['grossBasicPay'] ?? $master->gross_basic_pay ?? 0);
+        $oldGross = (float) ($master->gross_basic_pay ?? $master->gross_basic ?? $master->gross_salary ?? 0);
+        if (abs($newGross - $oldGross) >= 0.01) {
+            return true;
+        }
+
+        $deductionKeys = [
+            'income_tax', 'professional_tax', 'lic', 'mess', 'welfare', 'vpf', 'pf_loan',
+            'post_office', 'credit_society', 'standard_licence_fee', 'electricity', 'water',
+            'horticulture', 'vehicle_charge', 'other_deduction', 'advance',
+        ];
+        foreach ($deductionKeys as $key) {
+            $camel = Str::camel($key);
+            if (! array_key_exists($key, $validated) && ! array_key_exists($camel, $validated)) {
+                continue;
+            }
+            $newVal = (float) ($validated[$key] ?? $validated[$camel] ?? $master->{$key} ?? 0);
+            $oldVal = (float) ($master->{$key} ?? 0);
+            if (abs($newVal - $oldVal) >= 0.01) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function requireRevisionReason(?string $reason, bool $required): void
+    {
+        if ($required && (! is_string($reason) || trim($reason) === '')) {
+            abort(422, 'Reason for change is required when revising payroll master (DA/HRA/basic/deductions).');
+        }
     }
 
     /** @param  array<string, mixed>  $overrides */
@@ -926,13 +1391,15 @@ final class PayrollMasterService
 
     private function isCurrentMaster(HrmsPayrollMaster $master): bool
     {
-        return $master->effective_to === null && $master->effective_end_date === null;
+        // cirt_payroll_master stores current rows only; effective_end_date may be legacy.
+        return $master->effective_to === null;
     }
 
     /** @param  \Illuminate\Database\Eloquent\Builder<HrmsPayrollMaster>  $query */
     private function scopeCurrentMaster($query)
     {
-        return $query->whereNull('effective_to')->whereNull('effective_end_date');
+        // Current master table — no history rows. Only exclude if effective_to is explicitly closed.
+        return $query->whereNull('effective_to');
     }
 
     /** @param  array<string, mixed>  $payload */
@@ -1074,10 +1541,11 @@ final class PayrollMasterService
 
     /** @param  array<string, mixed>  $validated */
     /** @param  array<string, mixed>  $calc */
-    private function mergeCalculated(array $validated, array $calc, ?string $companyId, ?string $createdBy): array
+    private function mergeCalculated(array $validated, array $calc, ?string $companyId, ?string $createdBy, bool $forceCurrentRow = false): array
     {
         $userId = $validated['user_id'] ?? $validated['userId'] ?? $validated['employee_user_id'] ?? $validated['employeeUserId'] ?? null;
         $effectiveFrom = $validated['effective_from'] ?? $validated['effectiveFrom'] ?? now()->toDateString();
+        $effectiveTo = $forceCurrentRow ? null : ($validated['effective_to'] ?? $validated['effectiveTo'] ?? null);
 
         $attrs = [
             'company_id' => $companyId,
@@ -1160,8 +1628,8 @@ final class PayrollMasterService
             'reason_for_change' => $validated['reason_for_change'] ?? $validated['reasonForChange'] ?? null,
             'effective_from' => $effectiveFrom,
             'effective_start_date' => $effectiveFrom,
-            'effective_to' => $validated['effective_to'] ?? $validated['effectiveTo'] ?? null,
-            'effective_end_date' => $validated['effective_to'] ?? $validated['effectiveTo'] ?? null,
+            'effective_to' => $effectiveTo,
+            'effective_end_date' => $effectiveTo,
             'payroll_mode' => 'government',
             'pf_eligible' => false,
             'esic_eligible' => false,

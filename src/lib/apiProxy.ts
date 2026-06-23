@@ -83,7 +83,7 @@ export async function proxyToLaravel(
   }
 
   try {
-    const res = await fetch(targetUrl, fetchOptions);
+    const res = await fetch(targetUrl, { ...fetchOptions, cache: "no-store" });
     const data = await res.text();
     return new NextResponse(data, {
       status: res.status,

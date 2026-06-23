@@ -4,6 +4,7 @@ namespace Tests\Unit;
 
 use App\Services\PayrollArrearService;
 use App\Services\PayrollCalculationService;
+use App\Services\PayrollMasterService;
 use Carbon\Carbon;
 use PHPUnit\Framework\TestCase;
 
@@ -14,7 +15,8 @@ final class PayrollArrearCalculationTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new PayrollArrearService(new PayrollCalculationService());
+        $calculator = new PayrollCalculationService();
+        $this->service = new PayrollArrearService($calculator, new PayrollMasterService($calculator));
     }
 
     public function test_excel_example_arrear_calculation(): void
@@ -166,5 +168,29 @@ final class PayrollArrearCalculationTest extends TestCase
         $this->assertContains('newer-id', $ids);
         $this->assertContains('other-id', $ids);
         $this->assertNotContains('older-id', $ids);
+    }
+
+    public function test_may_run_arrear_window_extends_through_april_for_jan_effective(): void
+    {
+        $period = $this->service->arrearPeriodForRevision('2026-01-01', 2026, 5);
+        $this->assertNotNull($period);
+        $this->assertSame('2026-01-01', $period['from']->format('Y-m-d'));
+        $this->assertSame('2026-04-30', $period['to']->format('Y-m-d'));
+
+        $months = $this->service->monthsInArrearPeriod($period['from'], $period['to']);
+        $labels = array_map(static fn (Carbon $m) => $m->format('Y-m'), $months);
+        $this->assertContains('2026-01', $labels);
+        $this->assertContains('2026-03', $labels);
+        $this->assertContains('2026-04', $labels);
+        $this->assertNotContains('2026-05', $labels);
+    }
+
+    public function test_delta_arrear_amount_is_less_than_full_revision(): void
+    {
+        $fullRevision = $this->service->calculateMonthArrear(83600, 3600, 58, 62, 0.12);
+        $deltaRevision = $this->service->calculateMonthArrear(83600, 3600, 60, 62, 0.12);
+        $this->assertGreaterThan($deltaRevision['gross_arrear'], $fullRevision['gross_arrear']);
+        $this->assertSame(3344.0, $fullRevision['da_arrear']);
+        $this->assertSame(1672.0, $deltaRevision['da_arrear']);
     }
 }

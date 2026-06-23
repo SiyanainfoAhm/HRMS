@@ -12,6 +12,7 @@ use App\Models\HrmsUser;
 use App\Support\BankDetailsService;
 use App\Support\BankDetailsValidator;
 use App\Services\PayrollArrearService;
+use App\Services\PayrollMasterService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -20,6 +21,7 @@ class PayrollController extends Controller
 {
     public function __construct(
         private readonly PayrollArrearService $arrearService,
+        private readonly PayrollMasterService $masterService,
     ) {}
 
     public function periods(Request $request): JsonResponse
@@ -205,7 +207,11 @@ class PayrollController extends Controller
         $data['company_id'] = $user->company_id;
         $data['created_by'] = $user->id;
 
-        $master = HrmsPayrollMaster::create($data);
+        $master = $this->masterService->createOrUpdatePayrollMasterRevision(
+            $data,
+            (string) $user->company_id,
+            (string) $user->id,
+        );
 
         return response()->json(['master' => $master], 201);
     }
@@ -276,8 +282,7 @@ class PayrollController extends Controller
         }
 
         $existing = HrmsPayrollMaster::where('employee_user_id', $employeeUserId)
-            ->whereNull('effective_end_date')
-            ->orderBy('effective_start_date', 'desc')
+            ->where('company_id', $user->company_id)
             ->first();
 
         unset(
@@ -290,15 +295,16 @@ class PayrollController extends Controller
         $data['company_id'] = $user->company_id;
         $data['created_by'] = $user->id;
         $data['effective_start_date'] = $data['effective_start_date'] ?? now()->toDateString();
+        $data['effective_from'] = $data['effective_from'] ?? $data['effective_start_date'];
 
-        if ($existing) {
-            $existing->update($data);
-            return response()->json(['master' => $existing->refresh()]);
-        }
+        $master = $this->masterService->createOrUpdatePayrollMasterRevision(
+            $data,
+            (string) $user->company_id,
+            (string) $user->id,
+            $existing,
+        );
 
-        $master = HrmsPayrollMaster::create($data);
-
-        return response()->json(['master' => $master], 201);
+        return response()->json(['master' => $master->refresh()], $existing ? 200 : 201);
     }
 
     public function runPreview(Request $request): JsonResponse
@@ -668,8 +674,9 @@ class PayrollController extends Controller
         $generated = 0;
         $createdByEmployeeId = $this->employeeRecordIdForUser($user->id, $user->company_id);
         $masterEmployeeIds = array_flip($this->collectPayrollEmployeeUserIds((string) $user->company_id));
+        $monthlyPayrollIdsByEmployee = [];
 
-        DB::transaction(function () use ($user, $period, $rows, $year, $month, $daysInMonth, $periodEnd, $createdByEmployeeId, $masterEmployeeIds, &$generated) {
+        DB::transaction(function () use ($user, $period, $rows, $year, $month, $daysInMonth, $periodEnd, $createdByEmployeeId, $masterEmployeeIds, &$generated, &$monthlyPayrollIdsByEmployee) {
             foreach ($rows as $row) {
                 if (! is_array($row)) {
                     continue;
@@ -744,12 +751,9 @@ class PayrollController extends Controller
                         'created_by' => $createdByEmployeeId,
                     ]);
 
-                    $master = HrmsPayrollMaster::where('employee_user_id', $employeeUserId)
-                        ->where('company_id', $user->company_id)
-                        ->orderByDesc('effective_start_date')
-                        ->first();
+                    $master = $this->currentMasterForEmployee((string) $user->company_id, $employeeUserId);
 
-                    $this->insertGovernmentMonthlyFromPreview(
+                    $govMonthlyId = $this->insertGovernmentMonthlyFromPreview(
                         $user->company_id,
                         $period->id,
                         $employeeUserId,
@@ -764,6 +768,9 @@ class PayrollController extends Controller
                         (float) ($master?->da_percent ?? 53),
                         $periodEnd,
                     );
+                    if ($govMonthlyId) {
+                        $monthlyPayrollIdsByEmployee[$employeeUserId] = $govMonthlyId;
+                    }
                 } else {
                     HrmsPayslip::create([
                         'company_id' => $user->company_id,
@@ -802,6 +809,12 @@ class PayrollController extends Controller
 
                 $generated++;
             }
+
+            $this->arrearService->markArrearLinesAsPaidForPayrollRun(
+                $period,
+                (string) $user->id,
+                $monthlyPayrollIdsByEmployee,
+            );
         });
 
         if ($generated === 0) {
@@ -811,9 +824,6 @@ class PayrollController extends Controller
                     : 'No payslips were created. Check pay days, payroll master, and that payroll was not already run.',
             ], 400);
         }
-
-        $this->arrearService->attachArrearsToPayrollRun($period);
-        $this->arrearService->finalizeArrears($period);
 
         return response()->json([
             'ok' => true,
@@ -1032,9 +1042,9 @@ class PayrollController extends Controller
         int $payLevel,
         float $daPercent,
         string $periodEnd,
-    ): void {
+    ): ?string {
         if (! $masterId) {
-            return;
+            return null;
         }
 
         $ded = is_array($gm['deductions'] ?? null) ? $gm['deductions'] : [];
@@ -1045,7 +1055,7 @@ class PayrollController extends Controller
 
         $num = static fn ($v): float => is_numeric($v) ? (float) $v : 0.0;
 
-        HrmsGovernmentMonthlyPayroll::create([
+        $record = HrmsGovernmentMonthlyPayroll::create([
             'company_id' => $companyId,
             'payroll_period_id' => $periodId,
             'payroll_master_id' => $masterId,
@@ -1113,6 +1123,8 @@ class PayrollController extends Controller
             'net_arrear' => $num($gm['netArrear'] ?? $gm['net_arrear'] ?? 0),
             'arrear_batch_id' => $gm['arrearBatchId'] ?? $gm['arrear_batch_id'] ?? null,
         ]);
+
+        return (string) $record->id;
     }
 
     /**
@@ -1233,7 +1245,6 @@ class PayrollController extends Controller
         return HrmsPayrollMaster::query()
             ->where('company_id', $companyId)
             ->whereNull('effective_to')
-            ->whereNull('effective_end_date')
             ->get()
             ->map(fn (HrmsPayrollMaster $m) => $m->employee_user_id ?? $m->user_id)
             ->filter()
@@ -1247,31 +1258,7 @@ class PayrollController extends Controller
      */
     private function resolveMasterForPayrollDate(string $companyId, string $employeeUserId, string $asOfDate): ?HrmsPayrollMaster
     {
-        return HrmsPayrollMaster::query()
-            ->where('company_id', $companyId)
-            ->where(function ($q) use ($employeeUserId) {
-                $q->where('employee_user_id', $employeeUserId)
-                    ->orWhere('user_id', $employeeUserId);
-            })
-            ->where(function ($q) use ($asOfDate) {
-                $q->where(function ($q2) use ($asOfDate) {
-                    $q2->whereDate('effective_start_date', '<=', $asOfDate)
-                        ->orWhere(function ($q3) use ($asOfDate) {
-                            $q3->whereNull('effective_start_date')
-                                ->whereDate('effective_from', '<=', $asOfDate);
-                        });
-                });
-            })
-            ->where(function ($q) use ($asOfDate) {
-                $q->where(function ($q2) {
-                    $q2->whereNull('effective_end_date')->whereNull('effective_to');
-                })
-                    ->orWhereDate('effective_end_date', '>=', $asOfDate)
-                    ->orWhereDate('effective_to', '>=', $asOfDate);
-            })
-            ->orderByDesc('effective_start_date')
-            ->orderByDesc('effective_from')
-            ->first();
+        return $this->masterService->getPayrollMasterForDate($companyId, $employeeUserId, $asOfDate);
     }
 
     /** Current (open) payroll master row for an employee. */
@@ -1283,7 +1270,6 @@ class PayrollController extends Controller
                 $q->where('employee_user_id', $employeeUserId)
                     ->orWhere('user_id', $employeeUserId);
             })
-            ->whereNull('effective_end_date')
             ->whereNull('effective_to')
             ->orderByDesc('effective_start_date')
             ->orderByDesc('effective_from')

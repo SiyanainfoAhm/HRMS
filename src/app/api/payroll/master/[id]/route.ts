@@ -1,6 +1,8 @@
 import { NextRequest } from "next/server";
 import { proxyToLaravel } from "@/lib/apiProxy";
 
+export const dynamic = "force-dynamic";
+
 type Params = { params: Promise<{ id: string }> };
 
 export async function GET(request: NextRequest, { params }: Params) {

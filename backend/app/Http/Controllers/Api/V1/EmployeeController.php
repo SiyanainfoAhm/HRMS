@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\HrmsEmployee;
 use App\Models\HrmsPayrollMaster;
 use App\Models\HrmsUser;
+use App\Services\PayrollMasterService;
 use App\Support\BankDetailsService;
 use App\Support\BankDetailsValidator;
 use Illuminate\Http\JsonResponse;
@@ -14,6 +15,10 @@ use Illuminate\Support\Facades\Hash;
 
 class EmployeeController extends Controller
 {
+    public function __construct(
+        private readonly PayrollMasterService $payrollMasterService,
+    ) {}
+
     public function index(Request $request): JsonResponse
     {
         $user = $request->user();
@@ -445,12 +450,15 @@ class EmployeeController extends Controller
                 $targetUser->save();
             }
 
-            // Close any existing open master
-            HrmsPayrollMaster::where('employee_user_id', $targetUser->id)
-                ->whereNull('effective_end_date')
-                ->update(['effective_end_date' => now()->subDay()->toDateString()]);
+            $payrollMaster['effective_from'] = $dateOfJoining ?? now()->toDateString();
+            $payrollMaster['effectiveFrom'] = $payrollMaster['effective_from'];
+            $payrollMaster['reason_for_change'] = $payrollMaster['reason_for_change'] ?? 'Employee converted to current';
 
-            HrmsPayrollMaster::create($payrollMaster);
+            $this->payrollMasterService->createOrUpdatePayrollMasterRevision(
+                $payrollMaster,
+                (string) $targetUser->company_id,
+                (string) $request->user()->id,
+            );
         }
 
         return response()->json(['message' => 'Converted to current', 'user' => $targetUser->refresh()]);
@@ -484,10 +492,22 @@ class EmployeeController extends Controller
             $empRecord->save();
         }
 
-        // Close any open payroll master
-        HrmsPayrollMaster::where('employee_user_id', $targetUser->id)
-            ->whereNull('effective_end_date')
-            ->update(['effective_end_date' => $lastWorkingDate ?? now()->toDateString()]);
+        // Archive and remove current payroll master when employee leaves
+        $currentMaster = HrmsPayrollMaster::where('employee_user_id', $targetUser->id)
+            ->where('company_id', $targetUser->company_id)
+            ->first();
+        if ($currentMaster) {
+            $this->payrollMasterService->archiveMasterToHistory(
+                $currentMaster,
+                'EMPLOYMENT_END',
+                'Employee converted to past',
+                false,
+                (string) $request->user()->id,
+                null,
+                $lastWorkingDate ?? now()->toDateString(),
+            );
+            $currentMaster->delete();
+        }
 
         return response()->json(['message' => 'Converted to past', 'user' => $targetUser->refresh()]);
     }

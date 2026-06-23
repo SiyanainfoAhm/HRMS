@@ -7,7 +7,7 @@ import { SkeletonTable } from "@/components/Skeleton";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { DatePickerField } from "@/components/ui/DatePickerField";
 import { PasswordField } from "@/components/PasswordField";
-import { dispatchHrmsChange } from "@/lib/hrmsChangeBus";
+import { dispatchHrmsChange, onHrmsChange } from "@/lib/hrmsChangeBus";
 import { PASSWORD_COMPLEXITY_HINT, validatePasswordComplexity } from "@/lib/passwordValidators";
 import {
   computePayrollMasterPreview,
@@ -38,7 +38,9 @@ export type PayrollMasterRecord = {
   payLevel?: number | null;
   grossBasicPay?: number | null;
   daPercent?: number | null;
+  da_percent?: number | null;
   hraPercent?: number | null;
+  hra_percent?: number | null;
   medical?: number | null;
   transportTotal?: number | null;
   totalEarnings?: number | null;
@@ -77,6 +79,8 @@ export type PayrollMasterRecord = {
   effectiveTo?: string | null;
   reasonForChange?: string | null;
   isCurrent?: boolean;
+  rowType?: "CURRENT" | "HISTORY" | "SUPERSEDED" | string;
+  archivedAt?: string | null;
   userRole?: AppRole | string | null;
 };
 
@@ -123,6 +127,7 @@ type MasterFormState = {
   advance: string;
   remarks: string;
   effectiveFrom: string;
+  reasonForChange: string;
   userRole: AppRole;
   password: string;
   confirmPassword: string;
@@ -220,6 +225,7 @@ const emptyForm = (defaultDa = DEFAULT_DA_PERCENT, defaultHra = DEFAULT_HRA_PERC
   advance: "0",
   remarks: "",
   effectiveFrom: new Date().toISOString().slice(0, 10),
+  reasonForChange: "",
   userRole: "employee",
   password: "",
   confirmPassword: "",
@@ -269,6 +275,7 @@ function formFromRecord(r: PayrollMasterRecord): MasterFormState {
     advance: String(r.advance ?? 0),
     remarks: r.remarks ?? "",
     effectiveFrom: r.effectiveFrom?.slice(0, 10) ?? new Date().toISOString().slice(0, 10),
+    reasonForChange: "",
     userRole: normalizeRole(r.userRole ?? "employee"),
     password: "",
     confirmPassword: "",
@@ -290,8 +297,8 @@ function formToPayload(form: MasterFormState) {
     status: form.status,
     payLevel: parseInt(form.payLevel, 10),
     grossBasicPay: parseFloat(form.grossBasicPay) || 0,
-    daPercent: parseFloat(form.daPercent) || DEFAULT_DA_PERCENT,
-    hraPercent: parseFloat(form.hraPercent) || DEFAULT_HRA_PERCENT,
+    daPercent: Number.isFinite(parseFloat(form.daPercent)) ? parseFloat(form.daPercent) : DEFAULT_DA_PERCENT,
+    hraPercent: Number.isFinite(parseFloat(form.hraPercent)) ? parseFloat(form.hraPercent) : DEFAULT_HRA_PERCENT,
     medical: parseFloat(form.medical) || DEFAULT_MEDICAL,
     uan: form.uan.trim() || undefined,
     cpfNo: form.cpfNo.trim() || undefined,
@@ -319,12 +326,43 @@ function formToPayload(form: MasterFormState) {
     advance: parseFloat(form.advance) || 0,
     remarks: form.remarks.trim() || undefined,
     effectiveFrom: form.effectiveFrom || undefined,
+    reasonForChange: form.reasonForChange.trim() || undefined,
     role: form.userRole,
     ...(form.password.trim() ? { password: form.password } : {}),
   };
 }
 
-function validateForm(form: MasterFormState, editing: PayrollMasterRecord | null): string | null {
+function payrollStructureChanged(form: MasterFormState, baseline: MasterFormState): boolean {
+  return (
+    form.effectiveFrom !== baseline.effectiveFrom ||
+    form.daPercent !== baseline.daPercent ||
+    form.hraPercent !== baseline.hraPercent ||
+    form.grossBasicPay !== baseline.grossBasicPay ||
+    form.medical !== baseline.medical ||
+    form.professionalTax !== baseline.professionalTax ||
+    form.incomeTax !== baseline.incomeTax ||
+    form.lic !== baseline.lic ||
+    form.mess !== baseline.mess ||
+    form.welfare !== baseline.welfare ||
+    form.vpf !== baseline.vpf ||
+    form.pfLoan !== baseline.pfLoan ||
+    form.postOffice !== baseline.postOffice ||
+    form.creditSociety !== baseline.creditSociety ||
+    form.standardLicenceFee !== baseline.standardLicenceFee ||
+    form.electricity !== baseline.electricity ||
+    form.water !== baseline.water ||
+    form.horticulture !== baseline.horticulture ||
+    form.vehicleCharge !== baseline.vehicleCharge ||
+    form.otherDeduction !== baseline.otherDeduction ||
+    form.advance !== baseline.advance
+  );
+}
+
+function validateForm(
+  form: MasterFormState,
+  editing: PayrollMasterRecord | null,
+  editBaseline: MasterFormState | null,
+): string | null {
   if (!form.name.trim()) return "Name is required";
   if (!form.email.trim()) return "Email is required";
   if (!form.designation.trim()) return "Designation is required";
@@ -343,6 +381,10 @@ function validateForm(form: MasterFormState, editing: PayrollMasterRecord | null
     const pErr = validatePasswordComplexity(form.password);
     if (pErr) return pErr;
     if (form.password !== form.confirmPassword) return "Passwords do not match";
+  }
+
+  if (editing && editBaseline && form.effectiveFrom !== editBaseline.effectiveFrom && !form.reasonForChange.trim()) {
+    return "Reason for change is required when revising the effective date.";
   }
 
   return null;
@@ -405,10 +447,12 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
 
   const [rows, setRows] = useState<PayrollMasterRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<PayrollMasterRecord | null>(null);
+  const [editBaseline, setEditBaseline] = useState<MasterFormState | null>(null);
   const [form, setForm] = useState<MasterFormState>(() => emptyForm());
   const [formSaving, setFormSaving] = useState(false);
   const [formLoading, setFormLoading] = useState(false);
@@ -455,14 +499,27 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
 
   const loadRows = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
-      const res = await fetch("/api/payroll/master");
+      const res = await fetch(`/api/payroll/master?_=${Date.now()}`, { cache: "no-store" });
       const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || "Failed to load payroll master");
-      setRows(data.masters ?? data.employees ?? []);
+      if (!res.ok) {
+        throw new Error(data?.error || data?.message || `Failed to load payroll master (${res.status})`);
+      }
+      const list = (data.masters ?? data.employees ?? []) as PayrollMasterRecord[];
+      if (process.env.NODE_ENV === "development") {
+        console.info("[PayrollMaster] loaded", {
+          count: list.length,
+          companyId: data.companyId ?? null,
+          daValues: list.slice(0, 8).map((r) => ({ name: r.name, daPercent: r.daPercent ?? r.da_percent })),
+        });
+      }
+      setRows(list);
     } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : "Failed to load payroll master";
       setRows([]);
-      showToast("error", e instanceof Error ? e.message : "Failed to load payroll master");
+      setLoadError(message);
+      showToast("error", message);
     } finally {
       setLoading(false);
     }
@@ -470,6 +527,13 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
 
   useEffect(() => {
     if (canManage) loadRows();
+  }, [canManage, loadRows]);
+
+  useEffect(() => {
+    if (!canManage) return;
+    return onHrmsChange((kind) => {
+      if (kind === "payroll_master") void loadRows();
+    }, { kinds: ["payroll_master"] });
   }, [canManage, loadRows]);
 
   useEffect(() => {
@@ -531,6 +595,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
 
   function openAdd() {
     setEditing(null);
+    setEditBaseline(null);
     setMasterHistory([]);
     setArrearHistory([]);
     setForm(emptyForm(companyDefaultDa, companyDefaultHra));
@@ -563,7 +628,9 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
       const historyData = await historyRes.json();
       const arrearData = await arrearRes.json();
       if (!masterRes.ok) throw new Error(masterData?.error || "Failed to load employee");
-      setForm(formFromRecord(masterData.master ?? row));
+      const loadedForm = formFromRecord(masterData.master ?? row);
+      setForm(loadedForm);
+      setEditBaseline(loadedForm);
       if (historyRes.ok) {
         setMasterHistory(historyData.history ?? []);
       }
@@ -572,6 +639,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
       }
     } catch (e: unknown) {
       setForm(formFromRecord(row));
+      setEditBaseline(formFromRecord(row));
       showToast("error", e instanceof Error ? e.message : "Could not refresh employee; showing cached row");
     } finally {
       setFormLoading(false);
@@ -588,7 +656,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     setPhoneError(contactErrs.phone);
     setBankAccountError(contactErrs.bankAccount);
     setBankIfscError(contactErrs.bankIfsc);
-    const err = validateForm(form, editing);
+    const err = validateForm(form, editing, editBaseline);
     const firstErr = err || contactErrs.phone || contactErrs.bankAccount || contactErrs.bankIfsc;
     if (firstErr) {
       showToast("error", firstErr);
@@ -597,13 +665,27 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     setFormSaving(true);
     try {
       const payload = formToPayload(form);
+      if (process.env.NODE_ENV === "development") {
+        console.info("[PayrollMaster] update payload", { id: editing?.id, daPercent: payload.daPercent });
+      }
       const res = await fetch(editing ? `/api/payroll/master/${editing.id}` : "/api/payroll/master", {
         method: editing ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
+        cache: "no-store",
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.message || data?.error || "Save failed");
+      if (process.env.NODE_ENV === "development") {
+        console.info("[PayrollMaster] update response", {
+          id: data?.master?.id,
+          daPercent: data?.master?.daPercent ?? data?.master?.da_percent,
+        });
+      }
+      const saved = (data?.master ?? null) as PayrollMasterRecord | null;
+      if (saved?.id) {
+        setRows((prev) => prev.map((r) => (r.id === saved.id ? { ...r, ...saved } : r)));
+      }
       showToast("success", editing ? "Employee updated" : "Employee added");
       setFormOpen(false);
       dispatchHrmsChange("payroll_master");
@@ -820,6 +902,14 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
 
         {loading ? (
           <SkeletonTable rows={6} columns={12} />
+        ) : loadError ? (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+            <p className="font-medium">Could not load payroll master</p>
+            <p className="mt-1">{loadError}</p>
+            <button type="button" className="btn btn-outline mt-3 !py-1.5 !text-sm" onClick={() => loadRows()}>
+              Retry
+            </button>
+          </div>
         ) : rows.length === 0 ? (
           <p className="muted">No payroll master records yet. Add an employee, import from Excel, or sync existing employees.</p>
         ) : (
@@ -895,8 +985,8 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                     <td className={tdLeft}>{row.division || "—"}</td>
                     <td className={td}>{row.payLevel ?? "—"}</td>
                     <td className={td}>{fmt(row.grossBasicPay)}</td>
-                    <td className={td}>{row.daPercent ?? "—"}</td>
-                    <td className={td}>{row.hraPercent ?? "—"}</td>
+                    <td className={td}>{row.daPercent ?? row.da_percent ?? "—"}</td>
+                    <td className={td}>{row.hraPercent ?? row.hra_percent ?? "—"}</td>
                     <td className={td}>{fmt(row.medical)}</td>
                     <td className={td}>{fmt(row.transportTotal)}</td>
                     <td className={td}>{fmt(row.totalEarnings)}</td>
@@ -1176,7 +1266,22 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                     <div>
                       <label className={labelCls}>Effective From</label>
                       <DatePickerField value={form.effectiveFrom} onChange={(v) => patchForm({ effectiveFrom: v })} className="w-full" />
+                      <p className="mt-1 text-xs text-slate-500">
+                        Creating a new effective date archives the previous payroll master into history and makes this
+                        the current record.
+                      </p>
                     </div>
+                    {editing ? (
+                      <div className="sm:col-span-2">
+                        <label className={labelCls}>Reason for change</label>
+                        <input
+                          className={inputCls}
+                          value={form.reasonForChange}
+                          onChange={(e) => patchForm({ reasonForChange: e.target.value })}
+                          placeholder="Required when changing the effective date"
+                        />
+                      </div>
+                    ) : null}
                   </div>
                 </section>
 
@@ -1289,12 +1394,13 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                   <section className="rounded-lg border border-slate-200 bg-slate-50/80 p-4">
                     <h4 className="mb-3 text-sm font-semibold text-slate-800">Payroll master history</h4>
                     <p className="mb-3 text-xs text-slate-500">
-                      Each row is a version of this employee&apos;s salary master. The current version has no end date.
+                      Current row from payroll master; previous versions from payroll master history.
                     </p>
                     <div className="overflow-x-auto">
-                      <table className="w-full min-w-[640px] border-collapse text-left text-xs">
+                      <table className="w-full min-w-[720px] border-collapse text-left text-xs">
                         <thead>
                           <tr className="border-b border-slate-200 text-slate-600">
+                            <th className="px-2 py-1.5">Type</th>
                             <th className="px-2 py-1.5">Effective from</th>
                             <th className="px-2 py-1.5">Effective to</th>
                             <th className="px-2 py-1.5">DA %</th>
@@ -1308,8 +1414,11 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                           {masterHistory.map((h) => (
                             <tr
                               key={h.id}
-                              className={`border-b border-slate-100 ${h.isCurrent ? "bg-emerald-50/80 font-medium" : "bg-white"}`}
+                              className={`border-b border-slate-100 ${
+                                h.rowType === "CURRENT" || h.isCurrent ? "bg-emerald-50/80 font-medium" : "bg-white"
+                              }`}
                             >
+                              <td className="px-2 py-1.5">{h.rowType ?? (h.isCurrent ? "CURRENT" : "HISTORY")}</td>
                               <td className="px-2 py-1.5">{h.effectiveFrom?.slice(0, 10) ?? "—"}</td>
                               <td className="px-2 py-1.5">{h.effectiveTo?.slice(0, 10) ?? "—"}</td>
                               <td className="px-2 py-1.5">{h.daPercent ?? "—"}</td>

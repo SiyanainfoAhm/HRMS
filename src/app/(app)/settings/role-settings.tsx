@@ -1,6 +1,7 @@
 "use client";
 
 import { INSTITUTE_LABEL } from "@/lib/appBranding";
+import { dispatchHrmsChange } from "@/lib/hrmsChangeBus";
 import { isAdminRole, normalizeRole, type AppRole } from "@/lib/roles";
 import { useAuth } from "@/contexts/AuthContext";
 import { FormEvent, useEffect, useMemo, useState } from "react";
@@ -504,22 +505,39 @@ export function SettingsContent() {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
+        cache: "no-store",
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to save company profile");
+      if (process.env.NODE_ENV === "development") {
+        console.info("[Settings] company save", {
+          payrollRevision: data.payroll_revision,
+          defaultDa: data.company?.default_da_percent,
+        });
+      }
       setCompany(data.company);
       setIsCompanyDialogOpen(false);
       setDaRevisionConfirmOpen(false);
       const revision = data.payroll_revision;
       const arrearPreview = data.arrear_preview;
-      if (revision && (revision.revised > 0 || revision.skipped > 0)) {
-        let msg = `Settings saved. Payroll master revised for ${revision.revised} employee(s)${revision.skipped ? `, ${revision.skipped} already at new rates` : ""}.`;
+      if (revision?.errors?.length) {
+        const firstErr = revision.errors[0]?.message ?? "Payroll master revision failed";
+        showToast("error", `Settings saved but payroll revision failed: ${firstErr}`);
+      } else if (revision && revision.revised > 0) {
+        dispatchHrmsChange("payroll_master");
+        let msg = `Institute settings updated and payroll masters revised for ${revision.revised} employee(s).`;
+        if (revision.skipped > 0) {
+          msg += ` ${revision.skipped} already at the new rates.`;
+        }
         if (arrearPreview?.pendingArrearPeriod) {
-          msg += ` Pending DA arrears: ${arrearPreview.pendingArrearPeriod.from} to ${arrearPreview.pendingArrearPeriod.to} (based on the payroll month you run).`;
+          msg += ` Pending DA arrears: ${arrearPreview.pendingArrearPeriod.from} to ${arrearPreview.pendingArrearPeriod.to}.`;
         } else if (arrearPreview?.note) {
           msg += ` ${arrearPreview.note}`;
         }
         showToast("success", msg);
+      } else if (revision && revision.skipped > 0) {
+        dispatchHrmsChange("payroll_master");
+        showToast("success", "Institute settings updated. All payroll masters already match the new DA/HRA.");
       } else {
         showToast("success", "Settings updated successfully");
       }
@@ -1380,14 +1398,18 @@ export function SettingsContent() {
           />
           <div role="dialog" aria-modal="true" className="relative z-10 w-full max-w-lg rounded-xl border border-slate-200 bg-white shadow-xl">
             <div className="border-b border-slate-200 px-5 py-4">
-              <h3 className="text-base font-semibold text-slate-900">Confirm DA/HRA revision</h3>
+              <h3 className="text-base font-semibold text-slate-900">Apply DA/HRA revision</h3>
               <p className="mt-2 text-sm text-slate-600">
-                DA changed from {initialDaHra.da}% to {form.defaultDaPercent}% and HRA from {initialDaHra.hra}% to{" "}
-                {form.defaultHraPercent}%, effective from {form.payrollRevisionEffectiveFrom}.
+                Changing DA/HRA will update all current payroll master records and recalculate earnings and deductions
+                for all employees.
               </p>
               <p className="mt-2 text-sm text-slate-600">
-                This will create payroll master revisions for all current employees. Pending DA arrears for already
-                processed months (if any) will be included in the next payroll run—not immediately.
+                DA: {initialDaHra.da}% → {form.defaultDaPercent}% · HRA: {initialDaHra.hra}% → {form.defaultHraPercent}%
+                · Effective from {form.payrollRevisionEffectiveFrom}.
+              </p>
+              <p className="mt-2 text-sm text-slate-600">
+                Pending DA arrears for already processed months (if any) will be included in the next payroll run—not
+                immediately.
               </p>
             </div>
             <div className="flex justify-end gap-2 px-5 py-4">
@@ -1395,7 +1417,7 @@ export function SettingsContent() {
                 Cancel
               </button>
               <button type="button" className="btn btn-primary" onClick={() => void saveCompany()} disabled={saving}>
-                {saving ? "Saving..." : "Confirm & save"}
+                {saving ? "Applying..." : "Apply revision"}
               </button>
             </div>
           </div>

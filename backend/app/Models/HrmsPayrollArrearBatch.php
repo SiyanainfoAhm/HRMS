@@ -19,7 +19,7 @@ class HrmsPayrollArrearBatch extends Model
         'company_id', 'payroll_period_id', 'da_revision_event_id',
         'run_month', 'run_year', 'arrear_from', 'arrear_to', 'status',
         'total_da_arrear', 'total_transport_arrear', 'total_gross_arrear',
-        'total_cpf_arrear', 'total_net_arrear',
+        'total_cpf_arrear', 'total_net_arrear', 'paid_at',
     ];
 
     protected function casts(): array
@@ -32,6 +32,7 @@ class HrmsPayrollArrearBatch extends Model
             'total_gross_arrear' => 'float',
             'total_cpf_arrear' => 'float',
             'total_net_arrear' => 'float',
+            'paid_at' => 'datetime',
         ];
     }
 

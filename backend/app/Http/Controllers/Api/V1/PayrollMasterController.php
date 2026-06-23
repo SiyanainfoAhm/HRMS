@@ -11,6 +11,7 @@ use App\Services\PayrollArrearService;
 use App\Services\PayrollMasterService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class PayrollMasterController extends Controller
@@ -38,7 +39,22 @@ class PayrollMasterController extends Controller
             return $denied;
         }
 
-        $rows = $this->service->listForCompany($request->user()->company_id);
+        $user = $request->user();
+        $companyId = $user->company_id;
+
+        if (! $companyId && config('app.debug')) {
+            Log::warning('payroll_master.index missing company_id', ['user_id' => $user->id]);
+        }
+
+        $rows = $this->service->listForCompany($companyId);
+
+        if (config('app.debug')) {
+            Log::debug('payroll_master.index', [
+                'user_id' => $user->id,
+                'company_id' => $companyId,
+                'response_count' => count($rows),
+            ]);
+        }
 
         return response()->json(['masters' => $rows, 'employees' => $rows]);
     }
@@ -78,6 +94,12 @@ class PayrollMasterController extends Controller
         }
 
         $master = HrmsPayrollMaster::findOrFail($id);
+        if (config('app.debug')) {
+            Log::debug('payroll_master.http_update', [
+                'master_id' => $id,
+                'payload_da' => $request->input('da_percent') ?? $request->input('daPercent'),
+            ]);
+        }
         $master = $this->service->update($master, $request->all(), (string) $user->company_id);
 
         return response()->json(['master' => $this->service->formatRow($master)]);

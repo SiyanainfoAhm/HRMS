@@ -8,6 +8,7 @@ use App\Services\PayrollArrearService;
 use App\Services\PayrollMasterService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 
 class CompanyController extends Controller
@@ -93,11 +94,29 @@ class CompanyController extends Controller
 
         if (($daChanged || $hraChanged) && $request->boolean('apply_da_hra_revision', true)) {
             $effectiveFrom = $request->input('payroll_revision_effective_from') ?? now()->toDateString();
-            $payrollRevision = $this->payrollMasterService->revisionizeForCompanyDaHraChange(
+            if (config('app.debug')) {
+                Log::debug('company.settings_da_hra_revision', [
+                    'company_id' => $user->company_id,
+                    'old_da' => $oldDa,
+                    'new_da' => $newDa,
+                    'old_hra' => $oldHra,
+                    'new_hra' => $newHra,
+                    'effective_from' => $effectiveFrom,
+                ]);
+            }
+            $revisionReason = sprintf(
+                'Institute DA/HRA revision: DA %.2f%% → %.2f%%, HRA %.2f%% → %.2f%%',
+                $oldDa,
+                $newDa,
+                $oldHra,
+                $newHra,
+            );
+            $payrollRevision = $this->payrollMasterService->applyInstituteDaHraRevisionToPayrollMasters(
                 (string) $user->company_id,
                 $newDa,
                 $newHra,
                 $effectiveFrom,
+                $revisionReason,
                 $user->id,
             );
 

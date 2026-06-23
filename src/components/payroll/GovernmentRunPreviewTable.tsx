@@ -262,7 +262,10 @@ function GovernmentEmployeeCard({
                   ))}
                 </PayrollSectionRow>
                 {showArrears ? (
-                  <PayrollSectionRow title="DA arrears (auto)" titleClassName="text-violet-900">
+                  <PayrollSectionRow title="DA arrears (unpaid)" titleClassName="text-violet-900">
+                    <p className="col-span-full mb-1 text-[10px] text-violet-800/80">
+                      Arrears shown here are unpaid and will be marked paid after payroll confirmation.
+                    </p>
                     {[
                       { label: "DA ARR.", value: v(g, "daArrearsPaid") },
                       { label: "TR. ARR.", value: v(g, "transportArrearsPaid") },
