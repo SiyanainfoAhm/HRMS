@@ -1,6 +1,18 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
+import { PayrollComponentScroller, type PayrollScrollerHandle } from "./PayrollComponentScroller";
+import { PayrollEmployeeCardHeader } from "./PayrollEmployeeCardHeader";
+import {
+  GOV_PREVIEW_DEDUCTION_FIELDS,
+  GOV_PREVIEW_EARNING_FIELDS,
+  FieldChip,
+  PayrollSectionRow,
+  d,
+  fmtIn,
+  inpWide,
+  v,
+} from "./payrollRunPreviewShared";
 
 /** Monthly compute snapshot from `/api/payroll/run` preview (same shape as `computeGovernmentMonthlyPayroll` result). */
 export type GovernmentPreviewMonthly = {
@@ -45,43 +57,6 @@ export type GovernmentPreviewMonthly = {
   };
 };
 
-const GOV_PREVIEW_EARNING_FIELDS: { key: keyof GovernmentPreviewMonthly; label: string }[] = [
-  { key: "basicPaid", label: "Basic" },
-  { key: "spPayPaid", label: "SP" },
-  { key: "daPaid", label: "DA" },
-  { key: "transportPaid", label: "Transport" },
-  { key: "hraPaid", label: "HRA" },
-  { key: "medicalPaid", label: "Medical" },
-  { key: "extraWorkAllowancePaid", label: "EWA" },
-  { key: "nightAllowancePaid", label: "Night" },
-  { key: "uniformAllowancePaid", label: "Uniform" },
-  { key: "educationAllowancePaid", label: "Education" },
-  { key: "daArrearsPaid", label: "DA arr." },
-  { key: "transportArrearsPaid", label: "Tr. arr." },
-  { key: "encashmentPaid", label: "Encash." },
-  { key: "encashmentDaPaid", label: "Enc. DA" },
-];
-
-const GOV_PREVIEW_DEDUCTION_FIELDS: { key: keyof GovernmentPreviewMonthly["deductions"]; label: string }[] = [
-  { key: "incomeTax", label: "Inc. tax" },
-  { key: "pt", label: "P. Tax" },
-  { key: "lic", label: "LIC" },
-  { key: "cpf", label: "CPF" },
-  { key: "daCpf", label: "DA CPF" },
-  { key: "vpf", label: "VPF" },
-  { key: "pfLoan", label: "PF loan" },
-  { key: "postOffice", label: "Post off." },
-  { key: "creditSociety", label: "Cr. society" },
-  { key: "stdLicenceFee", label: "Std licence" },
-  { key: "electricity", label: "Electricity" },
-  { key: "water", label: "Water" },
-  { key: "mess", label: "Mess" },
-  { key: "horticulture", label: "Horticulture" },
-  { key: "welfare", label: "Welfare" },
-  { key: "vehCharge", label: "Veh. chg." },
-  { key: "other", label: "Other" },
-];
-
 export type GovernmentRunPreviewRow = {
   employeeUserId: string;
   employeeName: string | null;
@@ -99,6 +74,7 @@ export type GovernmentRunPreviewRow = {
   tds: number;
   pfEmployee: number;
   governmentMonthly?: GovernmentPreviewMonthly | null;
+  payslipPending?: boolean;
 };
 
 type Props = {
@@ -109,209 +85,251 @@ type Props = {
   onUpdate: (employeeUserId: string, field: string, value: number) => void;
 };
 
-function d(m: GovernmentPreviewMonthly | null | undefined, k: keyof GovernmentPreviewMonthly["deductions"]): number {
-  return Math.round(Number(m?.deductions?.[k] ?? 0));
-}
-
-function v(m: GovernmentPreviewMonthly | null | undefined, k: keyof GovernmentPreviewMonthly): number {
-  return Math.round(Number((m as Record<string, unknown>)?.[k as string] ?? 0));
-}
-
-const th = "border border-slate-300 bg-slate-100 px-2 py-2 text-left text-xs font-semibold text-slate-800";
-const tdBase = "border border-slate-200 align-top text-slate-900";
-const tdNum = `${tdBase} px-2 py-2 text-right text-sm tabular-nums`;
-const tdL = `${tdBase} px-2 py-2 text-left text-sm`;
-const inpWide =
-  "w-[5.25rem] min-w-[4.75rem] max-w-[6rem] rounded-md border border-sky-300 bg-white px-2 py-1.5 text-right text-sm tabular-nums text-slate-900 shadow-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-400";
-
-function FieldChip({
-  label,
-  readOnly,
-  value,
-  onChange,
-}: {
-  label: string;
-  readOnly: boolean;
-  value: number;
-  onChange: (n: number) => void;
-}) {
+function SummaryStat({ label, value, emphasis }: { label: string; value: string; emphasis?: boolean }) {
   return (
-    <div className="flex w-max min-w-0 flex-col gap-0.5 whitespace-nowrap">
-      <span className="text-[10px] font-medium uppercase tracking-wide text-slate-600">{label}</span>
-      {readOnly ? (
-        <span className="rounded border border-transparent px-2 py-1.5 text-right text-sm tabular-nums">
-          {value.toLocaleString("en-IN")}
-        </span>
-      ) : (
-        <input
-          type="number"
-          min={0}
-          step={1}
-          value={value}
-          onChange={(e) => onChange(parseInt(e.target.value, 10) || 0)}
-          className={inpWide}
-        />
-      )}
+    <div className="min-w-0">
+      <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">{label}</p>
+      <p className={`truncate text-sm tabular-nums ${emphasis ? "font-semibold text-slate-900" : "text-slate-800"}`}>
+        {value}
+      </p>
     </div>
   );
 }
 
-/** One horizontal row of fields — width grows with content (no inner scroll). */
-function SingleRowBand({
-  title,
-  titleClassName,
-  children,
+function GovernmentEmployeeCard({
+  row,
+  daysInMonth,
+  effectiveRunDay,
+  readOnly,
+  onUpdate,
+  expanded,
+  onToggleExpand,
 }: {
-  title: string;
-  titleClassName: string;
-  children: ReactNode;
+  row: GovernmentRunPreviewRow;
+  daysInMonth: number;
+  effectiveRunDay: number;
+  readOnly: boolean;
+  onUpdate: Props["onUpdate"];
+  expanded: boolean;
+  onToggleExpand: () => void;
 }) {
-  return (
-    <div>
-      <p className={`mb-1.5 text-[11px] font-semibold uppercase tracking-wide ${titleClassName}`}>{title}</p>
-      <table className="w-max border-collapse rounded-md border border-slate-200/90 bg-white/90">
-        <tbody>
-          <tr>{children}</tr>
-        </tbody>
-      </table>
+  const scrollerRef = useRef<PayrollScrollerHandle>(null);
+  const g = row.governmentMonthly;
+  const gb = row.grossMonthly ?? 0;
+  const displayName = row.employeeName || row.employeeEmail || "—";
+  const totalEarn = v(g, "totalEarnings");
+  const totalDed = v(g, "totalDeductions");
+
+  const summaryBlock = (
+    <div
+      className={
+        expanded
+          ? "grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3"
+          : "flex flex-wrap items-end gap-x-5 gap-y-2"
+      }
+    >
+      <SummaryStat label="Employee" value={displayName} />
+      <div>
+        <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Days</p>
+        {readOnly ? (
+          <p className="text-sm tabular-nums text-slate-800">
+            {row.payDays}
+            {row.unpaidLeaveDays > 0 ? ` (−${row.unpaidLeaveDays})` : ""}
+          </p>
+        ) : (
+          <input
+            type="number"
+            min={0}
+            max={effectiveRunDay ?? daysInMonth}
+            value={row.payDays}
+            onChange={(e) => onUpdate(row.employeeUserId, "payDays", parseInt(e.target.value, 10) || 0)}
+            className={`${inpWide} w-[4.5rem] min-w-[4rem]`}
+          />
+        )}
+      </div>
+      <SummaryStat label="Gr. basic" value={fmtIn(gb)} />
+      <SummaryStat label="Gross earnings" value={fmtIn(totalEarn)} />
+      <SummaryStat label="Total deductions" value={fmtIn(totalDed)} />
+      <SummaryStat label="Net pay" value={fmtIn(row.netPay)} emphasis />
+      {row.payslipPending ? (
+        <span className="self-center rounded bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-900">
+          Pending slip
+        </span>
+      ) : readOnly ? (
+        <span className="self-center rounded bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600">
+          Saved
+        </span>
+      ) : (
+        <span className="self-center rounded bg-sky-50 px-2 py-0.5 text-[10px] font-medium text-sky-800">
+          Editable
+        </span>
+      )}
     </div>
+  );
+
+  const showArrears =
+    v(g, "grossArrear" as keyof GovernmentPreviewMonthly) > 0 ||
+    v(g, "daArrearsPaid") > 0 ||
+    v(g, "transportArrearsPaid") > 0;
+
+  return (
+    <article className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      <PayrollEmployeeCardHeader
+        displayName={displayName}
+        email={row.employeeEmail}
+        expanded={expanded}
+        onToggleExpand={onToggleExpand}
+        gross={totalEarn}
+        deductions={totalDed}
+        net={row.netPay}
+        showScrollButtons={expanded}
+        onScrollLeft={() => scrollerRef.current?.scrollLeft()}
+        onScrollRight={() => scrollerRef.current?.scrollRight()}
+        onResetScroll={() => scrollerRef.current?.resetScroll()}
+      />
+
+      <div className={expanded ? "flex flex-col md:flex-row" : "px-4 py-3"}>
+        <aside
+          className={
+            expanded
+              ? "w-full shrink-0 border-b border-slate-100 p-4 md:w-[min(100%,20rem)] md:border-b-0 md:border-r"
+              : "w-full"
+          }
+        >
+          {summaryBlock}
+          {expanded ? (
+            <div className="mt-4 grid grid-cols-2 gap-3 border-t border-slate-100 pt-3">
+              <div>
+                <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Advance</p>
+                {readOnly ? (
+                  <p className="text-sm tabular-nums">{fmtIn(row.incentive ?? 0)}</p>
+                ) : (
+                  <input
+                    type="number"
+                    min={0}
+                    value={row.incentive ?? 0}
+                    onChange={(e) => onUpdate(row.employeeUserId, "incentive", parseInt(e.target.value, 10) || 0)}
+                    className={inpWide}
+                  />
+                )}
+              </div>
+              <div>
+                <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Reimb.</p>
+                {readOnly ? (
+                  <p className="text-sm tabular-nums">{fmtIn(row.reimbursement ?? 0)}</p>
+                ) : (
+                  <input
+                    type="number"
+                    min={0}
+                    value={row.reimbursement ?? 0}
+                    onChange={(e) => onUpdate(row.employeeUserId, "reimbursement", parseInt(e.target.value, 10) || 0)}
+                    className={inpWide}
+                  />
+                )}
+              </div>
+              <div className="col-span-2">
+                <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Take home</p>
+                <p className="text-base font-semibold tabular-nums text-slate-900">{fmtIn(row.takeHome)}</p>
+              </div>
+            </div>
+          ) : null}
+        </aside>
+
+        {expanded ? (
+          <div className="min-w-0 flex-1 p-4">
+            <PayrollComponentScroller ref={scrollerRef}>
+              <div className="flex flex-col gap-4">
+                <PayrollSectionRow title="Earnings (paid month)" titleClassName="text-emerald-900">
+                  {GOV_PREVIEW_EARNING_FIELDS.map(({ key, label }) => (
+                    <FieldChip
+                      key={key}
+                      label={label}
+                      readOnly={readOnly}
+                      value={v(g, key)}
+                      onChange={(n) => onUpdate(row.employeeUserId, `govEarning_${key}`, n)}
+                    />
+                  ))}
+                </PayrollSectionRow>
+                <PayrollSectionRow title="Deductions" titleClassName="text-rose-900">
+                  {GOV_PREVIEW_DEDUCTION_FIELDS.map(({ key, label }) => (
+                    <FieldChip
+                      key={key}
+                      label={label}
+                      readOnly={readOnly}
+                      value={d(g, key)}
+                      onChange={(n) => onUpdate(row.employeeUserId, `govDeduction_${key}`, n)}
+                    />
+                  ))}
+                </PayrollSectionRow>
+                {showArrears ? (
+                  <PayrollSectionRow title="DA arrears (auto)" titleClassName="text-violet-900">
+                    {[
+                      { label: "DA ARR.", value: v(g, "daArrearsPaid") },
+                      { label: "TR. ARR.", value: v(g, "transportArrearsPaid") },
+                      { label: "Gross arr.", value: v(g, "grossArrear" as keyof GovernmentPreviewMonthly) },
+                      { label: "CPF arr.", value: v(g, "cpfArrear" as keyof GovernmentPreviewMonthly) },
+                      { label: "Net arr.", value: v(g, "netArrear" as keyof GovernmentPreviewMonthly) },
+                    ].map(({ label, value }) => (
+                      <FieldChip key={label} label={label} readOnly value={value} onChange={() => {}} />
+                    ))}
+                  </PayrollSectionRow>
+                ) : null}
+              </div>
+            </PayrollComponentScroller>
+          </div>
+        ) : null}
+      </div>
+    </article>
   );
 }
 
 export function GovernmentRunPreviewTable({ rows, daysInMonth, effectiveRunDay, readOnly, onUpdate }: Props) {
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
+
+  useEffect(() => {
+    if (!rows.length) {
+      setExpandedIds(new Set());
+      return;
+    }
+    setExpandedIds((prev) => {
+      if (prev.size > 0) {
+        const next = new Set([...prev].filter((id) => rows.some((r) => r.employeeUserId === id)));
+        if (next.size > 0) return next;
+      }
+      return new Set([rows[0].employeeUserId]);
+    });
+  }, [rows]);
+
+  const toggleExpand = (id: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
   return (
-    <div className="-mx-1 sm:mx-0">
-      <p className="mb-3 text-xs leading-relaxed text-slate-600">
-        Government payroll preview: for each employee, <strong>all earnings are one horizontal row</strong> and{" "}
-        <strong>all deductions the row below</strong>. The table grows to full width so every field is visible; on
-        narrow screens use the <strong>single horizontal scroll</strong> under the card for the whole table. Before
-        generating payroll you can edit all amounts; after a run this view is read-only.
+    <div className="space-y-4">
+      <p className="text-xs leading-relaxed text-slate-600">
+        Each employee has a separate preview card. Scroll earnings and deductions horizontally inside the card — the
+        summary on the left stays visible. Expand or collapse cards to review multiple employees quickly.
       </p>
-      <div className="overflow-x-auto rounded-lg border border-slate-200 shadow-sm">
-        <table className="w-max min-w-[640px] border-collapse text-left text-xs">
-          <thead>
-            <tr className="bg-slate-100">
-              <th className={`${th} w-[140px]`}>Employee</th>
-              <th className={`${th} w-[88px]`}>Days</th>
-              <th className={`${th} w-[100px]`}>Gr. basic</th>
-              <th className={th}>Earnings row / Deductions row</th>
-              <th className={`${th} w-[88px] text-right`}>Σ Earn</th>
-              <th className={`${th} w-[88px] text-right`}>Σ Ded</th>
-              <th className={`${th} w-[88px] text-right`}>Net</th>
-              <th className={`${th} w-[88px] text-right`}>Adv.</th>
-              <th className={`${th} w-[88px] text-right`}>Reimb.</th>
-              <th className={`${th} w-[96px] text-right`}>Take</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => {
-              const g = r.governmentMonthly;
-              const gb = r.grossMonthly ?? 0;
-              return (
-                <tr key={r.employeeUserId} className="border-t border-slate-200 bg-white">
-                  <td className={tdL} title={r.employeeEmail || undefined}>
-                    <span className="font-medium text-slate-900">{r.employeeName || r.employeeEmail || "—"}</span>
-                  </td>
-                  <td className={tdL}>
-                    {readOnly ? (
-                      <span className="text-sm">
-                        {r.payDays}
-                        {r.unpaidLeaveDays > 0 ? ` (−${r.unpaidLeaveDays})` : ""}
-                      </span>
-                    ) : (
-                      <input
-                        type="number"
-                        min={0}
-                        max={effectiveRunDay ?? daysInMonth}
-                        value={r.payDays}
-                        onChange={(e) => onUpdate(r.employeeUserId, "payDays", parseInt(e.target.value, 10) || 0)}
-                        className={`${inpWide} w-[4.5rem] min-w-[4rem]`}
-                      />
-                    )}
-                  </td>
-                  <td className={tdNum}>{gb.toLocaleString("en-IN")}</td>
-                  <td className={`${tdBase} bg-slate-50/40 px-3 py-3`}>
-                    <div className="flex flex-col gap-4">
-                      <SingleRowBand title="Earnings (paid month)" titleClassName="text-emerald-900">
-                        {GOV_PREVIEW_EARNING_FIELDS.map(({ key, label }) => (
-                          <td key={key} className="border-r border-slate-100 px-2 py-2 align-bottom last:border-r-0">
-                            <FieldChip
-                              label={label}
-                              readOnly={readOnly}
-                              value={v(g, key)}
-                              onChange={(n) => onUpdate(r.employeeUserId, `govEarning_${key}`, n)}
-                            />
-                          </td>
-                        ))}
-                      </SingleRowBand>
-                      <SingleRowBand title="Deductions" titleClassName="text-rose-900">
-                        {GOV_PREVIEW_DEDUCTION_FIELDS.map(({ key, label }) => (
-                          <td key={key} className="border-r border-slate-100 px-2 py-2 align-bottom last:border-r-0">
-                            <FieldChip
-                              label={label}
-                              readOnly={readOnly}
-                              value={d(g, key)}
-                              onChange={(n) => onUpdate(r.employeeUserId, `govDeduction_${key}`, n)}
-                            />
-                          </td>
-                        ))}
-                      </SingleRowBand>
-                      {(v(g, "grossArrear" as keyof GovernmentPreviewMonthly) > 0 ||
-                        v(g, "daArrearsPaid") > 0 ||
-                        v(g, "transportArrearsPaid") > 0) && (
-                        <SingleRowBand title="DA arrears (auto)" titleClassName="text-violet-900">
-                          {[
-                            { label: "DA ARR.", value: v(g, "daArrearsPaid") },
-                            { label: "TR. ARR.", value: v(g, "transportArrearsPaid") },
-                            { label: "Gross arr.", value: v(g, "grossArrear" as keyof GovernmentPreviewMonthly) },
-                            { label: "CPF arr.", value: v(g, "cpfArrear" as keyof GovernmentPreviewMonthly) },
-                            { label: "Net arr.", value: v(g, "netArrear" as keyof GovernmentPreviewMonthly) },
-                          ].map(({ label, value }) => (
-                            <td key={label} className="border-r border-slate-100 px-2 py-2 align-bottom last:border-r-0">
-                              <FieldChip label={label} readOnly value={value} onChange={() => {}} />
-                            </td>
-                          ))}
-                        </SingleRowBand>
-                      )}
-                    </div>
-                  </td>
-                  <td className={tdNum}>{v(g, "totalEarnings").toLocaleString("en-IN")}</td>
-                  <td className={tdNum}>{v(g, "totalDeductions").toLocaleString("en-IN")}</td>
-                  <td className={tdNum}>{r.netPay.toLocaleString("en-IN")}</td>
-                  <td className={tdNum}>
-                    {readOnly ? (
-                      (r.incentive ?? 0).toLocaleString("en-IN")
-                    ) : (
-                      <input
-                        type="number"
-                        min={0}
-                        value={r.incentive ?? 0}
-                        onChange={(e) => onUpdate(r.employeeUserId, "incentive", parseInt(e.target.value, 10) || 0)}
-                        className={inpWide}
-                      />
-                    )}
-                  </td>
-                  <td className={tdNum}>
-                    {readOnly ? (
-                      (r.reimbursement ?? 0).toLocaleString("en-IN")
-                    ) : (
-                      <input
-                        type="number"
-                        min={0}
-                        value={r.reimbursement ?? 0}
-                        onChange={(e) => onUpdate(r.employeeUserId, "reimbursement", parseInt(e.target.value, 10) || 0)}
-                        className={inpWide}
-                      />
-                    )}
-                  </td>
-                  <td className={`${tdNum} font-semibold text-slate-900`}>{r.takeHome.toLocaleString("en-IN")}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+      <div className="space-y-4">
+        {rows.map((r) => (
+          <GovernmentEmployeeCard
+            key={r.employeeUserId}
+            row={r}
+            daysInMonth={daysInMonth}
+            effectiveRunDay={effectiveRunDay}
+            readOnly={readOnly}
+            onUpdate={onUpdate}
+            expanded={expandedIds.has(r.employeeUserId)}
+            onToggleExpand={() => toggleExpand(r.employeeUserId)}
+          />
+        ))}
       </div>
-      <p className="mt-2 text-[10px] leading-snug text-slate-500">
+      <p className="text-[10px] leading-snug text-slate-500">
         Paid days max {effectiveRunDay ?? daysInMonth} (month length {daysInMonth} days). Σ Ded includes all deduction
         fields; the payslip &quot;CPF&quot; bundle is CPF + DA CPF + VPF + PF loan.
       </p>

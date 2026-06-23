@@ -18,7 +18,14 @@ import {
   type GovernmentOptionalMonthlyEarnings,
 } from "@/lib/governmentPayroll";
 import { applyAutoArrearsToGovernmentMonthly } from "@/lib/payrollArrearCalc";
-import { GovernmentRunPreviewTable, type GovernmentRunPreviewRow } from "@/components/payroll/GovernmentRunPreviewTable";
+import {
+  GovernmentRunPreviewTable,
+  type GovernmentPreviewMonthly,
+  type GovernmentRunPreviewRow,
+} from "@/components/payroll/GovernmentRunPreviewTable";
+import { PayrollPreviewToolbar } from "@/components/payroll/PayrollPreviewToolbar";
+import { PrivateRunPreviewCards } from "@/components/payroll/PrivateRunPreviewCards";
+import { v as govPreviewV } from "@/components/payroll/payrollRunPreviewShared";
 import { isAdminRole } from "@/lib/roles";
 import { GovernmentPayslipPrint } from "@/components/payslip/GovernmentPayslipPrint";
 import type { GovernmentMonthlySlip } from "@/lib/governmentPayslipLayout";
@@ -619,6 +626,7 @@ function PayrollPageContent() {
   const [runYear, setRunYear] = useState(() => String(new Date().getFullYear()));
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
+  const [previewSearch, setPreviewSearch] = useState("");
   const [preview, setPreview] = useState<{
     periodName: string;
     periodStart: string;
@@ -718,6 +726,40 @@ function PayrollPageContent() {
     if (!rows?.length) return false;
     return rows.every((r: any) => r.payrollMode === "government" && !r.error);
   }, [preview?.rows]);
+
+  const filteredEditableRows = useMemo(() => {
+    const q = previewSearch.trim().toLowerCase();
+    if (!q) return editableRows;
+    return editableRows.filter((r) => {
+      const name = (r.employeeName ?? "").toLowerCase();
+      const email = (r.employeeEmail ?? "").toLowerCase();
+      return name.includes(q) || email.includes(q);
+    });
+  }, [editableRows, previewSearch]);
+
+  const previewTotals = useMemo(() => {
+    let gross = 0;
+    let deductions = 0;
+    let net = 0;
+    for (const r of filteredEditableRows) {
+      const g = r.governmentMonthly as GovernmentPreviewMonthly | null | undefined;
+      if (g && typeof g === "object") {
+        gross += govPreviewV(g, "totalEarnings");
+        deductions += govPreviewV(g, "totalDeductions");
+        net += r.netPay ?? govPreviewV(g, "netSalary");
+      } else {
+        gross += r.grossPay ?? 0;
+        deductions += r.deductions ?? 0;
+        net += r.takeHome ?? r.netPay ?? 0;
+      }
+    }
+    return {
+      employees: filteredEditableRows.length,
+      gross: Math.round(gross),
+      deductions: Math.round(deductions),
+      net: Math.round(net),
+    };
+  }, [filteredEditableRows]);
 
   // Salary slips tab (admin/HR view employee payslips)
   const [employees, setEmployees] = useState<{ id: string; name: string | null; email: string }[]>([]);
@@ -1857,387 +1899,95 @@ function PayrollPageContent() {
 
       {tab === "run" && (
         <div className="space-y-4">
-          <div className="card">
+          <div className="card overflow-visible">
             <h2 className="mb-1 text-lg font-semibold text-slate-900">Run monthly payroll</h2>
-            
+
             <form onSubmit={handleRunPayroll} className="space-y-4">
-              <div className="flex flex-wrap items-end gap-4">
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-slate-700">Month</label>
-                  <select
-                    value={runMonth}
-                    onChange={(e) => setRunMonth(e.target.value)}
-                    className="w-24 rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  >
-                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((m) => (
-                      <option key={m} value={String(m).padStart(2, "0")}>
-                        {["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][m - 1]}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-slate-700">Year</label>
-                  <input
-                    type="number"
-                    min="2020"
-                    max="2030"
-                    value={runYear}
-                    onChange={(e) => setRunYear(e.target.value)}
-                    className="w-20 rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  />
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  {preview?.periodName && (
-                    <span className="text-lg font-semibold text-slate-800">{preview.periodName}</span>
-                  )}
-                  <button
-                    type="submit"
-                    className={`btn btn-primary ${
-                      preview?.alreadyRun && preview?.payrollComplete !== false ? "cursor-not-allowed opacity-50" : ""
-                    }`}
-                    disabled={running || (!!preview?.alreadyRun && preview?.payrollComplete !== false)}
-                  >
-                    {running
-                      ? "Generating..."
-                      : preview?.alreadyRun && preview?.payrollComplete === false
-                        ? "Add missing payslips"
-                        : "Generate"}
-                  </button>
-                </div>
-              </div>
-              {runError && <p className="text-sm text-red-600">{runError}</p>}
-              {preview && !previewLoading && preview.daysInMonth ? (
-                <p className="text-xs text-slate-600">Days in month: {preview.daysInMonth}</p>
-              ) : null}
-              {preview?.alreadyRun && (
-                <div className="flex flex-wrap items-center gap-3">
-                  <p className="text-sm text-amber-700">
-                    Payroll already run for this period.
-                    {preview.payrollComplete === false && typeof preview.missingPayslipCount === "number" ? (
-                      <span className="ml-1 font-medium">
-                        {preview.missingPayslipCount} employee(s) still need payslips (e.g. new joiners)—click &quot;Add missing
-                        payslips&quot; to create them and update Excel.
-                      </span>
-                    ) : null}
-                  </p>
-                  {preview?.existingPeriodId && (
-                    <a
-                      href={`/api/payroll/export?periodId=${preview.existingPeriodId}`}
-                      download
-                      className="btn btn-outline !py-1.5 !text-sm"
-                    >
-                      Download Excel
-                    </a>
-                  )}
-                </div>
-              )}
+              <PayrollPreviewToolbar
+                runMonth={runMonth}
+                runYear={runYear}
+                onMonthChange={setRunMonth}
+                onYearChange={setRunYear}
+                periodName={preview?.periodName}
+                running={running}
+                generateDisabled={!!preview?.alreadyRun && preview?.payrollComplete !== false}
+                generateLabel={
+                  preview?.alreadyRun && preview?.payrollComplete === false
+                    ? "Add missing payslips"
+                    : "Generate"
+                }
+                search={previewSearch}
+                onSearchChange={setPreviewSearch}
+                totals={previewTotals}
+                filteredCount={filteredEditableRows.length}
+                totalCount={editableRows.length}
+              >
+                {runError && <p className="text-sm text-red-600">{runError}</p>}
+                {preview && !previewLoading && preview.daysInMonth ? (
+                  <p className="text-xs text-slate-600">Days in month: {preview.daysInMonth}</p>
+                ) : null}
+                {preview?.alreadyRun && (
+                  <div className="flex flex-wrap items-center gap-3">
+                    <p className="text-sm text-amber-700">
+                      Payroll already run for this period.
+                      {preview.payrollComplete === false && typeof preview.missingPayslipCount === "number" ? (
+                        <span className="ml-1 font-medium">
+                          {preview.missingPayslipCount} employee(s) still need payslips (e.g. new joiners)—click &quot;Add
+                          missing payslips&quot; to create them and update Excel.
+                        </span>
+                      ) : null}
+                    </p>
+                    {preview?.existingPeriodId && (
+                      <a
+                        href={`/api/payroll/export?periodId=${preview.existingPeriodId}`}
+                        download
+                        className="btn btn-outline !py-1.5 !text-sm"
+                      >
+                        Download Excel
+                      </a>
+                    )}
+                  </div>
+                )}
+              </PayrollPreviewToolbar>
               {previewLoading ? (
                 <div className="py-4">
                   <SkeletonTable rows={8} columns={8} />
                 </div>
               ) : editableRows.length ? (
-                <div className="mt-4 border-t border-slate-200 pt-4">
-                  <p className="mb-3 text-sm text-slate-600">
-                    {preview?.alreadyRun
-                      ? preview?.payrollComplete === false
-                        ? "Saved payslips are read-only. Rows marked as pending will get payslips when you add missing payslips."
-                        : "Payroll generated for this period. Values are read-only."
-                      : previewAllGovernment
-                        ? "Government payroll: preview matches the pay slip earnings and deduction columns. Paid days use the calendar month (see Days column max). Changing days recomputes Basic, DA, HRA, CPF, and totals."
-                        : "Edit values before generating. Changing pay days will recalculate gross, PF, ESIC and deductions."}
-                  </p>
+                filteredEditableRows.length ? (
+                  <div className="pt-2">
+                    <p className="mb-3 text-sm text-slate-600">
+                      {preview?.alreadyRun
+                        ? preview?.payrollComplete === false
+                          ? "Saved payslips are read-only. Rows marked as pending will get payslips when you add missing payslips."
+                          : "Payroll generated for this period. Values are read-only."
+                        : previewAllGovernment
+                          ? "Government payroll: preview matches the pay slip earnings and deduction columns. Paid days use the calendar month. Changing days recomputes Basic, DA, HRA, CPF, and totals."
+                          : "Edit values before generating. Changing pay days will recalculate gross, PF, ESIC and deductions."}
+                    </p>
 
-                  {previewAllGovernment && preview?.daysInMonth ? (
-                    <GovernmentRunPreviewTable
-                      rows={editableRows as GovernmentRunPreviewRow[]}
-                      daysInMonth={preview.daysInMonth}
-                      effectiveRunDay={preview.effectiveRunDay ?? preview.workingDaysThroughRunDay ?? preview.daysInMonth}
-                      readOnly={!!preview?.alreadyRun}
-                      onUpdate={updateEditableRow}
-                    />
-                  ) : (
-                    <div className="-mx-1 overflow-x-auto sm:mx-0">
-                      <table className="w-full min-w-[720px] table-fixed text-left text-xs">
-                        <thead className="bg-slate-50 text-slate-600">
-                          <tr>
-                            <th className="w-[100px] px-1.5 py-1">Employee</th>
-                            <th className="w-[52px] px-1 py-1">Days</th>
-                            <th className="w-[60px] px-1 py-1">Gross</th>
-                            <th className="w-[60px] px-1 py-1">Net</th>
-                            <th className="w-[48px] px-1 py-1">{previewHasGovernment ? "CPF" : "PF"}</th>
-                            <th className="w-[48px] px-1 py-1">PF(R)</th>
-                            <th className="w-[48px] px-1 py-1">ESIC</th>
-                            <th className="w-[52px] px-1 py-1">ESIC(R)</th>
-                            <th className="w-[44px] px-1 py-1">PT</th>
-                            <th className="w-[48px] px-1 py-1">Bonus</th>
-                            <th className="w-[48px] px-1 py-1">Inc</th>
-                            <th className="w-[52px] px-1 py-1">Reimb</th>
-                            <th className="w-[44px] px-1 py-1">TDS</th>
-                            <th className="w-[52px] px-1 py-1">Ded</th>
-                            <th className="w-[60px] px-1 py-1">Take</th>
-                            <th className="w-[60px] px-1 py-1">CTC</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {editableRows.map((r) => {
-                            const readOnly = !!preview?.alreadyRun;
-                            return (
-                              <tr key={r.employeeUserId} className="border-t border-slate-200">
-                                <td
-                                  className="truncate px-1.5 py-1 font-medium text-slate-900"
-                                  title={r.employeeName || r.employeeEmail || undefined}
-                                >
-                                  <span className="align-middle">{r.employeeName || r.employeeEmail || "—"}</span>
-                                  {r.payslipPending ? (
-                                    <span className="ml-1 inline-block align-middle rounded bg-amber-100 px-1 py-0 text-[10px] font-medium text-amber-900">
-                                      Pending slip
-                                    </span>
-                                  ) : null}
-                                </td>
-                                <td className="px-1 py-1">
-                                  {readOnly ? (
-                                    <span className="py-0.5">
-                                      {r.payDays}
-                                      {r.unpaidLeaveDays > 0 ? ` (-${r.unpaidLeaveDays})` : ""}
-                                    </span>
-                                  ) : (
-                                    <>
-                                      <input
-                                        type="number"
-                                        min={0}
-                                        max={preview?.effectiveRunDay ?? preview?.daysInMonth ?? 31}
-                                        value={r.payDays}
-                                        onChange={(e) =>
-                                          updateEditableRow(r.employeeUserId, "payDays", parseInt(e.target.value, 10) || 0)
-                                        }
-                                        className="w-full max-w-[44px] rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                                      />
-                                      {r.unpaidLeaveDays > 0 && (
-                                        <span className="ml-0.5 text-[10px] text-amber-700">(-{r.unpaidLeaveDays})</span>
-                                      )}
-                                      {r.payDaysSuppressedMinAttendance ? null : null}
-                                    </>
-                                  )}
-                                </td>
-                                <td className="px-1 py-1">
-                                  {readOnly ? (
-                                    <span>{r.grossPay.toLocaleString("en-IN")}</span>
-                                  ) : (
-                                    <input
-                                      type="number"
-                                      min={0}
-                                      value={r.grossPay}
-                                      onChange={(e) =>
-                                        updateEditableRow(r.employeeUserId, "grossPay", parseInt(e.target.value, 10) || 0)
-                                      }
-                                      className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                                    />
-                                  )}
-                                </td>
-                                <td className="px-1 py-1">
-                                  {readOnly ? (
-                                    <span>{r.netPay.toLocaleString("en-IN")}</span>
-                                  ) : (
-                                    <input
-                                      type="number"
-                                      min={0}
-                                      value={r.netPay}
-                                      onChange={(e) =>
-                                        updateEditableRow(r.employeeUserId, "netPay", parseInt(e.target.value, 10) || 0)
-                                      }
-                                      className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                                    />
-                                  )}
-                                </td>
-                                <td className="px-1 py-1">
-                                  {readOnly ? (
-                                    <span>{r.pfEmployee.toLocaleString("en-IN")}</span>
-                                  ) : (
-                                    <input
-                                      type="number"
-                                      min={0}
-                                      value={r.pfEmployee}
-                                      onChange={(e) =>
-                                        updateEditableRow(r.employeeUserId, "pfEmployee", parseInt(e.target.value, 10) || 0)
-                                      }
-                                      className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                                    />
-                                  )}
-                                </td>
-                                <td className="px-1 py-1">
-                                  {readOnly ? (
-                                    <span>{r.pfEmployer.toLocaleString("en-IN")}</span>
-                                  ) : (
-                                    <input
-                                      type="number"
-                                      min={0}
-                                      value={r.pfEmployer}
-                                      onChange={(e) =>
-                                        updateEditableRow(r.employeeUserId, "pfEmployer", parseInt(e.target.value, 10) || 0)
-                                      }
-                                      className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                                    />
-                                  )}
-                                </td>
-                                <td className="px-1 py-1">
-                                  {readOnly ? (
-                                    <span>{r.esicEmployee.toLocaleString("en-IN")}</span>
-                                  ) : (
-                                    <input
-                                      type="number"
-                                      min={0}
-                                      value={r.esicEmployee}
-                                      onChange={(e) =>
-                                        updateEditableRow(r.employeeUserId, "esicEmployee", parseInt(e.target.value, 10) || 0)
-                                      }
-                                      className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                                    />
-                                  )}
-                                </td>
-                                <td className="px-1 py-1">
-                                  {readOnly ? (
-                                    <span>{r.esicEmployer.toLocaleString("en-IN")}</span>
-                                  ) : (
-                                    <input
-                                      type="number"
-                                      min={0}
-                                      value={r.esicEmployer}
-                                      onChange={(e) =>
-                                        updateEditableRow(r.employeeUserId, "esicEmployer", parseInt(e.target.value, 10) || 0)
-                                      }
-                                      className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                                    />
-                                  )}
-                                </td>
-                                <td className="px-1 py-1">
-                                  {readOnly ? (
-                                    <span>{r.profTax.toLocaleString("en-IN")}</span>
-                                  ) : (
-                                    <input
-                                      type="number"
-                                      min={0}
-                                      value={r.profTax}
-                                      onChange={(e) =>
-                                        updateEditableRow(r.employeeUserId, "profTax", parseInt(e.target.value, 10) || 0)
-                                      }
-                                      className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                                    />
-                                  )}
-                                </td>
-                                <td className="px-1 py-1">
-                                  {readOnly ? (
-                                    <span>{(r.prBonus ?? 0).toLocaleString("en-IN")}</span>
-                                  ) : (
-                                    <input
-                                      type="number"
-                                      min={0}
-                                      value={r.prBonus ?? 0}
-                                      onChange={(e) =>
-                                        updateEditableRow(r.employeeUserId, "prBonus", parseInt(e.target.value, 10) || 0)
-                                      }
-                                      className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                                    />
-                                  )}
-                                </td>
-                                <td className="px-1 py-1">
-                                  {readOnly ? (
-                                    <span>{(r.incentive ?? 0).toLocaleString("en-IN")}</span>
-                                  ) : (
-                                    <input
-                                      type="number"
-                                      min={0}
-                                      value={r.incentive ?? 0}
-                                      onChange={(e) =>
-                                        updateEditableRow(r.employeeUserId, "incentive", parseInt(e.target.value, 10) || 0)
-                                      }
-                                      className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                                    />
-                                  )}
-                                </td>
-                                <td className="px-1 py-1">
-                                  {readOnly ? (
-                                    <span>{(r.reimbursement ?? 0).toLocaleString("en-IN")}</span>
-                                  ) : (
-                                    <input
-                                      type="number"
-                                      min={0}
-                                      value={r.reimbursement ?? 0}
-                                      onChange={(e) =>
-                                        updateEditableRow(r.employeeUserId, "reimbursement", parseInt(e.target.value, 10) || 0)
-                                      }
-                                      className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                                    />
-                                  )}
-                                </td>
-                                <td className="px-1 py-1">
-                                  {readOnly ? (
-                                    <span>{(r.tds ?? 0).toLocaleString("en-IN")}</span>
-                                  ) : (
-                                    <input
-                                      type="number"
-                                      min={0}
-                                      value={r.tds ?? 0}
-                                      onChange={(e) =>
-                                        updateEditableRow(r.employeeUserId, "tds", parseInt(e.target.value, 10) || 0)
-                                      }
-                                      className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                                    />
-                                  )}
-                                </td>
-                                <td className="px-1 py-1">
-                                  {readOnly ? (
-                                    <span>{r.deductions.toLocaleString("en-IN")}</span>
-                                  ) : (
-                                    <input
-                                      type="number"
-                                      min={0}
-                                      value={r.deductions}
-                                      onChange={(e) =>
-                                        updateEditableRow(r.employeeUserId, "deductions", parseInt(e.target.value, 10) || 0)
-                                      }
-                                      className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                                    />
-                                  )}
-                                </td>
-                                <td className="px-1 py-1">
-                                  {readOnly ? (
-                                    <span className="font-medium">{r.takeHome.toLocaleString("en-IN")}</span>
-                                  ) : (
-                                    <input
-                                      type="number"
-                                      min={0}
-                                      value={r.takeHome}
-                                      onChange={(e) =>
-                                        updateEditableRow(r.employeeUserId, "takeHome", parseInt(e.target.value, 10) || 0)
-                                      }
-                                      className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs font-medium focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                                    />
-                                  )}
-                                </td>
-                                <td className="px-1 py-1">
-                                  {readOnly ? (
-                                    <span>{r.ctc.toLocaleString("en-IN")}</span>
-                                  ) : (
-                                    <input
-                                      type="number"
-                                      min={0}
-                                      value={r.ctc}
-                                      onChange={(e) =>
-                                        updateEditableRow(r.employeeUserId, "ctc", parseInt(e.target.value, 10) || 0)
-                                      }
-                                      className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                                    />
-                                  )}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
+                    {previewAllGovernment && preview?.daysInMonth ? (
+                      <GovernmentRunPreviewTable
+                        rows={filteredEditableRows as GovernmentRunPreviewRow[]}
+                        daysInMonth={preview.daysInMonth}
+                        effectiveRunDay={preview.effectiveRunDay ?? preview.workingDaysThroughRunDay ?? preview.daysInMonth}
+                        readOnly={!!preview?.alreadyRun}
+                        onUpdate={updateEditableRow}
+                      />
+                    ) : preview?.daysInMonth ? (
+                      <PrivateRunPreviewCards
+                        rows={filteredEditableRows}
+                        daysInMonth={preview.daysInMonth}
+                        effectiveRunDay={preview.effectiveRunDay ?? preview.workingDaysThroughRunDay ?? preview.daysInMonth}
+                        readOnly={!!preview?.alreadyRun}
+                        pfLabel={previewHasGovernment ? "CPF" : "PF"}
+                        onUpdate={updateEditableRow}
+                      />
+                    ) : null}
+                  </div>
+                ) : (
+                  <p className="muted py-6">No employees match your search.</p>
+                )
             ) : !preview?.alreadyRun ? (
               <p className="muted py-6">No employees in payroll for the selected month and year. Ensure employees have Payroll Master records.</p>
             ) : null}
