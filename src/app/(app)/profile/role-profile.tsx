@@ -1339,6 +1339,7 @@ export function ProfileContent() {
                           dateOfJoining: user?.dateOfJoining,
                           uanNumber: user?.uanNumber,
                           pfNumber: user?.pfNumber,
+                          cpfNumber: (user as { cpfNumber?: string })?.cpfNumber ?? user?.pfNumber,
                         }}
                         slip={{
                           generatedAt: slip.generatedAt,

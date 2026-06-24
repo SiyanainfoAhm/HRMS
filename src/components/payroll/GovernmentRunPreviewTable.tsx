@@ -365,10 +365,7 @@ export function GovernmentRunPreviewTable({ rows, daysInMonth, effectiveRunDay, 
 
   return (
     <div className="space-y-4">
-      <p className="text-xs leading-relaxed text-slate-600">
-        Each employee has a separate preview card. Scroll earnings and deductions horizontally inside the card — the
-        summary on the left stays visible. Expand or collapse cards to review multiple employees quickly.
-      </p>
+
       <div className="space-y-4">
         {rows.map((r) => (
           <GovernmentEmployeeCard

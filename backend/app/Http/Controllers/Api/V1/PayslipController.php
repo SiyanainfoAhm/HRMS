@@ -7,13 +7,19 @@ use App\Models\HrmsCompany;
 use App\Models\HrmsDepartment;
 use App\Models\HrmsEmployee;
 use App\Models\HrmsGovernmentMonthlyPayroll;
+use App\Models\HrmsPayrollMaster;
 use App\Models\HrmsPayslip;
 use App\Models\HrmsUser;
+use App\Services\PayrollMasterService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class PayslipController extends Controller
 {
+    public function __construct(
+        private readonly PayrollMasterService $masterService,
+    ) {}
+
     public function me(Request $request): JsonResponse
     {
         $user = $request->user();
@@ -104,7 +110,9 @@ class PayslipController extends Controller
             $deptName = HrmsDepartment::find($user->department_id)?->name;
         }
 
-        $formatted = $payslips->map(function (HrmsPayslip $p) use ($govByPayslipId) {
+        $currentMaster = $this->currentMasterForEmployee($companyId, $employeeUserId);
+
+        $formatted = $payslips->map(function (HrmsPayslip $p) use ($govByPayslipId, $currentMaster, $user) {
             $period = $p->payrollPeriod;
             $periodStart = $period?->period_start?->format('Y-m-d') ?? '';
             $periodEnd = $period?->period_end?->format('Y-m-d') ?? '';
@@ -124,6 +132,8 @@ class PayslipController extends Controller
 
             $payDays = $p->pay_days !== null ? (float) $p->pay_days : 0;
             $gov = $govByPayslipId->get($p->id);
+            $master = $this->resolveMasterForSlip($gov, $currentMaster);
+            $bank = $this->resolveBankDetails($p, $master, $user);
             $unpaidLeaves = $gov
                 ? (int) ($gov->unpaid_days ?? 0)
                 : ($totalDays > 0 ? max(0, $totalDays - (int) $payDays) : 0);
@@ -158,9 +168,9 @@ class PayslipController extends Controller
                 'currency' => $p->currency,
                 'payslipNumber' => $p->payslip_number,
                 'generatedAt' => $generatedAt,
-                'bankName' => $p->bank_name ?? '',
-                'bankAccountNumber' => $p->bank_account_number ?? '',
-                'bankIfsc' => $p->bank_ifsc ?? '',
+                'bankName' => $bank['bank_name'],
+                'bankAccountNumber' => $bank['bank_account_number'],
+                'bankIfsc' => $bank['bank_ifsc'],
                 'periodStart' => $periodStart,
                 'periodEnd' => $periodEnd,
                 'periodName' => $period?->period_name ?? '',
@@ -173,7 +183,7 @@ class PayslipController extends Controller
 
         return [
             'company' => $this->formatCompany($company),
-            'user' => $this->formatUser($user, $deptName),
+            'user' => $this->formatUser($user, $deptName, $currentMaster),
             'payslips' => $formatted,
         ];
     }
@@ -200,11 +210,13 @@ class PayslipController extends Controller
         ];
     }
 
-    private function formatUser(?HrmsUser $user, ?string $departmentName): ?array
+    private function formatUser(?HrmsUser $user, ?string $departmentName, ?HrmsPayrollMaster $master = null): ?array
     {
         if (! $user) {
             return null;
         }
+
+        $cpfNo = $this->firstNonEmptyString($master?->cpf_no, $user->cpf_number, $user->pf_number);
 
         return [
             'id' => $user->id,
@@ -213,13 +225,72 @@ class PayslipController extends Controller
             'designation' => $user->designation ?? '',
             'departmentName' => $departmentName ?? '',
             'dateOfJoining' => $user->date_of_joining?->format('Y-m-d') ?? '',
-            'aadhaar' => $user->aadhaar ?? '',
-            'pan' => $user->pan ?? '',
-            'uanNumber' => $user->uan_number ?? '',
-            'pfNumber' => $user->pf_number ?? '',
+            'aadhaar' => $this->firstNonEmptyString($master?->aadhaar, $user->aadhaar),
+            'pan' => $this->firstNonEmptyString($master?->pan, $user->pan),
+            'uanNumber' => $this->firstNonEmptyString($master?->uan, $user->uan_number),
+            'pfNumber' => $cpfNo,
+            'cpfNumber' => $cpfNo,
             'esicNumber' => $user->esic_number ?? '',
             'governmentPayLevel' => $user->government_pay_level,
         ];
+    }
+
+    private function currentMasterForEmployee(string $companyId, string $employeeUserId): ?HrmsPayrollMaster
+    {
+        return HrmsPayrollMaster::query()
+            ->where('company_id', $companyId)
+            ->where(function ($q) use ($employeeUserId) {
+                $q->where('employee_user_id', $employeeUserId)
+                    ->orWhere('user_id', $employeeUserId);
+            })
+            ->whereNull('effective_to')
+            ->orderByDesc('effective_start_date')
+            ->orderByDesc('effective_from')
+            ->first();
+    }
+
+    private function resolveMasterForSlip(
+        ?HrmsGovernmentMonthlyPayroll $gov,
+        ?HrmsPayrollMaster $currentMaster,
+    ): ?HrmsPayrollMaster {
+        if ($gov?->payroll_master_id) {
+            $fromSlip = $this->masterService->findMasterOrHistoryById($gov->payroll_master_id);
+            if ($fromSlip) {
+                return $fromSlip;
+            }
+        }
+
+        return $currentMaster;
+    }
+
+    /**
+     * @return array{bank_name: string, bank_account_number: string, bank_ifsc: string}
+     */
+    private function resolveBankDetails(
+        HrmsPayslip $payslip,
+        ?HrmsPayrollMaster $master,
+        ?HrmsUser $user,
+    ): array {
+        return [
+            'bank_name' => $this->firstNonEmptyString($payslip->bank_name, $master?->bank_name, $user?->bank_name),
+            'bank_account_number' => $this->firstNonEmptyString(
+                $payslip->bank_account_number,
+                $master?->bank_account_number,
+                $user?->bank_account_number,
+            ),
+            'bank_ifsc' => $this->firstNonEmptyString($payslip->bank_ifsc, $master?->bank_ifsc, $user?->bank_ifsc),
+        ];
+    }
+
+    private function firstNonEmptyString(mixed ...$values): string
+    {
+        foreach ($values as $value) {
+            if (is_string($value) && trim($value) !== '') {
+                return trim($value);
+            }
+        }
+
+        return '';
     }
 
     private function fmtDate(string $ymd): string

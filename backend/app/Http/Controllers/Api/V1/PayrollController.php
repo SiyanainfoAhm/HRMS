@@ -731,6 +731,9 @@ class PayrollController extends Controller
                             + ($ded['vpf'] ?? 0) + ($ded['pfLoan'] ?? $ded['pf_loan'] ?? 0));
                     }
 
+                    $master = $this->currentMasterForEmployee((string) $user->company_id, $employeeUserId);
+                    $bank = $this->bankDetailsForPayslip($master, $empUser);
+
                     $payslip = HrmsPayslip::create([
                         'company_id' => $user->company_id,
                         'employee_id' => $subjectEmployeeId,
@@ -758,14 +761,12 @@ class PayrollController extends Controller
                         'pr_bonus' => (float) ($row['pr_bonus'] ?? $row['prBonus'] ?? 0),
                         'reimbursement' => (float) ($row['reimbursement'] ?? 0),
                         'tds' => (float) ($ded['incomeTax'] ?? $ded['income_tax'] ?? $row['tds'] ?? 0),
-                        'bank_name' => $empUser->bank_name,
-                        'bank_account_number' => $empUser->bank_account_number,
-                        'bank_ifsc' => $empUser->bank_ifsc,
+                        'bank_name' => $bank['bank_name'],
+                        'bank_account_number' => $bank['bank_account_number'],
+                        'bank_ifsc' => $bank['bank_ifsc'],
                         'generated_at' => now(),
                         'created_by' => $createdByEmployeeId,
                     ]);
-
-                    $master = $this->currentMasterForEmployee((string) $user->company_id, $employeeUserId);
 
                     $govMonthlyId = $this->insertGovernmentMonthlyFromPreview(
                         $user->company_id,
@@ -786,6 +787,9 @@ class PayrollController extends Controller
                         $monthlyPayrollIdsByEmployee[$employeeUserId] = $govMonthlyId;
                     }
                 } else {
+                    $master = $this->currentMasterForEmployee((string) $user->company_id, $employeeUserId);
+                    $bank = $this->bankDetailsForPayslip($master, $empUser);
+
                     HrmsPayslip::create([
                         'company_id' => $user->company_id,
                         'employee_id' => $subjectEmployeeId,
@@ -813,9 +817,9 @@ class PayrollController extends Controller
                         'pr_bonus' => (float) ($row['pr_bonus'] ?? $row['prBonus'] ?? 0),
                         'reimbursement' => (float) ($row['reimbursement'] ?? 0),
                         'tds' => (float) ($row['tds'] ?? 0),
-                        'bank_name' => $empUser->bank_name,
-                        'bank_account_number' => $empUser->bank_account_number,
-                        'bank_ifsc' => $empUser->bank_ifsc,
+                        'bank_name' => $bank['bank_name'],
+                        'bank_account_number' => $bank['bank_account_number'],
+                        'bank_ifsc' => $bank['bank_ifsc'],
                         'generated_at' => now(),
                         'created_by' => $createdByEmployeeId,
                     ]);
@@ -886,9 +890,11 @@ class PayrollController extends Controller
 
             $empUser = HrmsUser::find($slip['employee_user_id']);
             if ($empUser) {
-                $slip['bank_name'] = $empUser->bank_name;
-                $slip['bank_account_number'] = $empUser->bank_account_number;
-                $slip['bank_ifsc'] = $empUser->bank_ifsc;
+                $master = $this->currentMasterForEmployee((string) $user->company_id, $slip['employee_user_id']);
+                $bank = $this->bankDetailsForPayslip($master, $empUser);
+                $slip['bank_name'] = $bank['bank_name'];
+                $slip['bank_account_number'] = $bank['bank_account_number'];
+                $slip['bank_ifsc'] = $bank['bank_ifsc'];
                 $slip['employee_id'] = $this->employeeRecordIdForUser(
                     $slip['employee_user_id'],
                     $user->company_id,
@@ -1304,6 +1310,32 @@ class PayrollController extends Controller
             ->orderByDesc('effective_start_date')
             ->orderByDesc('effective_from')
             ->first();
+    }
+
+    /**
+     * @return array{bank_name: ?string, bank_account_number: ?string, bank_ifsc: ?string}
+     */
+    private function bankDetailsForPayslip(?HrmsPayrollMaster $master, HrmsUser $empUser): array
+    {
+        return [
+            'bank_name' => $this->firstNonEmptyString($master?->bank_name, $empUser->bank_name),
+            'bank_account_number' => $this->firstNonEmptyString(
+                $master?->bank_account_number,
+                $empUser->bank_account_number,
+            ),
+            'bank_ifsc' => $this->firstNonEmptyString($master?->bank_ifsc, $empUser->bank_ifsc),
+        ];
+    }
+
+    private function firstNonEmptyString(mixed ...$values): ?string
+    {
+        foreach ($values as $value) {
+            if (is_string($value) && trim($value) !== '') {
+                return trim($value);
+            }
+        }
+
+        return null;
     }
 
     /**

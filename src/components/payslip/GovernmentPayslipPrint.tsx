@@ -22,6 +22,7 @@ export type GovernmentPayslipPrintUser = {
   dateOfJoining?: string | null;
   uanNumber?: string | null;
   pfNumber?: string | null;
+  cpfNumber?: string | null;
 };
 
 export type GovernmentPayslipPrintSlip = {
@@ -113,7 +114,7 @@ export const GovernmentPayslipPrint = forwardRef<HTMLDivElement, GovernmentPaysl
                     <span className="text-slate-600">UAN:</span> {user?.uanNumber || "—"}
                   </div>
                   <div>
-                    <span className="text-slate-600">CPF No:</span> {user?.pfNumber || "—"}
+                    <span className="text-slate-600">CPF No:</span> {user?.cpfNumber || user?.pfNumber || "—"}
                   </div>
                   <div>
                     <span className="text-slate-600">Bank:</span> {slip.bankName || "—"}

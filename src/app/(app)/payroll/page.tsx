@@ -713,6 +713,8 @@ function PayrollPageContent() {
       governmentMonthly?: unknown;
       govRecalc?: GovRecalcPayload;
       payslipPending?: boolean;
+      arrearLineIds?: string[];
+      arrearLines?: Array<{ id?: string }>;
     }[]
   >([]);
 
@@ -777,6 +779,7 @@ function PayrollPageContent() {
       pan: string;
       uanNumber: string;
       pfNumber: string;
+      cpfNumber?: string;
       esicNumber: string;
     } | null;
     payslips: {
@@ -1823,12 +1826,12 @@ function PayrollPageContent() {
         tds: r.tds ?? 0,
         takeHome: r.takeHome,
         ctc: r.ctc,
-        arrearLineIds: Array.isArray((r as { arrearLineIds?: string[] }).arrearLineIds)
-          ? (r as { arrearLineIds: string[] }).arrearLineIds
-          : Array.isArray((r as { arrearLines?: { id?: string }[] }).arrearLines)
-            ? ((r as { arrearLines: { id?: string }[] }).arrearLines
+        arrearLineIds: Array.isArray(r.arrearLineIds)
+          ? r.arrearLineIds
+          : Array.isArray(r.arrearLines)
+            ? r.arrearLines
                 .map((line) => line?.id)
-                .filter((id): id is string => typeof id === "string" && id.length > 0))
+                .filter((id): id is string => typeof id === "string" && id.length > 0)
             : [],
         ...(r.payrollMode === "government" && r.govRecalc
           ? {
@@ -1969,15 +1972,7 @@ function PayrollPageContent() {
               ) : editableRows.length ? (
                 filteredEditableRows.length ? (
                   <div className="pt-2">
-                    <p className="mb-3 text-sm text-slate-600">
-                      {preview?.alreadyRun
-                        ? preview?.payrollComplete === false
-                          ? "Saved payslips are read-only. Rows marked as pending will get payslips when you add missing payslips."
-                          : "Payroll generated for this period. Values are read-only."
-                        : previewAllGovernment
-                          ? "Government payroll: preview matches the pay slip earnings and deduction columns. Paid days use the calendar month. Changing days recomputes Basic, DA, HRA, CPF, and totals."
-                          : "Edit values before generating. Changing pay days will recalculate gross, PF, ESIC and deductions."}
-                    </p>
+
 
                     {previewAllGovernment && preview?.daysInMonth ? (
                       <GovernmentRunPreviewTable
@@ -2142,6 +2137,7 @@ function PayrollPageContent() {
                       dateOfJoining: user?.dateOfJoining,
                       uanNumber: user?.uanNumber,
                       pfNumber: user?.pfNumber,
+                      cpfNumber: user?.cpfNumber ?? user?.pfNumber,
                     }}
                     slip={{
                       generatedAt: slip.generatedAt,
