@@ -6,8 +6,12 @@ import { useAuth } from "@/contexts/AuthContext";
 import { FormEvent, useEffect, useState, useRef, useMemo, Suspense } from "react";
 import { useToast } from "@/components/ToastProvider";
 import { dispatchHrmsChange, onHrmsChange } from "@/lib/hrmsChangeBus";
-import { SkeletonTable, SkeletonText } from "@/components/Skeleton";
+import { SkeletonTable, SkeletonPayslip, SkeletonEmployeeList } from "@/components/Skeleton";
 import { DatePickerField } from "@/components/ui/DatePickerField";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { SelectField } from "@/components/ui/SelectField";
+import { Button } from "@/components/ui/Button";
 import { computePayrollFromGross, defaultSalaryBreakup } from "@/lib/payrollCalc";
 import {
   computeGovernmentMonthlyPayroll,
@@ -27,6 +31,7 @@ import { PayrollPreviewToolbar } from "@/components/payroll/PayrollPreviewToolba
 import { PrivateRunPreviewCards } from "@/components/payroll/PrivateRunPreviewCards";
 import { v as govPreviewV } from "@/components/payroll/payrollRunPreviewShared";
 import { isAdminRole } from "@/lib/roles";
+import { Download, FileText } from "lucide-react";
 import { GovernmentPayslipPrint } from "@/components/payslip/GovernmentPayslipPrint";
 import type { GovernmentMonthlySlip } from "@/lib/governmentPayslipLayout";
 import type { GovernmentLeavePayslipDisplay } from "@/lib/leaveBalancesCompute";
@@ -627,6 +632,12 @@ function PayrollPageContent() {
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
   const [previewSearch, setPreviewSearch] = useState("");
+  const [debouncedPreviewSearch, setDebouncedPreviewSearch] = useState("");
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebouncedPreviewSearch(previewSearch), 200);
+    return () => window.clearTimeout(t);
+  }, [previewSearch]);
   const [preview, setPreview] = useState<{
     periodName: string;
     periodStart: string;
@@ -730,14 +741,14 @@ function PayrollPageContent() {
   }, [preview?.rows]);
 
   const filteredEditableRows = useMemo(() => {
-    const q = previewSearch.trim().toLowerCase();
+    const q = debouncedPreviewSearch.trim().toLowerCase();
     if (!q) return editableRows;
     return editableRows.filter((r) => {
       const name = (r.employeeName ?? "").toLowerCase();
       const email = (r.employeeEmail ?? "").toLowerCase();
       return name.includes(q) || email.includes(q);
     });
-  }, [editableRows, previewSearch]);
+  }, [editableRows, debouncedPreviewSearch]);
 
   const previewTotals = useMemo(() => {
     let gross = 0;
@@ -1901,192 +1912,162 @@ function PayrollPageContent() {
   }
 
   const payrollPageTitle = tab === "run" ? "Run Payroll" : "Salary Slips";
-  const payrollPageSubtitle =
-    tab === "run"
-      ? "Preview and generate monthly payroll for the selected period."
-      : "View and print employee salary slips.";
 
   return (
-    <section className="space-y-6">
-      <div>
-        <h1 className="page-title">{payrollPageTitle}</h1>
-        <p className="muted">{payrollPageSubtitle}</p>
-      </div>
+    <section className="flex min-h-0 flex-col gap-4">
+      <PageHeader title={payrollPageTitle} className="!mb-0" />
 
       {tab === "run" && (
-        <div className="space-y-4">
-          <div className="card overflow-visible">
-            <h2 className="mb-1 text-lg font-semibold text-slate-900">Run monthly payroll</h2>
-
-            <form onSubmit={handleRunPayroll} className="space-y-4">
-              <PayrollPreviewToolbar
-                runMonth={runMonth}
-                runYear={runYear}
-                onMonthChange={setRunMonth}
-                onYearChange={setRunYear}
-                periodName={preview?.periodName}
-                running={running}
-                generateDisabled={!!preview?.alreadyRun && preview?.payrollComplete !== false}
-                generateLabel={
-                  preview?.alreadyRun && preview?.payrollComplete === false
-                    ? "Add missing payslips"
-                    : "Generate"
-                }
-                search={previewSearch}
-                onSearchChange={setPreviewSearch}
-                totals={previewTotals}
-                filteredCount={filteredEditableRows.length}
-                totalCount={editableRows.length}
-              >
-                {runError && <p className="text-sm text-red-600">{runError}</p>}
-                {preview && !previewLoading && preview.daysInMonth ? (
-                  <p className="text-xs text-slate-600">Days in month: {preview.daysInMonth}</p>
-                ) : null}
-                {preview?.alreadyRun && (
-                  <div className="flex flex-wrap items-center gap-3">
-                    <p className="text-sm text-amber-700">
-                      Payroll already run for this period.
-                      {preview.payrollComplete === false && typeof preview.missingPayslipCount === "number" ? (
-                        <span className="ml-1 font-medium">
-                          {preview.missingPayslipCount} employee(s) still need payslips (e.g. new joiners)—click &quot;Add
-                          missing payslips&quot; to create them and update Excel.
-                        </span>
-                      ) : null}
-                    </p>
-                    {preview?.existingPeriodId && (
-                      <a
-                        href={`/api/payroll/export?periodId=${preview.existingPeriodId}`}
-                        download
-                        className="btn btn-outline !py-1.5 !text-sm"
-                      >
-                        Download Excel
-                      </a>
-                    )}
-                  </div>
+        <form
+          onSubmit={handleRunPayroll}
+          className="page-workspace flex min-h-[min(calc(100dvh-11rem),760px)] flex-col overflow-hidden"
+        >
+          <PayrollPreviewToolbar
+            runMonth={runMonth}
+            runYear={runYear}
+            onMonthChange={setRunMonth}
+            onYearChange={setRunYear}
+            periodName={preview?.periodName}
+            running={running}
+            generateDisabled={!!preview?.alreadyRun && preview?.payrollComplete !== false}
+            generateLabel={
+              preview?.alreadyRun && preview?.payrollComplete === false ? "Add missing payslips" : "Generate"
+            }
+            search={previewSearch}
+            onSearchChange={setPreviewSearch}
+            totals={previewTotals}
+            filteredCount={filteredEditableRows.length}
+            totalCount={editableRows.length}
+          >
+            {runError && <p className="text-sm text-red-600">{runError}</p>}
+            {preview?.alreadyRun && (
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <span className="rounded-lg bg-amber-50 px-2.5 py-1 text-amber-900">
+                  Payroll already run for this period.
+                  {preview.payrollComplete === false && typeof preview.missingPayslipCount === "number"
+                    ? ` ${preview.missingPayslipCount} missing slip(s).`
+                    : null}
+                </span>
+                {preview?.existingPeriodId && (
+                  <a
+                    href={`/api/payroll/export?periodId=${preview.existingPeriodId}`}
+                    download
+                    className="btn btn-outline btn-sm"
+                  >
+                    Download Excel
+                  </a>
                 )}
-              </PayrollPreviewToolbar>
-              {previewLoading ? (
-                <div className="py-4">
-                  <SkeletonTable rows={8} columns={8} />
-                </div>
-              ) : editableRows.length ? (
-                filteredEditableRows.length ? (
-                  <div className="pt-2">
+              </div>
+            )}
+          </PayrollPreviewToolbar>
 
-
-                    {previewAllGovernment && preview?.daysInMonth ? (
-                      <GovernmentRunPreviewTable
-                        rows={filteredEditableRows as GovernmentRunPreviewRow[]}
-                        daysInMonth={preview.daysInMonth}
-                        effectiveRunDay={preview.effectiveRunDay ?? preview.workingDaysThroughRunDay ?? preview.daysInMonth}
-                        readOnly={!!preview?.alreadyRun}
-                        onUpdate={updateEditableRow}
-                      />
-                    ) : preview?.daysInMonth ? (
-                      <PrivateRunPreviewCards
-                        rows={filteredEditableRows}
-                        daysInMonth={preview.daysInMonth}
-                        effectiveRunDay={preview.effectiveRunDay ?? preview.workingDaysThroughRunDay ?? preview.daysInMonth}
-                        readOnly={!!preview?.alreadyRun}
-                        pfLabel={previewHasGovernment ? "CPF" : "PF"}
-                        onUpdate={updateEditableRow}
-                      />
-                    ) : null}
-                  </div>
-                ) : (
-                  <p className="muted py-6">No employees match your search.</p>
-                )
+          <div className="min-h-0 flex-1 overflow-hidden p-3 sm:p-4">
+            {previewLoading ? (
+              <div className="flex h-full flex-col gap-3 p-3">
+                <SkeletonEmployeeList items={6} />
+              </div>
+            ) : editableRows.length ? (
+              filteredEditableRows.length ? (
+                previewAllGovernment && preview?.daysInMonth ? (
+                  <GovernmentRunPreviewTable
+                    rows={filteredEditableRows as GovernmentRunPreviewRow[]}
+                    daysInMonth={preview.daysInMonth}
+                    effectiveRunDay={
+                      preview.effectiveRunDay ?? preview.workingDaysThroughRunDay ?? preview.daysInMonth
+                    }
+                    readOnly={!!preview?.alreadyRun}
+                    onUpdate={updateEditableRow}
+                  />
+                ) : preview?.daysInMonth ? (
+                  <PrivateRunPreviewCards
+                    rows={filteredEditableRows}
+                    daysInMonth={preview.daysInMonth}
+                    effectiveRunDay={
+                      preview.effectiveRunDay ?? preview.workingDaysThroughRunDay ?? preview.daysInMonth
+                    }
+                    readOnly={!!preview?.alreadyRun}
+                    pfLabel={previewHasGovernment ? "CPF" : "PF"}
+                    onUpdate={updateEditableRow}
+                  />
+                ) : null
+              ) : (
+                <EmptyState title="No matches" description="Try a different name or email." />
+              )
             ) : !preview?.alreadyRun ? (
-              <p className="muted py-6">No employees in payroll for the selected month and year. Ensure employees have Payroll Master records.</p>
+              <EmptyState
+                title="No payroll data"
+                description="Generate payroll for the selected month, or add employees in Payroll Master."
+              />
             ) : null}
-            </form>
           </div>
-        </div>
+        </form>
       )}
 
       {tab === "slips" && (
-        <div className="card">
-          <h2 className="mb-1 text-lg font-semibold text-slate-900">Employee Salary Slips</h2>
-          <p className="muted mb-4">Select an employee and period to view or download their salary slip.</p>
-
-          <div className="mb-4 flex flex-wrap items-end gap-4">
-            <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Employee</label>
-              <select
-                value={selectedEmployeeId}
-                onChange={(e) => setSelectedEmployeeId(e.target.value)}
-                className="min-w-[200px] rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              >
-                <option value="">Select employee</option>
-                {employees.map((e) => (
-                  <option key={e.id} value={e.id}>
-                    {e.name || e.email || e.id}
-                  </option>
-                ))}
-              </select>
-            </div>
+        <div className="card space-y-4">
+          <div className="flex flex-wrap items-end gap-3 border-b border-slate-100 pb-4">
+            <SelectField
+              label="Employee"
+              value={selectedEmployeeId}
+              onChange={setSelectedEmployeeId}
+              loading={employeesLoading}
+              searchable
+              placeholder="Select employee"
+              options={employees.map((e) => ({
+                value: e.id,
+                label: e.name || e.email || e.id,
+              }))}
+              className="min-w-[220px] flex-1 max-w-sm"
+            />
             {slipsData && (
               <>
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-slate-700">Month</label>
-                  <select
-                    value={slipMonth}
-                    onChange={(e) => setSlipMonth(e.target.value)}
-                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  >
-                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((m) => (
-                      <option key={m} value={String(m).padStart(2, "0")}>
-                        {["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][m - 1]}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-slate-700">Year</label>
-                  <select
-                    value={slipYear}
-                    onChange={(e) => setSlipYear(e.target.value)}
-                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  >
-                    {(() => {
-                      const joinYear = slipsData.user?.dateOfJoining
-                        ? parseInt(slipsData.user.dateOfJoining.slice(0, 4), 10)
-                        : new Date().getFullYear() - 2;
-                      const currentYear = new Date().getFullYear();
-                      const years = [];
-                      for (let y = currentYear; y >= Math.max(joinYear, 2020); y--) years.push(y);
-                      return years.map((y) => (
-                        <option key={y} value={String(y)}>
-                          {y}
-                        </option>
-                      ));
-                    })()}
-                  </select>
-                </div>
+                <SelectField
+                  label="Month"
+                  value={slipMonth}
+                  onChange={setSlipMonth}
+                  options={[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((m) => ({
+                    value: String(m).padStart(2, "0"),
+                    label: ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][m - 1],
+                  }))}
+                  className="w-28"
+                />
+                <SelectField
+                  label="Year"
+                  value={slipYear}
+                  onChange={setSlipYear}
+                  options={(() => {
+                    const joinYear = slipsData.user?.dateOfJoining
+                      ? parseInt(slipsData.user.dateOfJoining.slice(0, 4), 10)
+                      : new Date().getFullYear() - 2;
+                    const currentYear = new Date().getFullYear();
+                    const years = [];
+                    for (let y = currentYear; y >= Math.max(joinYear, 2020); y--) years.push(y);
+                    return years.map((y) => ({ value: String(y), label: String(y) }));
+                  })()}
+                  className="w-28"
+                />
                 {slipsData.payslips.some((p) => p.periodMonth === `${slipYear}-${slipMonth}`) && (
-                  <button
-                    type="button"
-                    onClick={handleSlipDownloadPdf}
-                    disabled={pdfDownloading}
-                    className="btn btn-primary"
-                  >
-                    {pdfDownloading ? "Generating..." : "Download PDF"}
-                  </button>
+                  <Button size="sm" onClick={handleSlipDownloadPdf} loading={pdfDownloading} disabled={pdfDownloading}>
+                    <Download className="h-4 w-4" />
+                    Download PDF
+                  </Button>
                 )}
               </>
             )}
           </div>
 
           {employeesLoading ? (
-            <SkeletonText lines={2} />
+            <SkeletonTable rows={4} columns={4} />
           ) : slipsLoading ? (
-            <div className="py-4">
-              <SkeletonTable rows={6} columns={6} />
-            </div>
+            <SkeletonPayslip />
           ) : slipsError ? (
             <p className="text-sm text-red-600">{slipsError}</p>
           ) : !slipsData || !selectedEmployeeId ? (
-            <p className="muted">Select an employee to view their salary slips.</p>
+            <EmptyState
+              icon={FileText}
+              title="No slip selected"
+              description="Choose an employee and payroll period to preview their salary slip."
+            />
           ) : (
             (() => {
               const key = `${slipYear}-${slipMonth}`;
@@ -2095,7 +2076,13 @@ function PayrollPageContent() {
               const user = slipsData.user;
 
               if (!slip) {
-                return <p className="muted">No payslip for the selected period.</p>;
+                return (
+                  <EmptyState
+                    icon={FileText}
+                    title="No payslip"
+                    description="No salary slip was generated for the selected period."
+                  />
+                );
               }
 
               const salaryDate = new Date(slip.generatedAt).toLocaleDateString("en-IN", {
@@ -2126,7 +2113,8 @@ function PayrollPageContent() {
               const gov = slip.governmentMonthly;
               if (gov) {
                 return (
-                  <GovernmentPayslipPrint
+                  <div className="flex justify-center overflow-x-auto py-2">
+                    <GovernmentPayslipPrint
                     ref={payslipRef}
                     company={company}
                     user={{
@@ -2151,10 +2139,12 @@ function PayrollPageContent() {
                     gov={gov as GovernmentMonthlySlip}
                     leavePayslip={slip.leavePayslip ?? null}
                   />
+                  </div>
                 );
               }
 
               return (
+                <div className="flex justify-center overflow-x-auto py-2">
                 <div
                   ref={payslipRef}
                   className="payslip-print-area overflow-x-auto rounded-lg border border-black bg-white p-6 print:overflow-visible print:max-w-[190mm]"
@@ -2304,6 +2294,7 @@ function PayrollPageContent() {
                       </tr>
                     </tbody>
                   </table>
+                </div>
                 </div>
               );
             })()

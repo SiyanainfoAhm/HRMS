@@ -73,13 +73,17 @@ export type DatePickerFieldProps = {
   min?: string;
   /** Inclusive max date (YYYY-MM-DD) */
   max?: string;
+  /** Aliases for min/max */
+  minDate?: string;
+  maxDate?: string;
   disabled?: boolean;
   required?: boolean;
   id?: string;
+  label?: string;
+  error?: string | null;
+  helperText?: string;
   placeholder?: string;
-  /** Extra classes on the outer wrapper (e.g. w-full) */
   className?: string;
-  /** Show Clear / Today in footer */
   showQuickActions?: boolean;
 };
 
@@ -90,13 +94,20 @@ export function DatePickerField({
   onChange,
   min,
   max,
+  minDate,
+  maxDate,
   disabled,
   required,
   id,
+  label,
+  error,
+  helperText,
   placeholder = "dd-mm-yyyy",
   className = "",
   showQuickActions = true,
 }: DatePickerFieldProps) {
+  const minBound = minDate ?? min;
+  const maxBound = maxDate ?? max;
   const [open, setOpen] = useState(false);
   const [coords, setCoords] = useState<{ top: number; left: number; width: number } | null>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -152,8 +163,8 @@ export function DatePickerField({
 
   const disabledMatcher = (date: Date) => {
     const ymd = dateToYmdIST(date);
-    if (min && isYmd(min) && ymd < min) return true;
-    if (max && isYmd(max) && ymd > max) return true;
+    if (minBound && isYmd(minBound) && ymd < minBound) return true;
+    if (maxBound && isYmd(maxBound) && ymd > maxBound) return true;
     return false;
   };
 
@@ -163,8 +174,8 @@ export function DatePickerField({
     const defaultEnd = new Date(now.getFullYear() + 10, 11, 1);
     let start = defaultStart;
     let end = defaultEnd;
-    if (min && isYmd(min)) start = ymdToMonthStart(min);
-    if (max && isYmd(max)) end = ymdToMonthStart(max);
+    if (minBound && isYmd(minBound)) start = ymdToMonthStart(minBound);
+    if (maxBound && isYmd(maxBound)) end = ymdToMonthStart(maxBound);
     if (start > end) {
       return {
         startMonth: defaultStart,
@@ -174,7 +185,7 @@ export function DatePickerField({
       };
     }
     return { startMonth: start, endMonth: end, minYear: start.getFullYear(), maxYear: end.getFullYear() };
-  }, [min, max]);
+  }, [minBound, maxBound]);
 
   useEffect(() => {
     if (!open) return;
@@ -229,7 +240,8 @@ export function DatePickerField({
 
   const triggerClass =
     "input-field flex items-center justify-between gap-2 text-left " +
-    (disabled ? "cursor-not-allowed bg-slate-50 text-slate-500" : "hover:border-slate-400");
+    (disabled ? "cursor-not-allowed bg-slate-50 text-slate-500" : "hover:border-slate-400") +
+    (error ? " border-red-400 focus:border-red-500 focus:ring-red-500/20" : "");
 
   const navBtn = "picker-nav-btn";
 
@@ -443,8 +455,8 @@ export function DatePickerField({
               className="picker-link"
               onClick={() => {
                 const t = istTodayYmd();
-                if (min && t < min) return;
-                if (max && t > max) return;
+                if (minBound && t < minBound) return;
+                if (maxBound && t > maxBound) return;
                 onChange(t);
                 setOpen(false);
               }}
@@ -459,6 +471,12 @@ export function DatePickerField({
 
   return (
     <div className={`relative w-full ${className}`}>
+      {label ? (
+        <label htmlFor={id} className="label-field mb-1.5 text-xs">
+          {label}
+          {required ? <span className="text-red-500"> *</span> : null}
+        </label>
+      ) : null}
       <button
         ref={btnRef}
         type="button"
@@ -466,12 +484,15 @@ export function DatePickerField({
         disabled={disabled}
         aria-expanded={open}
         aria-haspopup="dialog"
+        aria-invalid={Boolean(error)}
         onClick={() => !disabled && setOpen((o) => !o)}
         className={triggerClass}
       >
         <span className={value ? "tabular-nums" : "text-slate-400"}>{value ? formatDdMmYyyy(value) : placeholder}</span>
         <CalendarIcon className="shrink-0 text-slate-400" />
       </button>
+      {error ? <p className="mt-1 text-xs text-red-600">{error}</p> : null}
+      {!error && helperText ? <p className="mt-1 text-xs text-brand-muted">{helperText}</p> : null}
       {panel}
     </div>
   );

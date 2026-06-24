@@ -7,6 +7,10 @@ import { useAuth } from "@/contexts/AuthContext";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useToast } from "@/components/ToastProvider";
 import { SkeletonList, SkeletonTable, SkeletonText } from "@/components/Skeleton";
+import { DatePickerField } from "@/components/ui/DatePickerField";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { cn } from "@/lib/cn";
 
 export function SettingsContent() {
   const { role } = useAuth();
@@ -560,47 +564,32 @@ export function SettingsContent() {
     void saveCompany(e);
   }
 
+  const tabBtn = (id: typeof activeTab, label: string) => (
+    <button
+      type="button"
+      onClick={() => setActiveTab(id)}
+      className={cn(
+        "rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors",
+        activeTab === id
+          ? "bg-brand-navy text-white shadow-sm"
+          : "border border-brand-border bg-white text-slate-600 hover:bg-slate-50",
+      )}
+    >
+      {label}
+    </button>
+  );
+
   return (
     <section className="space-y-4">
-      <div>
-        <h1 className="page-title">Settings</h1>
-        <p className="muted">
-          {INSTITUTE_LABEL} profile (name, address, professional tax, default DA/HRA) can be changed by Super Admin only. Org structure,
-          roles, and designations can be managed by Admin and HR.
-        </p>
-      </div>
+      <PageHeader title="Settings" description="Institute profile and organization structure" className="!mb-2" />
 
       {canViewCompanySettings ? (
         <>
           <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => setActiveTab("company")}
-              className={`btn ${activeTab === "company" ? "btn-primary" : "btn-outline"}`}
-            >
-              Institute
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab("roles")}
-              className={`btn ${activeTab === "roles" ? "btn-primary" : "btn-outline"}`}
-            >
-              Roles
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab("org")}
-              className={`btn ${activeTab === "org" ? "btn-primary" : "btn-outline"}`}
-            >
-              Divisions & Departments
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab("designations")}
-              className={`btn ${activeTab === "designations" ? "btn-primary" : "btn-outline"}`}
-            >
-              Designations
-            </button>
+            {tabBtn("company", "Institute")}
+            {tabBtn("roles", "Roles")}
+            {tabBtn("org", "Divisions & Departments")}
+            {tabBtn("designations", "Designations")}
           </div>
 
           {moduleError && <p className="text-sm text-red-600">{moduleError}</p>}
@@ -618,72 +607,81 @@ export function SettingsContent() {
                 )}
               </div>
               {loading ? (
-                <div className="mt-4">
-                  <SkeletonText lines={5} />
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  {Array.from({ length: 6 }).map((_, i) => (
+                    <div key={i} className="h-10 animate-pulse rounded-lg bg-slate-100" />
+                  ))}
                 </div>
               ) : error ? (
                 <p className="mt-4 text-sm text-red-600">{error}</p>
               ) : (
-                <div className="mt-4 text-sm text-slate-700">
-                  <p>
-                    <span className="text-slate-500">Name:</span> {company?.name || "—"}
-                  </p>
-                  <p>
-                    <span className="text-slate-500">Industry:</span> {company?.industry || "—"}
-                  </p>
-                  <p>
-                    <span className="text-slate-500">Phone:</span> {company?.phone || "—"}
-                  </p>
-                  <div className="mt-3">
-                    <p className="text-slate-500">Address</p>
-                    {(() => {
-                      const a1 = typeof company?.address_line1 === "string" ? company.address_line1.trim() : "";
-                      const a2 = typeof company?.address_line2 === "string" ? company.address_line2.trim() : "";
-                      const city = typeof company?.city === "string" ? company.city.trim() : "";
-                      const state = typeof company?.state === "string" ? company.state.trim() : "";
-                      const pc = typeof company?.postal_code === "string" ? company.postal_code.trim() : "";
-                      const country = typeof company?.country === "string" ? company.country.trim() : "";
-                      const cityLine = [city, state].filter(Boolean).join(", ");
-                      const cityPostal = [cityLine || null, pc || null].filter(Boolean).join(" ");
-                      const hasAny = a1 || a2 || city || state || pc || country;
-                      if (!hasAny) {
-                        return <p className="mt-0.5 text-slate-700">—</p>;
-                      }
-                      return (
-                        <div className="mt-0.5 space-y-0.5 text-slate-800">
-                          {a1 ? <p>{a1}</p> : null}
-                          {a2 ? <p>{a2}</p> : null}
-                          {cityPostal ? <p>{cityPostal}</p> : null}
-                          {country ? <p>{country}</p> : null}
-                        </div>
-                      );
-                    })()}
+                <dl className="mt-4 grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
+                  <div>
+                    <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Name</dt>
+                    <dd className="mt-0.5 font-medium text-slate-900">{company?.name || "—"}</dd>
                   </div>
-                  <p className="mt-3">
-                    <span className="text-slate-500">PT annual (₹):</span>{" "}
-                    {company?.professional_tax_annual != null
-                      ? Number(company.professional_tax_annual).toLocaleString("en-IN")
-                      : "—"}
-                  </p>
-                  <p>
-                    <span className="text-slate-500">PT monthly fixed (₹):</span>{" "}
-                    {company?.professional_tax_monthly != null
-                      ? Number(company.professional_tax_monthly).toLocaleString("en-IN")
-                      : "—"}
-                  </p>
-                  <p>
-                    <span className="text-slate-500">Default DA %:</span>{" "}
-                    {company?.default_da_percent != null ? `${Number(company.default_da_percent)}%` : "53%"}
-                  </p>
-                  <p>
-                    <span className="text-slate-500">Default HRA %:</span>{" "}
-                    {company?.default_hra_percent != null ? `${Number(company.default_hra_percent)}%` : "30%"}
-                  </p>
-                  <p className="mt-1 text-xs text-slate-500">
-                    When DA or HRA is changed here, all current payroll master records are versioned: the old row gets an
-                    effective end date and a new row opens with the updated rates. History is visible in Payroll Master → Edit.
-                  </p>
-                </div>
+                  <div>
+                    <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Industry</dt>
+                    <dd className="mt-0.5 text-slate-800">{company?.industry || "—"}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Phone</dt>
+                    <dd className="mt-0.5 text-slate-800">{company?.phone || "—"}</dd>
+                  </div>
+                  <div className="sm:col-span-2 lg:col-span-3">
+                    <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Address</dt>
+                    <dd className="mt-0.5 text-slate-800">
+                      {(() => {
+                        const a1 = typeof company?.address_line1 === "string" ? company.address_line1.trim() : "";
+                        const a2 = typeof company?.address_line2 === "string" ? company.address_line2.trim() : "";
+                        const city = typeof company?.city === "string" ? company.city.trim() : "";
+                        const state = typeof company?.state === "string" ? company.state.trim() : "";
+                        const pc = typeof company?.postal_code === "string" ? company.postal_code.trim() : "";
+                        const country = typeof company?.country === "string" ? company.country.trim() : "";
+                        const cityLine = [city, state].filter(Boolean).join(", ");
+                        const cityPostal = [cityLine || null, pc || null].filter(Boolean).join(" ");
+                        const hasAny = a1 || a2 || city || state || pc || country;
+                        if (!hasAny) return "—";
+                        return (
+                          <span className="block space-y-0.5">
+                            {a1 ? <span className="block">{a1}</span> : null}
+                            {a2 ? <span className="block">{a2}</span> : null}
+                            {cityPostal ? <span className="block">{cityPostal}</span> : null}
+                            {country ? <span className="block">{country}</span> : null}
+                          </span>
+                        );
+                      })()}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">PT annual (₹)</dt>
+                    <dd className="mt-0.5 tabular-nums text-slate-800">
+                      {company?.professional_tax_annual != null
+                        ? Number(company.professional_tax_annual).toLocaleString("en-IN")
+                        : "—"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">PT monthly (₹)</dt>
+                    <dd className="mt-0.5 tabular-nums text-slate-800">
+                      {company?.professional_tax_monthly != null
+                        ? Number(company.professional_tax_monthly).toLocaleString("en-IN")
+                        : "—"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Default DA</dt>
+                    <dd className="mt-0.5 text-slate-800">
+                      {company?.default_da_percent != null ? `${Number(company.default_da_percent)}%` : "53%"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Default HRA</dt>
+                    <dd className="mt-0.5 text-slate-800">
+                      {company?.default_hra_percent != null ? `${Number(company.default_hra_percent)}%` : "30%"}
+                    </dd>
+                  </div>
+                </dl>
               )}
             </div>
           )}
@@ -815,7 +813,7 @@ export function SettingsContent() {
               {moduleTabLoading ? (
                 <SkeletonTable rows={5} columns={5} />
               ) : roles.length === 0 ? (
-                <p className="muted">No roles yet.</p>
+                <EmptyState title="No roles" description="Add roles to assign permissions." />
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-sm">
@@ -1361,12 +1359,11 @@ export function SettingsContent() {
                         </span>
                       )}
                     </p>
-                    <label className="mb-1 mt-3 block text-xs font-medium">Revision effective from</label>
-                    <input
-                      type="date"
+                    <DatePickerField
+                      label="Revision effective from"
                       value={form.payrollRevisionEffectiveFrom}
-                      onChange={(e) => setForm((p) => ({ ...p, payrollRevisionEffectiveFrom: e.target.value }))}
-                      className="w-full max-w-xs rounded-lg border border-amber-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                      onChange={(v) => setForm((p) => ({ ...p, payrollRevisionEffectiveFrom: v }))}
+                      className="max-w-xs"
                     />
                   </div>
                 )}

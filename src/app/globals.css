@@ -203,6 +203,54 @@
     @apply transition-colors duration-150;
   }
 
+  .select-field {
+    @apply input-field appearance-none pr-9;
+  }
+
+  .page-workspace {
+    @apply flex min-h-0 flex-col overflow-hidden rounded-2xl border border-brand-border bg-white shadow-card;
+  }
+
+  .data-table-shell {
+    @apply overflow-hidden rounded-xl border border-brand-border bg-white shadow-sm;
+  }
+
+  .skeleton-shimmer {
+    @apply relative overflow-hidden bg-slate-100;
+  }
+
+  .skeleton-shimmer::after {
+    content: "";
+    @apply absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/70 to-transparent;
+    animation: shimmer 1.4s ease-in-out infinite;
+  }
+
+  @keyframes shimmer {
+    100% {
+      transform: translateX(100%);
+    }
+  }
+
+  .segment-tab {
+    @apply rounded-lg px-3 py-1.5 text-sm font-medium transition-colors;
+  }
+
+  .segment-tab-active {
+    @apply bg-brand-navy text-white shadow-sm;
+  }
+
+  .segment-tab-inactive {
+    @apply text-slate-600 hover:bg-slate-100 hover:text-slate-900;
+  }
+
+  .metric-chip {
+    @apply inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium tabular-nums;
+  }
+
+  .btn-sm {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
   @media (hover: hover) {
     .table-modern tbody tr:hover {
       @apply bg-brand-blue/[0.03];

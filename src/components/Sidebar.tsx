@@ -148,7 +148,7 @@ export function Sidebar({
             >
               <span
                 className={cn(
-                  "relative flex shrink-0 items-center justify-center overflow-hidden rounded-xl border border-brand-border bg-gradient-to-br from-brand-navy to-brand-blue shadow-sm",
+                  "relative flex shrink-0 items-center justify-center overflow-hidden rounded-xl border border-brand-navy/20 bg-brand-navy shadow-sm",
                   collapsed ? "h-10 w-10" : "h-11 w-11",
                 )}
               >
@@ -183,9 +183,9 @@ export function Sidebar({
                   title={collapsed ? item.label : undefined}
                   onClick={closeMobile}
                   className={cn(
-                    "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200",
+                    "flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-all duration-200",
                     isActive
-                      ? "bg-brand-navy text-white shadow-sm"
+                      ? "bg-brand-navy text-white shadow-sm ring-1 ring-brand-navy/20"
                       : "text-slate-600 hover:bg-slate-100 hover:text-slate-900",
                     collapsed && "justify-center px-2",
                   )}
@@ -202,7 +202,7 @@ export function Sidebar({
               {!collapsed && (
                 <div className="flex min-w-0 flex-1 items-center gap-2">
                   <div
-                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-brand-navy to-brand-blue text-xs font-bold text-white"
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-2 border-white bg-brand-navy text-xs font-bold text-white shadow-sm ring-1 ring-brand-border"
                     title={user.email}
                   >
                     {initials}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { cn } from "@/lib/cn";
 import { PayrollComponentScroller, type PayrollScrollerHandle } from "./PayrollComponentScroller";
 import { PayrollEmployeeCardHeader } from "./PayrollEmployeeCardHeader";
 import {
@@ -95,17 +96,6 @@ type Props = {
   onUpdate: (employeeUserId: string, field: string, value: number) => void;
 };
 
-const MONTH_LABELS = [
-  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-] as const;
-
-function formatArrearPeriod(year?: number, month?: number): string {
-  if (!year || !month) return "—";
-  const label = MONTH_LABELS[month - 1] ?? String(month).padStart(2, "0");
-  return `${label} ${year}`;
-}
-
 function SummaryStat({ label, value, emphasis }: { label: string; value: string; emphasis?: boolean }) {
   return (
     <div className="min-w-0">
@@ -117,22 +107,39 @@ function SummaryStat({ label, value, emphasis }: { label: string; value: string;
   );
 }
 
-function GovernmentEmployeeCard({
+function StickyMiniSummary({
+  gross,
+  deductions,
+  net,
+  takeHome,
+}: {
+  gross: number;
+  deductions: number;
+  net: number;
+  takeHome: number;
+}) {
+  return (
+    <div className="grid grid-cols-2 gap-2 border-b border-slate-100 bg-slate-50/80 px-4 py-2.5 sm:grid-cols-4">
+      <SummaryStat label="Gross" value={fmtIn(gross)} />
+      <SummaryStat label="Deductions" value={fmtIn(deductions)} />
+      <SummaryStat label="Net pay" value={fmtIn(net)} emphasis />
+      <SummaryStat label="Take home" value={fmtIn(takeHome)} emphasis />
+    </div>
+  );
+}
+
+function GovernmentEmployeeDetail({
   row,
   daysInMonth,
   effectiveRunDay,
   readOnly,
   onUpdate,
-  expanded,
-  onToggleExpand,
 }: {
   row: GovernmentRunPreviewRow;
   daysInMonth: number;
   effectiveRunDay: number;
   readOnly: boolean;
   onUpdate: Props["onUpdate"];
-  expanded: boolean;
-  onToggleExpand: () => void;
 }) {
   const scrollerRef = useRef<PayrollScrollerHandle>(null);
   const g = row.governmentMonthly;
@@ -141,85 +148,58 @@ function GovernmentEmployeeCard({
   const totalEarn = v(g, "totalEarnings");
   const totalDed = v(g, "totalDeductions");
 
-  const summaryBlock = (
-    <div
-      className={
-        expanded
-          ? "grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3"
-          : "flex flex-wrap items-end gap-x-5 gap-y-2"
-      }
-    >
-      <SummaryStat label="Employee" value={displayName} />
-      <div>
-        <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Days</p>
-        {readOnly ? (
-          <p className="text-sm tabular-nums text-slate-800">
-            {row.payDays}
-            {row.unpaidLeaveDays > 0 ? ` (−${row.unpaidLeaveDays})` : ""}
-          </p>
-        ) : (
-          <input
-            type="number"
-            min={0}
-            max={effectiveRunDay ?? daysInMonth}
-            value={row.payDays}
-            onChange={(e) => onUpdate(row.employeeUserId, "payDays", parseInt(e.target.value, 10) || 0)}
-            className={`${inpWide} w-[4.5rem] min-w-[4rem]`}
-          />
-        )}
-      </div>
-      <SummaryStat label="Gr. basic" value={fmtIn(gb)} />
-      <SummaryStat label="Gross earnings" value={fmtIn(totalEarn)} />
-      <SummaryStat label="Total deductions" value={fmtIn(totalDed)} />
-      <SummaryStat label="Net pay" value={fmtIn(row.netPay)} emphasis />
-      {row.payslipPending ? (
-        <span className="self-center rounded bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-900">
-          Pending slip
-        </span>
-      ) : readOnly ? (
-        <span className="self-center rounded bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600">
-          Saved
-        </span>
-      ) : (
-        <span className="self-center rounded bg-sky-50 px-2 py-0.5 text-[10px] font-medium text-sky-800">
-          Editable
-        </span>
-      )}
-    </div>
-  );
-
   const showArrears =
     v(g, "grossArrear" as keyof GovernmentPreviewMonthly) > 0 ||
     v(g, "daArrearsPaid") > 0 ||
     v(g, "transportArrearsPaid") > 0;
 
   return (
-    <article className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+    <div className="flex h-full min-h-0 flex-col">
       <PayrollEmployeeCardHeader
         displayName={displayName}
         email={row.employeeEmail}
-        expanded={expanded}
-        onToggleExpand={onToggleExpand}
+        expanded
+        onToggleExpand={() => {}}
         gross={totalEarn}
         deductions={totalDed}
         net={row.netPay}
-        showScrollButtons={expanded}
+        showScrollButtons
         onScrollLeft={() => scrollerRef.current?.scrollLeft()}
         onScrollRight={() => scrollerRef.current?.scrollRight()}
         onResetScroll={() => scrollerRef.current?.resetScroll()}
+        hideExpandToggle
       />
 
-      <div className={expanded ? "flex flex-col md:flex-row" : "px-4 py-3"}>
-        <aside
-          className={
-            expanded
-              ? "w-full shrink-0 border-b border-slate-100 p-4 md:w-[min(100%,20rem)] md:border-b-0 md:border-r"
-              : "w-full"
-          }
-        >
-          {summaryBlock}
-          {expanded ? (
-            <div className="mt-4 grid grid-cols-2 gap-3 border-t border-slate-100 pt-3">
+      <StickyMiniSummary
+        gross={totalEarn}
+        deductions={totalDed}
+        net={row.netPay}
+        takeHome={row.takeHome}
+      />
+
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="flex flex-col lg:flex-row">
+          <aside className="w-full shrink-0 border-b border-slate-100 p-4 lg:w-56 lg:border-b-0 lg:border-r xl:w-64">
+            <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+              <SummaryStat label="Gr. basic" value={fmtIn(gb)} />
+              <div>
+                <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Days</p>
+                {readOnly ? (
+                  <p className="text-sm tabular-nums text-slate-800">
+                    {row.payDays}
+                    {row.unpaidLeaveDays > 0 ? ` (−${row.unpaidLeaveDays})` : ""}
+                  </p>
+                ) : (
+                  <input
+                    type="number"
+                    min={0}
+                    max={effectiveRunDay ?? daysInMonth}
+                    value={row.payDays}
+                    onChange={(e) => onUpdate(row.employeeUserId, "payDays", parseInt(e.target.value, 10) || 0)}
+                    className={`${inpWide} w-[4.5rem] min-w-[4rem]`}
+                  />
+                )}
+              </div>
               <div>
                 <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Advance</p>
                 {readOnly ? (
@@ -248,19 +228,22 @@ function GovernmentEmployeeCard({
                   />
                 )}
               </div>
-              <div className="col-span-2">
-                <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Take home</p>
-                <p className="text-base font-semibold tabular-nums text-slate-900">{fmtIn(row.takeHome)}</p>
-              </div>
             </div>
-          ) : null}
-        </aside>
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {row.payslipPending ? (
+                <span className="rounded bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-900">Pending slip</span>
+              ) : readOnly ? (
+                <span className="rounded bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600">Saved</span>
+              ) : (
+                <span className="rounded bg-sky-50 px-2 py-0.5 text-[10px] font-medium text-sky-800">Editable</span>
+              )}
+            </div>
+          </aside>
 
-        {expanded ? (
           <div className="min-w-0 flex-1 p-4">
             <PayrollComponentScroller ref={scrollerRef}>
               <div className="flex flex-col gap-4">
-                <PayrollSectionRow title="Earnings (paid month)" titleClassName="text-emerald-900">
+                <PayrollSectionRow title="Earnings" titleClassName="text-emerald-900">
                   {GOV_PREVIEW_EARNING_FIELDS.map(({ key, label }) => (
                     <FieldChip
                       key={key}
@@ -284,42 +267,12 @@ function GovernmentEmployeeCard({
                 </PayrollSectionRow>
                 {showArrears ? (
                   <PayrollSectionRow
-                    title={readOnly ? "DA arrears included in this payroll" : "DA arrears (unpaid)"}
+                    title={readOnly ? "Arrears (included)" : "Arrears (unpaid)"}
                     titleClassName="text-violet-900"
                   >
-                    {!readOnly ? (
-                      <p className="col-span-full mb-1 text-[10px] text-violet-800/80">
-                        Arrears shown here are unpaid and will be marked paid after payroll confirmation.
-                      </p>
-                    ) : null}
-                    {(row.arrearLines ?? []).length > 0 ? (
-                      <div className="col-span-full mb-2 space-y-1">
-                        {(row.arrearLines ?? []).map((line) => (
-                          <p
-                            key={line.id ?? `${line.arrearYear}-${line.arrearMonth}-${line.oldDaPercent}`}
-                            className="text-[10px] leading-snug text-violet-900"
-                          >
-                            {readOnly ? "Included arrears" : "Unpaid arrears"}:{" "}
-                            {formatArrearPeriod(line.arrearYear, line.arrearMonth)}, DA{" "}
-                            {line.oldDaPercent ?? "—"}% → {line.newDaPercent ?? "—"}%
-                            {line.id ? (
-                              <span className="text-violet-700/80"> · line {line.id.slice(0, 8)}…</span>
-                            ) : null}
-                            {line.revisionEventId ? (
-                              <span className="text-violet-700/80"> · revision {line.revisionEventId.slice(0, 8)}…</span>
-                            ) : null}
-                          </p>
-                        ))}
-                        {(row.arrearLineIds ?? []).length > 0 ? (
-                          <p className="text-[9px] text-violet-700/70">
-                            Line IDs: {(row.arrearLineIds ?? []).join(", ")}
-                          </p>
-                        ) : null}
-                      </div>
-                    ) : null}
                     {[
-                      { label: "DA ARR.", value: v(g, "daArrearsPaid") },
-                      { label: "TR. ARR.", value: v(g, "transportArrearsPaid") },
+                      { label: "DA arr.", value: v(g, "daArrearsPaid") },
+                      { label: "Tr. arr.", value: v(g, "transportArrearsPaid") },
                       { label: "Gross arr.", value: v(g, "grossArrear" as keyof GovernmentPreviewMonthly) },
                       { label: "CPF arr.", value: v(g, "cpfArrear" as keyof GovernmentPreviewMonthly) },
                       { label: "Net arr.", value: v(g, "netArrear" as keyof GovernmentPreviewMonthly) },
@@ -331,59 +284,84 @@ function GovernmentEmployeeCard({
               </div>
             </PayrollComponentScroller>
           </div>
-        ) : null}
+        </div>
       </div>
-    </article>
+    </div>
   );
 }
 
 export function GovernmentRunPreviewTable({ rows, daysInMonth, effectiveRunDay, readOnly, onUpdate }: Props) {
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!rows.length) {
-      setExpandedIds(new Set());
+      setSelectedId(null);
       return;
     }
-    setExpandedIds((prev) => {
-      if (prev.size > 0) {
-        const next = new Set([...prev].filter((id) => rows.some((r) => r.employeeUserId === id)));
-        if (next.size > 0) return next;
-      }
-      return new Set([rows[0].employeeUserId]);
+    setSelectedId((prev) => {
+      if (prev && rows.some((r) => r.employeeUserId === prev)) return prev;
+      return rows[0].employeeUserId;
     });
   }, [rows]);
 
-  const toggleExpand = (id: string) => {
-    setExpandedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
+  const selected = rows.find((r) => r.employeeUserId === selectedId);
 
   return (
-    <div className="space-y-4">
+    <div className="page-workspace h-[min(calc(100dvh-17rem),680px)] min-h-[380px]">
+      <div className="grid h-full min-h-0 grid-cols-1 overflow-hidden xl:grid-cols-[minmax(220px,260px)_1fr]">
+        <div className="flex min-h-0 flex-col border-b border-brand-border xl:border-b-0 xl:border-r">
+          <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-3 py-2">
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Employees</span>
+            <span className="text-xs tabular-nums text-slate-500">{rows.length}</span>
+          </div>
+          <ul className="min-h-0 flex-1 overflow-y-auto" role="listbox" aria-label="Payroll employees">
+            {rows.map((r) => {
+              const name = r.employeeName || r.employeeEmail || "—";
+              const active = r.employeeUserId === selectedId;
+              const g = r.governmentMonthly;
+              return (
+                <li key={r.employeeUserId}>
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={active}
+                    onClick={() => setSelectedId(r.employeeUserId)}
+                    className={cn(
+                      "w-full border-b border-slate-50 px-3 py-2.5 text-left transition-colors",
+                      active ? "bg-brand-navy/5 ring-1 ring-inset ring-brand-blue/30" : "hover:bg-slate-50",
+                    )}
+                  >
+                    <div className="truncate text-sm font-medium text-slate-900">{name}</div>
+                    <div className="mt-0.5 flex items-center justify-between gap-2 text-xs text-slate-500">
+                      <span className="truncate">{r.employeeEmail}</span>
+                      <span className="shrink-0 tabular-nums font-medium text-slate-700">
+                        {fmtIn(v(g, "totalEarnings") || r.netPay)}
+                      </span>
+                    </div>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
 
-      <div className="space-y-4">
-        {rows.map((r) => (
-          <GovernmentEmployeeCard
-            key={r.employeeUserId}
-            row={r}
-            daysInMonth={daysInMonth}
-            effectiveRunDay={effectiveRunDay}
-            readOnly={readOnly}
-            onUpdate={onUpdate}
-            expanded={expandedIds.has(r.employeeUserId)}
-            onToggleExpand={() => toggleExpand(r.employeeUserId)}
-          />
-        ))}
+        <div className="min-h-0 overflow-hidden">
+          {selected ? (
+            <GovernmentEmployeeDetail
+              key={selected.employeeUserId}
+              row={selected}
+              daysInMonth={daysInMonth}
+              effectiveRunDay={effectiveRunDay}
+              readOnly={readOnly}
+              onUpdate={onUpdate}
+            />
+          ) : (
+            <div className="flex h-full items-center justify-center p-8 text-sm text-slate-500">
+              Select an employee to view payroll details.
+            </div>
+          )}
+        </div>
       </div>
-      <p className="text-[10px] leading-snug text-slate-500">
-        Paid days max {effectiveRunDay ?? daysInMonth} (month length {daysInMonth} days). Σ Ded includes all deduction
-        fields; the payslip &quot;CPF&quot; bundle is CPF + DA CPF + VPF + PF loan.
-      </p>
     </div>
   );
 }

@@ -47,7 +47,7 @@ export function Topbar({
         <span className="hidden rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700 lg:inline">
           {roleLabel(user.role)}
         </span>
-        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-brand-navy to-brand-blue text-xs font-bold text-white">
+        <div className="flex h-9 w-9 items-center justify-center rounded-full border border-brand-border bg-brand-navy text-xs font-bold text-white shadow-sm">
           {(user.name || user.email).slice(0, 2).toUpperCase()}
         </div>
       </div>

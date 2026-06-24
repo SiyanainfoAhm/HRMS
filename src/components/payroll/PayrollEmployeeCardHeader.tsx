@@ -15,6 +15,7 @@ type Props = {
   onScrollLeft: () => void;
   onScrollRight: () => void;
   onResetScroll: () => void;
+  hideExpandToggle?: boolean;
 };
 
 const iconBtn =
@@ -32,24 +33,33 @@ export function PayrollEmployeeCardHeader({
   onScrollLeft,
   onScrollRight,
   onResetScroll,
+  hideExpandToggle,
 }: Props) {
   return (
     <header className="flex flex-wrap items-center gap-2 border-b border-slate-100 bg-slate-50/60 px-3 py-2 sm:px-4 sm:py-2.5">
-      <button
-        type="button"
-        onClick={onToggleExpand}
-        className="flex min-w-0 items-center gap-1.5 text-left text-sm font-semibold text-slate-900 hover:text-sky-800"
-        aria-expanded={expanded}
-      >
-        {expanded ? (
-          <ChevronDown className="h-4 w-4 shrink-0 text-slate-500" aria-hidden />
-        ) : (
-          <ChevronRight className="h-4 w-4 shrink-0 text-slate-500" aria-hidden />
-        )}
-        <span className="truncate" title={email || undefined}>
-          {displayName}
-        </span>
-      </button>
+      {hideExpandToggle ? (
+        <div className="flex min-w-0 items-center gap-1.5 text-sm font-semibold text-slate-900">
+          <span className="truncate" title={email || undefined}>
+            {displayName}
+          </span>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={onToggleExpand}
+          className="flex min-w-0 items-center gap-1.5 text-left text-sm font-semibold text-slate-900 hover:text-sky-800"
+          aria-expanded={expanded}
+        >
+          {expanded ? (
+            <ChevronDown className="h-4 w-4 shrink-0 text-slate-500" aria-hidden />
+          ) : (
+            <ChevronRight className="h-4 w-4 shrink-0 text-slate-500" aria-hidden />
+          )}
+          <span className="truncate" title={email || undefined}>
+            {displayName}
+          </span>
+        </button>
+      )}
 
       <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-xs tabular-nums text-slate-600">
         <span>

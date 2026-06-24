@@ -67,10 +67,12 @@ export function FieldChip({
   onChange: (n: number) => void;
 }) {
   return (
-    <div className="flex w-[5.5rem] min-w-[5.5rem] flex-col gap-0.5">
-      <span className="truncate text-[10px] font-medium uppercase tracking-wide text-slate-600">{label}</span>
+    <div className="flex w-[5.75rem] min-w-[5.75rem] flex-col items-end gap-0.5">
+      <span className="w-full truncate text-right text-[10px] font-medium uppercase tracking-wide text-slate-600">
+        {label}
+      </span>
       {readOnly ? (
-        <span className="rounded border border-transparent px-2 py-1.5 text-right text-sm tabular-nums text-slate-900">
+        <span className="w-full rounded border border-transparent px-2 py-1.5 text-right text-sm tabular-nums text-slate-900">
           {fmtIn(value)}
         </span>
       ) : (

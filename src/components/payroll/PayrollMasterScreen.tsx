@@ -1,14 +1,33 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AlertCircle, CheckCircle2 } from "lucide-react";
+import { cn } from "@/lib/cn";
+import {
+  fieldDomId,
+  mapApiErrorToField,
+  validateEmployeeForm,
+  type FormTabId,
+  type TabStatus,
+} from "@/lib/payrollMasterFormValidation";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/components/ToastProvider";
-import { SkeletonTable } from "@/components/Skeleton";
+import { SkeletonTable, SkeletonCard } from "@/components/Skeleton";
+import { AppCard } from "@/components/ui/AppCard";
+import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { DatePickerField } from "@/components/ui/DatePickerField";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { FileUpload } from "@/components/ui/FileUpload";
+import { FormField } from "@/components/ui/FormField";
+import { Input } from "@/components/ui/Input";
+import { Modal } from "@/components/ui/Modal";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { SelectField } from "@/components/ui/SelectField";
+import { PayrollMasterDataGrid } from "@/components/payroll/PayrollMasterDataGrid";
 import { PasswordField } from "@/components/PasswordField";
 import { dispatchHrmsChange, onHrmsChange } from "@/lib/hrmsChangeBus";
-import { PASSWORD_COMPLEXITY_HINT, validatePasswordComplexity } from "@/lib/passwordValidators";
 import {
   computePayrollMasterPreview,
   DEFAULT_DA_PERCENT,
@@ -19,9 +38,6 @@ import { GOVERNMENT_DEFAULT_CPF_RATE_ON_TOTAL_EARNINGS } from "@/lib/governmentP
 import {
   normalizeDigits,
   normalizeIfscInput,
-  validateBankAccountInteractive,
-  validateIfscInteractive,
-  validateIndianMobileOptionalInteractive,
 } from "@/lib/employeeValidators";
 import { isAdminRole, normalizeRole, type AppRole } from "@/lib/roles";
 
@@ -358,58 +374,6 @@ function payrollStructureChanged(form: MasterFormState, baseline: MasterFormStat
   );
 }
 
-function validateForm(
-  form: MasterFormState,
-  editing: PayrollMasterRecord | null,
-  editBaseline: MasterFormState | null,
-): string | null {
-  if (!form.name.trim()) return "Name is required";
-  if (!form.email.trim()) return "Email is required";
-  if (!form.designation.trim()) return "Designation is required";
-  if (!form.payLevel || !Number.isFinite(parseInt(form.payLevel, 10))) return "Pay level must be numeric";
-  const gross = parseFloat(form.grossBasicPay);
-  if (!Number.isFinite(gross) || gross <= 0) return "Gross basic pay must be greater than 0";
-  if (form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) return "Invalid email";
-  if (form.aadhaar && !/^\d{12}$/.test(form.aadhaar.replace(/\D/g, ""))) return "Aadhaar must be 12 digits";
-  if (form.pan && !/^[A-Z]{5}\d{4}[A-Z]$/i.test(form.pan)) return "Invalid PAN format";
-
-  if (!editing) {
-    const pErr = validatePasswordComplexity(form.password);
-    if (pErr) return pErr;
-    if (form.password !== form.confirmPassword) return "Passwords do not match";
-  } else if (form.password.trim() || form.confirmPassword.trim()) {
-    const pErr = validatePasswordComplexity(form.password);
-    if (pErr) return pErr;
-    if (form.password !== form.confirmPassword) return "Passwords do not match";
-  }
-
-  if (editing && editBaseline && form.effectiveFrom !== editBaseline.effectiveFrom && !form.reasonForChange.trim()) {
-    return "Reason for change is required when revising the effective date.";
-  }
-
-  return null;
-}
-
-function contactFieldErrors(form: MasterFormState): {
-  phone: string | null;
-  bankAccount: string | null;
-  bankIfsc: string | null;
-} {
-  const phoneDigits = normalizeDigits(form.phone);
-  const accountDigits = normalizeDigits(form.bankAccountNumber);
-  const ifscNorm = normalizeIfscInput(form.bankIfsc);
-  const hasAnyBank = Boolean(form.bankName.trim() || accountDigits || ifscNorm);
-
-  const phone = validateIndianMobileOptionalInteractive(phoneDigits);
-  let bankAccount = validateBankAccountInteractive(accountDigits);
-  let bankIfsc = validateIfscInteractive(form.bankIfsc);
-  if (hasAnyBank) {
-    if (!accountDigits) bankAccount = bankAccount ?? "Account number is required";
-    if (!ifscNorm) bankIfsc = bankIfsc ?? "IFSC is required";
-  }
-  return { phone, bankAccount, bankIfsc };
-}
-
 function fmt(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return "—";
   return Math.round(n).toLocaleString("en-IN");
@@ -451,6 +415,9 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
   const [busy, setBusy] = useState<string | null>(null);
 
   const [formOpen, setFormOpen] = useState(false);
+  const [formSection, setFormSection] = useState<
+    "basic" | "payroll" | "statutory" | "deductions" | "bank" | "history"
+  >("basic");
   const [editing, setEditing] = useState<PayrollMasterRecord | null>(null);
   const [editBaseline, setEditBaseline] = useState<MasterFormState | null>(null);
   const [form, setForm] = useState<MasterFormState>(() => emptyForm());
@@ -477,9 +444,10 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
   >([]);
   const [passwordTouched, setPasswordTouched] = useState(false);
   const [confirmPasswordTouched, setConfirmPasswordTouched] = useState(false);
-  const [phoneError, setPhoneError] = useState<string | null>(null);
-  const [bankAccountError, setBankAccountError] = useState<string | null>(null);
-  const [bankIfscError, setBankIfscError] = useState<string | null>(null);
+  const [submitAttempted, setSubmitAttempted] = useState(false);
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
+  const [visitedTabs, setVisitedTabs] = useState<Partial<Record<FormTabId, boolean>>>({});
+  const [apiFieldErrors, setApiFieldErrors] = useState<Record<string, string>>({});
 
   const [importOpen, setImportOpen] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
@@ -564,6 +532,70 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     };
   }, [canManage]);
 
+  const formValidation = useMemo(
+    () =>
+      validateEmployeeForm(form, Boolean(editing), editBaseline, {
+        mode: editing ? "edit" : "add",
+        submitAttempted,
+        touched,
+        visitedTabs,
+      }),
+    [form, editing, editBaseline, submitAttempted, touched, visitedTabs],
+  );
+
+  const touchField = useCallback((field: string) => {
+    setTouched((prev) => (prev[field] ? prev : { ...prev, [field]: true }));
+  }, []);
+
+  const visitTab = useCallback((tab: FormTabId | "history") => {
+    if (tab === "history") return;
+    setVisitedTabs((prev) => (prev[tab] ? prev : { ...prev, [tab]: true }));
+  }, []);
+
+  const showError = useCallback(
+    (field: string): string | null => {
+      const err = apiFieldErrors[field] ?? formValidation.errors[field];
+      if (!err) return null;
+      if (submitAttempted) return err;
+      if (field === "password" && passwordTouched) return err;
+      if (field === "confirmPassword" && confirmPasswordTouched) return err;
+      if (touched[field]) return err;
+      return null;
+    },
+    [apiFieldErrors, formValidation.errors, submitAttempted, touched, passwordTouched, confirmPasswordTouched],
+  );
+
+  function renderTabStatusIcon(status: TabStatus) {
+    if (status === "error") {
+      return <AlertCircle className="h-4 w-4 shrink-0 text-red-600" aria-hidden />;
+    }
+    if (status === "complete") {
+      return <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" aria-hidden />;
+    }
+    return <span className="h-4 w-4 shrink-0" aria-hidden />;
+  }
+
+  function resetFormValidationState() {
+    setSubmitAttempted(false);
+    setTouched({});
+    setVisitedTabs({});
+    setApiFieldErrors({});
+    setPasswordTouched(false);
+    setConfirmPasswordTouched(false);
+  }
+
+  function focusFirstInvalidField(field: string | null, tab: FormTabId | null) {
+    if (tab) setFormSection(tab);
+    if (!field) return;
+    window.setTimeout(() => {
+      const el = document.getElementById(fieldDomId(field));
+      if (el) {
+        el.focus();
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }, 80);
+  }
+
   const preview = useMemo(
     () =>
       computePayrollMasterPreview({
@@ -599,21 +631,15 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     setMasterHistory([]);
     setArrearHistory([]);
     setForm(emptyForm(companyDefaultDa, companyDefaultHra));
-    setPasswordTouched(false);
-    setConfirmPasswordTouched(false);
-    setPhoneError(null);
-    setBankAccountError(null);
-    setBankIfscError(null);
+    resetFormValidationState();
+    setFormSection("basic");
     setFormOpen(true);
   }
 
   async function openEdit(row: PayrollMasterRecord) {
     setEditing(row);
-    setPasswordTouched(false);
-    setConfirmPasswordTouched(false);
-    setPhoneError(null);
-    setBankAccountError(null);
-    setBankIfscError(null);
+    resetFormValidationState();
+    setFormSection("basic");
     setFormOpen(true);
     setFormLoading(true);
     setMasterHistory([]);
@@ -652,16 +678,23 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
 
   async function handleSave(e: FormEvent) {
     e.preventDefault();
-    const contactErrs = contactFieldErrors(form);
-    setPhoneError(contactErrs.phone);
-    setBankAccountError(contactErrs.bankAccount);
-    setBankIfscError(contactErrs.bankIfsc);
-    const err = validateForm(form, editing, editBaseline);
-    const firstErr = err || contactErrs.phone || contactErrs.bankAccount || contactErrs.bankIfsc;
-    if (firstErr) {
-      showToast("error", firstErr);
+    if (formSaving) return;
+
+    setSubmitAttempted(true);
+    setApiFieldErrors({});
+    const validation = validateEmployeeForm(form, Boolean(editing), editBaseline, {
+      mode: editing ? "edit" : "add",
+      submitAttempted: true,
+      touched,
+      visitedTabs,
+    });
+
+    if (!validation.isValid) {
+      showToast("error", "Please complete the highlighted fields.");
+      focusFirstInvalidField(validation.firstErrorField, validation.firstErrorTab);
       return;
     }
+
     setFormSaving(true);
     try {
       const payload = formToPayload(form);
@@ -675,7 +708,23 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
         cache: "no-store",
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data?.message || data?.error || "Save failed");
+      if (!res.ok) {
+        const msg = data?.message || data?.error || "Save failed";
+        const field = mapApiErrorToField(String(msg));
+        if (field) {
+          setApiFieldErrors({ [field]: msg });
+          const tab: FormTabId =
+            field === "grossBasicPay" || field === "daPercent" || field === "hraPercent" || field === "effectiveFrom"
+              ? "payroll"
+              : field === "bankName" || field === "bankAccountNumber" || field === "bankIfsc"
+                ? "bank"
+                : field === "aadhaar" || field === "pan"
+                  ? "statutory"
+                  : "basic";
+          focusFirstInvalidField(field, tab);
+        }
+        throw new Error(msg);
+      }
       if (process.env.NODE_ENV === "development") {
         console.info("[PayrollMaster] update response", {
           id: data?.master?.id,
@@ -687,6 +736,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
         setRows((prev) => prev.map((r) => (r.id === saved.id ? { ...r, ...saved } : r)));
       }
       showToast("success", editing ? "Employee updated" : "Employee added");
+      resetFormValidationState();
       setFormOpen(false);
       dispatchHrmsChange("payroll_master");
       await loadRows();
@@ -861,280 +911,222 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
       : inputCls;
   const labelCls = "mb-1 block text-xs font-medium text-slate-700";
 
+  const cpfBadge = `CPF auto-calculated at ${Math.round(GOVERNMENT_DEFAULT_CPF_RATE_ON_TOTAL_EARNINGS * 100)}% of total earnings`;
+
+  const formSections = [
+    { id: "basic" as const, label: "Basic Details" },
+    { id: "payroll" as const, label: "Payroll Details" },
+    { id: "statutory" as const, label: "Statutory" },
+    { id: "deductions" as const, label: "Deductions" },
+    { id: "bank" as const, label: "Bank Details" },
+    ...(editing ? [{ id: "history" as const, label: "History" }] : []),
+  ];
+
   return (
     <div className="space-y-4">
-      <div className="card">
-        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-semibold text-slate-900">Payroll Master</h2>
-            <p className="text-sm text-brand-muted">Employee salary master — add, import, sync, and maintain payroll records.</p>
-          </div>
-          {canWrite && (
-            <div className="flex flex-wrap gap-2">
-              <button type="button" className="btn btn-primary !py-1.5 !text-sm" onClick={openAdd}>
+      <PageHeader
+        title="Payroll Master"
+        description="Employee salary master records"
+        className="!mb-2"
+        badge={<Badge tone="info">{cpfBadge}</Badge>}
+        actions={
+          canWrite ? (
+            <>
+              <Button size="sm" onClick={openAdd}>
                 Add Employee
-              </button>
-              <button type="button" className="btn btn-outline !py-1.5 !text-sm" onClick={() => setImportOpen(true)}>
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setImportOpen(true)}>
                 Import Excel
-              </button>
-              <button type="button" className="btn btn-outline !py-1.5 !text-sm" onClick={handleDownloadTemplate}>
+              </Button>
+              <Button size="sm" variant="outline" onClick={handleDownloadTemplate}>
                 Download Template
-              </button>
-              <button
-                type="button"
-                className="btn btn-outline !py-1.5 !text-sm"
-                onClick={handleExport}
-                disabled={busy === "export"}
-              >
-                {busy === "export" ? "Exporting…" : "Export Master"}
-              </button>
-              <button
-                type="button"
-                className="btn btn-outline !py-1.5 !text-sm"
-                onClick={handleSync}
-                disabled={busy === "sync"}
-              >
-                {busy === "sync" ? "Syncing…" : "Sync Existing Employees"}
-              </button>
-            </div>
-          )}
-        </div>
+              </Button>
+              <Button size="sm" variant="outline" onClick={handleExport} loading={busy === "export"} disabled={busy === "export"}>
+                Export Master
+              </Button>
+              <Button size="sm" variant="outline" onClick={handleSync} loading={busy === "sync"} disabled={busy === "sync"}>
+                Sync Employees
+              </Button>
+            </>
+          ) : undefined
+        }
+      />
 
+      <AppCard padding={false} className="overflow-hidden">
         {loading ? (
-          <SkeletonTable rows={6} columns={12} />
+          <div className="p-4">
+            <SkeletonTable rows={8} columns={10} />
+          </div>
         ) : loadError ? (
-          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-            <p className="font-medium">Could not load payroll master</p>
-            <p className="mt-1">{loadError}</p>
-            <button type="button" className="btn btn-outline mt-3 !py-1.5 !text-sm" onClick={() => loadRows()}>
-              Retry
-            </button>
+          <div className="p-5">
+            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+              <p className="font-medium">Could not load payroll master</p>
+              <p className="mt-1">{loadError}</p>
+              <Button variant="outline" size="sm" className="mt-3" onClick={() => loadRows()}>
+                Retry
+              </Button>
+            </div>
           </div>
         ) : rows.length === 0 ? (
-          <p className="muted">No payroll master records yet. Add an employee, import from Excel, or sync existing employees.</p>
-        ) : (
-          <div className="overflow-x-auto rounded-lg border border-slate-800/30 shadow-sm">
-            <p className="border-b border-slate-200 bg-amber-50/95 px-3 py-2 text-xs leading-snug text-amber-950">
-              Government payroll: <strong>PF (CPF)</strong> is always{" "}
-              {Math.round(GOVERNMENT_DEFAULT_CPF_RATE_ON_TOTAL_EARNINGS * 100)}% of total earnings (auto-calculated).
-            </p>
-            <table className="w-full min-w-[3200px] border-collapse text-left text-sm">
-              <thead>
-                <tr className="bg-[#0a1628] text-white">
-                  <th colSpan={EARNINGS_COLUMN_COUNT} className={`${th} !text-center`} />
-                  <th
-                    colSpan={DEFAULT_DEDUCTION_COLUMN_COUNT}
-                    className={`${th} !text-center border-l border-white/20`}
-                  >
-                    Default deductions
-                  </th>
-                  <th
-                    colSpan={VARIABLE_DEDUCTION_COLUMN_COUNT}
-                    className={`${th} !text-center border-l border-white/20`}
-                  >
-                    Variable deductions
-                  </th>
-                  <th colSpan={canWrite ? 4 : 3} className={`${th} !text-center border-l border-white/20`} />
-                </tr>
-                <tr className="bg-[#0a1628] text-white">
-                  <th className={`${th} !text-left`}>Code</th>
-                  <th className={`${th} !text-left`}>Name</th>
-                  <th className={th}>Designation</th>
-                  <th className={th}>Dept</th>
-                  <th className={th}>Div</th>
-                  <th className={th}>Level</th>
-                  <th className={th}>Gross Basic</th>
-                  <th className={th}>DA %</th>
-                  <th className={th}>HRA %</th>
-                  <th className={th}>Med</th>
-                  <th className={th}>Transport</th>
-                  <th className={th}>Tot. Earn.</th>
-                  <th className={`${th} border-l border-white/20`}>PF (CPF)</th>
-                  <th className={th}>DA CPF</th>
-                  <th className={th}>PT</th>
-                  <th className={`${th} border-l border-white/20`}>Inc. Tax</th>
-                  <th className={th}>LIC</th>
-                  <th className={th}>Mess</th>
-                  <th className={th}>Welfare</th>
-                  <th className={th}>VPF</th>
-                  <th className={th}>PF Loan</th>
-                  <th className={th}>P.O.</th>
-                  <th className={th}>Credit Soc.</th>
-                  <th className={th}>Std Lic.</th>
-                  <th className={th}>Elec.</th>
-                  <th className={th}>Water</th>
-                  <th className={th}>Horti.</th>
-                  <th className={th}>Vehicle</th>
-                  <th className={th}>Other</th>
-                  <th className={th}>Advance</th>
-                  <th className={`${th} border-l border-white/20`}>Take Home</th>
-                  <th className={th}>Effective</th>
-                  <th className={th}>Status</th>
-                  {canWrite && <th className={th}>Actions</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row) => (
-                  <tr key={row.id} className="border-t border-slate-200 bg-white hover:bg-slate-50/80">
-                    <td className={tdLeft}>{row.employeeCode || "—"}</td>
-                    <td className={tdLeft}>
-                      <span className="font-medium text-cyan-700">{row.name || row.email || "—"}</span>
-                    </td>
-                    <td className={tdLeft}>{row.designation || "—"}</td>
-                    <td className={tdLeft}>{row.department || "—"}</td>
-                    <td className={tdLeft}>{row.division || "—"}</td>
-                    <td className={td}>{row.payLevel ?? "—"}</td>
-                    <td className={td}>{fmt(row.grossBasicPay)}</td>
-                    <td className={td}>{row.daPercent ?? row.da_percent ?? "—"}</td>
-                    <td className={td}>{row.hraPercent ?? row.hra_percent ?? "—"}</td>
-                    <td className={td}>{fmt(row.medical)}</td>
-                    <td className={td}>{fmt(row.transportTotal)}</td>
-                    <td className={td}>{fmt(row.totalEarnings)}</td>
-                    <td className={td}>{fmt(row.cpfEffective ?? row.cpfDefault)}</td>
-                    <td className={td}>{fmt(row.daCpf)}</td>
-                    <td className={td}>{fmt(row.professionalTax)}</td>
-                    <td className={td}>{fmt(row.incomeTax)}</td>
-                    <td className={td}>{fmt(row.lic)}</td>
-                    <td className={td}>{fmt(row.mess)}</td>
-                    <td className={td}>{fmt(row.welfare)}</td>
-                    <td className={td}>{fmt(row.vpf)}</td>
-                    <td className={td}>{fmt(row.pfLoan)}</td>
-                    <td className={td}>{fmt(row.postOffice)}</td>
-                    <td className={td}>{fmt(row.creditSociety)}</td>
-                    <td className={td}>{fmt(row.standardLicenceFee)}</td>
-                    <td className={td}>{fmt(row.electricity)}</td>
-                    <td className={td}>{fmt(row.water)}</td>
-                    <td className={td}>{fmt(row.horticulture)}</td>
-                    <td className={td}>{fmt(row.vehicleCharge)}</td>
-                    <td className={td}>{fmt(row.otherDeduction)}</td>
-                    <td className={td}>{fmt(row.advance)}</td>
-                    <td className={td}>{fmt(row.takeHome)}</td>
-                    <td className={tdLeft}>{row.effectiveFrom?.slice(0, 10) ?? "—"}</td>
-                    <td className={tdLeft}>
-                      <span
-                        className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${
-                          row.status === "active"
-                            ? "bg-emerald-100 text-emerald-900"
-                            : "bg-slate-200 text-slate-700"
-                        }`}
-                      >
-                        {row.status ?? "active"}
-                      </span>
-                    </td>
-                    {canWrite && (
-                      <td className="border border-slate-200 px-1 py-1">
-                        <div className="flex flex-wrap justify-center gap-1">
-                          <button
-                            type="button"
-                            className="rounded border border-slate-300 px-2 py-0.5 text-[10px] font-medium hover:bg-slate-100"
-                            onClick={() => openEdit(row)}
-                          >
-                            Edit
-                          </button>
-                          {row.status === "active" && (
-                            <button
-                              type="button"
-                              className="rounded border border-amber-400 px-2 py-0.5 text-[10px] font-medium text-amber-900 hover:bg-amber-50"
-                              onClick={() => setDeactivateTarget(row)}
-                            >
-                              Deactivate
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="p-6">
+            <EmptyState
+              title="No employees yet"
+              description="Add an employee, import from Excel, or sync existing employees."
+              action={
+                canWrite ? (
+                  <Button size="sm" onClick={openAdd}>
+                    Add Employee
+                  </Button>
+                ) : undefined
+              }
+            />
           </div>
-        )}
-      </div>
-
-      {formOpen && (
-        <div className="fixed inset-0 z-[60] overflow-y-auto">
-          <button
-            type="button"
-            className="fixed inset-0 bg-slate-900/50 backdrop-blur-[2px]"
-            aria-label="Close"
-            onClick={() => setFormOpen(false)}
+        ) : (
+          <PayrollMasterDataGrid
+            rows={rows}
+            canWrite={canWrite}
+            cpfRateLabel={cpfBadge}
+            resetKey={rows.map((r) => r.id).join(",")}
+            onEdit={openEdit}
+            onDeactivate={setDeactivateTarget}
           />
-          <div className="relative flex min-h-full items-center justify-center p-4">
-            <form
-              onSubmit={handleSave}
-              className="relative z-10 flex max-h-[min(92vh,100dvh)] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl"
+        )}
+      </AppCard>
+
+      <Modal
+        open={formOpen}
+        onClose={() => {
+          resetFormValidationState();
+          setFormOpen(false);
+        }}
+        title={editing ? "Edit Employee" : "Add Employee"}
+        description={editing ? `${form.employeeCode || "—"} · ${form.name || form.email}` : "Payroll master record"}
+        headerExtra={editing ? <Badge tone={form.status === "active" ? "success" : "neutral"}>{form.status}</Badge> : null}
+        size="2xl"
+        asForm
+        onSubmit={handleSave}
+        footer={
+          <>
+            <Button
+              variant="outline"
+              onClick={() => {
+                resetFormValidationState();
+                setFormOpen(false);
+              }}
+              disabled={formSaving || formLoading}
             >
-              <div className="shrink-0 border-b border-slate-100 px-5 py-4 sm:px-6">
-                <h3 className="text-lg font-semibold text-slate-900">
-                  {editing ? "Edit Employee" : "Add Employee"}
-                </h3>
-                <p className="mt-1 text-xs text-slate-500">
-                  Payroll master record — earnings, default deductions (PF &amp; PT), then variable deductions. Scroll for all sections.
-                </p>
+              Cancel
+            </Button>
+            <Button type="submit" loading={formSaving} disabled={formSaving || formLoading}>
+              {editing ? "Update Employee" : "Add Employee"}
+            </Button>
+          </>
+        }
+      >
+        {formLoading ? (
+          <SkeletonCard />
+        ) : (
+          <div className="flex min-h-[min(50vh,460px)] flex-col">
+            {submitAttempted && !formValidation.isValid ? (
+              <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                Please complete the highlighted fields.
               </div>
-              <div className="flex-1 space-y-6 overflow-y-auto px-5 py-4 sm:px-6">
-                {formLoading ? (
-                  <p className="py-8 text-center text-sm text-slate-500">Loading payroll master record…</p>
-                ) : (
-                  <>
+            ) : null}
+            <div className="flex min-h-0 flex-1 flex-col lg:flex-row lg:-mx-2">
+            <nav className="mb-4 flex shrink-0 gap-1 overflow-x-auto border-b border-slate-100 pb-3 lg:mb-0 lg:w-48 lg:flex-col lg:border-b-0 lg:border-r lg:pr-3 lg:pb-0">
+              {formSections.map((s) => {
+                const isActive = formSection === s.id;
+                const isValidTab = s.id !== "history";
+                const tabId = isValidTab ? (s.id as FormTabId) : null;
+                const status: TabStatus | null = tabId ? formValidation.tabStatus[tabId] : null;
+                return (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => {
+                      setFormSection(s.id);
+                      visitTab(s.id);
+                    }}
+                    className={cn(
+                      "segment-tab flex w-full items-center justify-between gap-2 whitespace-nowrap text-left",
+                      isActive && "segment-tab-active",
+                      !isActive && status === "neutral" && "segment-tab-inactive",
+                      !isActive && status === "error" && "border border-red-200 bg-red-50 text-red-900",
+                      !isActive && status === "complete" && "border border-emerald-200 bg-emerald-50/50 text-slate-800",
+                      isActive && status === "error" && "ring-1 ring-red-300",
+                    )}
+                  >
+                    <span className="truncate">{s.label}</span>
+                    {status ? renderTabStatusIcon(status) : null}
+                  </button>
+                );
+              })}
+            </nav>
+            <div className="min-h-0 flex-1 space-y-5 lg:pl-4">
+                {formSection === "basic" && (
                 <section>
                   <h4 className="mb-3 text-sm font-semibold text-slate-800">Basic details</h4>
                   <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                    <div>
-                      <label className={labelCls}>Employee Code</label>
-                      <input className={inputCls} value={form.employeeCode} onChange={(e) => patchForm({ employeeCode: e.target.value })} />
-                    </div>
-                    <div>
-                      <label className={labelCls}>Pay Level *</label>
-                      <input type="number" min={1} className={inputCls} value={form.payLevel} onChange={(e) => patchForm({ payLevel: e.target.value })} required />
-                      <p className="mt-1 text-xs text-slate-500">
-                        Transport base (auto): {fmt(preview.transportBase)} — levels 1–2: ₹1,350 · 3–8: ₹3,600 · 9+: ₹7,200
-                      </p>
-                    </div>
-                    <div>
-                      <label className={labelCls}>Name *</label>
-                      <input className={inputCls} value={form.name} onChange={(e) => patchForm({ name: e.target.value })} required />
-                    </div>
-                    <div>
-                      <label className={labelCls}>Email *</label>
-                      <input type="email" className={inputCls} value={form.email} onChange={(e) => patchForm({ email: e.target.value })} required />
-                    </div>
-                    <div>
-                      <label className={labelCls}>User role *</label>
-                      <select
-                        className={inputCls}
+                    <FormField label="Employee Code">
+                      <Input id={fieldDomId("employeeCode")} value={form.employeeCode} onChange={(e) => patchForm({ employeeCode: e.target.value })} />
+                    </FormField>
+                    <FormField label="Pay Level" required error={showError("payLevel")}>
+                      <Input
+                        id={fieldDomId("payLevel")}
+                        type="number"
+                        min={1}
+                        invalid={Boolean(showError("payLevel"))}
+                        value={form.payLevel}
+                        onChange={(e) => patchForm({ payLevel: e.target.value })}
+                        onBlur={() => touchField("payLevel")}
+                      />
+                    </FormField>
+                    <FormField label="Name" required error={showError("name")}>
+                      <Input
+                        id={fieldDomId("name")}
+                        invalid={Boolean(showError("name"))}
+                        value={form.name}
+                        onChange={(e) => patchForm({ name: e.target.value })}
+                        onBlur={() => touchField("name")}
+                      />
+                    </FormField>
+                    <FormField label="Email" required error={showError("email")}>
+                      <Input
+                        id={fieldDomId("email")}
+                        type="email"
+                        invalid={Boolean(showError("email"))}
+                        value={form.email}
+                        onChange={(e) => patchForm({ email: e.target.value })}
+                        onBlur={() => touchField("email")}
+                      />
+                    </FormField>
+                    <FormField label="User role" required error={showError("userRole")}>
+                      <SelectField
                         value={form.userRole}
-                        onChange={(e) => patchForm({ userRole: e.target.value as AppRole })}
+                        onChange={(v) => {
+                          patchForm({ userRole: v as AppRole });
+                          touchField("userRole");
+                        }}
+                        error={showError("userRole")}
+                        options={[
+                          { value: "employee", label: "Employee" },
+                          { value: "admin", label: "Admin" },
+                        ]}
                         required
-                      >
-                        <option value="employee">Employee</option>
-                        <option value="admin">Admin</option>
-                      </select>
-                      <p className="mt-1 text-xs text-brand-muted">
-                        Admin can manage payroll and settings. Employee can view salary slips only.
-                      </p>
-                    </div>
+                      />
+                    </FormField>
                     <div>
                       <PasswordField
                         label={editing ? "New password (optional)" : "Password *"}
                         autoComplete="new-password"
                         value={form.password}
                         onChange={(v) => patchForm({ password: v })}
-                        onBlur={() => setPasswordTouched(true)}
-                        error={
-                          passwordTouched || formSaving
-                            ? editing && !form.password.trim()
-                              ? null
-                              : validatePasswordComplexity(form.password)
-                            : null
-                        }
+                        onBlur={() => {
+                          setPasswordTouched(true);
+                          touchField("password");
+                        }}
+                        error={showError("password")}
                       />
-                      {(passwordTouched || formSaving || !editing) && !validatePasswordComplexity(form.password) && (
-                        <p className="mt-1 text-xs text-brand-muted">{PASSWORD_COMPLEXITY_HINT}</p>
-                      )}
-                      {editing && (
-                        <p className="mt-1 text-xs text-brand-muted">Leave blank to keep the current password.</p>
-                      )}
                     </div>
                     <div>
                       <PasswordField
@@ -1142,61 +1134,54 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                         autoComplete="new-password"
                         value={form.confirmPassword}
                         onChange={(v) => patchForm({ confirmPassword: v })}
-                        onBlur={() => setConfirmPasswordTouched(true)}
-                        error={
-                          confirmPasswordTouched || formSaving
-                            ? form.confirmPassword && form.password !== form.confirmPassword
-                              ? "Passwords do not match"
-                              : !editing && !form.confirmPassword.trim()
-                                ? "Please confirm the password"
-                                : null
-                            : null
-                        }
+                        onBlur={() => {
+                          setConfirmPasswordTouched(true);
+                          touchField("confirmPassword");
+                        }}
+                        error={showError("confirmPassword")}
                       />
                     </div>
-                    <div>
-                      <label className={labelCls}>Phone</label>
-                      <input
+                    <FormField label="Phone" error={showError("phone")}>
+                      <Input
+                        id={fieldDomId("phone")}
                         type="text"
                         inputMode="numeric"
                         maxLength={10}
                         autoComplete="tel"
-                        className={fieldInputCls(Boolean(phoneError))}
+                        invalid={Boolean(showError("phone"))}
                         value={form.phone}
-                        aria-invalid={Boolean(phoneError)}
-                        placeholder="10-digit mobile (starts 6–9)"
+                        placeholder="10-digit mobile"
                         onChange={(e) => patchForm({ phone: normalizeDigits(e.target.value).slice(0, 10) })}
-                        onKeyUp={(e) => {
-                          const d = normalizeDigits(e.currentTarget.value).slice(0, 10);
-                          setPhoneError(validateIndianMobileOptionalInteractive(d));
-                        }}
+                        onBlur={() => touchField("phone")}
                       />
-                      {phoneError && <p className="mt-1 text-xs text-red-600">{phoneError}</p>}
-                      {!phoneError && form.phone.length > 0 && form.phone.length < 10 && (
-                        <p className="mt-1 text-xs text-slate-500">{form.phone.length}/10 digits</p>
-                      )}
-                    </div>
-                    <div>
-                      <label className={labelCls}>Gender</label>
-                      <select className={inputCls} value={form.gender} onChange={(e) => patchForm({ gender: e.target.value })}>
-                        <option value="">—</option>
-                        <option value="male">Male</option>
-                        <option value="female">Female</option>
-                        <option value="other">Other</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className={labelCls}>Date of Birth</label>
-                      <DatePickerField value={form.dateOfBirth} onChange={(v) => patchForm({ dateOfBirth: v })} className="w-full" />
-                    </div>
-                    <div>
-                      <label className={labelCls}>Date of Joining</label>
-                      <DatePickerField value={form.dateOfJoining} onChange={(v) => patchForm({ dateOfJoining: v })} className="w-full" />
-                    </div>
-                    <div>
-                      <label className={labelCls}>Designation *</label>
-                      <input className={inputCls} value={form.designation} onChange={(e) => patchForm({ designation: e.target.value })} required />
-                    </div>
+                    </FormField>
+                    <FormField label="Gender">
+                      <SelectField
+                        value={form.gender}
+                        onChange={(v) => patchForm({ gender: v })}
+                        placeholder="Select gender"
+                        options={[
+                          { value: "male", label: "Male" },
+                          { value: "female", label: "Female" },
+                          { value: "other", label: "Other" },
+                        ]}
+                      />
+                    </FormField>
+                    <FormField label="Date of Birth">
+                      <DatePickerField label="" value={form.dateOfBirth} onChange={(v) => patchForm({ dateOfBirth: v })} />
+                    </FormField>
+                    <FormField label="Date of Joining">
+                      <DatePickerField label="" value={form.dateOfJoining} onChange={(v) => patchForm({ dateOfJoining: v })} />
+                    </FormField>
+                    <FormField label="Designation" required error={showError("designation")}>
+                      <Input
+                        id={fieldDomId("designation")}
+                        invalid={Boolean(showError("designation"))}
+                        value={form.designation}
+                        onChange={(e) => patchForm({ designation: e.target.value })}
+                        onBlur={() => touchField("designation")}
+                      />
+                    </FormField>
                     <div>
                       <label className={labelCls}>Department</label>
                       <input className={inputCls} value={form.department} onChange={(e) => patchForm({ department: e.target.value })} />
@@ -1205,198 +1190,214 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                       <label className={labelCls}>Division</label>
                       <input className={inputCls} value={form.division} onChange={(e) => patchForm({ division: e.target.value })} />
                     </div>
-                    <div>
-                      <label className={labelCls}>Status *</label>
-                      <select className={inputCls} value={form.status} onChange={(e) => patchForm({ status: e.target.value })} required>
-                        {STATUS_OPTIONS.map((s) => (
-                          <option key={s} value={s}>
-                            {s}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+                    <FormField label="Status" required error={showError("status")}>
+                      <SelectField
+                        value={form.status}
+                        onChange={(v) => {
+                          patchForm({ status: v });
+                          touchField("status");
+                        }}
+                        error={showError("status")}
+                        options={STATUS_OPTIONS.map((s) => ({ value: s, label: s }))}
+                        required
+                      />
+                    </FormField>
                   </div>
                 </section>
+                )}
 
+                {formSection === "payroll" && (
                 <section>
                   <h4 className="mb-3 text-sm font-semibold text-slate-800">Payroll details</h4>
                   <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                    <div>
-                      <label className={labelCls}>Gross Basic Pay *</label>
-                      <input type="number" min={0} step={100} className={inputCls} value={form.grossBasicPay} onChange={(e) => patchForm({ grossBasicPay: e.target.value })} required />
-                    </div>
-                    <div>
-                      <label className={labelCls}>DA %</label>
-                      <input type="number" step="0.01" className={inputCls} value={form.daPercent} onChange={(e) => patchForm({ daPercent: e.target.value })} />
-                      <p className="mt-1 text-xs text-slate-500">
-                        {editing
-                          ? "Changing DA creates a new master version from Effective From; previous rates are kept in history below."
-                          : `Pre-filled from institute default (${companyDefaultDa}%).`}
-                      </p>
-                    </div>
-                    <div>
-                      <label className={labelCls}>HRA %</label>
-                      <input type="number" step="0.01" className={inputCls} value={form.hraPercent} onChange={(e) => patchForm({ hraPercent: e.target.value })} />
-                      <p className="mt-1 text-xs text-slate-500">
-                        {editing
-                          ? "Changing HRA creates a new master version from Effective From; previous rates are kept in history below."
-                          : `Pre-filled from institute default (${companyDefaultHra}%).`}
-                      </p>
-                    </div>
-                    <div>
-                      <label className={labelCls}>Medical</label>
-                      <input type="number" className={inputCls} value={form.medical} onChange={(e) => patchForm({ medical: e.target.value })} />
-                    </div>
-                    <div>
-                      <label className={labelCls}>UAN</label>
-                      <input className={inputCls} value={form.uan} onChange={(e) => patchForm({ uan: e.target.value })} />
-                    </div>
-                    <div>
-                      <label className={labelCls}>CPF No</label>
-                      <input className={inputCls} value={form.cpfNo} onChange={(e) => patchForm({ cpfNo: e.target.value })} />
-                    </div>
-                    <div>
-                      <label className={labelCls}>PAN</label>
-                      <input className={inputCls} value={form.pan} onChange={(e) => patchForm({ pan: e.target.value })} />
-                    </div>
-                    <div>
-                      <label className={labelCls}>Aadhaar</label>
-                      <input className={inputCls} value={form.aadhaar} onChange={(e) => patchForm({ aadhaar: e.target.value })} maxLength={12} />
-                    </div>
-                    <div>
-                      <label className={labelCls}>Effective From</label>
-                      <DatePickerField value={form.effectiveFrom} onChange={(v) => patchForm({ effectiveFrom: v })} className="w-full" />
-                      <p className="mt-1 text-xs text-slate-500">
-                        Creating a new effective date archives the previous payroll master into history and makes this
-                        the current record.
-                      </p>
-                    </div>
+                    <FormField label="Gross Basic Pay" required error={showError("grossBasicPay")}>
+                      <Input
+                        id={fieldDomId("grossBasicPay")}
+                        type="number"
+                        min={0}
+                        step={100}
+                        numeric
+                        invalid={Boolean(showError("grossBasicPay"))}
+                        value={form.grossBasicPay}
+                        onChange={(e) => patchForm({ grossBasicPay: e.target.value })}
+                        onBlur={() => touchField("grossBasicPay")}
+                      />
+                    </FormField>
+                    <FormField label="DA %" required error={showError("daPercent")}>
+                      <Input
+                        id={fieldDomId("daPercent")}
+                        type="number"
+                        step="0.01"
+                        invalid={Boolean(showError("daPercent"))}
+                        value={form.daPercent}
+                        onChange={(e) => patchForm({ daPercent: e.target.value })}
+                        onBlur={() => touchField("daPercent")}
+                      />
+                    </FormField>
+                    <FormField label="HRA %" required error={showError("hraPercent")}>
+                      <Input
+                        id={fieldDomId("hraPercent")}
+                        type="number"
+                        step="0.01"
+                        invalid={Boolean(showError("hraPercent"))}
+                        value={form.hraPercent}
+                        onChange={(e) => patchForm({ hraPercent: e.target.value })}
+                        onBlur={() => touchField("hraPercent")}
+                      />
+                    </FormField>
+                    <FormField label="Medical" error={showError("medical")}>
+                      <Input
+                        id={fieldDomId("medical")}
+                        type="number"
+                        numeric
+                        invalid={Boolean(showError("medical"))}
+                        value={form.medical}
+                        onChange={(e) => patchForm({ medical: e.target.value })}
+                        onBlur={() => touchField("medical")}
+                      />
+                    </FormField>
+                    <FormField label="Effective From" required error={showError("effectiveFrom")}>
+                      <DatePickerField
+                        id={fieldDomId("effectiveFrom")}
+                        value={form.effectiveFrom}
+                        onChange={(v) => {
+                          patchForm({ effectiveFrom: v });
+                          touchField("effectiveFrom");
+                        }}
+                        error={showError("effectiveFrom")}
+                      />
+                    </FormField>
                     {editing ? (
-                      <div className="sm:col-span-2">
-                        <label className={labelCls}>Reason for change</label>
-                        <input
-                          className={inputCls}
+                      <FormField label="Reason for change" error={showError("reasonForChange")} className="sm:col-span-2">
+                        <Input
+                          id={fieldDomId("reasonForChange")}
+                          invalid={Boolean(showError("reasonForChange"))}
                           value={form.reasonForChange}
                           onChange={(e) => patchForm({ reasonForChange: e.target.value })}
-                          placeholder="Required when changing the effective date"
+                          onBlur={() => touchField("reasonForChange")}
+                          placeholder="When changing effective date"
                         />
-                      </div>
+                      </FormField>
                     ) : null}
                   </div>
                 </section>
+                )}
 
+                {formSection === "statutory" && (
                 <section>
-                  <h4 className="mb-3 text-sm font-semibold text-slate-800">Default deductions</h4>
-                  <p className="mb-3 text-xs text-slate-500">
-                    PF (CPF) is fixed at {Math.round(GOVERNMENT_DEFAULT_CPF_RATE_ON_TOTAL_EARNINGS * 100)}% of total
-                    earnings and updates when you change pay components. Edit PT below.
-                  </p>
-                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                    <div>
-                      <label className={labelCls}>
-                        PF (CPF) — {Math.round(GOVERNMENT_DEFAULT_CPF_RATE_ON_TOTAL_EARNINGS * 100)}% of total earnings
-                      </label>
-                      <input
+                  <h4 className="mb-3 text-sm font-semibold text-slate-800">Statutory details</h4>
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    <FormField label="UAN"><Input value={form.uan} onChange={(e) => patchForm({ uan: e.target.value })} /></FormField>
+                    <FormField label="CPF No"><Input value={form.cpfNo} onChange={(e) => patchForm({ cpfNo: e.target.value })} /></FormField>
+                    <FormField label="PAN" error={showError("pan")}>
+                      <Input id={fieldDomId("pan")} invalid={Boolean(showError("pan"))} value={form.pan} onChange={(e) => patchForm({ pan: e.target.value })} onBlur={() => touchField("pan")} />
+                    </FormField>
+                    <FormField label="Aadhaar" required error={showError("aadhaar")}>
+                      <Input
+                        id={fieldDomId("aadhaar")}
                         type="text"
-                        readOnly
-                        tabIndex={-1}
-                        className={`${inputCls} cursor-not-allowed bg-slate-100 text-slate-700`}
-                        value={fmt(preview.cpfEffective)}
-                        aria-readonly
+                        inputMode="numeric"
+                        invalid={Boolean(showError("aadhaar"))}
+                        value={form.aadhaar}
+                        onChange={(e) => patchForm({ aadhaar: normalizeDigits(e.target.value).slice(0, 12) })}
+                        onBlur={() => touchField("aadhaar")}
+                        maxLength={12}
                       />
-                    </div>
+                    </FormField>
+                  </div>
+                  <h4 className="mb-3 mt-5 text-sm font-semibold text-slate-800">Default deductions</h4>
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    <FormField label={`PF (CPF) — ${Math.round(GOVERNMENT_DEFAULT_CPF_RATE_ON_TOTAL_EARNINGS * 100)}%`}>
+                      <Input readOnly value={fmt(preview.cpfEffective)} />
+                    </FormField>
                     {DEFAULT_DEDUCTION_FIELDS.map(([key, label]) => (
-                      <div key={key}>
-                        <label className={labelCls}>{label}</label>
-                        <input
+                      <FormField key={key} label={label} error={showError(key)}>
+                        <Input
+                          id={fieldDomId(key)}
                           type="number"
                           min={0}
-                          className={inputCls}
+                          numeric
+                          invalid={Boolean(showError(key))}
                           value={form[key]}
                           onChange={(e) => patchForm({ [key]: e.target.value })}
+                          onBlur={() => touchField(key)}
                         />
-                      </div>
+                      </FormField>
                     ))}
                   </div>
                 </section>
+                )}
 
+                {formSection === "deductions" && (
                 <section>
                   <h4 className="mb-3 text-sm font-semibold text-slate-800">Variable deductions</h4>
                   <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                     {VARIABLE_DEDUCTION_FIELDS.map(([key, label]) => (
-                      <div key={key}>
-                        <label className={labelCls}>{label}</label>
-                        <input
+                      <FormField key={key} label={label} error={showError(key)}>
+                        <Input
+                          id={fieldDomId(key)}
                           type="number"
                           min={0}
-                          className={inputCls}
+                          numeric
+                          invalid={Boolean(showError(key))}
                           value={form[key]}
                           onChange={(e) => patchForm({ [key]: e.target.value })}
+                          onBlur={() => touchField(key)}
                         />
-                      </div>
+                      </FormField>
                     ))}
                   </div>
                 </section>
+                )}
 
+                {formSection === "bank" && (
                 <section>
                   <h4 className="mb-3 text-sm font-semibold text-slate-800">Bank details</h4>
                   <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                    <div>
-                      <label className={labelCls}>Bank Name</label>
-                      <input className={inputCls} value={form.bankName} onChange={(e) => patchForm({ bankName: e.target.value })} />
-                    </div>
-                    <div>
-                      <label className={labelCls}>Account Number</label>
-                      <input
+                    <FormField label="Bank Name" required error={showError("bankName")}>
+                      <Input
+                        id={fieldDomId("bankName")}
+                        invalid={Boolean(showError("bankName"))}
+                        value={form.bankName}
+                        onChange={(e) => patchForm({ bankName: e.target.value })}
+                        onBlur={() => touchField("bankName")}
+                      />
+                    </FormField>
+                    <FormField label="Account Number" required error={showError("bankAccountNumber")}>
+                      <Input
+                        id={fieldDomId("bankAccountNumber")}
                         type="text"
                         inputMode="numeric"
                         maxLength={18}
-                        className={fieldInputCls(Boolean(bankAccountError))}
+                        invalid={Boolean(showError("bankAccountNumber"))}
                         value={form.bankAccountNumber}
-                        aria-invalid={Boolean(bankAccountError)}
                         placeholder="9–18 digits"
-                        onChange={(e) =>
-                          patchForm({ bankAccountNumber: normalizeDigits(e.target.value).slice(0, 18) })
-                        }
-                        onKeyUp={(e) => {
-                          const d = normalizeDigits(e.currentTarget.value).slice(0, 18);
-                          setBankAccountError(validateBankAccountInteractive(d));
-                        }}
+                        onChange={(e) => patchForm({ bankAccountNumber: normalizeDigits(e.target.value).slice(0, 18) })}
+                        onBlur={() => touchField("bankAccountNumber")}
                       />
-                      {bankAccountError && <p className="mt-1 text-xs text-red-600">{bankAccountError}</p>}
-                      {!bankAccountError &&
-                        form.bankAccountNumber.length > 0 &&
-                        form.bankAccountNumber.length < 9 && (
-                          <p className="mt-1 text-xs text-slate-500">{form.bankAccountNumber.length}/9+ digits</p>
-                        )}
-                    </div>
-                    <div>
-                      <label className={labelCls}>IFSC</label>
-                      <input
-                        type="text"
+                    </FormField>
+                    <FormField label="IFSC" required error={showError("bankIfsc")}>
+                      <Input
+                        id={fieldDomId("bankIfsc")}
                         maxLength={11}
-                        className={`${fieldInputCls(Boolean(bankIfscError))} font-mono uppercase`}
+                        className="font-mono uppercase"
+                        invalid={Boolean(showError("bankIfsc"))}
                         value={form.bankIfsc}
-                        aria-invalid={Boolean(bankIfscError)}
                         placeholder="e.g. SBIN0001234"
                         onChange={(e) => patchForm({ bankIfsc: normalizeIfscInput(e.target.value) })}
-                        onKeyUp={(e) => setBankIfscError(validateIfscInteractive(e.currentTarget.value))}
+                        onBlur={() => touchField("bankIfsc")}
                       />
-                      {bankIfscError && <p className="mt-1 text-xs text-red-600">{bankIfscError}</p>}
-                      {!bankIfscError && form.bankIfsc.length > 0 && form.bankIfsc.length < 11 && (
-                        <p className="mt-1 text-xs text-slate-500">{form.bankIfsc.length}/11 characters</p>
-                      )}
-                    </div>
+                    </FormField>
                   </div>
                 </section>
+                )}
 
-                {editing && masterHistory.length > 0 && (
-                  <section className="rounded-lg border border-slate-200 bg-slate-50/80 p-4">
+                {formSection === "history" && editing && (
+                <>
+                {masterHistory.length > 0 && (
+                  <section className="rounded-xl border border-brand-border bg-slate-50/50 p-4">
                     <h4 className="mb-3 text-sm font-semibold text-slate-800">Payroll master history</h4>
-                    <p className="mb-3 text-xs text-slate-500">
-                      Current row from payroll master; previous versions from payroll master history.
-                    </p>
-                    <div className="overflow-x-auto">
+                    <div className="max-h-48 overflow-auto rounded-lg border border-slate-200 bg-white">
                       <table className="w-full min-w-[720px] border-collapse text-left text-xs">
                         <thead>
                           <tr className="border-b border-slate-200 text-slate-600">
@@ -1436,10 +1437,10 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                   </section>
                 )}
 
-                {editing && arrearHistory.length > 0 && (
-                  <section className="rounded-lg border border-violet-200 bg-violet-50/40 p-4">
-                    <h4 className="mb-3 text-sm font-semibold text-slate-800">DA Arrears History</h4>
-                    <div className="overflow-x-auto">
+                {arrearHistory.length > 0 && (
+                  <section className="mt-4 rounded-xl border border-violet-200/80 bg-violet-50/30 p-4">
+                    <h4 className="mb-3 text-sm font-semibold text-slate-800">DA arrears history</h4>
+                    <div className="max-h-48 overflow-auto rounded-lg border border-violet-100 bg-white">
                       <table className="w-full min-w-[720px] border-collapse text-left text-xs">
                         <thead>
                           <tr className="border-b border-violet-200 text-slate-600">
@@ -1480,7 +1481,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                   </section>
                 )}
 
-                <section className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                <section className="mt-4 rounded-xl border border-brand-border bg-slate-50/80 p-4">
                   <h4 className="mb-3 text-sm font-semibold text-slate-800">Calculated preview</h4>
                   <div className="grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
                     <div>Pay level: <strong>{form.payLevel}</strong></div>
@@ -1497,75 +1498,51 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                     </div>
                   </div>
                 </section>
-                  </>
+                </>
                 )}
-              </div>
-              <div className="shrink-0 border-t border-slate-100 bg-slate-50/90 px-5 py-3 sm:px-6">
-                <div className="flex justify-end gap-2">
-                  <button type="button" className="btn btn-outline" onClick={() => setFormOpen(false)} disabled={formSaving || formLoading}>
-                    Cancel
-                  </button>
-                  <button type="submit" className="btn btn-primary" disabled={formSaving || formLoading}>
-                    {formSaving ? "Saving…" : editing ? "Update" : "Add Employee"}
-                  </button>
-                </div>
-              </div>
-            </form>
+            </div>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </Modal>
 
-      {importOpen && (
-        <div className="fixed inset-0 z-[60] overflow-y-auto">
-          <button type="button" className="fixed inset-0 bg-slate-900/50" aria-label="Close" onClick={closeImportModal} />
-          <div className="relative flex min-h-full items-center justify-center p-4">
-            <div className="relative z-10 w-full max-w-5xl rounded-xl border border-slate-200 bg-white shadow-xl">
-              <div className="border-b border-slate-100 px-5 py-4">
-                <h3 className="text-lg font-semibold text-slate-900">Import Payroll Master</h3>
-                <p className="mt-1 text-sm text-slate-500">
-                  Upload .xlsx or .csv using the template format. Records appear below as soon as you select a file.
-                </p>
-              </div>
-              <div className="space-y-4 px-5 py-4">
-                <input
-                  type="file"
-                  accept=".xlsx,.xls,.csv"
-                  onChange={(e) => handleImportFileChange(e.target.files?.[0] ?? null)}
-                  className="block w-full text-sm"
+      <Modal
+        open={importOpen}
+        onClose={closeImportModal}
+        title="Import Payroll Master"
+        description="Upload .xlsx or .csv using the template format."
+        size="xl"
+        footer={
+          <>
+            <Button variant="outline" size="sm" onClick={handleDownloadTemplate}>
+              Download template
+            </Button>
+            <Button
+              size="sm"
+              loading={importing}
+              disabled={
+                importing ||
+                importPreviewing ||
+                !importFile ||
+                !importPreview ||
+                (importPreview?.summary?.valid_rows ?? 0) === 0
+              }
+              onClick={handleImport}
+            >
+              Confirm import
+            </Button>
+          </>
+        }
+      >
+              <div className="space-y-4">
+                <FileUpload
+                  file={importFile}
+                  onFileChange={handleImportFileChange}
+                  disabled={importing || importPreviewing}
                 />
-                {importFile && (
-                  <p className="text-xs text-slate-600">
-                    Selected: <span className="font-medium text-slate-800">{importFile.name}</span>
-                  </p>
-                )}
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    className="btn btn-outline !py-1.5 !text-sm"
-                    onClick={handleDownloadTemplate}
-                  >
-                    Download template
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-primary !py-1.5 !text-sm"
-                    onClick={handleImport}
-                    disabled={
-                      importing ||
-                      importPreviewing ||
-                      !importFile ||
-                      !importPreview ||
-                      (importPreview.summary.valid_rows ?? 0) === 0
-                    }
-                  >
-                    {importing ? "Importing…" : "Confirm import"}
-                  </button>
-                </div>
 
                 {importFile && importPreviewing && (
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-600">
-                    Reading file and validating rows…
-                  </div>
+                  <SkeletonTable rows={4} columns={6} />
                 )}
 
                 {importPreview && !importPreviewing && (
@@ -1679,15 +1656,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                   </div>
                 )}
               </div>
-              <div className="border-t border-slate-100 px-5 py-3 text-right">
-                <button type="button" className="btn btn-outline" onClick={closeImportModal}>
-                  Close
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      </Modal>
 
       <ConfirmDialog
         open={!!deactivateTarget}
