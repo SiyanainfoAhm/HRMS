@@ -23,6 +23,8 @@ class HrmsPayrollArrearLine extends Model
         'source_monthly_payroll_id', 'old_payroll_master_id', 'new_payroll_master_id',
         'is_locked', 'status',
         'paid_in_payroll_id', 'paid_in_period_id', 'paid_in_month', 'paid_at', 'paid_by',
+        'company_id',
+        'included_in_payroll_period_id', 'included_in_month', 'included_in_year', 'included_in_payroll_id',
     ];
 
     protected function casts(): array
@@ -50,7 +52,13 @@ class HrmsPayrollArrearLine extends Model
 
     public function isPaid(): bool
     {
-        if ($this->status === 'paid') {
+        $status = strtoupper((string) ($this->status ?? ''));
+
+        if (in_array($status, ['PAID', 'INCLUDED'], true)) {
+            return true;
+        }
+
+        if ($this->paid_at !== null || $this->included_in_payroll_period_id !== null) {
             return true;
         }
 
@@ -59,7 +67,10 @@ class HrmsPayrollArrearLine extends Model
 
     public function isUnpaid(): bool
     {
-        return ! $this->isPaid() && $this->status !== 'reversed';
+        $status = strtoupper((string) ($this->status ?? 'UNPAID'));
+
+        return ! $this->isPaid()
+            && ! in_array($status, ['PAID', 'INCLUDED', 'CANCELLED'], true);
     }
 
     public function batch(): BelongsTo

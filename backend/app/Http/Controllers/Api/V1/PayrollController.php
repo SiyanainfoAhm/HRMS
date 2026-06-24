@@ -675,8 +675,9 @@ class PayrollController extends Controller
         $createdByEmployeeId = $this->employeeRecordIdForUser($user->id, $user->company_id);
         $masterEmployeeIds = array_flip($this->collectPayrollEmployeeUserIds((string) $user->company_id));
         $monthlyPayrollIdsByEmployee = [];
+        $arrearLineIdsByEmployee = [];
 
-        DB::transaction(function () use ($user, $period, $rows, $year, $month, $daysInMonth, $periodEnd, $createdByEmployeeId, $masterEmployeeIds, &$generated, &$monthlyPayrollIdsByEmployee) {
+        DB::transaction(function () use ($user, $period, $rows, $year, $month, $daysInMonth, $periodEnd, $createdByEmployeeId, $masterEmployeeIds, &$generated, &$monthlyPayrollIdsByEmployee, &$arrearLineIdsByEmployee) {
             foreach ($rows as $row) {
                 if (! is_array($row)) {
                     continue;
@@ -685,6 +686,19 @@ class PayrollController extends Controller
                 $employeeUserId = $row['employee_user_id'] ?? $row['employeeUserId'] ?? null;
                 if (! is_string($employeeUserId) || $employeeUserId === '') {
                     continue;
+                }
+
+                $lineIds = $row['arrear_line_ids'] ?? $row['arrearLineIds'] ?? null;
+                if (! is_array($lineIds) && is_array($row['arrear_lines'] ?? $row['arrearLines'] ?? null)) {
+                    $lineIds = array_values(array_filter(array_map(
+                        static fn ($line) => is_array($line) ? ($line['id'] ?? null) : null,
+                        $row['arrear_lines'] ?? $row['arrearLines'],
+                    )));
+                }
+                if (is_array($lineIds) && $lineIds !== []) {
+                    $arrearLineIdsByEmployee[$employeeUserId] = array_values(array_unique(array_filter(
+                        array_map(static fn ($id) => is_string($id) ? $id : null, $lineIds),
+                    )));
                 }
 
                 if (! isset($masterEmployeeIds[$employeeUserId])) {
@@ -810,10 +824,18 @@ class PayrollController extends Controller
                 $generated++;
             }
 
+            $this->arrearService->persistArrearLinesForPayrollConfirm(
+                (string) $user->company_id,
+                $year,
+                $month,
+                (string) $period->id,
+            );
+
             $this->arrearService->markArrearLinesAsPaidForPayrollRun(
                 $period,
                 (string) $user->id,
                 $monthlyPayrollIdsByEmployee,
+                $arrearLineIdsByEmployee,
             );
         });
 
@@ -1147,22 +1169,21 @@ class PayrollController extends Controller
             ];
         }
 
-        $result = $this->arrearService->generateOrUpdateDraftArrearBatch(
+        $result = $this->arrearService->previewArrearsForRun(
             $companyId,
             $year,
             $month,
-            $periodId,
         );
 
-        $arrearPeriods = array_map(function ($batch) {
-            $from = $batch->arrear_from;
-            $to = $batch->arrear_to;
+        $arrearPeriods = array_map(function (array $batch) {
+            $from = $batch['arrear_from'] ?? null;
+            $to = $batch['arrear_to'] ?? null;
 
             return [
-                'revisionEventId' => $batch->da_revision_event_id,
-                'from' => $from?->format('Y-m-d'),
-                'to' => $to?->format('Y-m-d'),
-                'status' => $batch->status,
+                'revisionEventId' => $batch['revisionEventId'] ?? $batch['da_revision_event_id'] ?? null,
+                'from' => $from instanceof \Carbon\Carbon ? $from->format('Y-m-d') : null,
+                'to' => $to instanceof \Carbon\Carbon ? $to->format('Y-m-d') : null,
+                'status' => $batch['status'] ?? 'preview',
                 'monthCount' => ($from && $to)
                     ? $this->arrearService->countEligibleArrearMonths($from, $to)
                     : 0,
@@ -1199,7 +1220,16 @@ class PayrollController extends Controller
                 'grossArrear' => round((float) $totals['grossArrear'], 2),
                 'cpfArrear' => round((float) $totals['cpfArrear'], 2),
                 'netArrear' => round((float) $totals['netArrear'], 2),
-                'arrearLines' => $totals['lines'] ?? [],
+                'arrearLines' => array_map(static fn (array $line): array => [
+                    'id' => $line['id'] ?? null,
+                    'arrearYear' => (int) ($line['arrear_year'] ?? 0),
+                    'arrearMonth' => (int) ($line['arrear_month'] ?? 0),
+                    'oldDaPercent' => (float) ($line['old_da_percent'] ?? 0),
+                    'newDaPercent' => (float) ($line['new_da_percent'] ?? 0),
+                    'grossArrear' => (float) ($line['gross_arrear'] ?? 0),
+                    'revisionEventId' => $line['da_revision_event_id'] ?? null,
+                ], is_array($totals['lines'] ?? null) ? $totals['lines'] : []),
+                'arrearLineIds' => array_values(array_unique($totals['arrearLineIds'] ?? [])),
             ]);
         }, $rows);
     }
@@ -1341,5 +1371,24 @@ class PayrollController extends Controller
             'effectiveRunDay' => $effectiveRunDay,
             'exclude' => false,
         ];
+    }
+
+    /** Dev-only: list pending unpaid arrear lines for diagnostics. */
+    public function debugUnpaidArrears(Request $request): JsonResponse
+    {
+        if (! config('app.debug')) {
+            abort(404);
+        }
+
+        $companyId = $request->user()->company_id;
+        $runYear = $request->query('year') !== null ? (int) $request->query('year') : null;
+        $runMonth = $request->query('month') !== null ? (int) $request->query('month') : null;
+
+        return response()->json([
+            'companyId' => $companyId,
+            'runYear' => $runYear,
+            'runMonth' => $runMonth,
+            'unpaid' => $this->arrearService->getUnpaidArrearsForPayroll($companyId, $runYear, $runMonth),
+        ]);
     }
 }

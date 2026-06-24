@@ -76,7 +76,8 @@ class CompanyController extends Controller
             'apply_da_hra_revision' => ['nullable', 'boolean'],
         ]);
 
-        $oldDa = (float) ($company->default_da_percent ?? 53);
+        $baselineDa = $this->payrollArrearService->getCurrentTargetDaPercent((string) $user->company_id);
+        $oldDa = (float) ($company->default_da_percent ?? $baselineDa ?? 53);
         $oldHra = (float) ($company->default_hra_percent ?? 30);
         $newDa = array_key_exists('default_da_percent', $payload)
             ? (float) ($payload['default_da_percent'] ?? $oldDa)
@@ -120,7 +121,7 @@ class CompanyController extends Controller
                 $user->id,
             );
 
-            if ($daChanged) {
+            if ($daChanged && $newDa > $oldDa + 0.001) {
                 $daRevisionEvent = $this->payrollArrearService->createRevisionEvent(
                     (string) $user->company_id,
                     $oldDa,

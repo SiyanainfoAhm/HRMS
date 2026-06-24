@@ -97,6 +97,7 @@ Route::prefix('v1')->group(function () {
         Route::post('payroll/master', [PayrollMasterController::class, 'store']);
         Route::patch('payroll/master', [PayrollController::class, 'upsertMaster']);
         Route::get('payroll/run', [PayrollController::class, 'runPreview']);
+        Route::get('payroll/arrears/debug-unpaid', [PayrollController::class, 'debugUnpaidArrears']);
         Route::post('payroll/run', [PayrollController::class, 'run']);
         Route::post('payroll/payslips', [PayrollController::class, 'storePayslips']);
         Route::get('payroll/export', [PayrollController::class, 'export']);

@@ -877,6 +877,12 @@ function PayrollPageContent() {
             base.grossPay = comp.totalEarnings;
             base.deductions = comp.totalDeductions;
             base.netPay = comp.netSalary;
+            base.arrearLineIds = Array.isArray(r.arrearLineIds)
+              ? r.arrearLineIds
+              : Array.isArray(r.arrearLines)
+                ? r.arrearLines.map((line: { id?: string }) => line?.id).filter(Boolean)
+                : [];
+            base.arrearLines = Array.isArray(r.arrearLines) ? r.arrearLines : [];
             base.tds = comp.deductions.incomeTax;
             base.profTax = comp.deductions.pt;
             base.pfEmployee = Math.round(
@@ -1817,6 +1823,13 @@ function PayrollPageContent() {
         tds: r.tds ?? 0,
         takeHome: r.takeHome,
         ctc: r.ctc,
+        arrearLineIds: Array.isArray((r as { arrearLineIds?: string[] }).arrearLineIds)
+          ? (r as { arrearLineIds: string[] }).arrearLineIds
+          : Array.isArray((r as { arrearLines?: { id?: string }[] }).arrearLines)
+            ? ((r as { arrearLines: { id?: string }[] }).arrearLines
+                .map((line) => line?.id)
+                .filter((id): id is string => typeof id === "string" && id.length > 0))
+            : [],
         ...(r.payrollMode === "government" && r.govRecalc
           ? {
               payrollMode: r.payrollMode,

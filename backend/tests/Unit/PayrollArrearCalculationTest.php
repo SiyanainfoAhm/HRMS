@@ -193,4 +193,12 @@ final class PayrollArrearCalculationTest extends TestCase
         $this->assertSame(3344.0, $fullRevision['da_arrear']);
         $this->assertSame(1672.0, $deltaRevision['da_arrear']);
     }
+
+    public function test_no_arrear_when_old_and_new_da_match_actual_paid_rate(): void
+    {
+        $result = $this->service->calculateMonthArrear(83600, 3600, 60, 60, 0.12);
+        $this->assertSame(0.0, $result['da_arrear']);
+        $this->assertSame(0.0, $result['transport_arrear']);
+        $this->assertSame(0.0, $result['gross_arrear']);
+    }
 }

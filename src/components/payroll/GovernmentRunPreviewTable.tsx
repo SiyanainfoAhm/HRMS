@@ -75,6 +75,16 @@ export type GovernmentRunPreviewRow = {
   pfEmployee: number;
   governmentMonthly?: GovernmentPreviewMonthly | null;
   payslipPending?: boolean;
+  arrearLines?: Array<{
+    id?: string;
+    arrearYear?: number;
+    arrearMonth?: number;
+    oldDaPercent?: number;
+    newDaPercent?: number;
+    grossArrear?: number;
+    revisionEventId?: string;
+  }>;
+  arrearLineIds?: string[];
 };
 
 type Props = {
@@ -84,6 +94,17 @@ type Props = {
   readOnly: boolean;
   onUpdate: (employeeUserId: string, field: string, value: number) => void;
 };
+
+const MONTH_LABELS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+] as const;
+
+function formatArrearPeriod(year?: number, month?: number): string {
+  if (!year || !month) return "—";
+  const label = MONTH_LABELS[month - 1] ?? String(month).padStart(2, "0");
+  return `${label} ${year}`;
+}
 
 function SummaryStat({ label, value, emphasis }: { label: string; value: string; emphasis?: boolean }) {
   return (
@@ -262,10 +283,40 @@ function GovernmentEmployeeCard({
                   ))}
                 </PayrollSectionRow>
                 {showArrears ? (
-                  <PayrollSectionRow title="DA arrears (unpaid)" titleClassName="text-violet-900">
-                    <p className="col-span-full mb-1 text-[10px] text-violet-800/80">
-                      Arrears shown here are unpaid and will be marked paid after payroll confirmation.
-                    </p>
+                  <PayrollSectionRow
+                    title={readOnly ? "DA arrears included in this payroll" : "DA arrears (unpaid)"}
+                    titleClassName="text-violet-900"
+                  >
+                    {!readOnly ? (
+                      <p className="col-span-full mb-1 text-[10px] text-violet-800/80">
+                        Arrears shown here are unpaid and will be marked paid after payroll confirmation.
+                      </p>
+                    ) : null}
+                    {(row.arrearLines ?? []).length > 0 ? (
+                      <div className="col-span-full mb-2 space-y-1">
+                        {(row.arrearLines ?? []).map((line) => (
+                          <p
+                            key={line.id ?? `${line.arrearYear}-${line.arrearMonth}-${line.oldDaPercent}`}
+                            className="text-[10px] leading-snug text-violet-900"
+                          >
+                            {readOnly ? "Included arrears" : "Unpaid arrears"}:{" "}
+                            {formatArrearPeriod(line.arrearYear, line.arrearMonth)}, DA{" "}
+                            {line.oldDaPercent ?? "—"}% → {line.newDaPercent ?? "—"}%
+                            {line.id ? (
+                              <span className="text-violet-700/80"> · line {line.id.slice(0, 8)}…</span>
+                            ) : null}
+                            {line.revisionEventId ? (
+                              <span className="text-violet-700/80"> · revision {line.revisionEventId.slice(0, 8)}…</span>
+                            ) : null}
+                          </p>
+                        ))}
+                        {(row.arrearLineIds ?? []).length > 0 ? (
+                          <p className="text-[9px] text-violet-700/70">
+                            Line IDs: {(row.arrearLineIds ?? []).join(", ")}
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : null}
                     {[
                       { label: "DA ARR.", value: v(g, "daArrearsPaid") },
                       { label: "TR. ARR.", value: v(g, "transportArrearsPaid") },

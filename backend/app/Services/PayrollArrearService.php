@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\HrmsCompany;
 use App\Models\HrmsDaRevisionEvent;
 use App\Models\HrmsGovernmentMonthlyPayroll;
 use App\Models\HrmsPayrollArrearBatch;
@@ -12,6 +13,7 @@ use App\Models\HrmsPayslip;
 use App\Models\HrmsUser;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 /**
@@ -51,6 +53,10 @@ final class PayrollArrearService
      */
     public function detectPendingDaArrears(string $companyId, int $runYear, int $runMonth): array
     {
+        if (! HrmsDaRevisionEvent::query()->where('company_id', $companyId)->exists()) {
+            return [];
+        }
+
         $runStart = Carbon::create($runYear, $runMonth, 1)->startOfDay();
 
         $candidates = HrmsDaRevisionEvent::query()
@@ -58,6 +64,7 @@ final class PayrollArrearService
             ->whereDate('effective_from', '<', $runStart->toDateString())
             ->orderByDesc('created_at')
             ->get()
+            ->filter(fn (HrmsDaRevisionEvent $e) => $this->isActiveRevisionEvent($e, $companyId))
             ->filter(fn (HrmsDaRevisionEvent $e) => $this->arrearPeriodForRevision(
                 $e->effective_from->format('Y-m-d'),
                 $runYear,
@@ -65,6 +72,23 @@ final class PayrollArrearService
             ) !== null);
 
         return $this->dedupeRevisionEventsByTransition($candidates);
+    }
+
+    /**
+     * Revision events that still have at least one unsettled arrear month for this payroll run.
+     *
+     * @return list<HrmsDaRevisionEvent>
+     */
+    public function detectPendingDaArrearsForRun(string $companyId, int $runYear, int $runMonth): array
+    {
+        $events = $this->detectPendingDaArrears($companyId, $runYear, $runMonth);
+
+        return array_values(array_filter(
+            $events,
+            fn (HrmsDaRevisionEvent $event) => count(
+                $this->calculateDaArrearsForRevision($event, $companyId, $runYear, $runMonth)['lines'],
+            ) > 0,
+        ));
     }
 
     /**
@@ -289,12 +313,27 @@ final class PayrollArrearService
                     continue;
                 }
 
-                if ($this->isArrearMonthSettledForRevision(
+                if ($this->isArrearMonthSettled($companyId, (string) $employeeUserId, $y, $m, $newDaPercent)) {
+                    $this->debugArrear('skip settled calendar month', [
+                        'payroll_run' => sprintf('%04d-%02d', $runYear, $runMonth),
+                        'employee_user_id' => $employeeUserId,
+                        'arrear_year' => $y,
+                        'arrear_month' => $m,
+                        'target_da_percent' => $newDaPercent,
+                        'reason' => 'settled',
+                    ]);
+                    continue;
+                }
+
+                $effectiveOldDa = $this->resolveEffectiveOldDaForArrearMonth(
                     (string) $employeeUserId,
                     $m,
                     $y,
-                    (string) $event->id,
-                )) {
+                    $revisionOldDa,
+                    $newDaPercent,
+                    $companyId,
+                );
+                if ($effectiveOldDa === null) {
                     continue;
                 }
 
@@ -314,15 +353,24 @@ final class PayrollArrearService
                     continue;
                 }
 
-                $oldDa = (float) ($source['old_da_percent'] ?? $revisionOldDa);
+                $oldDa = (float) ($source['old_da_percent'] ?? $effectiveOldDa);
                 if ($oldDa >= $newDaPercent - 0.001) {
+                    $this->debugArrear('skip month already paid at target DA', [
+                        'payroll_run' => sprintf('%04d-%02d', $runYear, $runMonth),
+                        'employee_user_id' => $employeeUserId,
+                        'arrear_year' => $y,
+                        'arrear_month' => $m,
+                        'actual_paid_da_percent' => $oldDa,
+                        'target_da_percent' => $newDaPercent,
+                        'reason' => 'paid_at_target',
+                    ]);
                     continue;
                 }
 
                 $calc = $this->calculateMonthArrear(
                     (float) $source['basic'],
                     (float) $source['transport_base'],
-                    $oldDa,
+                    $effectiveOldDa,
                     $newDaPercent,
                     (float) $source['cpf_rate'],
                 );
@@ -350,6 +398,17 @@ final class PayrollArrearService
                         $m,
                     );
                 }
+
+                $this->debugArrear('include arrear month', [
+                    'payroll_run' => sprintf('%04d-%02d', $runYear, $runMonth),
+                    'employee_user_id' => $employeeUserId,
+                    'arrear_year' => $y,
+                    'arrear_month' => $m,
+                    'old_da_percent' => $effectiveOldDa,
+                    'new_da_percent' => $newDaPercent,
+                    'gross_arrear' => $calc['gross_arrear'],
+                    'reason' => 'included',
+                ]);
 
                 $lines[] = $line;
                 $totals['total_da_arrear'] += $calc['da_arrear'];
@@ -389,6 +448,72 @@ final class PayrollArrearService
     }
 
     /**
+     * Read-only arrear preview for Run Payroll — never inserts batches or lines.
+     *
+     * @return array{batches: list<array<string, mixed>>, warnings: list<string>, employeeTotals: array<string, mixed>}
+     */
+    public function previewArrearsForRun(
+        string $companyId,
+        int $runYear,
+        int $runMonth,
+    ): array {
+        $this->purgeOrphanArrearArtifacts($companyId);
+        $this->purgeSettledUnpaidArrearLines($companyId);
+
+        $events = $this->detectPendingDaArrearsForRun($companyId, $runYear, $runMonth);
+        $batches = [];
+        $allWarnings = [];
+        $employeeTotals = [];
+
+        foreach ($events as $event) {
+            $period = $this->arrearPeriodForRevision($event->effective_from->format('Y-m-d'), $runYear, $runMonth);
+            if ($period === null) {
+                continue;
+            }
+
+            $calc = $this->calculateDaArrearsForRevision($event, $companyId, $runYear, $runMonth);
+            $allWarnings = array_merge($allWarnings, $calc['warnings']);
+
+            foreach ($calc['lines'] as $line) {
+                $line['da_revision_event_id'] = $event->id;
+                $employeeTotals = $this->mergeCalcLineIntoEmployeeTotals($employeeTotals, $line);
+            }
+
+            if ($calc['lines'] !== []) {
+                $batches[] = [
+                    'revisionEventId' => $event->id,
+                    'da_revision_event_id' => $event->id,
+                    'arrear_from' => $period['from'],
+                    'arrear_to' => $period['to'],
+                    'status' => 'preview',
+                ];
+            }
+        }
+
+        $employeeTotals = $this->dedupeEmployeeTotals($employeeTotals);
+
+        $previewLineIds = [];
+        foreach ($employeeTotals as $totals) {
+            foreach ($totals['arrearLineIds'] ?? [] as $lineId) {
+                $previewLineIds[] = $lineId;
+            }
+        }
+
+        $this->debugArrear('preview arrear totals', [
+            'payroll_run' => sprintf('%04d-%02d', $runYear, $runMonth),
+            'active_revision_count' => count($events),
+            'employee_count' => count($employeeTotals),
+            'arrear_line_ids' => array_values(array_unique($previewLineIds)),
+        ]);
+
+        return [
+            'batches' => $batches,
+            'warnings' => array_values(array_unique($allWarnings)),
+            'employeeTotals' => $employeeTotals,
+        ];
+    }
+
+    /**
      * @return array<string, mixed>
      */
     public function generateOrUpdateDraftArrearBatch(
@@ -398,7 +523,9 @@ final class PayrollArrearService
         ?string $payrollPeriodId = null,
     ): array {
         return DB::transaction(function () use ($companyId, $runYear, $runMonth, $payrollPeriodId) {
-            $events = $this->detectPendingDaArrears($companyId, $runYear, $runMonth);
+            $this->purgeOrphanArrearArtifacts($companyId);
+            $this->purgeSettledUnpaidArrearLines($companyId);
+            $events = $this->detectPendingDaArrearsForRun($companyId, $runYear, $runMonth);
             $activeRevisionIds = array_map(static fn (HrmsDaRevisionEvent $e) => $e->id, $events);
 
             $this->purgeSupersededDraftBatches($companyId, $runYear, $runMonth, $activeRevisionIds);
@@ -430,14 +557,21 @@ final class PayrollArrearService
                     $batches[] = $existingBatch;
                     $employeeTotals = $this->mergeEmployeeTotals(
                         $employeeTotals,
-                        $this->aggregateLinesToEmployeeTotals($existingBatch->lines->all()),
+                        $this->aggregateLinesToEmployeeTotals($existingBatch->lines->all(), $companyId),
                     );
 
                     continue;
                 }
 
                 if ($existingBatch) {
-                    HrmsPayrollArrearLine::where('arrear_batch_id', $existingBatch->id)->delete();
+                    HrmsPayrollArrearLine::query()
+                        ->where('arrear_batch_id', $existingBatch->id)
+                        ->where('is_locked', false)
+                        ->where(function ($q) {
+                            $q->whereNull('status')
+                                ->orWhereIn(DB::raw('UPPER(COALESCE(status, \'UNPAID\'))'), ['UNPAID', 'DRAFT']);
+                        })
+                        ->delete();
                     $existingBatch->update([
                         'payroll_period_id' => $payrollPeriodId,
                         'arrear_from' => $period['from']->toDateString(),
@@ -470,8 +604,15 @@ final class PayrollArrearService
                 }
 
                 foreach ($calc['lines'] as $line) {
-                    $this->upsertArrearLine($batch->id, (string) $event->id, $payrollPeriodId, $line);
+                    $stored = $this->upsertArrearLine($batch->id, (string) $event->id, $payrollPeriodId, $line, $companyId);
+                    $line['id'] = $stored->id;
                     $employeeTotals = $this->mergeCalcLineIntoEmployeeTotals($employeeTotals, $line);
+                }
+
+                if ($calc['lines'] === []) {
+                    HrmsPayrollArrearLine::where('arrear_batch_id', $batch->id)->delete();
+                    $batch->delete();
+                    continue;
                 }
 
                 $batches[] = $batch->load('revisionEvent');
@@ -509,11 +650,32 @@ final class PayrollArrearService
             )->all();
 
             if ($unpaidLines !== []) {
-                return $this->aggregateLinesToEmployeeTotals($unpaidLines);
+                return $this->aggregateLinesToEmployeeTotals($unpaidLines, $companyId);
             }
         }
 
-        return $this->generateOrUpdateDraftArrearBatch($companyId, $runYear, $runMonth, $payrollPeriodId)['employeeTotals'];
+        return $this->previewArrearsForRun($companyId, $runYear, $runMonth)['employeeTotals'];
+    }
+
+    /**
+     * Persist draft arrear batches/lines when payroll is confirmed (not during preview).
+     *
+     * @return array<string, mixed>
+     */
+    public function persistArrearLinesForPayrollConfirm(
+        string $companyId,
+        int $runYear,
+        int $runMonth,
+        string $payrollPeriodId,
+    ): array {
+        $preview = $this->previewArrearsForRun($companyId, $runYear, $runMonth);
+        if ($preview['employeeTotals'] === []) {
+            $this->purgeOrphanArrearArtifacts($companyId);
+
+            return ['batches' => [], 'employeeTotals' => []];
+        }
+
+        return $this->generateOrUpdateDraftArrearBatch($companyId, $runYear, $runMonth, $payrollPeriodId);
     }
 
     public function attachArrearsToPayrollRun(HrmsPayrollPeriod $period): void
@@ -533,7 +695,8 @@ final class PayrollArrearService
                 ->where('payroll_period_id', $period->id)
                 ->pluck('id'))
             ->where(function ($q) {
-                $q->whereNull('status')->orWhere('status', 'unpaid');
+                $q->whereNull('status')
+                    ->orWhereIn(DB::raw('UPPER(COALESCE(status, \'UNPAID\'))'), ['UNPAID', 'DRAFT']);
             })
             ->update(['payroll_period_id' => $period->id]);
     }
@@ -542,11 +705,13 @@ final class PayrollArrearService
      * Mark draft arrear lines as paid when payroll is confirmed. Idempotent for already-paid lines.
      *
      * @param  array<string, string>  $monthlyPayrollIdsByEmployee  employee_user_id => cirt_monthly_payroll id
+     * @param  array<string, list<string>>  $arrearLineIdsByEmployee
      */
     public function markArrearLinesAsPaidForPayrollRun(
         HrmsPayrollPeriod $period,
         ?string $paidBy,
         array $monthlyPayrollIdsByEmployee = [],
+        array $arrearLineIdsByEmployee = [],
     ): void {
         $this->attachArrearsToPayrollRun($period);
 
@@ -555,6 +720,28 @@ final class PayrollArrearService
         $paidInMonth = ($year >= 2000 && $month >= 1 && $month <= 12)
             ? sprintf('%04d-%02d-01', $year, $month)
             : null;
+
+        $explicitIds = [];
+        foreach ($arrearLineIdsByEmployee as $ids) {
+            foreach ($ids as $id) {
+                if (is_string($id) && $id !== '') {
+                    $explicitIds[] = $id;
+                }
+            }
+        }
+        $explicitIds = array_values(array_unique($explicitIds));
+
+        if ($explicitIds !== []) {
+            $this->markArrearLineIdsPaid(
+                $explicitIds,
+                $period,
+                $paidBy,
+                $year,
+                $month,
+                $paidInMonth,
+                $monthlyPayrollIdsByEmployee,
+            );
+        }
 
         $batches = HrmsPayrollArrearBatch::query()
             ->where('payroll_period_id', $period->id)
@@ -574,16 +761,15 @@ final class PayrollArrearService
                 }
 
                 $employeeUserId = (string) $line->employee_user_id;
-                $line->update([
-                    'status' => 'paid',
-                    'is_locked' => true,
-                    'payroll_period_id' => $period->id,
-                    'paid_in_period_id' => $period->id,
-                    'paid_in_payroll_id' => $monthlyPayrollIdsByEmployee[$employeeUserId] ?? $line->paid_in_payroll_id,
-                    'paid_in_month' => $paidInMonth,
-                    'paid_at' => now(),
-                    'paid_by' => $paidBy,
-                ]);
+                $this->applyPaidStatusToLine(
+                    $line,
+                    $period,
+                    $paidBy,
+                    $year,
+                    $month,
+                    $paidInMonth,
+                    $monthlyPayrollIdsByEmployee[$employeeUserId] ?? null,
+                );
             }
 
             $batch->update([
@@ -705,6 +891,7 @@ final class PayrollArrearService
             'cpfArrear' => 0.0,
             'netArrear' => 0.0,
             'lines' => [],
+            'arrearLineIds' => [],
         ];
     }
 
@@ -749,6 +936,9 @@ final class PayrollArrearService
         $employeeTotals[$uid]['cpfArrear'] += $line['cpf_arrear'];
         $employeeTotals[$uid]['netArrear'] += $line['net_arrear'];
         $employeeTotals[$uid]['lines'][] = $line;
+        if (! empty($line['id'])) {
+            $employeeTotals[$uid]['arrearLineIds'][] = (string) $line['id'];
+        }
 
         return $employeeTotals;
     }
@@ -759,6 +949,7 @@ final class PayrollArrearService
         string $revisionEventId,
         ?string $payrollPeriodId,
         array $line,
+        ?string $companyId = null,
     ): HrmsPayrollArrearLine {
         $employeeUserId = (string) $line['employee_user_id'];
         $arrearYear = (int) $line['arrear_year'];
@@ -775,10 +966,39 @@ final class PayrollArrearService
             return $existing;
         }
 
+        $paidDuplicate = HrmsPayrollArrearLine::query()
+            ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+            ->where('employee_user_id', $employeeUserId)
+            ->where('arrear_year', $arrearYear)
+            ->where('arrear_month', $arrearMonth)
+            ->whereBetween('old_da_percent', [(float) $line['old_da_percent'] - 0.01, (float) $line['old_da_percent'] + 0.01])
+            ->whereBetween('new_da_percent', [(float) $line['new_da_percent'] - 0.01, (float) $line['new_da_percent'] + 0.01])
+            ->where(fn ($q) => $this->applyPaidLineScope($q))
+            ->first();
+
+        if ($paidDuplicate) {
+            return $paidDuplicate;
+        }
+
+        $unpaidDuplicate = HrmsPayrollArrearLine::query()
+            ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+            ->where('employee_user_id', $employeeUserId)
+            ->where('arrear_year', $arrearYear)
+            ->where('arrear_month', $arrearMonth)
+            ->whereBetween('old_da_percent', [(float) $line['old_da_percent'] - 0.01, (float) $line['old_da_percent'] + 0.01])
+            ->whereBetween('new_da_percent', [(float) $line['new_da_percent'] - 0.01, (float) $line['new_da_percent'] + 0.01])
+            ->where(fn ($q) => $this->applyUnpaidLineScope($q))
+            ->first();
+
+        if ($unpaidDuplicate && ! $existing) {
+            $existing = $unpaidDuplicate;
+        }
+
         $attributes = [
             'arrear_batch_id' => $batchId,
             'da_revision_event_id' => $revisionEventId,
             'payroll_period_id' => $payrollPeriodId,
+            'company_id' => $companyId,
             'basic' => $line['basic'],
             'transport_base' => $line['transport_base'],
             'old_da_percent' => $line['old_da_percent'],
@@ -797,7 +1017,7 @@ final class PayrollArrearService
             'old_payroll_master_id' => $line['old_payroll_master_id'],
             'new_payroll_master_id' => $line['new_payroll_master_id'],
             'is_locked' => false,
-            'status' => 'unpaid',
+            'status' => 'UNPAID',
         ];
 
         if ($existing) {
@@ -925,12 +1145,11 @@ final class PayrollArrearService
             $sums = $this->emptyEmployeeArrear();
 
             foreach ($lines as $line) {
-                $key = $this->arrearLineBusinessKey(
+                $key = sprintf(
+                    '%s|%d|%d',
                     (string) ($line['employee_user_id'] ?? $uid),
                     (int) $line['arrear_year'],
                     (int) $line['arrear_month'],
-                    (float) $line['old_da_percent'],
-                    (float) $line['new_da_percent'],
                 );
 
                 if (isset($deduped[$key])) {
@@ -945,14 +1164,417 @@ final class PayrollArrearService
                 $sums['netArrear'] += (float) $line['net_arrear'];
             }
 
-            $employeeTotals[$uid] = array_merge($sums, ['lines' => array_values($deduped)]);
+            $lineIds = array_values(array_unique(array_filter(array_map(
+                static fn (array $line): ?string => isset($line['id']) ? (string) $line['id'] : null,
+                array_values($deduped),
+            ))));
+
+            $employeeTotals[$uid] = array_merge($sums, [
+                'lines' => array_values($deduped),
+                'arrearLineIds' => $lineIds,
+            ]);
         }
 
         return $employeeTotals;
     }
 
     /**
-     * True when this employee/month is already settled for the given DA revision event.
+     * True when this employee calendar month is already settled at the target DA level or higher.
+     *
+     * @deprecated Prefer isArrearMonthSettled() which also checks finalized monthly payroll DA.
+     */
+    public function isArrearCalendarMonthSettled(
+        string $employeeUserId,
+        int $month,
+        int $year,
+        float $newDaPercent,
+        ?string $companyId = null,
+    ): bool {
+        if ($companyId !== null) {
+            return $this->isArrearMonthSettled($companyId, $employeeUserId, $year, $month, $newDaPercent);
+        }
+
+        return $this->hasPaidArrearLineForCalendarMonth($employeeUserId, $year, $month, $newDaPercent);
+    }
+
+    /**
+     * Calendar salary month is settled when a paid/included arrear line exists OR
+     * finalized monthly payroll for that month already used the target DA percent.
+     */
+    public function isArrearMonthSettled(
+        string $companyId,
+        string $employeeUserId,
+        int $arrearYear,
+        int $arrearMonth,
+        float $targetDaPercent,
+    ): bool {
+        if ($this->hasPaidArrearLineForCalendarMonth($employeeUserId, $arrearYear, $arrearMonth, $targetDaPercent)) {
+            return true;
+        }
+
+        return $this->isSalaryMonthPaidAtTargetDa($companyId, $employeeUserId, $arrearYear, $arrearMonth, $targetDaPercent);
+    }
+
+    /**
+     * Unpaid arrear lines eligible for Run Payroll preview (excludes settled calendar months).
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function getUnpaidArrearsForPayroll(string $companyId, ?int $runYear = null, ?int $runMonth = null): array
+    {
+        $query = HrmsPayrollArrearLine::query()
+            ->where('company_id', $companyId)
+            ->where(fn ($q) => $this->applyUnpaidLineScope($q));
+
+        if ($runYear !== null && $runMonth !== null) {
+            $batchIds = HrmsPayrollArrearBatch::query()
+                ->where('company_id', $companyId)
+                ->where('run_year', $runYear)
+                ->where('run_month', $runMonth)
+                ->pluck('id');
+            if ($batchIds->isNotEmpty()) {
+                $query->whereIn('arrear_batch_id', $batchIds);
+            }
+        }
+
+        return $query
+            ->orderBy('employee_user_id')
+            ->orderBy('arrear_year')
+            ->orderBy('arrear_month')
+            ->get()
+            ->reject(function (HrmsPayrollArrearLine $line) use ($companyId) {
+                return $this->isArrearMonthSettled(
+                    $companyId,
+                    (string) $line->employee_user_id,
+                    (int) $line->arrear_year,
+                    (int) $line->arrear_month,
+                    (float) $line->new_da_percent,
+                );
+            })
+            ->map(fn (HrmsPayrollArrearLine $line) => [
+                'employee_user_id' => $line->employee_user_id,
+                'arrear_year' => $line->arrear_year,
+                'arrear_month' => $line->arrear_month,
+                'old_da_percent' => $line->old_da_percent,
+                'new_da_percent' => $line->new_da_percent,
+                'status' => $line->status,
+                'included_in_month' => $line->included_in_month,
+                'included_in_year' => $line->included_in_year,
+                'paid_at' => $line->paid_at,
+                'da_arrear' => $line->da_arrear,
+                'transport_arrear' => $line->transport_arrear,
+                'gross_arrear' => $line->gross_arrear,
+                'cpf_arrear' => $line->cpf_arrear,
+                'net_arrear' => $line->net_arrear,
+            ])
+            ->values()
+            ->all();
+    }
+
+    public function resolveEffectiveOldDaForArrearMonth(
+        string $employeeUserId,
+        int $month,
+        int $year,
+        float $revisionOldDa,
+        float $newDaPercent,
+        ?string $companyId = null,
+    ): ?float {
+        if ($companyId !== null && $this->isArrearMonthSettled($companyId, $employeeUserId, $year, $month, $newDaPercent)) {
+            return null;
+        }
+
+        if ($this->isArrearCalendarMonthSettled($employeeUserId, $month, $year, $newDaPercent, $companyId)) {
+            return null;
+        }
+
+        $topPaid = HrmsPayrollArrearLine::query()
+            ->where('employee_user_id', $employeeUserId)
+            ->where('arrear_month', $month)
+            ->where('arrear_year', $year)
+            ->where(fn ($q) => $this->applyPaidLineScope($q))
+            ->orderByDesc('new_da_percent')
+            ->first();
+
+        if ($topPaid && (float) $topPaid->new_da_percent >= $newDaPercent - 0.001) {
+            return null;
+        }
+
+        return $topPaid ? (float) $topPaid->new_da_percent : $revisionOldDa;
+    }
+
+    /** @param  list<string>  $lineIds */
+    /** @param  array<string, string>  $monthlyPayrollIdsByEmployee */
+    private function markArrearLineIdsPaid(
+        array $lineIds,
+        HrmsPayrollPeriod $period,
+        ?string $paidBy,
+        int $year,
+        int $month,
+        ?string $paidInMonth,
+        array $monthlyPayrollIdsByEmployee,
+    ): void {
+        $lines = HrmsPayrollArrearLine::query()
+            ->whereIn('id', $lineIds)
+            ->lockForUpdate()
+            ->get();
+
+        foreach ($lines as $line) {
+            if ($line->isPaid()) {
+                continue;
+            }
+
+            $employeeUserId = (string) $line->employee_user_id;
+            $this->applyPaidStatusToLine(
+                $line,
+                $period,
+                $paidBy,
+                $year,
+                $month,
+                $paidInMonth,
+                $monthlyPayrollIdsByEmployee[$employeeUserId] ?? null,
+            );
+        }
+    }
+
+    private function applyPaidStatusToLine(
+        HrmsPayrollArrearLine $line,
+        HrmsPayrollPeriod $period,
+        ?string $paidBy,
+        int $year,
+        int $month,
+        ?string $paidInMonth,
+        ?string $monthlyPayrollId,
+    ): void {
+        $line->update([
+            'status' => 'PAID',
+            'is_locked' => true,
+            'payroll_period_id' => $period->id,
+            'paid_in_period_id' => $period->id,
+            'paid_in_payroll_id' => $monthlyPayrollId ?? $line->paid_in_payroll_id,
+            'paid_in_month' => $paidInMonth,
+            'paid_at' => now(),
+            'paid_by' => $paidBy,
+            'included_in_payroll_period_id' => $period->id,
+            'included_in_month' => $month,
+            'included_in_year' => $year,
+            'included_in_payroll_id' => $monthlyPayrollId ?? $line->included_in_payroll_id,
+        ]);
+    }
+
+    /** @param  \Illuminate\Database\Eloquent\Builder<HrmsPayrollArrearLine>  $query */
+    private function applyPaidLineScope($query): void
+    {
+        $query->where(function ($q) {
+            $q->whereIn(DB::raw('UPPER(COALESCE(status, \'UNPAID\'))'), ['PAID', 'INCLUDED'])
+                ->orWhereNotNull('paid_at')
+                ->orWhereNotNull('included_in_payroll_period_id')
+                ->orWhere(function ($q2) {
+                    $q2->where('is_locked', true)
+                        ->whereHas('batch', fn ($b) => $b->where('status', 'finalized'));
+                });
+        });
+    }
+
+    /** @param  \Illuminate\Database\Eloquent\Builder<HrmsPayrollArrearLine>  $query */
+    private function applyUnpaidLineScope($query): void
+    {
+        $query->whereIn(DB::raw('UPPER(COALESCE(status, \'UNPAID\'))'), ['UNPAID', 'DRAFT'])
+            ->whereNull('included_in_payroll_period_id')
+            ->whereNull('included_in_month')
+            ->whereNull('included_in_year')
+            ->whereNull('paid_at');
+    }
+
+    private function hasPaidArrearLineForCalendarMonth(
+        string $employeeUserId,
+        int $arrearYear,
+        int $arrearMonth,
+        float $targetDaPercent,
+    ): bool {
+        return HrmsPayrollArrearLine::query()
+            ->where('employee_user_id', $employeeUserId)
+            ->where('arrear_month', $arrearMonth)
+            ->where('arrear_year', $arrearYear)
+            ->where(fn ($q) => $this->applyPaidLineScope($q))
+            ->where('new_da_percent', '>=', $targetDaPercent - 0.001)
+            ->exists();
+    }
+
+    private function isSalaryMonthPaidAtTargetDa(
+        string $companyId,
+        string $employeeUserId,
+        int $arrearYear,
+        int $arrearMonth,
+        float $targetDaPercent,
+    ): bool {
+        $period = HrmsPayrollPeriod::query()
+            ->where('company_id', $companyId)
+            ->whereYear('period_start', $arrearYear)
+            ->whereMonth('period_start', $arrearMonth)
+            ->first();
+
+        if ($period === null) {
+            return false;
+        }
+
+        $hasPayslip = HrmsPayslip::query()
+            ->where('payroll_period_id', $period->id)
+            ->where('employee_user_id', $employeeUserId)
+            ->exists();
+
+        if (! $hasPayslip) {
+            return false;
+        }
+
+        $gov = HrmsGovernmentMonthlyPayroll::query()
+            ->where('payroll_period_id', $period->id)
+            ->where('employee_user_id', $employeeUserId)
+            ->first();
+
+        if ($gov === null) {
+            return false;
+        }
+
+        $basic = (float) ($gov->basic_paid ?: $gov->basic_actual ?: 0);
+        if ($basic <= 0) {
+            return false;
+        }
+
+        $paidDaPercent = $this->deriveDaPercentFromMonthly($gov, $basic);
+
+        return $paidDaPercent >= $targetDaPercent - 0.001;
+    }
+
+    private function purgeSettledUnpaidArrearLines(string $companyId): void
+    {
+        HrmsPayrollArrearLine::query()
+            ->where(fn ($q) => $this->applyUnpaidLineScope($q))
+            ->where(function ($q) use ($companyId) {
+                $q->where('company_id', $companyId)
+                    ->orWhereHas('batch', fn ($b) => $b->where('company_id', $companyId));
+            })
+            ->orderBy('created_at')
+            ->chunk(100, function ($lines) use ($companyId) {
+                foreach ($lines as $line) {
+                    if ($this->isArrearMonthSettled(
+                        $companyId,
+                        (string) $line->employee_user_id,
+                        (int) $line->arrear_year,
+                        (int) $line->arrear_month,
+                        (float) $line->new_da_percent,
+                    )) {
+                        $this->debugArrear('purge orphan unpaid line for settled month', [
+                            'arrear_line_id' => $line->id,
+                            'employee_user_id' => $line->employee_user_id,
+                            'arrear_year' => $line->arrear_year,
+                            'arrear_month' => $line->arrear_month,
+                        ]);
+                        $line->delete();
+                    }
+                }
+            });
+    }
+
+    private function purgeOrphanArrearArtifacts(string $companyId): void
+    {
+        $activeRevisionIds = HrmsDaRevisionEvent::query()
+            ->where('company_id', $companyId)
+            ->get()
+            ->filter(fn (HrmsDaRevisionEvent $event) => $this->isActiveRevisionEvent($event, $companyId))
+            ->pluck('id')
+            ->all();
+
+        HrmsPayrollArrearLine::query()
+            ->where(fn ($q) => $this->applyUnpaidLineScope($q))
+            ->where(function ($q) use ($companyId) {
+                $q->where('company_id', $companyId)
+                    ->orWhereHas('batch', fn ($b) => $b->where('company_id', $companyId));
+            })
+            ->where(function ($q) use ($activeRevisionIds) {
+                $q->whereNull('da_revision_event_id');
+                if ($activeRevisionIds !== []) {
+                    $q->orWhereNotIn('da_revision_event_id', $activeRevisionIds);
+                } else {
+                    $q->orWhereNotNull('da_revision_event_id');
+                }
+            })
+            ->delete();
+
+        $draftBatchQuery = HrmsPayrollArrearBatch::query()
+            ->where('company_id', $companyId)
+            ->where('status', 'draft');
+
+        if ($activeRevisionIds !== []) {
+            $draftBatchQuery->whereNotIn('da_revision_event_id', $activeRevisionIds);
+        }
+
+        $orphanBatchIds = $draftBatchQuery->pluck('id');
+        if ($orphanBatchIds->isNotEmpty()) {
+            HrmsPayrollArrearLine::whereIn('arrear_batch_id', $orphanBatchIds)->delete();
+            HrmsPayrollArrearBatch::whereIn('id', $orphanBatchIds)->delete();
+        }
+
+        $emptyBatchIds = HrmsPayrollArrearBatch::query()
+            ->where('company_id', $companyId)
+            ->where('status', 'draft')
+            ->whereDoesntHave('lines')
+            ->pluck('id');
+
+        if ($emptyBatchIds->isNotEmpty()) {
+            HrmsPayrollArrearBatch::whereIn('id', $emptyBatchIds)->delete();
+        }
+    }
+
+    public function getCurrentTargetDaPercent(string $companyId): ?float
+    {
+        $masterDas = HrmsPayrollMaster::query()
+            ->where('company_id', $companyId)
+            ->whereNull('effective_to')
+            ->pluck('da_percent')
+            ->map(static fn ($da) => round((float) $da, 2))
+            ->filter(static fn (float $da) => $da > 0)
+            ->unique()
+            ->values();
+
+        if ($masterDas->count() === 1) {
+            return (float) $masterDas->first();
+        }
+
+        $companyDa = HrmsCompany::query()->where('id', $companyId)->value('default_da_percent');
+
+        return $companyDa !== null ? round((float) $companyDa, 2) : null;
+    }
+
+    public function isActiveRevisionEvent(?HrmsDaRevisionEvent $event, string $companyId): bool
+    {
+        if ($event === null || $event->company_id !== $companyId) {
+            return false;
+        }
+
+        $oldDa = (float) $event->old_da_percent;
+        $newDa = (float) $event->new_da_percent;
+        if ($oldDa >= $newDa - 0.001) {
+            return false;
+        }
+
+        $targetDa = $this->getCurrentTargetDaPercent($companyId);
+        if ($targetDa === null) {
+            return false;
+        }
+
+        return abs($newDa - $targetDa) < 0.001;
+    }
+
+    /** @param  array<string, mixed>  $context */
+    private function debugArrear(string $message, array $context = []): void
+    {
+        if (config('app.debug')) {
+            Log::debug('[PayrollArrear] '.$message, $context);
+        }
+    }
+
+    /**
+     * @deprecated Use isArrearCalendarMonthSettled()
      */
     public function isArrearMonthSettledForRevision(
         string $employeeUserId,
@@ -965,17 +1587,12 @@ final class PayrollArrearService
             ->where('arrear_month', $month)
             ->where('arrear_year', $year)
             ->where('da_revision_event_id', $revisionEventId)
-            ->where(function ($q) {
-                $q->where('status', 'paid')
-                    ->orWhere(function ($q2) {
-                        $q2->where('is_locked', true)
-                            ->whereHas('batch', fn ($b) => $b->where('status', 'finalized'));
-                    });
-            })
-            ->exists();
+            ->where(fn ($q) => $this->applyPaidLineScope($q))
+            ->exists()
+            || $this->isArrearCalendarMonthSettled($employeeUserId, $month, $year, 999);
     }
 
-    /** @deprecated Use isArrearMonthSettledForRevision() */
+    /** @deprecated Use isArrearCalendarMonthSettled() */
     private function isArrearMonthAlreadyPaid(
         string $employeeUserId,
         int $month,
@@ -1088,14 +1705,19 @@ final class PayrollArrearService
             $daPaid = (float) ($gov->da_paid ?: $gov->da_actual ?: 0);
             if ($daPaid > 0) {
                 $paidPct = round($daPaid / $basic * 100, 2);
-                if ($paidPct < $newDa - 0.001) {
-                    return $paidPct;
+                if ($paidPct >= $newDa - 0.001) {
+                    return $newDa;
                 }
+
+                return $paidPct;
             }
         }
 
         if ($historicalMaster && $historicalMaster->da_percent !== null) {
             $masterDa = (float) $historicalMaster->da_percent;
+            if ($masterDa >= $newDa - 0.001) {
+                return $newDa;
+            }
             if ($masterDa < $newDa - 0.001) {
                 return $masterDa;
             }
@@ -1188,18 +1810,31 @@ final class PayrollArrearService
      * @param  list<HrmsPayrollArrearLine>  $lines
      * @return array<string, array<string, mixed>>
      */
-    private function aggregateLinesToEmployeeTotals(array $lines): array
+    private function aggregateLinesToEmployeeTotals(array $lines, ?string $companyId = null): array
     {
         $deduped = [];
 
         foreach ($lines as $line) {
-            $revisionEventId = (string) ($line->da_revision_event_id ?? $line->batch?->da_revision_event_id ?? '');
-            $key = $this->arrearLineBusinessKey(
+            if ($line instanceof HrmsPayrollArrearLine && $line->isPaid()) {
+                continue;
+            }
+
+            if ($line instanceof HrmsPayrollArrearLine && $companyId !== null
+                && $this->isArrearMonthSettled(
+                    $companyId,
+                    (string) $line->employee_user_id,
+                    (int) $line->arrear_year,
+                    (int) $line->arrear_month,
+                    (float) $line->new_da_percent,
+                )) {
+                continue;
+            }
+
+            $key = sprintf(
+                '%s|%d|%d',
                 (string) $line->employee_user_id,
                 (int) $line->arrear_year,
                 (int) $line->arrear_month,
-                (float) $line->old_da_percent,
-                (float) $line->new_da_percent,
             );
 
             if (! isset($deduped[$key])) {
@@ -1209,7 +1844,7 @@ final class PayrollArrearService
             }
 
             $existing = $deduped[$key];
-            if ($line->is_locked && ! $existing->is_locked) {
+            if ($line instanceof HrmsPayrollArrearLine && $line->isPaid() && ! ($existing instanceof HrmsPayrollArrearLine && $existing->isPaid())) {
                 $deduped[$key] = $line;
             }
         }
@@ -1228,8 +1863,23 @@ final class PayrollArrearService
             $employeeTotals[$uid]['grossArrear'] += (float) $line->gross_arrear;
             $employeeTotals[$uid]['cpfArrear'] += (float) $line->cpf_arrear;
             $employeeTotals[$uid]['netArrear'] += (float) $line->net_arrear;
+            if ($line instanceof HrmsPayrollArrearLine) {
+                $employeeTotals[$uid]['arrearLineIds'][] = (string) $line->id;
+                $employeeTotals[$uid]['lines'][] = [
+                    'id' => (string) $line->id,
+                    'employee_user_id' => $line->employee_user_id,
+                    'arrear_year' => (int) $line->arrear_year,
+                    'arrear_month' => (int) $line->arrear_month,
+                    'old_da_percent' => (float) $line->old_da_percent,
+                    'new_da_percent' => (float) $line->new_da_percent,
+                    'da_revision_event_id' => $line->da_revision_event_id,
+                    'da_arrear' => (float) $line->da_arrear,
+                    'transport_arrear' => (float) $line->transport_arrear,
+                    'gross_arrear' => (float) $line->gross_arrear,
+                ];
+            }
         }
 
-        return $employeeTotals;
+        return $this->dedupeEmployeeTotals($employeeTotals);
     }
 }
