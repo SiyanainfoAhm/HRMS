@@ -496,13 +496,23 @@ final class PayrollMasterService
         $invalidRows = (int) ($plan['summary']['invalid_rows'] ?? 0);
         $canImport = $plan['file_errors'] === [] && $invalidRows === 0;
         $warningRows = (int) ($plan['summary']['warning_rows'] ?? 0);
+        $blockedMessage = null;
+        if (! $canImport) {
+            $blockedMessage = 'Import blocked. Please fix the listed errors and upload again.';
+            foreach ($plan['file_errors'] as $fe) {
+                if (($fe['field'] ?? '') === 'template') {
+                    $blockedMessage = (string) ($fe['message'] ?? $blockedMessage);
+                    break;
+                }
+            }
+        }
 
         return [
             'headers' => $plan['headers'],
             'summary' => $plan['summary'],
             'can_import' => $canImport,
             'requires_confirmation' => $canImport && $warningRows > 0,
-            'blocked_message' => $canImport ? null : 'Import blocked. Please fix the listed errors and upload again.',
+            'blocked_message' => $blockedMessage,
             'rows' => array_map(fn (array $item) => $this->formatImportPreviewRow($item), $plan['rows']),
             'file_errors' => $plan['file_errors'],
             'issues' => $issues,
@@ -530,6 +540,14 @@ final class PayrollMasterService
         }
 
         if ($plan['file_errors'] !== [] || ($summary['invalid_rows'] ?? 0) > 0) {
+            $blockedMessage = 'Import blocked. Please fix the listed errors and upload again.';
+            foreach ($plan['file_errors'] as $fe) {
+                if (($fe['field'] ?? '') === 'template') {
+                    $blockedMessage = (string) ($fe['message'] ?? $blockedMessage);
+                    break;
+                }
+            }
+
             foreach ($plan['rows'] as $item) {
                 if ($item['valid']) {
                     continue;
@@ -547,11 +565,13 @@ final class PayrollMasterService
             }
 
             return [
-                'message' => 'Import blocked. Please fix the listed errors and upload again.',
+                'message' => $blockedMessage,
                 'summary' => $summary,
                 'errors' => $errors,
             ];
         }
+
+        $generatedPasswords = [];
 
         foreach ($plan['rows'] as $item) {
             try {
@@ -561,6 +581,14 @@ final class PayrollMasterService
                 } else {
                     $this->create($item['data'], $companyId ?? '', $createdBy, false, true);
                     $summary['inserted_rows']++;
+                }
+                if (! empty($item['generated_password'])) {
+                    $generatedPasswords[] = [
+                        'row' => $item['row'],
+                        'employeeCode' => $item['data']['employee_code'] ?? null,
+                        'employeeName' => $item['data']['name'] ?? null,
+                        'password' => $item['generated_password'],
+                    ];
                 }
             } catch (\Throwable $e) {
                 $summary['failed_rows'] = ($summary['failed_rows'] ?? 0) + 1;
@@ -579,7 +607,9 @@ final class PayrollMasterService
             ? 'Import completed successfully'
             : 'Import completed with errors';
 
-        return compact('message', 'summary', 'errors');
+        return array_merge(compact('message', 'summary', 'errors'), [
+            'generated_passwords' => $generatedPasswords,
+        ]);
     }
 
     /**
@@ -630,18 +660,29 @@ final class PayrollMasterService
         $map = $this->normalizeHeaders($header);
         $headers = array_values(array_filter($map));
         $headerRowIndex = 1;
-        if (! in_array('name', $headers, true) && ! in_array('employee_code', $headers, true) && $rows !== []) {
-            $headerRowIndex = 2;
-            $header = array_shift($rows);
-            $map = $this->normalizeHeaders($header);
-            $headers = array_values(array_filter($map));
+
+        if (! $this->headersLookLikePayrollImport($headers) && $rows !== []) {
+            $legacyHeader = array_shift($rows);
+            $legacyMap = $this->normalizeHeaders($legacyHeader);
+            $legacyHeaders = array_values(array_filter($legacyMap));
+            if ($this->headersLookLikePayrollImport($legacyHeaders)) {
+                $headerRowIndex = 2;
+                $header = $legacyHeader;
+                $map = $legacyMap;
+                $headers = $legacyHeaders;
+            }
         }
-        $requiredHeaders = ['name', 'pay_level', 'gross_basic_pay'];
-        $missing = array_values(array_diff($requiredHeaders, $headers));
-        if ($missing !== []) {
-            $fileErrors[] = [
-                'field' => 'headers',
-                'message' => 'Missing required columns: '.implode(', ', $missing),
+
+        foreach ($this->validateImportTemplateStructure($headers) as $templateError) {
+            $fileErrors[] = $templateError;
+        }
+
+        if ($fileErrors !== []) {
+            return [
+                'headers' => $headers,
+                'summary' => $summary,
+                'rows' => [],
+                'file_errors' => $fileErrors,
             ];
         }
 
@@ -660,6 +701,7 @@ final class PayrollMasterService
             $row = $this->normalizeImportRow($this->mapRow($map, $rawRow));
             $repair = $this->repairImportRowAlignment($row);
             $row = $repair['row'];
+            $rowWarnings = $this->applyImportRowDefaults($row);
             if (! empty($row['status'])) {
                 $row['status'] = mb_strtolower(trim((string) $row['status']));
             }
@@ -670,14 +712,20 @@ final class PayrollMasterService
                 array_unshift($rowErrors, $this->importIssue('columns', $columnError['message']));
             }
 
+            $generatedPassword = ($row['_import_password_source'] ?? '') === 'generated'
+                ? (string) ($row['password'] ?? '')
+                : null;
+            unset($row['_import_password_source']);
+
             $planRows[] = [
                 'row' => $rowNum,
                 'data' => $row,
                 'errors' => $rowErrors,
-                'warnings' => [],
+                'warnings' => $rowWarnings,
                 'valid' => $rowErrors === [],
                 'action' => $action,
                 'existing' => $existing,
+                'generated_password' => $generatedPassword,
             ];
         }
 
@@ -722,18 +770,251 @@ final class PayrollMasterService
 
     public function templateDownload(string $format = 'xlsx'): StreamedResponse
     {
-        $sheet = new Spreadsheet;
-        $this->writeSpreadsheetWithGroupedHeaders($sheet, [$this->sampleTemplateRowAsRecord()], true);
+        $spreadsheet = new Spreadsheet;
+        $this->writeImportTemplateDataSheet($spreadsheet->getActiveSheet());
+        if ($format !== 'csv') {
+            $instructions = $spreadsheet->createSheet();
+            $instructions->setTitle('Instructions');
+            $this->writeImportTemplateInstructionsSheet($instructions);
+        }
+        $spreadsheet->setActiveSheetIndex(0);
 
         $filename = 'cirt_payroll_master_template.'.($format === 'csv' ? 'csv' : 'xlsx');
 
-        return response()->streamDownload(function () use ($sheet, $format) {
+        return response()->streamDownload(function () use ($spreadsheet, $format) {
             if ($format === 'csv') {
-                (new Csv($sheet))->save('php://output');
+                (new Csv($spreadsheet))->save('php://output');
             } else {
-                (new Xlsx($sheet))->save('php://output');
+                (new Xlsx($spreadsheet))->save('php://output');
             }
         }, $filename);
+    }
+
+    /**
+     * Import template column order — display headers in Excel row 1, internal keys for parser.
+     *
+     * @return list<array{key: string, header: string, required_in_template: bool}>
+     */
+    private function importTemplateColumns(): array
+    {
+        return [
+            ['key' => 'employee_code', 'header' => 'Employee Code*', 'required_in_template' => true],
+            ['key' => 'pay_level', 'header' => 'Pay Level*', 'required_in_template' => true],
+            ['key' => 'name', 'header' => 'Name*', 'required_in_template' => true],
+            ['key' => 'email', 'header' => 'Email*', 'required_in_template' => true],
+            ['key' => 'user_role', 'header' => 'User Role', 'required_in_template' => true],
+            ['key' => 'password', 'header' => 'Password', 'required_in_template' => true],
+            ['key' => 'confirm_password', 'header' => 'Confirm Password', 'required_in_template' => true],
+            ['key' => 'phone', 'header' => 'Phone', 'required_in_template' => false],
+            ['key' => 'gender', 'header' => 'Gender', 'required_in_template' => false],
+            ['key' => 'date_of_birth', 'header' => 'Date of Birth', 'required_in_template' => false],
+            ['key' => 'date_of_joining', 'header' => 'Date of Joining', 'required_in_template' => false],
+            ['key' => 'designation', 'header' => 'Designation', 'required_in_template' => false],
+            ['key' => 'department', 'header' => 'Department', 'required_in_template' => false],
+            ['key' => 'division', 'header' => 'Division', 'required_in_template' => false],
+            ['key' => 'status', 'header' => 'Status', 'required_in_template' => false],
+            ['key' => 'gross_basic_pay', 'header' => 'Gross Basic*', 'required_in_template' => true],
+            ['key' => 'da_percent', 'header' => 'DA %', 'required_in_template' => false],
+            ['key' => 'hra_percent', 'header' => 'HRA %', 'required_in_template' => false],
+            ['key' => 'total_earnings', 'header' => 'Total Earnings', 'required_in_template' => false],
+            ['key' => 'cpf_effective', 'header' => 'CPF', 'required_in_template' => false],
+            ['key' => 'take_home', 'header' => 'Take Home', 'required_in_template' => false],
+            ['key' => 'uan', 'header' => 'UAN', 'required_in_template' => false],
+            ['key' => 'cpf_no', 'header' => 'CPF No', 'required_in_template' => false],
+            ['key' => 'pan', 'header' => 'PAN*', 'required_in_template' => true],
+            ['key' => 'aadhaar', 'header' => 'Aadhaar*', 'required_in_template' => true],
+            ['key' => 'bank_name', 'header' => 'Bank Name', 'required_in_template' => false],
+            ['key' => 'bank_account_number', 'header' => 'Bank Account Number*', 'required_in_template' => true],
+            ['key' => 'bank_ifsc', 'header' => 'IFSC Code', 'required_in_template' => false],
+            ['key' => 'professional_tax', 'header' => 'Professional Tax', 'required_in_template' => false],
+            ['key' => 'cpf_default', 'header' => 'PF / CPF %', 'required_in_template' => false],
+        ];
+    }
+
+    /** @return list<string> */
+    private function importTemplateDisplayHeaders(): array
+    {
+        return array_map(fn (array $col) => $col['header'], $this->importTemplateColumns());
+    }
+
+    /** @return list<string|int|float> */
+    private function importTemplateSampleValues(): array
+    {
+        $sample = [
+            'employee_code' => 'EMP001',
+            'pay_level' => 8,
+            'name' => 'Test Employee',
+            'email' => 'test@example.com',
+            'user_role' => 'Employee',
+            'password' => 'Welcome@123',
+            'confirm_password' => 'Welcome@123',
+            'phone' => '9876543210',
+            'gender' => 'male',
+            'date_of_birth' => '1990-01-01',
+            'date_of_joining' => '2026-05-01',
+            'designation' => 'Developer',
+            'department' => 'IT Department',
+            'division' => 'Admin',
+            'status' => 'active',
+            'gross_basic_pay' => 52000,
+            'da_percent' => 60,
+            'hra_percent' => 30,
+            'total_earnings' => '',
+            'cpf_effective' => '',
+            'take_home' => '',
+            'uan' => 'UAN123',
+            'cpf_no' => 'CPF123',
+            'pan' => 'ABCDE1234F',
+            'aadhaar' => '123456789012',
+            'bank_name' => 'Test Bank',
+            'bank_account_number' => '1234567890',
+            'bank_ifsc' => 'TEST0001234',
+            'professional_tax' => 200,
+            'cpf_default' => 0,
+        ];
+
+        return array_map(fn (array $col) => $sample[$col['key']] ?? '', $this->importTemplateColumns());
+    }
+
+    private function writeImportTemplateDataSheet(\PhpOffice\PhpSpreadsheet\Worksheet\Worksheet $sheet): void
+    {
+        $sheet->setTitle('Payroll Master');
+        $sheet->fromArray($this->importTemplateDisplayHeaders(), null, 'A1');
+        $sheet->fromArray($this->importTemplateSampleValues(), null, 'A2');
+        $lastCol = Coordinate::stringFromColumnIndex(count($this->importTemplateColumns()));
+        $sheet->getStyle('A1:'.$lastCol.'1')->getFont()->setBold(true);
+    }
+
+    private function writeImportTemplateInstructionsSheet(\PhpOffice\PhpSpreadsheet\Worksheet\Worksheet $sheet): void
+    {
+        $lines = [
+            ['Payroll Master Import — Instructions'],
+            [''],
+            ['Required columns are marked with * in the Data sheet header row.'],
+            ['User Role allowed values: Employee, Admin (blank defaults to Employee).'],
+            ['Password: leave blank to auto-generate a temporary password, or set Password and Confirm Password to the same value.'],
+            ['PAN format: ABCDE1234F (5 letters + 4 digits + 1 letter).'],
+            ['Aadhaar: exactly 12 digits.'],
+            ['Status: active or inactive (blank defaults to active).'],
+            [''],
+            ['Must be unique: Employee Code, Email, Phone, Aadhaar, PAN, Bank Account Number.'],
+            [''],
+            ['Download a fresh template if you see "Missing required columns: User Role, Password, Confirm Password".'],
+        ];
+        $sheet->fromArray($lines, null, 'A1');
+        $sheet->getStyle('A1')->getFont()->setBold(true);
+        $sheet->getColumnDimension('A')->setWidth(100);
+    }
+
+    private function importColumnDisplayName(string $key): string
+    {
+        foreach ($this->importTemplateColumns() as $col) {
+            if ($col['key'] === $key) {
+                return rtrim($col['header'], '*');
+            }
+        }
+
+        return str_replace('_', ' ', ucwords($key, '_'));
+    }
+
+    /**
+     * @param  list<string>  $mappedHeaders
+     * @return list<array{field: string, message: string, missing_columns?: list<string>}>
+     */
+    private function validateImportTemplateStructure(array $mappedHeaders): array
+    {
+        $missing = [];
+        foreach ($this->importTemplateColumns() as $col) {
+            if (! $col['required_in_template']) {
+                continue;
+            }
+            if (! in_array($col['key'], $mappedHeaders, true)) {
+                $missing[] = rtrim($col['header'], '*');
+            }
+        }
+
+        if ($missing === []) {
+            return [];
+        }
+
+        return [[
+            'field' => 'template',
+            'message' => 'Invalid template. Missing required columns: '.implode(', ', $missing).'. Please download the latest template.',
+            'missing_columns' => $missing,
+        ]];
+    }
+
+    /** @param  list<string>  $mappedHeaders */
+    private function headersLookLikePayrollImport(array $mappedHeaders): bool
+    {
+        return in_array('employee_code', $mappedHeaders, true)
+            || in_array('name', $mappedHeaders, true)
+            || in_array('email', $mappedHeaders, true);
+    }
+
+    private function generateTemporaryImportPassword(): string
+    {
+        return 'Welcome@'.random_int(1000, 9999);
+    }
+
+    /**
+     * @param  array<string, mixed>  $row
+     * @return list<array{field: string, message: string, type?: string}>
+     */
+    private function applyImportRowDefaults(array &$row): array
+    {
+        $warnings = [];
+
+        $rawRole = trim((string) ($row['user_role'] ?? ''));
+        if ($rawRole === '') {
+            $row['user_role'] = 'employee';
+        } else {
+            $normalizedRole = $this->normalizeImportUserRole($rawRole);
+            if ($normalizedRole !== null) {
+                $row['user_role'] = $normalizedRole;
+            }
+        }
+
+        $status = mb_strtolower(trim((string) ($row['status'] ?? '')));
+        $row['status'] = $status !== '' ? $status : 'active';
+
+        if (empty($row['effective_from'])) {
+            $row['effective_from'] = now()->toDateString();
+        }
+
+        $password = trim((string) ($row['password'] ?? ''));
+        if ($password === '') {
+            $generated = $this->generateTemporaryImportPassword();
+            $row['password'] = $generated;
+            $row['confirm_password'] = $generated;
+            $row['_import_password_source'] = 'generated';
+            $warnings[] = $this->importIssue(
+                'password',
+                'Temporary password was auto-generated for this row.',
+                'warning',
+            );
+        } else {
+            $row['_import_password_source'] = 'provided';
+        }
+
+        return $warnings;
+    }
+
+    private function normalizeImportUserRole(string $raw): ?string
+    {
+        $raw = trim($raw);
+        if ($raw === '') {
+            return 'employee';
+        }
+        $lower = mb_strtolower($raw);
+        if ($lower === 'employee') {
+            return 'employee';
+        }
+        if ($lower === 'admin') {
+            return 'admin';
+        }
+
+        return null;
     }
 
     public function deactivate(HrmsPayrollMaster $master): HrmsPayrollMaster
@@ -2225,7 +2506,7 @@ final class PayrollMasterService
     /** @return array<string, string> */
     private function headerAliases(): array
     {
-        return [
+        $aliases = [
             'code' => 'employee_code',
             'emp_code' => 'employee_code',
             'employee id' => 'employee_code',
@@ -2243,12 +2524,21 @@ final class PayrollMasterService
             'gross basic' => 'gross_basic_pay',
             'gross basic pay' => 'gross_basic_pay',
             'basic pay' => 'gross_basic_pay',
+            'da %' => 'da_percent',
+            'da percent' => 'da_percent',
+            'hra %' => 'hra_percent',
+            'hra percent' => 'hra_percent',
+            'total earnings' => 'total_earnings',
+            'cpf' => 'cpf_effective',
+            'take home' => 'take_home',
             'uan no' => 'uan',
             'uan' => 'uan',
             'cpf no' => 'cpf_no',
             'gpf no' => 'cpf_no',
             'pf no' => 'cpf_no',
             'pf' => 'cpf_default',
+            'pf / cpf %' => 'cpf_default',
+            'pf/cpf %' => 'cpf_default',
             'pf default' => 'cpf_default',
             'cpf default' => 'cpf_default',
             'pt' => 'professional_tax',
@@ -2264,12 +2554,32 @@ final class PayrollMasterService
             'role' => 'user_role',
             'confirm password' => 'confirm_password',
             'password confirm' => 'confirm_password',
+            'date of birth' => 'date_of_birth',
+            'date of joining' => 'date_of_joining',
+            'bank name' => 'bank_name',
+            'user_role' => 'user_role',
+            'confirm_password' => 'confirm_password',
+            'employee_code' => 'employee_code',
+            'pay_level' => 'pay_level',
+            'gross_basic_pay' => 'gross_basic_pay',
+            'bank_account_number' => 'bank_account_number',
+            'bank_ifsc' => 'bank_ifsc',
         ];
+
+        foreach ($this->importTemplateColumns() as $col) {
+            $aliases[$this->normHeaderKey($col['header'])] = $col['key'];
+        }
+
+        return $aliases;
     }
 
     private function normHeaderKey(string $h): string
     {
-        return preg_replace('/\s+/', ' ', mb_strtolower(trim($h))) ?? '';
+        $h = trim($h);
+        $h = rtrim($h, '*');
+        $h = trim($h);
+
+        return preg_replace('/\s+/', ' ', mb_strtolower($h)) ?? '';
     }
 
     /** @param  array<int, string>  $map */
@@ -2594,6 +2904,7 @@ final class PayrollMasterService
             'valid' => $item['valid'],
             'errors' => $item['errors'],
             'warnings' => $item['warnings'] ?? [],
+            'generatedPassword' => $item['generated_password'] ?? null,
         ];
     }
 
@@ -2672,17 +2983,15 @@ final class PayrollMasterService
 
     /** @param  array<string, mixed>  $row */
     /** @return list<array{field: string, message: string, type?: string}> */
-    private function passwordImportIssues(array $row, bool $required): array
+    private function passwordImportIssues(array $row): array
     {
+        if (($row['_import_password_source'] ?? '') === 'generated') {
+            return [];
+        }
+
         $issues = [];
         $password = trim((string) ($row['password'] ?? ''));
         $confirm = trim((string) ($row['confirm_password'] ?? $row['confirmPassword'] ?? ''));
-
-        if ($required && $password === '') {
-            $issues[] = $this->importIssue('password', 'Password is required.');
-
-            return $issues;
-        }
 
         if ($password !== '') {
             if (strlen($password) < 8) {
@@ -2700,7 +3009,7 @@ final class PayrollMasterService
             }
         }
 
-        if ($required && $password !== '' && $confirm === '') {
+        if ($password !== '' && $confirm === '') {
             $issues[] = $this->importIssue('confirm_password', 'Please confirm the password.');
         }
         if ($confirm !== '' && $password !== $confirm) {
@@ -2758,17 +3067,14 @@ final class PayrollMasterService
 
         $status = mb_strtolower(trim((string) ($row['status'] ?? 'active')));
         if ($status === '') {
-            $errors[] = $this->importIssue('status', 'Status is required.');
-        } else {
-            $allowedStatuses = ['active', 'inactive', 'retired', 'deceased', 'resigned'];
-            if (! in_array($status, $allowedStatuses, true)) {
-                $errors[] = $this->importIssue(
-                    'status',
-                    'Status must be one of: '.implode(', ', $allowedStatuses).'. Re-download the latest import template if columns are misaligned.',
-                );
-            } elseif (strlen($status) > 20) {
-                $errors[] = $this->importIssue('status', 'Status must be at most 20 characters.');
-            }
+            $status = 'active';
+        }
+        $allowedStatuses = ['active', 'inactive'];
+        if (! in_array($status, $allowedStatuses, true)) {
+            $errors[] = $this->importIssue(
+                'status',
+                'Status must be active or inactive.',
+            );
         }
 
         if (empty($row['pay_level'])) {
@@ -2790,9 +3096,7 @@ final class PayrollMasterService
             }
         }
 
-        if (empty($row['effective_from'])) {
-            $errors[] = $this->importIssue('effective_from', 'Effective From is required.');
-        } elseif (! $this->isValidImportDate($row['effective_from'])) {
+        if (! empty($row['effective_from']) && ! $this->isValidImportDate($row['effective_from'])) {
             $errors[] = $this->importIssue('effective_from', 'Enter a valid date for Effective From.');
         }
 
@@ -2826,10 +3130,6 @@ final class PayrollMasterService
             $errors[] = $this->importIssue('pan', 'Enter a valid PAN number.');
         }
 
-        if (empty($row['bank_name'])) {
-            $errors[] = $this->importIssue('bank_name', 'Bank name is required.');
-        }
-
         $account = (string) ($row['bank_account_number'] ?? '');
         if ($account === '') {
             $errors[] = $this->importIssue('bank_account_number', 'Account number is required.');
@@ -2838,9 +3138,7 @@ final class PayrollMasterService
         }
 
         $ifsc = (string) ($row['bank_ifsc'] ?? '');
-        if ($ifsc === '') {
-            $errors[] = $this->importIssue('bank_ifsc', 'IFSC is required.');
-        } elseif (! preg_match('/^[A-Z]{4}0[A-Z0-9]{6}$/', $ifsc)) {
+        if ($ifsc !== '' && ! preg_match('/^[A-Z]{4}0[A-Z0-9]{6}$/', $ifsc)) {
             $errors[] = $this->importIssue('bank_ifsc', 'Enter a valid IFSC code.');
         }
 
@@ -2860,18 +3158,12 @@ final class PayrollMasterService
             }
         }
 
-        $needsNewUser = $this->importRowNeedsNewUser($row, $companyId, $existing);
-        if ($needsNewUser) {
-            $roleRaw = (string) ($row['user_role'] ?? $row['role'] ?? '');
-            if ($roleRaw === '') {
-                $errors[] = $this->importIssue('user_role', 'User role is required.');
-            } elseif (! in_array(mb_strtolower($roleRaw), ['admin', 'employee'], true)) {
-                $errors[] = $this->importIssue('user_role', 'User role must be admin or employee.');
-            }
-            $errors = array_merge($errors, $this->passwordImportIssues($row, true));
-        } else {
-            $errors = array_merge($errors, $this->passwordImportIssues($row, false));
+        $role = $this->normalizeImportUserRole((string) ($row['user_role'] ?? ''));
+        if ($role === null) {
+            $errors[] = $this->importIssue('user_role', 'User role must be Employee or Admin.');
         }
+
+        $errors = array_merge($errors, $this->passwordImportIssues($row));
 
         $ignoreUserId = $existing?->user_id ?? $existing?->employee_user_id;
         foreach ($this->validatePayloadUniquenessErrors($row, $existing?->id, $companyId, $ignoreUserId, false) as $dup) {

@@ -181,10 +181,16 @@ type ImportPreviewRow = {
   warnings?: ImportIssue[];
 };
 
+type ImportFileError = {
+  field: string;
+  message: string;
+  missing_columns?: string[];
+};
+
 type ImportPreview = {
   summary: Record<string, number>;
   rows: ImportPreviewRow[];
-  fileErrors: Array<{ field: string; message: string }>;
+  fileErrors: ImportFileError[];
   canImport?: boolean;
   requiresConfirmation?: boolean;
   blockedMessage?: string | null;
@@ -478,6 +484,12 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     message: string;
     summary: Record<string, number>;
     errors: ImportError[];
+    generatedPasswords?: Array<{
+      row: number;
+      employeeCode?: string | null;
+      employeeName?: string | null;
+      password: string;
+    }>;
   } | null>(null);
   const importPreviewRequestRef = useRef(0);
 
@@ -861,7 +873,11 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
             name: r.employeeName ?? r.name ?? null,
             warnings: r.warnings ?? [],
           })),
-          fileErrors: data.file_errors ?? data.fileErrors ?? [],
+          fileErrors: (data.file_errors ?? data.fileErrors ?? []).map((e: ImportFileError) => ({
+            field: e.field,
+            message: e.message,
+            missing_columns: e.missing_columns ?? (e as { missingColumns?: string[] }).missingColumns,
+          })),
           canImport:
             data.can_import ??
             data.canImport ??
@@ -913,6 +929,11 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     return (importPreview.summary.valid_rows ?? 0) > 0;
   }, [importPreview, importWarningsAcknowledged]);
 
+  const importTemplateErrors = useMemo(
+    () => importPreview?.fileErrors.filter((e) => e.field === "template") ?? [],
+    [importPreview],
+  );
+
   const importIssueRows = useMemo(() => {
     if (!importPreview) return [];
     return importPreview.rows.filter((r) => !r.valid || (r.warnings?.length ?? 0) > 0);
@@ -945,6 +966,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
         message: data.message ?? "Import finished",
         summary: data.summary ?? {},
         errors: data.errors ?? [],
+        generatedPasswords: data.generated_passwords ?? data.generatedPasswords ?? [],
       });
       if (data.summary?.inserted_rows || data.summary?.updated_rows) {
         dispatchHrmsChange("payroll_master");
@@ -1671,7 +1693,27 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                       </label>
                     ) : null}
 
-                    {importPreview.fileErrors.length > 0 && (
+                    {importTemplateErrors.length > 0 ? (
+                      <div className="rounded border border-red-300 bg-red-50 px-3 py-3 text-xs text-red-900">
+                        <p className="font-semibold">Template format issue</p>
+                        <p className="mt-1">{importTemplateErrors[0]?.message}</p>
+                        {(importTemplateErrors[0]?.missing_columns?.length ?? 0) > 0 ? (
+                          <div className="mt-2">
+                            <p className="font-medium">Missing columns:</p>
+                            <ul className="mt-1 list-inside list-disc">
+                              {importTemplateErrors[0]?.missing_columns?.map((col) => (
+                                <li key={col}>{col}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        ) : null}
+                        <p className="mt-2 font-medium">
+                          Action: Download the latest template and try again.
+                        </p>
+                      </div>
+                    ) : null}
+
+                    {importPreview.fileErrors.length > 0 && importTemplateErrors.length === 0 && (
                       <div className="rounded border border-red-200 bg-red-50 p-2 text-xs text-red-800">
                         {importPreview.fileErrors.map((e, i) => (
                           <p key={i}>
@@ -1832,6 +1874,22 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                         </div>
                       ))}
                     </div>
+                    {(importResult.generatedPasswords?.length ?? 0) > 0 ? (
+                      <div className="rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-950">
+                        <p className="font-medium">Auto-generated login passwords</p>
+                        <ul className="mt-1 space-y-1">
+                          {importResult.generatedPasswords?.map((gp) => (
+                            <li key={gp.row}>
+                              Row {gp.row}
+                              {gp.employeeName || gp.employeeCode
+                                ? ` — ${gp.employeeName ?? ""}${gp.employeeCode ? ` / ${gp.employeeCode}` : ""}`
+                                : ""}
+                              : <code className="rounded bg-white px-1">{gp.password}</code>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
                     {importResult.errors.length > 0 && (
                       <div className="max-h-48 overflow-auto rounded border border-red-200 bg-white">
                         <table className="w-full text-left text-xs">
