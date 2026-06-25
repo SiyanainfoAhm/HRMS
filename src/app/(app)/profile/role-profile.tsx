@@ -20,6 +20,7 @@ import {
 } from "@/lib/employeeValidators";
 import { PASSWORD_COMPLEXITY_HINT, validatePasswordComplexity } from "@/lib/passwordValidators";
 import { GovernmentPayslipPrint } from "@/components/payslip/GovernmentPayslipPrint";
+import { resolvePayslipDepartment, resolvePayslipDesignation } from "@/lib/payslipUserFields";
 import type { GovernmentMonthlySlip } from "@/lib/governmentPayslipLayout";
 import type { GovernmentLeavePayslipDisplay } from "@/lib/leaveBalancesCompute";
 
@@ -111,6 +112,7 @@ export function ProfileContent() {
       employeeCode: string;
       designation: string;
       departmentName?: string;
+      department?: string;
       dateOfJoining: string;
       aadhaar: string;
       pan: string;
@@ -1335,6 +1337,7 @@ export function ProfileContent() {
                           name: user?.name,
                           employeeCode: user?.employeeCode,
                           designation: user?.designation,
+                          department: user?.department,
                           departmentName: user?.departmentName,
                           dateOfJoining: user?.dateOfJoining,
                           uanNumber: user?.uanNumber,
@@ -1383,7 +1386,7 @@ export function ProfileContent() {
                               <div className="space-y-1.5 text-sm leading-relaxed">
                                 <div><span className="text-slate-600">Employee Name:</span> {user?.name || "—"}</div>
                                 <div><span className="text-slate-600">Designation:</span> {user?.designation || "—"}</div>
-                                <div><span className="text-slate-600">Department:</span> {user?.departmentName || "—"}</div>
+                                <div><span className="text-slate-600">Department:</span> {resolvePayslipDepartment(user)}</div>
                                 <div><span className="text-slate-600">Salary Date:</span> {salaryDate}</div>
                               </div>
                             </td>

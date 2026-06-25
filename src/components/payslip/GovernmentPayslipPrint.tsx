@@ -7,6 +7,7 @@ import {
   type GovernmentMonthlySlip,
 } from "@/lib/governmentPayslipLayout";
 import type { GovernmentLeavePayslipDisplay } from "@/lib/leaveBalancesCompute";
+import { resolvePayslipDepartment, resolvePayslipDesignation } from "@/lib/payslipUserFields";
 
 export type GovernmentPayslipPrintCompany = {
   name?: string | null;
@@ -19,6 +20,7 @@ export type GovernmentPayslipPrintUser = {
   employeeCode?: string | null;
   designation?: string | null;
   departmentName?: string | null;
+  department?: string | null;
   dateOfJoining?: string | null;
   uanNumber?: string | null;
   pfNumber?: string | null;
@@ -97,10 +99,10 @@ export const GovernmentPayslipPrint = forwardRef<HTMLDivElement, GovernmentPaysl
                     <span className="text-slate-600">Employee Name:</span> {user?.name || "—"}
                   </div>
                   <div>
-                    <span className="text-slate-600">Designation:</span> {user?.designation || "—"}
+                    <span className="text-slate-600">Designation:</span> {resolvePayslipDesignation(user)}
                   </div>
                   <div>
-                    <span className="text-slate-600">Department:</span> {user?.departmentName || "—"}
+                    <span className="text-slate-600">Department:</span> {resolvePayslipDepartment(user)}
                   </div>
                   <div>
                     <span className="text-slate-600">Date of Joining:</span>{" "}

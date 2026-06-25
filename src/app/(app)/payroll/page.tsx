@@ -35,6 +35,7 @@ import { Download, FileText } from "lucide-react";
 import { GovernmentPayslipPrint } from "@/components/payslip/GovernmentPayslipPrint";
 import type { GovernmentMonthlySlip } from "@/lib/governmentPayslipLayout";
 import type { GovernmentLeavePayslipDisplay } from "@/lib/leaveBalancesCompute";
+import { resolvePayslipDepartment, resolvePayslipDesignation } from "@/lib/payslipUserFields";
 import {
   normalizeDigits,
   normalizeIfscInput,
@@ -784,6 +785,7 @@ function PayrollPageContent() {
       name: string;
       employeeCode: string;
       designation: string;
+      department?: string;
       departmentName?: string;
       dateOfJoining: string;
       aadhaar: string;
@@ -2115,6 +2117,7 @@ function PayrollPageContent() {
                       name: user?.name,
                       employeeCode: user?.employeeCode,
                       designation: user?.designation,
+                      department: user?.department,
                       departmentName: user?.departmentName,
                       dateOfJoining: user?.dateOfJoining,
                       uanNumber: user?.uanNumber,
@@ -2165,8 +2168,8 @@ function PayrollPageContent() {
                         <td className={`w-1/2 ${cellClass}`}>
                           <div className="space-y-1.5 text-sm leading-relaxed">
                             <div><span className="text-slate-600">Employee Name:</span> {user?.name || "—"}</div>
-                            <div><span className="text-slate-600">Designation:</span> {user?.designation || "—"}</div>
-                            <div><span className="text-slate-600">Department:</span> {(user as { departmentName?: string })?.departmentName || "—"}</div>
+                            <div><span className="text-slate-600">Designation:</span> {resolvePayslipDesignation(user)}</div>
+                            <div><span className="text-slate-600">Department:</span> {resolvePayslipDepartment(user)}</div>
                             <div><span className="text-slate-600">Salary Date:</span> {salaryDate}</div>
                           </div>
                         </td>
