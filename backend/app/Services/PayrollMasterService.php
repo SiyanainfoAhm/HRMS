@@ -669,6 +669,8 @@ final class PayrollMasterService
             ];
         }
 
+        $this->flagImportFileDuplicates($planRows, $summary);
+
         if ($summary['total_rows'] === 0 && $fileErrors === []) {
             $fileErrors[] = ['field' => 'file', 'message' => 'No data rows found'];
         }
@@ -1438,9 +1440,15 @@ final class PayrollMasterService
             abort(422, 'Email is required');
         }
 
+        $ignoreUserId = null;
+        if ($ignoreId) {
+            $existing = HrmsPayrollMaster::find($ignoreId);
+            $ignoreUserId = $existing?->user_id ?? $existing?->employee_user_id;
+        }
+
         $code = $payload['employee_code'] ?? $payload['employeeCode'] ?? null;
         if ($code) {
-            $q = HrmsPayrollMaster::where('employee_code', $code);
+            $q = HrmsPayrollMaster::whereRaw('LOWER(TRIM(employee_code)) = ?', [mb_strtolower(trim((string) $code))]);
             if ($companyId) {
                 $q->where('company_id', $companyId);
             }
@@ -1449,8 +1457,23 @@ final class PayrollMasterService
             }
             $this->scopeCurrentMaster($q);
             if ($q->exists()) {
-                abort(422, 'Employee code already exists');
+                abort(422, 'Employee Code already exists.');
             }
+            if ($companyId) {
+                $uq = HrmsUser::query()
+                    ->where('company_id', $companyId)
+                    ->whereRaw('LOWER(TRIM(employee_code)) = ?', [mb_strtolower(trim((string) $code))]);
+                if ($ignoreUserId) {
+                    $uq->where('id', '!=', $ignoreUserId);
+                }
+                if ($uq->exists()) {
+                    abort(422, 'Employee Code already exists.');
+                }
+            }
+        }
+
+        foreach ($this->validatePayloadUniquenessErrors($payload, $ignoreId, $companyId, $ignoreUserId, $salaryPending) as $err) {
+            abort(422, $err['message']);
         }
 
         foreach (['cpf_no' => 'cpfNo', 'uan' => 'uan'] as $col => $camel) {
@@ -1472,6 +1495,130 @@ final class PayrollMasterService
         }
 
         return $payload;
+    }
+
+    /**
+     * @return list<array{field: string, message: string}>
+     *
+     * @param  array<string, mixed>  $payload
+     */
+    private function validatePayloadUniquenessErrors(
+        array $payload,
+        ?string $ignoreMasterId,
+        ?string $companyId,
+        ?string $ignoreUserId,
+        bool $salaryPending = false,
+    ): array {
+        $errors = [];
+
+        if (! $salaryPending) {
+            $pan = strtoupper(preg_replace('/[^A-Z0-9]/', '', (string) ($payload['pan'] ?? '')));
+            if ($pan === '') {
+                $errors[] = ['field' => 'pan', 'message' => 'PAN is required.'];
+            } elseif (! preg_match('/^[A-Z]{5}\d{4}[A-Z]$/', $pan)) {
+                $errors[] = ['field' => 'pan', 'message' => 'Enter a valid PAN number.'];
+            } elseif ($this->masterNormalizedFieldExists('pan', $pan, $ignoreMasterId, $companyId, fn ($v) => strtoupper(preg_replace('/[^A-Z0-9]/', '', (string) $v)))) {
+                $errors[] = ['field' => 'pan', 'message' => 'PAN number already exists.'];
+            }
+        }
+
+        $code = trim((string) ($payload['employee_code'] ?? $payload['employeeCode'] ?? ''));
+        if ($code === '' && ! $ignoreMasterId && ! $salaryPending) {
+            $errors[] = ['field' => 'employee_code', 'message' => 'Employee code is required.'];
+        }
+
+        $email = mb_strtolower(trim((string) ($payload['email'] ?? '')));
+        if ($email !== '') {
+            if ($this->masterNormalizedFieldExists('email', $email, $ignoreMasterId, $companyId, fn ($v) => mb_strtolower(trim((string) $v)))) {
+                $errors[] = ['field' => 'email', 'message' => 'Email already exists.'];
+            }
+            if ($companyId && $this->userFieldExists('email', $email, $ignoreUserId, $companyId, fn ($v) => mb_strtolower(trim((string) $v)))) {
+                $errors[] = ['field' => 'email', 'message' => 'Email already exists.'];
+            }
+        }
+
+        $phone = preg_replace('/\D/', '', (string) ($payload['phone'] ?? ''));
+        if ($phone !== '') {
+            if ($this->masterNormalizedFieldExists('phone', $phone, $ignoreMasterId, $companyId, fn ($v) => preg_replace('/\D/', '', (string) $v))) {
+                $errors[] = ['field' => 'phone', 'message' => 'Phone number already exists.'];
+            }
+            if ($companyId && $this->userFieldExists('phone', $phone, $ignoreUserId, $companyId, fn ($v) => preg_replace('/\D/', '', (string) $v))) {
+                $errors[] = ['field' => 'phone', 'message' => 'Phone number already exists.'];
+            }
+        }
+
+        $aadhaar = preg_replace('/\D/', '', (string) ($payload['aadhaar'] ?? ''));
+        if ($aadhaar !== '') {
+            if ($this->masterNormalizedFieldExists('aadhaar', $aadhaar, $ignoreMasterId, $companyId, fn ($v) => preg_replace('/\D/', '', (string) $v))) {
+                $errors[] = ['field' => 'aadhaar', 'message' => 'Aadhaar number already exists.'];
+            }
+            if ($companyId && $this->userFieldExists('aadhaar', $aadhaar, $ignoreUserId, $companyId, fn ($v) => preg_replace('/\D/', '', (string) $v))) {
+                $errors[] = ['field' => 'aadhaar', 'message' => 'Aadhaar number already exists.'];
+            }
+        }
+
+        $account = preg_replace('/\D/', '', (string) ($payload['bank_account_number'] ?? $payload['bankAccountNumber'] ?? ''));
+        if ($account !== '') {
+            if ($this->masterNormalizedFieldExists('bank_account_number', $account, $ignoreMasterId, $companyId, fn ($v) => preg_replace('/\D/', '', (string) $v))) {
+                $errors[] = ['field' => 'bank_account_number', 'message' => 'Bank account number already exists.'];
+            }
+            if ($companyId && $this->userFieldExists('bank_account_number', $account, $ignoreUserId, $companyId, fn ($v) => preg_replace('/\D/', '', (string) $v))) {
+                $errors[] = ['field' => 'bank_account_number', 'message' => 'Bank account number already exists.'];
+            }
+        }
+
+        return $errors;
+    }
+
+    private function masterNormalizedFieldExists(
+        string $column,
+        string $normalizedValue,
+        ?string $ignoreMasterId,
+        ?string $companyId,
+        callable $normalize,
+    ): bool {
+        if ($normalizedValue === '') {
+            return false;
+        }
+        $q = HrmsPayrollMaster::query()->whereNotNull($column)->where($column, '!=', '');
+        if ($companyId) {
+            $q->where('company_id', $companyId);
+        }
+        if ($ignoreMasterId) {
+            $q->where('id', '!=', $ignoreMasterId);
+        }
+        $this->scopeCurrentMaster($q);
+
+        foreach ($q->get([$column]) as $row) {
+            if ($normalize($row->{$column} ?? '') === $normalizedValue) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function userFieldExists(
+        string $column,
+        string $normalizedValue,
+        ?string $ignoreUserId,
+        string $companyId,
+        callable $normalize,
+    ): bool {
+        if ($normalizedValue === '') {
+            return false;
+        }
+        $q = HrmsUser::query()->where('company_id', $companyId)->whereNotNull($column)->where($column, '!=', '');
+        if ($ignoreUserId) {
+            $q->where('id', '!=', $ignoreUserId);
+        }
+        foreach ($q->get([$column]) as $row) {
+            if ($normalize($row->{$column} ?? '') === $normalizedValue) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /** @param  array<string, mixed>  $payload */
@@ -2171,6 +2318,49 @@ final class PayrollMasterService
         return ['row' => $row, 'fixed' => false];
     }
 
+    /**
+     * @param  list<array{row: int, data: array<string, mixed>, errors: list<array{field: string, message: string}>, valid: bool, action: string, existing: ?HrmsPayrollMaster}>  $planRows
+     * @param  array<string, int>  $summary
+     */
+    private function flagImportFileDuplicates(array &$planRows, array &$summary): void
+    {
+        $fields = [
+            'employee_code' => ['message' => 'Employee Code already exists in this import file.', 'norm' => fn ($v) => mb_strtolower(trim((string) $v))],
+            'email' => ['message' => 'Email already exists in this import file.', 'norm' => fn ($v) => mb_strtolower(trim((string) $v))],
+            'phone' => ['message' => 'Phone number already exists in this import file.', 'norm' => fn ($v) => preg_replace('/\D/', '', (string) $v)],
+            'aadhaar' => ['message' => 'Aadhaar number already exists in this import file.', 'norm' => fn ($v) => preg_replace('/\D/', '', (string) $v)],
+            'pan' => ['message' => 'PAN number already exists in this import file.', 'norm' => fn ($v) => strtoupper(preg_replace('/[^A-Z0-9]/', '', (string) $v))],
+            'bank_account_number' => ['message' => 'Bank account number already exists in this import file.', 'norm' => fn ($v) => preg_replace('/\D/', '', (string) $v)],
+        ];
+
+        /** @var array<string, array<string, int>> $seen */
+        $seen = [];
+        foreach ($planRows as $index => $item) {
+            if (! $item['valid']) {
+                continue;
+            }
+            foreach ($fields as $field => $meta) {
+                $key = $meta['norm']($item['data'][$field] ?? '');
+                if ($key === '') {
+                    continue;
+                }
+                if (isset($seen[$field][$key])) {
+                    $planRows[$index]['errors'][] = ['field' => $field, 'message' => $meta['message']];
+                    $planRows[$index]['valid'] = false;
+                    $summary['valid_rows']--;
+                    $summary['invalid_rows']++;
+                    if ($item['action'] === 'update') {
+                        $summary['update_rows']--;
+                    } else {
+                        $summary['insert_rows']--;
+                    }
+                } else {
+                    $seen[$field][$key] = $item['row'];
+                }
+            }
+        }
+    }
+
     /** @param  array<string, mixed>  $row */
     /** @return list<array{field: string, message: string}> */
     private function validateImportRow(array $row, ?string $companyId): array
@@ -2190,10 +2380,12 @@ final class PayrollMasterService
             $errors[] = ['field' => 'email', 'message' => 'Invalid email'];
         }
         if (! empty($row['aadhaar']) && ! preg_match('/^\d{12}$/', preg_replace('/\D/', '', (string) $row['aadhaar']))) {
-            $errors[] = ['field' => 'aadhaar', 'message' => 'Aadhaar must be 12 digits'];
+            $errors[] = ['field' => 'aadhaar', 'message' => 'Enter a valid 12-digit Aadhaar number.'];
         }
-        if (! empty($row['pan']) && ! preg_match('/^[A-Z]{5}\d{4}[A-Z]$/i', (string) $row['pan'])) {
-            $errors[] = ['field' => 'pan', 'message' => 'Invalid PAN format'];
+        if (empty($row['pan'])) {
+            $errors[] = ['field' => 'pan', 'message' => 'PAN is required.'];
+        } elseif (! preg_match('/^[A-Z]{5}\d{4}[A-Z]$/i', (string) $row['pan'])) {
+            $errors[] = ['field' => 'pan', 'message' => 'Enter a valid PAN number.'];
         }
         $status = mb_strtolower(trim((string) ($row['status'] ?? 'active')));
         $allowedStatuses = ['active', 'inactive', 'retired', 'deceased', 'resigned'];
@@ -2204,6 +2396,12 @@ final class PayrollMasterService
             ];
         } elseif (strlen($status) > 20) {
             $errors[] = ['field' => 'status', 'message' => 'Status must be at most 20 characters'];
+        }
+
+        $existing = $this->findExistingMaster($companyId, $row);
+        $ignoreUserId = $existing?->user_id ?? $existing?->employee_user_id;
+        foreach ($this->validatePayloadUniquenessErrors($row, $existing?->id, $companyId, $ignoreUserId, false) as $dup) {
+            $errors[] = $dup;
         }
 
         return $errors;

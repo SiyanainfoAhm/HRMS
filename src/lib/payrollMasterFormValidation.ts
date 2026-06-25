@@ -2,8 +2,12 @@ import { validatePasswordComplexity } from "@/lib/passwordValidators";
 import {
   normalizeDigits,
   normalizeIfscInput,
-  validateIndianMobileOptionalInteractive,
+  normalizePanInput,
 } from "@/lib/employeeValidators";
+import {
+  type PayrollMasterUniqueRow,
+  validatePayrollMasterUniqueness,
+} from "@/lib/payrollMasterUniqueness";
 
 /** Mirrors MasterFormState in PayrollMasterScreen — kept loose to avoid circular imports. */
 export type MasterFormLike = {
@@ -61,6 +65,8 @@ export type ValidateEmployeeFormOptions = {
   submitAttempted: boolean;
   touched: Record<string, boolean>;
   visitedTabs: Partial<Record<FormTabId, boolean>>;
+  existingEmployees?: PayrollMasterUniqueRow[];
+  editingId?: string | null;
 };
 
 export type EmployeeFormValidation = {
@@ -91,6 +97,7 @@ const VARIABLE_DEDUCTION_KEYS = [
 
 const TAB_FIELD_ORDER: Record<FormTabId, readonly string[]> = {
   basic: [
+    "employeeCode",
     "name",
     "email",
     "userRole",
@@ -158,6 +165,10 @@ function computeTabStatus(
 export function validateBasicDetails(form: MasterFormLike, editing: boolean): Record<string, string> {
   const errors: Record<string, string> = {};
 
+  if (!form.employeeCode.trim()) {
+    errors.employeeCode = "Employee code is required.";
+  }
+
   if (!form.name.trim()) errors.name = "Name is required.";
   if (!form.email.trim()) errors.email = "Email is required.";
   else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) errors.email = "Enter a valid email.";
@@ -187,8 +198,14 @@ export function validateBasicDetails(form: MasterFormLike, editing: boolean): Re
     else if (form.password !== form.confirmPassword) errors.confirmPassword = "Passwords do not match.";
   }
 
-  const phoneErr = validateIndianMobileOptionalInteractive(normalizeDigits(form.phone));
-  if (phoneErr) errors.phone = phoneErr;
+  const phoneDigits = normalizeDigits(form.phone);
+  if (phoneDigits) {
+    if (phoneDigits.length !== 10) {
+      errors.phone = "Enter a valid 10-digit phone number.";
+    } else if (!/^[6-9]\d{9}$/.test(phoneDigits)) {
+      errors.phone = "Enter a valid 10-digit phone number.";
+    }
+  }
 
   return errors;
 }
@@ -234,15 +251,18 @@ export function validatePayrollDetails(
 export function validateStatutory(form: MasterFormLike): Record<string, string> {
   const errors: Record<string, string> = {};
 
-  if (form.pan.trim() && !/^[A-Z]{5}\d{4}[A-Z]$/i.test(form.pan.trim())) {
-    errors.pan = "Invalid PAN format.";
+  const panNorm = normalizePanInput(form.pan);
+  if (!panNorm) {
+    errors.pan = "PAN is required.";
+  } else if (!/^[A-Z]{5}\d{4}[A-Z]$/.test(panNorm)) {
+    errors.pan = "Enter a valid PAN number.";
   }
 
   const aadhaarDigits = normalizeDigits(form.aadhaar);
   if (!aadhaarDigits) {
     errors.aadhaar = "Aadhaar number is required.";
   } else if (!/^\d{12}$/.test(aadhaarDigits)) {
-    errors.aadhaar = "Aadhaar must be a valid 12-digit number.";
+    errors.aadhaar = "Enter a valid 12-digit Aadhaar number.";
   }
 
   const ptErr = nonNegNumberError(form.professionalTax, "Professional Tax");
@@ -323,6 +343,8 @@ export function validateEmployeeForm(
     submitAttempted: options?.submitAttempted ?? false,
     touched: options?.touched ?? {},
     visitedTabs: options?.visitedTabs ?? {},
+    existingEmployees: options?.existingEmployees ?? [],
+    editingId: options?.editingId ?? null,
   };
 
   const basic = validateBasicDetails(form, editing);
@@ -330,23 +352,31 @@ export function validateEmployeeForm(
   const statutory = validateStatutory(form);
   const deductions = validateDeductions(form);
   const bank = validateBankDetails(form);
+  const uniqueness = validatePayrollMasterUniqueness(form, opts.existingEmployees ?? [], opts.editingId);
 
   const slices: Record<FormTabId, Record<string, string>> = {
-    basic,
+    basic: { ...basic, ...pickUniqueness(uniqueness, ["employeeCode", "email", "phone"]) },
     payroll,
-    statutory,
+    statutory: { ...statutory, ...pickUniqueness(uniqueness, ["aadhaar", "pan"]) },
     deductions,
-    bank,
+    bank: { ...bank, ...pickUniqueness(uniqueness, ["bankAccountNumber"]) },
   };
 
-  const errors = { ...basic, ...payroll, ...statutory, ...deductions, ...bank };
+  const errors = {
+    ...basic,
+    ...payroll,
+    ...statutory,
+    ...deductions,
+    ...bank,
+    ...uniqueness,
+  };
 
   const tabStatus: Record<FormTabId, TabStatus> = {
-    basic: computeTabStatus("basic", basic, opts),
-    payroll: computeTabStatus("payroll", payroll, opts),
-    statutory: computeTabStatus("statutory", statutory, opts),
-    deductions: computeTabStatus("deductions", deductions, opts),
-    bank: computeTabStatus("bank", bank, opts),
+    basic: computeTabStatus("basic", slices.basic, opts),
+    payroll: computeTabStatus("payroll", slices.payroll, opts),
+    statutory: computeTabStatus("statutory", slices.statutory, opts),
+    deductions: computeTabStatus("deductions", slices.deductions, opts),
+    bank: computeTabStatus("bank", slices.bank, opts),
   };
 
   let firstErrorTab: FormTabId | null = null;
@@ -370,10 +400,20 @@ export function validateEmployeeForm(
   };
 }
 
+function pickUniqueness(errors: Record<string, string>, keys: string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const key of keys) {
+    if (errors[key]) out[key] = errors[key];
+  }
+  return out;
+}
+
 /** Map backend error messages to form field keys when possible. */
 export function mapApiErrorToField(message: string): string | null {
   const m = message.toLowerCase();
+  if (m.includes("employee code")) return "employeeCode";
   if (m.includes("email")) return "email";
+  if (m.includes("phone")) return "phone";
   if (m.includes("password")) return "password";
   if (m.includes("designation")) return "designation";
   if (m.includes("gross")) return "grossBasicPay";

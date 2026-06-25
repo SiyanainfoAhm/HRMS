@@ -10,6 +10,10 @@ import {
   type FormTabId,
   type TabStatus,
 } from "@/lib/payrollMasterFormValidation";
+import {
+  generateNextEmployeeCode,
+  type PayrollMasterUniqueRow,
+} from "@/lib/payrollMasterUniqueness";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/components/ToastProvider";
 import { SkeletonTable, SkeletonCard } from "@/components/Skeleton";
@@ -38,6 +42,7 @@ import { GOVERNMENT_DEFAULT_CPF_RATE_ON_TOTAL_EARNINGS } from "@/lib/governmentP
 import {
   normalizeDigits,
   normalizeIfscInput,
+  normalizePanInput,
 } from "@/lib/employeeValidators";
 import { isAdminRole, normalizeRole, type AppRole } from "@/lib/roles";
 
@@ -532,6 +537,20 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     };
   }, [canManage]);
 
+  const existingForUniqueness = useMemo<PayrollMasterUniqueRow[]>(
+    () =>
+      rows.map((r) => ({
+        id: r.id,
+        employeeCode: r.employeeCode,
+        email: r.email,
+        phone: r.phone,
+        aadhaar: r.aadhaar,
+        pan: r.pan,
+        bankAccountNumber: r.bankAccountNumber,
+      })),
+    [rows],
+  );
+
   const formValidation = useMemo(
     () =>
       validateEmployeeForm(form, Boolean(editing), editBaseline, {
@@ -539,8 +558,10 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
         submitAttempted,
         touched,
         visitedTabs,
+        existingEmployees: existingForUniqueness,
+        editingId: editing?.id ?? null,
       }),
-    [form, editing, editBaseline, submitAttempted, touched, visitedTabs],
+    [form, editing, editBaseline, submitAttempted, touched, visitedTabs, existingForUniqueness],
   );
 
   const touchField = useCallback((field: string) => {
@@ -630,7 +651,10 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     setEditBaseline(null);
     setMasterHistory([]);
     setArrearHistory([]);
-    setForm(emptyForm(companyDefaultDa, companyDefaultHra));
+    setForm({
+      ...emptyForm(companyDefaultDa, companyDefaultHra),
+      employeeCode: generateNextEmployeeCode(rows.map((r) => r.employeeCode ?? "").filter(Boolean)),
+    });
     resetFormValidationState();
     setFormSection("basic");
     setFormOpen(true);
@@ -687,6 +711,8 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
       submitAttempted: true,
       touched,
       visitedTabs,
+      existingEmployees: existingForUniqueness,
+      editingId: editing?.id ?? null,
     });
 
     if (!validation.isValid) {
@@ -720,7 +746,9 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                 ? "bank"
                 : field === "aadhaar" || field === "pan"
                   ? "statutory"
-                  : "basic";
+                  : field === "employeeCode" || field === "email" || field === "phone"
+                    ? "basic"
+                    : "basic";
           focusFirstInvalidField(field, tab);
         }
         throw new Error(msg);
@@ -1067,8 +1095,14 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                 <section>
                   <h4 className="mb-3 text-sm font-semibold text-slate-800">Basic details</h4>
                   <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                    <FormField label="Employee Code">
-                      <Input id={fieldDomId("employeeCode")} value={form.employeeCode} onChange={(e) => patchForm({ employeeCode: e.target.value })} />
+                    <FormField label="Employee Code" required error={showError("employeeCode")}>
+                      <Input
+                        id={fieldDomId("employeeCode")}
+                        invalid={Boolean(showError("employeeCode"))}
+                        value={form.employeeCode}
+                        onChange={(e) => patchForm({ employeeCode: e.target.value })}
+                        onBlur={() => touchField("employeeCode")}
+                      />
                     </FormField>
                     <FormField label="Pay Level" required error={showError("payLevel")}>
                       <Input
@@ -1289,8 +1323,16 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                   <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                     <FormField label="UAN"><Input value={form.uan} onChange={(e) => patchForm({ uan: e.target.value })} /></FormField>
                     <FormField label="CPF No"><Input value={form.cpfNo} onChange={(e) => patchForm({ cpfNo: e.target.value })} /></FormField>
-                    <FormField label="PAN" error={showError("pan")}>
-                      <Input id={fieldDomId("pan")} invalid={Boolean(showError("pan"))} value={form.pan} onChange={(e) => patchForm({ pan: e.target.value })} onBlur={() => touchField("pan")} />
+                    <FormField label="PAN" required error={showError("pan")}>
+                      <Input
+                        id={fieldDomId("pan")}
+                        invalid={Boolean(showError("pan"))}
+                        value={form.pan}
+                        onChange={(e) => patchForm({ pan: normalizePanInput(e.target.value) })}
+                        onBlur={() => touchField("pan")}
+                        maxLength={10}
+                        className="uppercase"
+                      />
                     </FormField>
                     <FormField label="Aadhaar" required error={showError("aadhaar")}>
                       <Input
