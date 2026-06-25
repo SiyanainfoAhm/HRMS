@@ -194,8 +194,9 @@ class PayrollMasterController extends Controller
 
         $request->validate(['file' => ['required', 'file', 'mimes:csv,xlsx,xls', 'max:10240']]);
         $result = $this->service->importFile($request->file('file'), $user->company_id, $user->id);
+        $blocked = str_contains((string) ($result['message'] ?? ''), 'Import blocked');
 
-        return response()->json($result, ($result['summary']['failed_rows'] ?? 0) > 0 ? 422 : 200);
+        return response()->json($result, $blocked || ($result['summary']['failed_rows'] ?? 0) > 0 ? 422 : 200);
     }
 
     public function importPreview(Request $request): JsonResponse

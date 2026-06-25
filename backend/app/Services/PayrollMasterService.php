@@ -21,6 +21,7 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Shared\Date as ExcelDate;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Csv;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
@@ -490,25 +491,21 @@ final class PayrollMasterService
     public function previewImportFile(UploadedFile $file, ?string $companyId): array
     {
         $plan = $this->buildImportPlan($file, $companyId);
+        $issues = $this->flattenImportIssues($plan);
+
+        $invalidRows = (int) ($plan['summary']['invalid_rows'] ?? 0);
+        $canImport = $plan['file_errors'] === [] && $invalidRows === 0;
+        $warningRows = (int) ($plan['summary']['warning_rows'] ?? 0);
 
         return [
             'headers' => $plan['headers'],
             'summary' => $plan['summary'],
-            'rows' => array_map(fn (array $item) => [
-                'row' => $item['row'],
-                'employeeCode' => $item['data']['employee_code'] ?? null,
-                'name' => $item['data']['name'] ?? null,
-                'email' => $item['data']['email'] ?? null,
-                'designation' => $item['data']['designation'] ?? null,
-                'payLevel' => $item['data']['pay_level'] ?? null,
-                'grossBasicPay' => $item['data']['gross_basic_pay'] ?? null,
-                'status' => $item['data']['status'] ?? 'active',
-                'remarks' => $item['data']['remarks'] ?? null,
-                'action' => $item['action'],
-                'valid' => $item['valid'],
-                'errors' => $item['errors'],
-            ], $plan['rows']),
+            'can_import' => $canImport,
+            'requires_confirmation' => $canImport && $warningRows > 0,
+            'blocked_message' => $canImport ? null : 'Import blocked. Please fix the listed errors and upload again.',
+            'rows' => array_map(fn (array $item) => $this->formatImportPreviewRow($item), $plan['rows']),
             'file_errors' => $plan['file_errors'],
+            'issues' => $issues,
         ];
     }
 
@@ -522,38 +519,59 @@ final class PayrollMasterService
         $errors = [];
 
         foreach ($plan['file_errors'] as $e) {
-            $errors[] = ['row' => 0, 'field' => $e['field'], 'message' => $e['message']];
+            $errors[] = [
+                'row' => 0,
+                'employee_code' => null,
+                'employee_name' => null,
+                'field' => $e['field'],
+                'message' => $e['message'],
+                'error_type' => 'error',
+            ];
         }
 
-        if ($plan['file_errors'] !== []) {
+        if ($plan['file_errors'] !== [] || ($summary['invalid_rows'] ?? 0) > 0) {
+            foreach ($plan['rows'] as $item) {
+                if ($item['valid']) {
+                    continue;
+                }
+                foreach ($item['errors'] as $e) {
+                    $errors[] = [
+                        'row' => $item['row'],
+                        'employee_code' => $item['data']['employee_code'] ?? null,
+                        'employee_name' => $item['data']['name'] ?? null,
+                        'field' => $e['field'],
+                        'message' => $e['message'],
+                        'error_type' => $e['type'] ?? 'error',
+                    ];
+                }
+            }
+
             return [
-                'message' => 'Import file has header or format errors',
+                'message' => 'Import blocked. Please fix the listed errors and upload again.',
                 'summary' => $summary,
                 'errors' => $errors,
             ];
         }
 
         foreach ($plan['rows'] as $item) {
-            if (! $item['valid']) {
-                $summary['failed_rows']++;
-                foreach ($item['errors'] as $e) {
-                    $errors[] = ['row' => $item['row'], 'field' => $e['field'], 'message' => $e['message']];
-                }
-
-                continue;
-            }
-
             try {
                 if ($item['action'] === 'update' && $item['existing']) {
                     $this->update($item['existing'], $item['data'], $companyId ?? $item['existing']->company_id);
                     $summary['updated_rows']++;
                 } else {
-                    $this->create($item['data'], $companyId ?? '', $createdBy, false, false);
+                    $this->create($item['data'], $companyId ?? '', $createdBy, false, true);
                     $summary['inserted_rows']++;
                 }
             } catch (\Throwable $e) {
-                $summary['failed_rows']++;
-                $errors[] = ['row' => $item['row'], 'field' => 'row', 'message' => $e->getMessage()];
+                $summary['failed_rows'] = ($summary['failed_rows'] ?? 0) + 1;
+                $errors[] = [
+                    'row' => $item['row'],
+                    'employee_code' => $item['data']['employee_code'] ?? null,
+                    'employee_name' => $item['data']['name'] ?? null,
+                    'field' => 'row',
+                    'message' => $this->friendlyImportSaveError($e),
+                    'error_type' => 'error',
+                ];
             }
         }
 
@@ -586,6 +604,7 @@ final class PayrollMasterService
             'total_rows' => 0,
             'valid_rows' => 0,
             'invalid_rows' => 0,
+            'warning_rows' => 0,
             'insert_rows' => 0,
             'update_rows' => 0,
             'inserted_rows' => 0,
@@ -627,6 +646,10 @@ final class PayrollMasterService
         }
 
         $rowNum = $headerRowIndex;
+        while ($rows !== [] && $this->isImportInstructionRow($rows[0])) {
+            array_shift($rows);
+        }
+
         foreach ($rows as $rawRow) {
             $rowNum++;
             if ($this->isEmptyRow($rawRow)) {
@@ -634,42 +657,33 @@ final class PayrollMasterService
             }
             $summary['total_rows']++;
             $columnError = $this->validateImportColumnCount($header, $rawRow);
-            $row = $this->mapRow($map, $rawRow);
+            $row = $this->normalizeImportRow($this->mapRow($map, $rawRow));
             $repair = $this->repairImportRowAlignment($row);
             $row = $repair['row'];
             if (! empty($row['status'])) {
                 $row['status'] = mb_strtolower(trim((string) $row['status']));
             }
-            $rowErrors = $this->validateImportRow($row, $companyId);
-            if ($columnError !== null && ! $repair['fixed']) {
-                array_unshift($rowErrors, $columnError);
-            }
             $existing = $this->findExistingMaster($companyId, $row);
             $action = $existing ? 'update' : 'insert';
-            $valid = $rowErrors === [];
-
-            if ($valid) {
-                $summary['valid_rows']++;
-                if ($action === 'update') {
-                    $summary['update_rows']++;
-                } else {
-                    $summary['insert_rows']++;
-                }
-            } else {
-                $summary['invalid_rows']++;
+            $rowErrors = $this->validateImportRow($row, $companyId, $existing);
+            if ($columnError !== null && ! $repair['fixed']) {
+                array_unshift($rowErrors, $this->importIssue('columns', $columnError['message']));
             }
 
             $planRows[] = [
                 'row' => $rowNum,
                 'data' => $row,
                 'errors' => $rowErrors,
-                'valid' => $valid,
+                'warnings' => [],
+                'valid' => $rowErrors === [],
                 'action' => $action,
                 'existing' => $existing,
             ];
         }
 
-        $this->flagImportFileDuplicates($planRows, $summary);
+        $this->flagImportFileDuplicates($planRows);
+        $this->appendImportRowWarnings($planRows);
+        $summary = $this->recountImportPlanSummary($planRows, $summary);
 
         if ($summary['total_rows'] === 0 && $fileErrors === []) {
             $fileErrors[] = ['field' => 'file', 'message' => 'No data rows found'];
@@ -709,7 +723,7 @@ final class PayrollMasterService
     public function templateDownload(string $format = 'xlsx'): StreamedResponse
     {
         $sheet = new Spreadsheet;
-        $this->writeSpreadsheetWithGroupedHeaders($sheet, [$this->sampleTemplateRowAsRecord()]);
+        $this->writeSpreadsheetWithGroupedHeaders($sheet, [$this->sampleTemplateRowAsRecord()], true);
 
         $filename = 'cirt_payroll_master_template.'.($format === 'csv' ? 'csv' : 'xlsx');
 
@@ -736,7 +750,8 @@ final class PayrollMasterService
     private function templatePreDeductionHeaders(): array
     {
         return [
-            'employee_code', 'name', 'email', 'phone', 'gender', 'date_of_birth', 'date_of_joining',
+            'employee_code', 'name', 'email', 'user_role', 'password', 'confirm_password',
+            'phone', 'gender', 'date_of_birth', 'date_of_joining',
             'designation', 'department', 'division', 'pay_level', 'gross_basic_pay', 'da_percent', 'hra_percent', 'medical',
             'uan', 'cpf_no', 'pan', 'aadhaar', 'bank_name', 'bank_account_number', 'bank_ifsc',
             'status', 'remarks', 'effective_from',
@@ -784,17 +799,41 @@ final class PayrollMasterService
     }
 
     /** @param  list<array<string, mixed>>  $rows */
-    private function writeSpreadsheetWithGroupedHeaders(Spreadsheet $sheet, array $rows): void
+    private function writeSpreadsheetWithGroupedHeaders(Spreadsheet $sheet, array $rows, bool $includeInstructions = false): void
     {
         $activeSheet = $sheet->getActiveSheet();
         $activeSheet->fromArray($this->templateGroupHeaderRow(), null, 'A1');
         $activeSheet->fromArray($this->templateHeaders(), null, 'A2');
-        $i = 3;
+        $dataRowStart = 3;
+        if ($includeInstructions) {
+            $activeSheet->fromArray($this->templateInstructionRow(), null, 'A3');
+            $this->applyTemplateInstructionMerge($activeSheet);
+            $dataRowStart = 4;
+        }
+        $i = $dataRowStart;
         foreach ($rows as $r) {
             $activeSheet->fromArray($this->rowToExport($r), null, 'A'.$i);
             $i++;
         }
         $this->applyTemplateGroupHeaderMerges($activeSheet);
+    }
+
+    private function applyTemplateInstructionMerge(\PhpOffice\PhpSpreadsheet\Worksheet\Worksheet $sheet): void
+    {
+        $lastCol = Coordinate::stringFromColumnIndex(count($this->templateHeaders()));
+        $sheet->mergeCells('A3:'.$lastCol.'3');
+        $sheet->getStyle('A3')->getAlignment()->setWrapText(true);
+    }
+
+    /** @return list<string> */
+    private function templateInstructionRow(): array
+    {
+        $cols = count($this->templateHeaders());
+        $row = array_fill(0, $cols, '');
+        $row[0] = 'Required: employee_code, name, email, user_role, password (new login), pay_level, designation, status, pan, aadhaar, bank_name, bank_account_number, bank_ifsc, gross_basic_pay, effective_from. '
+            .'Unique: employee_code, email, phone, aadhaar, pan, bank_account_number.';
+
+        return $row;
     }
 
     private function applyTemplateGroupHeaderMerges(\PhpOffice\PhpSpreadsheet\Worksheet\Worksheet $sheet): void
@@ -838,6 +877,9 @@ final class PayrollMasterService
             'employee_code' => 'EMP001',
             'name' => 'Test Employee',
             'email' => 'test@example.com',
+            'user_role' => 'employee',
+            'password' => 'ChangeMe1!',
+            'confirm_password' => 'ChangeMe1!',
             'phone' => '9876543210',
             'gender' => 'male',
             'date_of_birth' => '1990-01-01',
@@ -2218,6 +2260,10 @@ final class PayrollMasterService
             'ifsc' => 'bank_ifsc',
             'mobile' => 'phone',
             'phone number' => 'phone',
+            'user role' => 'user_role',
+            'role' => 'user_role',
+            'confirm password' => 'confirm_password',
+            'password confirm' => 'confirm_password',
         ];
     }
 
@@ -2319,89 +2365,517 @@ final class PayrollMasterService
     }
 
     /**
-     * @param  list<array{row: int, data: array<string, mixed>, errors: list<array{field: string, message: string}>, valid: bool, action: string, existing: ?HrmsPayrollMaster}>  $planRows
-     * @param  array<string, int>  $summary
+     * @param  list<array{
+     *     row: int,
+     *     data: array<string, mixed>,
+     *     errors: list<array{field: string, message: string, type?: string}>,
+     *     warnings: list<array{field: string, message: string, type?: string}>,
+     *     valid: bool,
+     *     action: string,
+     *     existing: ?HrmsPayrollMaster
+     * }>  $planRows
      */
-    private function flagImportFileDuplicates(array &$planRows, array &$summary): void
+    private function flagImportFileDuplicates(array &$planRows): void
     {
         $fields = [
-            'employee_code' => ['message' => 'Employee Code already exists in this import file.', 'norm' => fn ($v) => mb_strtolower(trim((string) $v))],
-            'email' => ['message' => 'Email already exists in this import file.', 'norm' => fn ($v) => mb_strtolower(trim((string) $v))],
-            'phone' => ['message' => 'Phone number already exists in this import file.', 'norm' => fn ($v) => preg_replace('/\D/', '', (string) $v)],
-            'aadhaar' => ['message' => 'Aadhaar number already exists in this import file.', 'norm' => fn ($v) => preg_replace('/\D/', '', (string) $v)],
-            'pan' => ['message' => 'PAN number already exists in this import file.', 'norm' => fn ($v) => strtoupper(preg_replace('/[^A-Z0-9]/', '', (string) $v))],
-            'bank_account_number' => ['message' => 'Bank account number already exists in this import file.', 'norm' => fn ($v) => preg_replace('/\D/', '', (string) $v)],
+            'employee_code' => fn ($v) => mb_strtolower(trim((string) $v)),
+            'email' => fn ($v) => mb_strtolower(trim((string) $v)),
+            'phone' => fn ($v) => preg_replace('/\D/', '', (string) $v),
+            'aadhaar' => fn ($v) => preg_replace('/\D/', '', (string) $v),
+            'pan' => fn ($v) => strtoupper(preg_replace('/[^A-Z0-9]/', '', (string) $v)),
+            'bank_account_number' => fn ($v) => preg_replace('/\D/', '', (string) $v),
         ];
 
-        /** @var array<string, array<string, int>> $seen */
-        $seen = [];
+        /** @var array<string, array<string, list<int>>> $occurrences */
+        $occurrences = [];
         foreach ($planRows as $index => $item) {
-            if (! $item['valid']) {
-                continue;
-            }
-            foreach ($fields as $field => $meta) {
-                $key = $meta['norm']($item['data'][$field] ?? '');
+            foreach ($fields as $field => $normalize) {
+                $key = $normalize($item['data'][$field] ?? '');
                 if ($key === '') {
                     continue;
                 }
-                if (isset($seen[$field][$key])) {
-                    $planRows[$index]['errors'][] = ['field' => $field, 'message' => $meta['message']];
-                    $planRows[$index]['valid'] = false;
-                    $summary['valid_rows']--;
-                    $summary['invalid_rows']++;
-                    if ($item['action'] === 'update') {
-                        $summary['update_rows']--;
-                    } else {
-                        $summary['insert_rows']--;
+                $occurrences[$field][$key][] = $index;
+            }
+        }
+
+        foreach ($occurrences as $field => $groups) {
+            foreach ($groups as $indices) {
+                if (count($indices) < 2) {
+                    continue;
+                }
+                $rowNumbers = array_map(fn (int $i) => $planRows[$i]['row'], $indices);
+                sort($rowNumbers);
+                foreach ($indices as $index) {
+                    $others = array_values(array_filter($rowNumbers, fn (int $n) => $n !== $planRows[$index]['row']));
+                    $message = $this->duplicateImportFieldMessage($field);
+                    if ($others !== []) {
+                        $message .= ' (also in row'.(count($others) > 1 ? 's' : '').' '.implode(', ', $others).')';
                     }
-                } else {
-                    $seen[$field][$key] = $item['row'];
+                    $planRows[$index]['errors'][] = $this->importIssue($field, $message);
+                    $planRows[$index]['valid'] = false;
                 }
             }
         }
     }
 
-    /** @param  array<string, mixed>  $row */
-    /** @return list<array{field: string, message: string}> */
-    private function validateImportRow(array $row, ?string $companyId): array
+    /**
+     * @param  list<array{
+     *     row: int,
+     *     data: array<string, mixed>,
+     *     errors: list<array{field: string, message: string, type?: string}>,
+     *     warnings: list<array{field: string, message: string, type?: string}>,
+     *     valid: bool,
+     *     action: string,
+     *     existing: ?HrmsPayrollMaster
+     * }>  $planRows
+     */
+    private function appendImportRowWarnings(array &$planRows): void
     {
-        $errors = [];
-        if (empty($row['name'])) {
-            $errors[] = ['field' => 'name', 'message' => 'Name is required'];
+        foreach ($planRows as &$item) {
+            if (! $item['valid']) {
+                continue;
+            }
+            $warnings = [];
+            if ($item['action'] === 'update') {
+                $warnings[] = $this->importIssue('row', 'This row will update an existing payroll master record.', 'warning');
+            }
+            if (empty($item['data']['date_of_joining'])) {
+                $warnings[] = $this->importIssue('date_of_joining', 'Date of joining is empty.', 'warning');
+            }
+            if (empty($item['data']['department'])) {
+                $warnings[] = $this->importIssue('department', 'Department is empty.', 'warning');
+            }
+            $item['warnings'] = $warnings;
         }
-        if (empty($row['pay_level'])) {
-            $errors[] = ['field' => 'pay_level', 'message' => 'Pay level is required'];
-        }
-        $gross = (float) ($row['gross_basic_pay'] ?? 0);
-        if ($gross <= 0) {
-            $errors[] = ['field' => 'gross_basic_pay', 'message' => 'Gross basic pay must be greater than 0'];
-        }
-        if (! empty($row['email']) && ! filter_var($row['email'], FILTER_VALIDATE_EMAIL)) {
-            $errors[] = ['field' => 'email', 'message' => 'Invalid email'];
-        }
-        if (! empty($row['aadhaar']) && ! preg_match('/^\d{12}$/', preg_replace('/\D/', '', (string) $row['aadhaar']))) {
-            $errors[] = ['field' => 'aadhaar', 'message' => 'Enter a valid 12-digit Aadhaar number.'];
-        }
-        if (empty($row['pan'])) {
-            $errors[] = ['field' => 'pan', 'message' => 'PAN is required.'];
-        } elseif (! preg_match('/^[A-Z]{5}\d{4}[A-Z]$/i', (string) $row['pan'])) {
-            $errors[] = ['field' => 'pan', 'message' => 'Enter a valid PAN number.'];
-        }
-        $status = mb_strtolower(trim((string) ($row['status'] ?? 'active')));
-        $allowedStatuses = ['active', 'inactive', 'retired', 'deceased', 'resigned'];
-        if ($status !== '' && ! in_array($status, $allowedStatuses, true)) {
-            $errors[] = [
-                'field' => 'status',
-                'message' => 'Status must be one of: '.implode(', ', $allowedStatuses).'. Re-download the latest import template if columns are misaligned.',
-            ];
-        } elseif (strlen($status) > 20) {
-            $errors[] = ['field' => 'status', 'message' => 'Status must be at most 20 characters'];
+        unset($item);
+    }
+
+    /**
+     * @param  list<array{
+     *     row: int,
+     *     data: array<string, mixed>,
+     *     errors: list<array{field: string, message: string, type?: string}>,
+     *     warnings: list<array{field: string, message: string, type?: string}>,
+     *     valid: bool,
+     *     action: string,
+     *     existing: ?HrmsPayrollMaster
+     * }>  $planRows
+     * @param  array<string, int>  $summary
+     * @return array<string, int>
+     */
+    private function recountImportPlanSummary(array $planRows, array $summary): array
+    {
+        $summary['valid_rows'] = 0;
+        $summary['invalid_rows'] = 0;
+        $summary['warning_rows'] = 0;
+        $summary['insert_rows'] = 0;
+        $summary['update_rows'] = 0;
+
+        foreach ($planRows as $item) {
+            if (! $item['valid']) {
+                $summary['invalid_rows']++;
+
+                continue;
+            }
+            $summary['valid_rows']++;
+            if (($item['warnings'] ?? []) !== []) {
+                $summary['warning_rows']++;
+            }
+            if ($item['action'] === 'update') {
+                $summary['update_rows']++;
+            } else {
+                $summary['insert_rows']++;
+            }
         }
 
-        $existing = $this->findExistingMaster($companyId, $row);
+        return $summary;
+    }
+
+    /** @return array{field: string, message: string, type: string} */
+    private function importIssue(string $field, string $message, string $type = 'error'): array
+    {
+        return ['field' => $field, 'message' => $message, 'type' => $type];
+    }
+
+    private function duplicateImportFieldMessage(string $field): string
+    {
+        return match ($field) {
+            'employee_code' => 'Employee Code already exists.',
+            'email' => 'Email already exists.',
+            'phone' => 'Phone number already exists.',
+            'aadhaar' => 'Aadhaar number already exists.',
+            'pan' => 'PAN number already exists.',
+            'bank_account_number' => 'Bank account number already exists.',
+            default => 'Value already exists.',
+        };
+    }
+
+    /** @param  array<string, mixed>  $row */
+    private function importEmployeeLabel(array $row): string
+    {
+        $name = trim((string) ($row['name'] ?? ''));
+        $code = trim((string) ($row['employee_code'] ?? ''));
+        $email = trim((string) ($row['email'] ?? ''));
+
+        if ($name !== '' && $code !== '') {
+            return $name.' / Employee Code '.$code;
+        }
+        if ($name !== '') {
+            return $name;
+        }
+        if ($code !== '') {
+            return 'Employee Code '.$code;
+        }
+        if ($email !== '') {
+            return $email;
+        }
+
+        return 'Unknown employee';
+    }
+
+    /** @param  array<string, mixed>  $plan */
+    /** @return list<array{rowNumber: int, employeeCode: ?string, employeeName: ?string, employeeLabel: string, field: string, errorType: string, message: string}> */
+    private function flattenImportIssues(array $plan): array
+    {
+        $issues = [];
+        foreach ($plan['file_errors'] as $e) {
+            $issues[] = [
+                'rowNumber' => 0,
+                'employeeCode' => null,
+                'employeeName' => null,
+                'employeeLabel' => 'File',
+                'field' => $e['field'],
+                'errorType' => 'error',
+                'message' => $e['message'],
+            ];
+        }
+        foreach ($plan['rows'] as $item) {
+            foreach (array_merge($item['errors'], $item['warnings'] ?? []) as $issue) {
+                $issues[] = [
+                    'rowNumber' => $item['row'],
+                    'employeeCode' => $item['data']['employee_code'] ?? null,
+                    'employeeName' => $item['data']['name'] ?? null,
+                    'employeeLabel' => $this->importEmployeeLabel($item['data']),
+                    'field' => $issue['field'],
+                    'errorType' => $issue['type'] ?? 'error',
+                    'message' => $issue['message'],
+                ];
+            }
+        }
+
+        return $issues;
+    }
+
+    /** @param  array{
+     *     row: int,
+     *     data: array<string, mixed>,
+     *     errors: list<array{field: string, message: string, type?: string}>,
+     *     warnings: list<array{field: string, message: string, type?: string}>,
+     *     valid: bool,
+     *     action: string,
+     *     existing: ?HrmsPayrollMaster
+     * }  $item
+     * @return array<string, mixed>
+     */
+    private function formatImportPreviewRow(array $item): array
+    {
+        return [
+            'row' => $item['row'],
+            'employeeCode' => $item['data']['employee_code'] ?? null,
+            'employeeName' => $item['data']['name'] ?? null,
+            'employeeLabel' => $this->importEmployeeLabel($item['data']),
+            'email' => $item['data']['email'] ?? null,
+            'designation' => $item['data']['designation'] ?? null,
+            'payLevel' => $item['data']['pay_level'] ?? null,
+            'grossBasicPay' => $item['data']['gross_basic_pay'] ?? null,
+            'status' => $item['data']['status'] ?? 'active',
+            'remarks' => $item['data']['remarks'] ?? null,
+            'action' => $item['action'],
+            'valid' => $item['valid'],
+            'errors' => $item['errors'],
+            'warnings' => $item['warnings'] ?? [],
+        ];
+    }
+
+    private function friendlyImportSaveError(\Throwable $e): string
+    {
+        $message = $e->getMessage();
+        $lower = mb_strtolower($message);
+        foreach ([
+            'employee code' => 'Employee Code already exists.',
+            'email' => 'Email already exists.',
+            'phone' => 'Phone number already exists.',
+            'aadhaar' => 'Aadhaar number already exists.',
+            'pan' => 'PAN number already exists.',
+            'account' => 'Bank account number already exists.',
+            'password' => 'Password is required for new employee login.',
+        ] as $needle => $friendly) {
+            if (str_contains($lower, $needle)) {
+                return $friendly;
+            }
+        }
+
+        return $message;
+    }
+
+    /** @param  list<mixed>  $row */
+    private function isImportInstructionRow(array $row): bool
+    {
+        $first = trim((string) ($row[0] ?? ''));
+
+        return str_starts_with($first, 'Required:') || str_starts_with($first, 'NOTE:');
+    }
+
+    /** @param  array<string, mixed>  $row */
+    /** @return array<string, mixed> */
+    private function normalizeImportRow(array $row): array
+    {
+        foreach ([
+            'employee_code', 'name', 'email', 'designation', 'department', 'division', 'bank_name',
+            'uan', 'cpf_no', 'gender', 'user_role', 'status', 'remarks', 'password', 'confirm_password',
+        ] as $key) {
+            if (array_key_exists($key, $row) && $row[$key] !== null) {
+                $row[$key] = trim((string) $row[$key]);
+            }
+        }
+
+        if (! empty($row['email'])) {
+            $row['email'] = mb_strtolower((string) $row['email']);
+        }
+        if (! empty($row['pan'])) {
+            $row['pan'] = strtoupper(preg_replace('/[^A-Z0-9]/', '', (string) $row['pan']));
+        }
+        if (! empty($row['aadhaar'])) {
+            $row['aadhaar'] = preg_replace('/\D/', '', (string) $row['aadhaar']);
+        }
+        if (! empty($row['phone'])) {
+            $row['phone'] = preg_replace('/\D/', '', (string) $row['phone']);
+        }
+        if (! empty($row['bank_account_number'])) {
+            $row['bank_account_number'] = preg_replace('/\D/', '', (string) $row['bank_account_number']);
+        }
+        if (! empty($row['bank_ifsc'])) {
+            $row['bank_ifsc'] = strtoupper(preg_replace('/\s+/', '', (string) $row['bank_ifsc']));
+        }
+
+        return $row;
+    }
+
+    private function importRowNeedsNewUser(array $row, ?string $companyId, ?HrmsPayrollMaster $existing): bool
+    {
+        if ($existing && ($existing->user_id ?? $existing->employee_user_id)) {
+            return false;
+        }
+
+        return ! $this->resolveLinkedUserId($row, $companyId, null);
+    }
+
+    /** @param  array<string, mixed>  $row */
+    /** @return list<array{field: string, message: string, type?: string}> */
+    private function passwordImportIssues(array $row, bool $required): array
+    {
+        $issues = [];
+        $password = trim((string) ($row['password'] ?? ''));
+        $confirm = trim((string) ($row['confirm_password'] ?? $row['confirmPassword'] ?? ''));
+
+        if ($required && $password === '') {
+            $issues[] = $this->importIssue('password', 'Password is required.');
+
+            return $issues;
+        }
+
+        if ($password !== '') {
+            if (strlen($password) < 8) {
+                $issues[] = $this->importIssue('password', 'Password must be at least 8 characters.');
+            } elseif (! preg_match('/[A-Z]/', $password)) {
+                $issues[] = $this->importIssue('password', 'Password must include at least one uppercase letter.');
+            } elseif (! preg_match('/[a-z]/', $password)) {
+                $issues[] = $this->importIssue('password', 'Password must include at least one lowercase letter.');
+            } elseif (! preg_match('/[0-9]/', $password)) {
+                $issues[] = $this->importIssue('password', 'Password must include at least one number.');
+            } elseif (! preg_match('/[^A-Za-z0-9]/', $password)) {
+                $issues[] = $this->importIssue('password', 'Password must include at least one special character.');
+            } elseif (strlen($password) > 255) {
+                $issues[] = $this->importIssue('password', 'Password is too long.');
+            }
+        }
+
+        if ($required && $password !== '' && $confirm === '') {
+            $issues[] = $this->importIssue('confirm_password', 'Please confirm the password.');
+        }
+        if ($confirm !== '' && $password !== $confirm) {
+            $issues[] = $this->importIssue('confirm_password', 'Passwords do not match.');
+        }
+
+        return $issues;
+    }
+
+    private function isValidImportDate(mixed $value): bool
+    {
+        if ($value === null || $value === '') {
+            return false;
+        }
+        if (is_numeric($value)) {
+            try {
+                ExcelDate::excelToDateTimeObject((float) $value);
+
+                return true;
+            } catch (\Throwable) {
+                return false;
+            }
+        }
+        $s = trim((string) $value);
+        if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $s)) {
+            return true;
+        }
+
+        return strtotime($s) !== false;
+    }
+
+    /** @param  array<string, mixed>  $row */
+    /** @return list<array{field: string, message: string, type?: string}> */
+    private function validateImportRow(array $row, ?string $companyId, ?HrmsPayrollMaster $existing): array
+    {
+        $errors = [];
+
+        if (empty($row['employee_code'])) {
+            $errors[] = $this->importIssue('employee_code', 'Employee code is required.');
+        }
+
+        if (empty($row['name'])) {
+            $errors[] = $this->importIssue('name', 'Name is required.');
+        }
+
+        if (empty($row['email'])) {
+            $errors[] = $this->importIssue('email', 'Email is required.');
+        } elseif (! filter_var((string) $row['email'], FILTER_VALIDATE_EMAIL)) {
+            $errors[] = $this->importIssue('email', 'Enter a valid email.');
+        }
+
+        if (empty($row['designation'])) {
+            $errors[] = $this->importIssue('designation', 'Designation is required.');
+        }
+
+        $status = mb_strtolower(trim((string) ($row['status'] ?? 'active')));
+        if ($status === '') {
+            $errors[] = $this->importIssue('status', 'Status is required.');
+        } else {
+            $allowedStatuses = ['active', 'inactive', 'retired', 'deceased', 'resigned'];
+            if (! in_array($status, $allowedStatuses, true)) {
+                $errors[] = $this->importIssue(
+                    'status',
+                    'Status must be one of: '.implode(', ', $allowedStatuses).'. Re-download the latest import template if columns are misaligned.',
+                );
+            } elseif (strlen($status) > 20) {
+                $errors[] = $this->importIssue('status', 'Status must be at most 20 characters.');
+            }
+        }
+
+        if (empty($row['pay_level'])) {
+            $errors[] = $this->importIssue('pay_level', 'Pay level is required.');
+        } else {
+            $level = (int) $row['pay_level'];
+            if ($level < 1) {
+                $errors[] = $this->importIssue('pay_level', 'Pay level must be at least 1.');
+            }
+        }
+
+        $grossRaw = $row['gross_basic_pay'] ?? null;
+        if ($grossRaw === null || trim((string) $grossRaw) === '') {
+            $errors[] = $this->importIssue('gross_basic_pay', 'Gross Basic Pay is required.');
+        } else {
+            $gross = (float) $grossRaw;
+            if (! is_finite($gross) || $gross <= 0) {
+                $errors[] = $this->importIssue('gross_basic_pay', 'Gross basic pay must be greater than 0.');
+            }
+        }
+
+        if (empty($row['effective_from'])) {
+            $errors[] = $this->importIssue('effective_from', 'Effective From is required.');
+        } elseif (! $this->isValidImportDate($row['effective_from'])) {
+            $errors[] = $this->importIssue('effective_from', 'Enter a valid date for Effective From.');
+        }
+
+        if (! empty($row['date_of_birth']) && ! $this->isValidImportDate($row['date_of_birth'])) {
+            $errors[] = $this->importIssue('date_of_birth', 'Enter a valid date of birth.');
+        }
+        if (! empty($row['date_of_joining']) && ! $this->isValidImportDate($row['date_of_joining'])) {
+            $errors[] = $this->importIssue('date_of_joining', 'Enter a valid date of joining.');
+        }
+
+        $phone = (string) ($row['phone'] ?? '');
+        if ($phone !== '') {
+            if (! preg_match('/^\d{10}$/', $phone)) {
+                $errors[] = $this->importIssue('phone', 'Enter a valid 10-digit phone number.');
+            } elseif (! preg_match('/^[6-9]\d{9}$/', $phone)) {
+                $errors[] = $this->importIssue('phone', 'Enter a valid 10-digit phone number.');
+            }
+        }
+
+        $aadhaar = (string) ($row['aadhaar'] ?? '');
+        if ($aadhaar === '') {
+            $errors[] = $this->importIssue('aadhaar', 'Aadhaar number is required.');
+        } elseif (! preg_match('/^\d{12}$/', $aadhaar)) {
+            $errors[] = $this->importIssue('aadhaar', 'Enter a valid 12-digit Aadhaar number.');
+        }
+
+        $pan = (string) ($row['pan'] ?? '');
+        if ($pan === '') {
+            $errors[] = $this->importIssue('pan', 'PAN is required.');
+        } elseif (! preg_match('/^[A-Z]{5}\d{4}[A-Z]$/', $pan)) {
+            $errors[] = $this->importIssue('pan', 'Enter a valid PAN number.');
+        }
+
+        if (empty($row['bank_name'])) {
+            $errors[] = $this->importIssue('bank_name', 'Bank name is required.');
+        }
+
+        $account = (string) ($row['bank_account_number'] ?? '');
+        if ($account === '') {
+            $errors[] = $this->importIssue('bank_account_number', 'Account number is required.');
+        } elseif (! preg_match('/^\d{9,18}$/', $account)) {
+            $errors[] = $this->importIssue('bank_account_number', 'Account number must be 9–18 digits.');
+        }
+
+        $ifsc = (string) ($row['bank_ifsc'] ?? '');
+        if ($ifsc === '') {
+            $errors[] = $this->importIssue('bank_ifsc', 'IFSC is required.');
+        } elseif (! preg_match('/^[A-Z]{4}0[A-Z0-9]{6}$/', $ifsc)) {
+            $errors[] = $this->importIssue('bank_ifsc', 'Enter a valid IFSC code.');
+        }
+
+        foreach ([
+            'da_percent' => 'DA %',
+            'hra_percent' => 'HRA %',
+            'medical' => 'Medical',
+            'professional_tax' => 'Professional Tax',
+            'income_tax' => 'Income Tax',
+        ] as $field => $label) {
+            if (! isset($row[$field]) || trim((string) $row[$field]) === '') {
+                continue;
+            }
+            $n = (float) $row[$field];
+            if (! is_finite($n) || $n < 0) {
+                $errors[] = $this->importIssue($field, $label.' must be ≥ 0.');
+            }
+        }
+
+        $needsNewUser = $this->importRowNeedsNewUser($row, $companyId, $existing);
+        if ($needsNewUser) {
+            $roleRaw = (string) ($row['user_role'] ?? $row['role'] ?? '');
+            if ($roleRaw === '') {
+                $errors[] = $this->importIssue('user_role', 'User role is required.');
+            } elseif (! in_array(mb_strtolower($roleRaw), ['admin', 'employee'], true)) {
+                $errors[] = $this->importIssue('user_role', 'User role must be admin or employee.');
+            }
+            $errors = array_merge($errors, $this->passwordImportIssues($row, true));
+        } else {
+            $errors = array_merge($errors, $this->passwordImportIssues($row, false));
+        }
+
         $ignoreUserId = $existing?->user_id ?? $existing?->employee_user_id;
         foreach ($this->validatePayloadUniquenessErrors($row, $existing?->id, $companyId, $ignoreUserId, false) as $dup) {
-            $errors[] = $dup;
+            $errors[] = $this->importIssue($dup['field'], $dup['message']);
         }
 
         return $errors;

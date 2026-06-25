@@ -14,6 +14,11 @@ import {
   generateNextEmployeeCode,
   type PayrollMasterUniqueRow,
 } from "@/lib/payrollMasterUniqueness";
+import {
+  downloadImportValidationReport,
+  formatImportFieldLabel,
+  type ImportValidationIssue,
+} from "@/lib/payrollMasterImportReport";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/components/ToastProvider";
 import { SkeletonTable, SkeletonCard } from "@/components/Skeleton";
@@ -156,9 +161,13 @@ type MasterFormState = {
 
 type ImportError = { row: number; field: string; message: string };
 
+type ImportIssue = { field: string; message: string; type?: "error" | "warning" | string };
+
 type ImportPreviewRow = {
   row: number;
   employeeCode?: string | null;
+  employeeName?: string | null;
+  employeeLabel?: string | null;
   name?: string | null;
   email?: string | null;
   designation?: string | null;
@@ -168,13 +177,18 @@ type ImportPreviewRow = {
   remarks?: string | null;
   action: "insert" | "update" | string;
   valid: boolean;
-  errors: Array<{ field: string; message: string }>;
+  errors: ImportIssue[];
+  warnings?: ImportIssue[];
 };
 
 type ImportPreview = {
   summary: Record<string, number>;
   rows: ImportPreviewRow[];
   fileErrors: Array<{ field: string; message: string }>;
+  canImport?: boolean;
+  requiresConfirmation?: boolean;
+  blockedMessage?: string | null;
+  issues?: ImportValidationIssue[];
 };
 
 const STATUS_OPTIONS = ["active", "inactive", "retired", "deceased", "resigned"] as const;
@@ -459,6 +473,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
   const [importPreviewing, setImportPreviewing] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
+  const [importWarningsAcknowledged, setImportWarningsAcknowledged] = useState(false);
   const [importResult, setImportResult] = useState<{
     message: string;
     summary: Record<string, number>;
@@ -818,6 +833,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     setImportPreview(null);
     setImportResult(null);
     setImportPreviewing(false);
+    setImportWarningsAcknowledged(false);
   }
 
   function closeImportModal() {
@@ -839,10 +855,23 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
         if (requestId !== importPreviewRequestRef.current) return;
         const preview: ImportPreview = {
           summary: data.summary ?? {},
-          rows: data.rows ?? [],
+          rows: (data.rows ?? []).map((r: ImportPreviewRow) => ({
+            ...r,
+            employeeName: r.employeeName ?? r.name ?? null,
+            name: r.employeeName ?? r.name ?? null,
+            warnings: r.warnings ?? [],
+          })),
           fileErrors: data.file_errors ?? data.fileErrors ?? [],
+          canImport:
+            data.can_import ??
+            data.canImport ??
+            ((data.summary?.invalid_rows ?? 0) === 0 && (data.file_errors ?? data.fileErrors ?? []).length === 0),
+          requiresConfirmation: data.requires_confirmation ?? data.requiresConfirmation,
+          blockedMessage: data.blocked_message ?? data.blockedMessage ?? null,
+          issues: data.issues ?? [],
         };
         setImportPreview(preview);
+        setImportWarningsAcknowledged(false);
       } catch (e: unknown) {
         if (requestId !== importPreviewRequestRef.current) return;
         setImportPreview(null);
@@ -872,7 +901,22 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     }
     setImportFile(file);
     setImportResult(null);
+    setImportWarningsAcknowledged(false);
   }
+
+  const importCanConfirm = useMemo(() => {
+    if (!importPreview) return false;
+    if (importPreview.canImport === false) return false;
+    if ((importPreview.summary.invalid_rows ?? 0) > 0) return false;
+    if (importPreview.fileErrors.length > 0) return false;
+    if (importPreview.requiresConfirmation && !importWarningsAcknowledged) return false;
+    return (importPreview.summary.valid_rows ?? 0) > 0;
+  }, [importPreview, importWarningsAcknowledged]);
+
+  const importIssueRows = useMemo(() => {
+    if (!importPreview) return [];
+    return importPreview.rows.filter((r) => !r.valid || (r.warnings?.length ?? 0) > 0);
+  }, [importPreview]);
 
   async function handleImport() {
     if (!importFile) {
@@ -883,8 +927,11 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
       showToast("error", importPreviewing ? "Wait for the file preview to load" : "Select a file and wait for preview");
       return;
     }
-    if ((importPreview.summary.valid_rows ?? 0) === 0) {
-      showToast("error", "No valid rows to import");
+    if (!importCanConfirm) {
+      showToast(
+        "error",
+        importPreview.blockedMessage ?? "Import blocked. Please fix the listed errors and upload again.",
+      );
       return;
     }
     setImporting(true);
@@ -1562,13 +1609,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
             <Button
               size="sm"
               loading={importing}
-              disabled={
-                importing ||
-                importPreviewing ||
-                !importFile ||
-                !importPreview ||
-                (importPreview?.summary?.valid_rows ?? 0) === 0
-              }
+              disabled={importing || importPreviewing || !importFile || !importCanConfirm}
               onClick={handleImport}
             >
               Confirm import
@@ -1589,21 +1630,47 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
 
                 {importPreview && !importPreviewing && (
                   <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
-                    <div className="grid grid-cols-2 gap-1 text-xs sm:grid-cols-4">
-                      {[
-                        ["total_rows", "Total"],
-                        ["valid_rows", "Valid"],
-                        ["invalid_rows", "Invalid"],
-                        ["insert_rows", "New"],
-                        ["update_rows", "Updates"],
-                      ].map(([key, label]) =>
-                        importPreview.summary[key] != null ? (
-                          <div key={key}>
-                            {label}: <strong>{importPreview.summary[key]}</strong>
-                          </div>
-                        ) : null,
-                      )}
+                    <div className="flex flex-wrap gap-2 text-xs">
+                      <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-emerald-800">
+                        {importPreview.summary.valid_rows ?? 0} rows valid
+                      </span>
+                      <span className="rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-red-800">
+                        {importPreview.summary.invalid_rows ?? 0} rows have errors
+                      </span>
+                      {(importPreview.summary.warning_rows ?? 0) > 0 ? (
+                        <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-900">
+                          {importPreview.summary.warning_rows ?? 0} warnings
+                        </span>
+                      ) : null}
+                      <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-slate-700">
+                        {importPreview.summary.total_rows ?? 0} total checked
+                      </span>
                     </div>
+
+                    {!importCanConfirm && importPreview.blockedMessage ? (
+                      <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+                        {importPreview.blockedMessage}
+                      </div>
+                    ) : null}
+
+                    {importPreview.requiresConfirmation && importCanConfirm === false && (importPreview.summary.invalid_rows ?? 0) === 0 ? (
+                      <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                        Review warnings below, then confirm to proceed with import.
+                      </div>
+                    ) : null}
+
+                    {importPreview.requiresConfirmation && (importPreview.summary.invalid_rows ?? 0) === 0 ? (
+                      <label className="flex items-start gap-2 rounded border border-amber-200 bg-amber-50/60 px-3 py-2 text-xs text-amber-950">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5"
+                          checked={importWarningsAcknowledged}
+                          onChange={(e) => setImportWarningsAcknowledged(e.target.checked)}
+                        />
+                        <span>I have reviewed the warnings and want to proceed with import.</span>
+                      </label>
+                    ) : null}
+
                     {importPreview.fileErrors.length > 0 && (
                       <div className="rounded border border-red-200 bg-red-50 p-2 text-xs text-red-800">
                         {importPreview.fileErrors.map((e, i) => (
@@ -1613,52 +1680,144 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                         ))}
                       </div>
                     )}
-                    {importPreview.rows.length > 0 && (
-                      <div className="max-h-72 overflow-auto rounded border border-slate-200 bg-white">
-                        <table className="w-full text-left text-xs">
-                          <thead className="sticky top-0 bg-slate-100">
-                            <tr>
-                              <th className="px-2 py-1.5">Row</th>
-                              <th className="px-2 py-1.5">Code</th>
-                              <th className="px-2 py-1.5">Name</th>
-                              <th className="px-2 py-1.5">Email</th>
-                              <th className="px-2 py-1.5">Designation</th>
-                              <th className="px-2 py-1.5">Level</th>
-                              <th className="px-2 py-1.5">Gross</th>
-                              <th className="px-2 py-1.5">Status</th>
-                              <th className="px-2 py-1.5">Action</th>
-                              <th className="px-2 py-1.5">Result</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {importPreview.rows.map((r) => (
-                              <tr
-                                key={r.row}
-                                className={`border-t border-slate-100 ${r.valid ? "" : "bg-red-50"}`}
-                              >
-                                <td className="px-2 py-1">{r.row}</td>
-                                <td className="px-2 py-1">{r.employeeCode || "—"}</td>
-                                <td className="px-2 py-1">{r.name || "—"}</td>
-                                <td className="px-2 py-1">{r.email || "—"}</td>
-                                <td className="px-2 py-1">{r.designation || "—"}</td>
-                                <td className="px-2 py-1">{r.payLevel ?? "—"}</td>
-                                <td className="px-2 py-1">{r.grossBasicPay ?? "—"}</td>
-                                <td className="px-2 py-1">{r.status || "—"}</td>
-                                <td className="px-2 py-1 capitalize">{r.action}</td>
-                                <td className="px-2 py-1">
-                                  {r.valid ? (
-                                    <span className="text-emerald-700">OK</span>
-                                  ) : (
-                                    <span className="text-red-700" title={r.errors.map((e) => e.message).join("; ")}>
-                                      {r.errors.map((e) => e.message).join("; ") || "Invalid"}
-                                    </span>
-                                  )}
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
+
+                    {(importPreview.issues?.length ?? 0) > 0 || importIssueRows.length > 0 ? (
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-medium text-slate-700">Validation details</p>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() =>
+                            downloadImportValidationReport(
+                              importPreview.issues ??
+                                importIssueRows.flatMap((r) => [
+                                  ...r.errors.map((e) => ({
+                                    rowNumber: r.row,
+                                    employeeCode: r.employeeCode,
+                                    employeeName: r.employeeName ?? r.name,
+                                    employeeLabel: r.employeeLabel,
+                                    field: e.field,
+                                    errorType: e.type ?? "error",
+                                    message: e.message,
+                                  })),
+                                  ...(r.warnings ?? []).map((w) => ({
+                                    rowNumber: r.row,
+                                    employeeCode: r.employeeCode,
+                                    employeeName: r.employeeName ?? r.name,
+                                    employeeLabel: r.employeeLabel,
+                                    field: w.field,
+                                    errorType: w.type ?? "warning",
+                                    message: w.message,
+                                  })),
+                                ]),
+                            )
+                          }
+                        >
+                          Download error report
+                        </Button>
                       </div>
+                    ) : null}
+
+                    {importIssueRows.length > 0 && (
+                      <div className="max-h-80 space-y-2 overflow-auto rounded border border-slate-200 bg-white p-2">
+                        {importIssueRows.map((r) => {
+                          const label =
+                            r.employeeLabel ??
+                            (r.employeeName || r.name
+                              ? `${r.employeeName ?? r.name}${r.employeeCode ? ` / Employee Code ${r.employeeCode}` : ""}`
+                              : r.employeeCode
+                                ? `Employee Code ${r.employeeCode}`
+                                : r.email
+                                  ? String(r.email)
+                                  : "Unknown employee");
+
+                          return (
+                            <details
+                              key={r.row}
+                              className={cn(
+                                "rounded border px-3 py-2 text-xs",
+                                !r.valid ? "border-red-200 bg-red-50/40" : "border-amber-200 bg-amber-50/30",
+                              )}
+                              open={!r.valid}
+                            >
+                              <summary className="cursor-pointer font-medium text-slate-800">
+                                Row {r.row} — {label}
+                              </summary>
+                              <ul className="mt-2 space-y-1.5 pl-1">
+                                {r.errors.map((e, i) => (
+                                  <li key={`e-${i}`} className="text-red-800">
+                                    <span className="font-medium">{formatImportFieldLabel(e.field)}:</span> {e.message}
+                                  </li>
+                                ))}
+                                {(r.warnings ?? []).map((w, i) => (
+                                  <li key={`w-${i}`} className="text-amber-900">
+                                    <span className="font-medium">{formatImportFieldLabel(w.field)}:</span> {w.message}
+                                  </li>
+                                ))}
+                              </ul>
+                            </details>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {importPreview.rows.length > 0 && importIssueRows.length === 0 && importPreview.fileErrors.length === 0 ? (
+                      <div className="rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+                        All {importPreview.summary.valid_rows ?? importPreview.rows.length} rows passed validation.
+                        {importPreview.requiresConfirmation
+                          ? " Review warnings checkbox above if shown, then confirm import."
+                          : " You can confirm import."}
+                      </div>
+                    ) : null}
+
+                    {importPreview.rows.length > 0 && (
+                      <details className="rounded border border-slate-200 bg-white text-xs">
+                        <summary className="cursor-pointer px-3 py-2 font-medium text-slate-700">
+                          Preview all rows ({importPreview.rows.length})
+                        </summary>
+                        <div className="max-h-56 overflow-auto border-t border-slate-100">
+                          <table className="w-full text-left text-xs">
+                            <thead className="sticky top-0 bg-slate-100">
+                              <tr>
+                                <th className="px-2 py-1.5">Row</th>
+                                <th className="px-2 py-1.5">Employee</th>
+                                <th className="px-2 py-1.5">Email</th>
+                                <th className="px-2 py-1.5">Action</th>
+                                <th className="px-2 py-1.5">Result</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {importPreview.rows.map((r) => (
+                                <tr
+                                  key={r.row}
+                                  className={cn(
+                                    "border-t border-slate-100",
+                                    !r.valid && "bg-red-50",
+                                    r.valid && (r.warnings?.length ?? 0) > 0 && "bg-amber-50/50",
+                                  )}
+                                >
+                                  <td className="px-2 py-1">{r.row}</td>
+                                  <td className="px-2 py-1">
+                                    {r.employeeLabel ?? r.employeeName ?? r.name ?? r.employeeCode ?? "—"}
+                                  </td>
+                                  <td className="px-2 py-1">{r.email || "—"}</td>
+                                  <td className="px-2 py-1 capitalize">{r.action}</td>
+                                  <td className="px-2 py-1">
+                                    {!r.valid ? (
+                                      <span className="text-red-700">Errors</span>
+                                    ) : (r.warnings?.length ?? 0) > 0 ? (
+                                      <span className="text-amber-800">Warning</span>
+                                    ) : (
+                                      <span className="text-emerald-700">OK</span>
+                                    )}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </details>
                     )}
                   </div>
                 )}
