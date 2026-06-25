@@ -12,6 +12,7 @@ import {
   d,
   fmtIn,
   inpWide,
+  payrollDaysInputClass,
   v,
 } from "./payrollRunPreviewShared";
 
@@ -234,7 +235,7 @@ function GovernmentEmployeeDetail({
                     max={effectiveRunDay ?? daysInMonth}
                     value={row.payDays}
                     onChange={(e) => onUpdate(row.employeeUserId, "payDays", parseInt(e.target.value, 10) || 0)}
-                    className={`${inpWide} w-[4.5rem] min-w-[4rem]`}
+                    className={payrollDaysInputClass}
                   />
                 )}
               </div>

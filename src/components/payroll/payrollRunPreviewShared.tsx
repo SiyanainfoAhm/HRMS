@@ -40,8 +40,10 @@ export const GOV_PREVIEW_DEDUCTION_FIELDS: { key: keyof GovernmentPreviewMonthly
   { key: "other", label: "Other" },
 ];
 
-export const inpWide =
-  "h-8 w-[4.75rem] min-w-[4.25rem] max-w-[5.5rem] rounded-md border border-sky-300 bg-white px-1.5 py-0.5 text-right text-[13px] tabular-nums text-slate-900 shadow-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-400";
+export const payrollAmountInputClass = "payroll-amount-input";
+export const payrollDaysInputClass = "payroll-days-input";
+/** @deprecated Use payrollAmountInputClass */
+export const inpWide = payrollAmountInputClass;
 
 export function d(m: GovernmentPreviewMonthly | null | undefined, k: keyof GovernmentPreviewMonthly["deductions"]): number {
   return Math.round(Number(m?.deductions?.[k] ?? 0));
@@ -67,14 +69,12 @@ export function FieldChip({
   onChange: (n: number) => void;
 }) {
   return (
-    <div className="flex w-[5rem] min-w-[5rem] flex-col items-end gap-0.5">
+    <div className="flex w-[6.875rem] min-w-[6.875rem] shrink-0 flex-col gap-0.5">
       <span className="w-full truncate text-right text-[9px] font-medium uppercase tracking-wide text-slate-600">
         {label}
       </span>
       {readOnly ? (
-        <span className="w-full rounded border border-transparent px-1.5 py-0.5 text-right text-[13px] tabular-nums text-slate-900">
-          {fmtIn(value)}
-        </span>
+        <span className="payroll-amount-value">{fmtIn(value)}</span>
       ) : (
         <input
           type="number"
@@ -82,7 +82,7 @@ export function FieldChip({
           step={1}
           value={value}
           onChange={(e) => onChange(parseInt(e.target.value, 10) || 0)}
-          className={inpWide}
+          className={payrollAmountInputClass}
         />
       )}
     </div>

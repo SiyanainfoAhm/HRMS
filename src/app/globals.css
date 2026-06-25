@@ -256,6 +256,28 @@
     @apply inline-flex h-8 min-h-8 items-center justify-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50;
   }
 
+  /** Run Payroll — salary amount fields (earnings/deductions). */
+  .payroll-amount-input {
+    @apply box-border h-[34px] w-[6.875rem] min-w-[6rem] max-w-none shrink-0 rounded-md border border-sky-300 bg-white px-2 py-0.5 text-right text-[13px] leading-normal tabular-nums text-slate-900 shadow-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-400;
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+
+  .payroll-amount-input::-webkit-outer-spin-button,
+  .payroll-amount-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  .payroll-amount-value {
+    @apply box-border flex h-[34px] w-[6.875rem] min-w-[6rem] shrink-0 items-center justify-end px-2 text-right text-[13px] leading-normal tabular-nums text-slate-900;
+  }
+
+  /** Run Payroll — small numeric fields (pay days, etc.). */
+  .payroll-days-input {
+    @apply payroll-amount-input w-[4.5rem] min-w-[4.5rem];
+  }
+
   @media (hover: hover) {
     .table-modern tbody tr:hover {
       @apply bg-brand-blue/[0.03];

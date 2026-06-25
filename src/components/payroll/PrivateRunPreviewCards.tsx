@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { PayrollComponentScroller, type PayrollScrollerHandle } from "./PayrollComponentScroller";
 import { PayrollEmployeeCardHeader } from "./PayrollEmployeeCardHeader";
-import { FieldChip, PayrollSectionRow, fmtIn, inpWide } from "./payrollRunPreviewShared";
+import { FieldChip, PayrollSectionRow, fmtIn, inpWide, payrollDaysInputClass } from "./payrollRunPreviewShared";
 
 export type PrivateRunPreviewRow = {
   employeeUserId: string;
@@ -93,7 +93,7 @@ function PrivateEmployeeCard({
             max={effectiveRunDay ?? daysInMonth}
             value={row.payDays}
             onChange={(e) => onUpdate(row.employeeUserId, "payDays", parseInt(e.target.value, 10) || 0)}
-            className={`${inpWide} w-[4.5rem] min-w-[4rem]`}
+            className={payrollDaysInputClass}
           />
         )}
       </div>
