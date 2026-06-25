@@ -86,6 +86,11 @@ export type GovernmentRunPreviewRow = {
     revisionEventId?: string;
   }>;
   arrearLineIds?: string[];
+  daArrear?: number;
+  transportArrear?: number;
+  grossArrear?: number;
+  cpfArrear?: number;
+  netArrear?: number;
 };
 
 type Props = {
@@ -100,7 +105,7 @@ function SummaryStat({ label, value, emphasis }: { label: string; value: string;
   return (
     <div className="min-w-0">
       <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">{label}</p>
-      <p className={`truncate text-sm tabular-nums ${emphasis ? "font-semibold text-slate-900" : "text-slate-800"}`}>
+      <p className={`truncate text-[13px] tabular-nums ${emphasis ? "font-semibold text-slate-900" : "text-slate-800"}`}>
         {value}
       </p>
     </div>
@@ -119,12 +124,50 @@ function StickyMiniSummary({
   takeHome: number;
 }) {
   return (
-    <div className="grid grid-cols-2 gap-2 border-b border-slate-100 bg-slate-50/80 px-4 py-2.5 sm:grid-cols-4">
+    <div className="grid grid-cols-2 gap-1.5 border-b border-slate-100 bg-slate-50/80 px-3 py-1.5 sm:grid-cols-4">
       <SummaryStat label="Gross" value={fmtIn(gross)} />
       <SummaryStat label="Deductions" value={fmtIn(deductions)} />
       <SummaryStat label="Net pay" value={fmtIn(net)} emphasis />
       <SummaryStat label="Take home" value={fmtIn(takeHome)} emphasis />
     </div>
+  );
+}
+
+function resolveUnpaidArrears(row: GovernmentRunPreviewRow) {
+  const g = row.governmentMonthly;
+  return {
+    daArrear: Math.round(Number(row.daArrear ?? g?.daArrearsPaid ?? 0) || 0),
+    trArrear: Math.round(Number(row.transportArrear ?? g?.transportArrearsPaid ?? 0) || 0),
+    grossArrear: Math.round(Number(row.grossArrear ?? g?.grossArrear ?? 0) || 0),
+    cpfArrear: Math.round(Number(row.cpfArrear ?? g?.cpfArrear ?? 0) || 0),
+    netArrear: Math.round(Number(row.netArrear ?? g?.netArrear ?? 0) || 0),
+  };
+}
+
+function ArrearField({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="flex min-w-[4.5rem] flex-1 flex-col items-center gap-0.5">
+      <span className="text-center text-[9px] font-medium uppercase tracking-wide text-slate-600">{label}</span>
+      <span className="text-center text-[13px] tabular-nums text-slate-900">{fmtIn(value)}</span>
+    </div>
+  );
+}
+
+function ArrearsUnpaidSection({ row, readOnly }: { row: GovernmentRunPreviewRow; readOnly: boolean }) {
+  const arrears = resolveUnpaidArrears(row);
+  const title = readOnly ? "ARREARS (INCLUDED)" : "ARREARS (UNPAID)";
+
+  return (
+    <section className="w-full shrink-0 border-t border-slate-100 pt-2.5" aria-label={title}>
+      <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-violet-900">{title}</p>
+      <div className="flex flex-wrap gap-1.5 rounded-lg border border-slate-200/90 bg-white/90 p-1.5 sm:flex-nowrap">
+        <ArrearField label="DA arr." value={arrears.daArrear} />
+        <ArrearField label="Tr. arr." value={arrears.trArrear} />
+        <ArrearField label="Gross arr." value={arrears.grossArrear} />
+        <ArrearField label="CPF arr." value={arrears.cpfArrear} />
+        <ArrearField label="Net arr." value={arrears.netArrear} />
+      </div>
+    </section>
   );
 }
 
@@ -147,11 +190,6 @@ function GovernmentEmployeeDetail({
   const displayName = row.employeeName || row.employeeEmail || "—";
   const totalEarn = v(g, "totalEarnings");
   const totalDed = v(g, "totalDeductions");
-
-  const showArrears =
-    v(g, "grossArrear" as keyof GovernmentPreviewMonthly) > 0 ||
-    v(g, "daArrearsPaid") > 0 ||
-    v(g, "transportArrearsPaid") > 0;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -179,13 +217,13 @@ function GovernmentEmployeeDetail({
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="flex flex-col lg:flex-row">
-          <aside className="w-full shrink-0 border-b border-slate-100 p-4 lg:w-56 lg:border-b-0 lg:border-r xl:w-64">
-            <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+          <aside className="w-full shrink-0 border-b border-slate-100 p-3 lg:w-52 lg:border-b-0 lg:border-r xl:w-56">
+            <div className="grid grid-cols-2 gap-x-3 gap-y-2">
               <SummaryStat label="Gr. basic" value={fmtIn(gb)} />
               <div>
                 <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Days</p>
                 {readOnly ? (
-                  <p className="text-sm tabular-nums text-slate-800">
+                  <p className="text-[13px] tabular-nums text-slate-800">
                     {row.payDays}
                     {row.unpaidLeaveDays > 0 ? ` (−${row.unpaidLeaveDays})` : ""}
                   </p>
@@ -203,7 +241,7 @@ function GovernmentEmployeeDetail({
               <div>
                 <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Advance</p>
                 {readOnly ? (
-                  <p className="text-sm tabular-nums">{fmtIn(row.incentive ?? 0)}</p>
+                  <p className="text-[13px] tabular-nums">{fmtIn(row.incentive ?? 0)}</p>
                 ) : (
                   <input
                     type="number"
@@ -217,7 +255,7 @@ function GovernmentEmployeeDetail({
               <div>
                 <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Reimb.</p>
                 {readOnly ? (
-                  <p className="text-sm tabular-nums">{fmtIn(row.reimbursement ?? 0)}</p>
+                  <p className="text-[13px] tabular-nums">{fmtIn(row.reimbursement ?? 0)}</p>
                 ) : (
                   <input
                     type="number"
@@ -229,7 +267,7 @@ function GovernmentEmployeeDetail({
                 )}
               </div>
             </div>
-            <div className="mt-3 flex flex-wrap gap-1.5">
+            <div className="mt-2 flex flex-wrap gap-1">
               {row.payslipPending ? (
                 <span className="rounded bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-900">Pending slip</span>
               ) : readOnly ? (
@@ -240,9 +278,9 @@ function GovernmentEmployeeDetail({
             </div>
           </aside>
 
-          <div className="min-w-0 flex-1 p-4">
+          <div className="flex min-w-0 flex-1 flex-col gap-2.5 p-3">
             <PayrollComponentScroller ref={scrollerRef}>
-              <div className="flex flex-col gap-4">
+              <div className="flex flex-col gap-2.5">
                 <PayrollSectionRow title="Earnings" titleClassName="text-emerald-900">
                   {GOV_PREVIEW_EARNING_FIELDS.map(({ key, label }) => (
                     <FieldChip
@@ -265,24 +303,9 @@ function GovernmentEmployeeDetail({
                     />
                   ))}
                 </PayrollSectionRow>
-                {showArrears ? (
-                  <PayrollSectionRow
-                    title={readOnly ? "Arrears (included)" : "Arrears (unpaid)"}
-                    titleClassName="text-violet-900"
-                  >
-                    {[
-                      { label: "DA arr.", value: v(g, "daArrearsPaid") },
-                      { label: "Tr. arr.", value: v(g, "transportArrearsPaid") },
-                      { label: "Gross arr.", value: v(g, "grossArrear" as keyof GovernmentPreviewMonthly) },
-                      { label: "CPF arr.", value: v(g, "cpfArrear" as keyof GovernmentPreviewMonthly) },
-                      { label: "Net arr.", value: v(g, "netArrear" as keyof GovernmentPreviewMonthly) },
-                    ].map(({ label, value }) => (
-                      <FieldChip key={label} label={label} readOnly value={value} onChange={() => {}} />
-                    ))}
-                  </PayrollSectionRow>
-                ) : null}
               </div>
             </PayrollComponentScroller>
+            <ArrearsUnpaidSection row={row} readOnly={readOnly} />
           </div>
         </div>
       </div>
@@ -307,12 +330,12 @@ export function GovernmentRunPreviewTable({ rows, daysInMonth, effectiveRunDay, 
   const selected = rows.find((r) => r.employeeUserId === selectedId);
 
   return (
-    <div className="page-workspace h-[min(calc(100dvh-17rem),680px)] min-h-[380px]">
-      <div className="grid h-full min-h-0 grid-cols-1 overflow-hidden xl:grid-cols-[minmax(220px,260px)_1fr]">
+    <div className="page-workspace h-[min(calc(100dvh-13rem),760px)] min-h-[340px]">
+      <div className="grid h-full min-h-0 grid-cols-1 overflow-hidden xl:grid-cols-[minmax(200px,240px)_1fr]">
         <div className="flex min-h-0 flex-col border-b border-brand-border xl:border-b-0 xl:border-r">
-          <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-3 py-2">
-            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Employees</span>
-            <span className="text-xs tabular-nums text-slate-500">{rows.length}</span>
+          <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-2.5 py-1.5">
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Employees</span>
+            <span className="text-[11px] tabular-nums text-slate-500">{rows.length}</span>
           </div>
           <ul className="min-h-0 flex-1 overflow-y-auto" role="listbox" aria-label="Payroll employees">
             {rows.map((r) => {
@@ -327,12 +350,12 @@ export function GovernmentRunPreviewTable({ rows, daysInMonth, effectiveRunDay, 
                     aria-selected={active}
                     onClick={() => setSelectedId(r.employeeUserId)}
                     className={cn(
-                      "w-full border-b border-slate-50 px-3 py-2.5 text-left transition-colors",
+                      "w-full border-b border-slate-50 px-2.5 py-2 text-left transition-colors",
                       active ? "bg-brand-navy/5 ring-1 ring-inset ring-brand-blue/30" : "hover:bg-slate-50",
                     )}
                   >
-                    <div className="truncate text-sm font-medium text-slate-900">{name}</div>
-                    <div className="mt-0.5 flex items-center justify-between gap-2 text-xs text-slate-500">
+                    <div className="truncate text-[13px] font-medium leading-tight text-slate-900">{name}</div>
+                    <div className="mt-0.5 flex items-center justify-between gap-2 text-[11px] leading-tight text-slate-500">
                       <span className="truncate">{r.employeeEmail}</span>
                       <span className="shrink-0 tabular-nums font-medium text-slate-700">
                         {fmtIn(v(g, "totalEarnings") || r.netPay)}
@@ -356,7 +379,7 @@ export function GovernmentRunPreviewTable({ rows, daysInMonth, effectiveRunDay, 
               onUpdate={onUpdate}
             />
           ) : (
-            <div className="flex h-full items-center justify-center p-8 text-sm text-slate-500">
+            <div className="flex h-full items-center justify-center p-6 text-[13px] text-slate-500">
               Select an employee to view payroll details.
             </div>
           )}

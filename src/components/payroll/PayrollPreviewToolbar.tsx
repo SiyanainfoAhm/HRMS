@@ -54,12 +54,12 @@ export function PayrollPreviewToolbar({
   }));
 
   return (
-    <div className="shrink-0 border-b border-brand-border bg-white px-4 py-3">
-      <div className="flex flex-col gap-3">
-        <div className="flex flex-wrap items-end gap-3">
+    <div className="shrink-0 border-b border-brand-border bg-white px-3 py-2">
+      <div className="flex flex-col gap-2">
+        <div className="flex flex-wrap items-end gap-2">
           <SelectField label="Month" value={runMonth} onChange={onMonthChange} options={monthOptions} className="w-28" />
           <div>
-            <label className="label-field mb-1.5 text-xs">Year</label>
+            <label className="label-field mb-1 text-[11px]">Year</label>
             <input
               type="number"
               min={2020}
@@ -70,7 +70,7 @@ export function PayrollPreviewToolbar({
             />
           </div>
           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-            {periodName ? <span className="truncate text-sm font-semibold text-slate-800">{periodName}</span> : null}
+            {periodName ? <span className="truncate text-[13px] font-semibold text-slate-800">{periodName}</span> : null}
             <Button type="submit" size="sm" loading={running} disabled={running || generateDisabled}>
               {generateLabel}
             </Button>
@@ -79,16 +79,16 @@ export function PayrollPreviewToolbar({
 
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative min-w-[180px] flex-1 max-w-md">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
             <input
               type="search"
               value={search}
               onChange={(e) => onSearchChange(e.target.value)}
               placeholder="Search employee…"
-              className="input-field w-full py-2 pl-9"
+              className="input-field w-full py-1.5 pl-8"
             />
           </div>
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap gap-1">
             <span className="metric-chip bg-slate-100 text-slate-700">
               {filteredCount}/{totalCount} · {totals.employees} emp
             </span>

@@ -14,8 +14,8 @@ export function AppCard({
   return (
     <div
       className={cn(
-        "overflow-hidden rounded-2xl border border-brand-border bg-white shadow-card",
-        padding && "p-4 sm:p-5",
+        "overflow-hidden rounded-xl border border-brand-border bg-white shadow-card",
+        padding && "p-3 sm:p-3.5",
         className,
       )}
     >
@@ -38,13 +38,13 @@ export function AppCardHeader({
   className?: string;
 }) {
   return (
-    <div className={cn("mb-4 flex flex-wrap items-start justify-between gap-3", className)}>
+    <div className={cn("mb-3 flex flex-wrap items-start justify-between gap-2", className)}>
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
-          <h2 className="text-base font-semibold text-slate-900">{title}</h2>
+          <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
           {badge}
         </div>
-        {subtitle ? <p className="mt-0.5 text-sm text-brand-muted">{subtitle}</p> : null}
+        {subtitle ? <p className="mt-0.5 text-xs text-brand-muted">{subtitle}</p> : null}
       </div>
       {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
     </div>

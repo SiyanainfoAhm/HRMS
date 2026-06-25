@@ -19,7 +19,7 @@ type Props = {
 };
 
 const iconBtn =
-  "inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 shadow-sm hover:bg-slate-50 hover:text-slate-900";
+  "inline-flex h-6 w-6 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 shadow-sm hover:bg-slate-50 hover:text-slate-900";
 
 export function PayrollEmployeeCardHeader({
   displayName,
@@ -36,9 +36,9 @@ export function PayrollEmployeeCardHeader({
   hideExpandToggle,
 }: Props) {
   return (
-    <header className="flex flex-wrap items-center gap-2 border-b border-slate-100 bg-slate-50/60 px-3 py-2 sm:px-4 sm:py-2.5">
+    <header className="flex flex-wrap items-center gap-1.5 border-b border-slate-100 bg-slate-50/60 px-2.5 py-1.5 sm:px-3">
       {hideExpandToggle ? (
-        <div className="flex min-w-0 items-center gap-1.5 text-sm font-semibold text-slate-900">
+        <div className="flex min-w-0 items-center gap-1.5 text-[13px] font-semibold text-slate-900">
           <span className="truncate" title={email || undefined}>
             {displayName}
           </span>
@@ -47,7 +47,7 @@ export function PayrollEmployeeCardHeader({
         <button
           type="button"
           onClick={onToggleExpand}
-          className="flex min-w-0 items-center gap-1.5 text-left text-sm font-semibold text-slate-900 hover:text-sky-800"
+          className="flex min-w-0 items-center gap-1.5 text-left text-[13px] font-semibold text-slate-900 hover:text-sky-800"
           aria-expanded={expanded}
         >
           {expanded ? (
@@ -61,7 +61,7 @@ export function PayrollEmployeeCardHeader({
         </button>
       )}
 
-      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-xs tabular-nums text-slate-600">
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] tabular-nums text-slate-600">
         <span>
           Gross <span className="font-medium text-slate-800">{fmtIn(gross)}</span>
         </span>
@@ -90,7 +90,7 @@ export function PayrollEmployeeCardHeader({
           <button
             type="button"
             onClick={onResetScroll}
-            className="inline-flex h-7 items-center gap-1 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-600 shadow-sm hover:bg-slate-50"
+            className="inline-flex h-6 items-center gap-1 rounded-md border border-slate-200 bg-white px-1.5 text-[11px] text-slate-600 shadow-sm hover:bg-slate-50"
             aria-label="Reset scroll position"
           >
             <RotateCcw className="h-3.5 w-3.5" />

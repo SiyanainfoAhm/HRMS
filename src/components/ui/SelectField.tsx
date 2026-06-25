@@ -50,7 +50,7 @@ export function SelectField({
     return (
       <div className={cn("min-w-0", className)}>
         {label ? (
-          <label htmlFor={id} className="label-field mb-1.5 text-xs">
+          <label htmlFor={id} className="label-field">
             {label}
             {required ? <span className="text-red-500"> *</span> : null}
           </label>
@@ -93,7 +93,7 @@ export function SelectField({
   return (
     <div className={cn("relative min-w-0", className)}>
       {label ? (
-        <label className="label-field mb-1.5 text-xs">
+        <label className="label-field">
           {label}
           {required ? <span className="text-red-500"> *</span> : null}
         </label>
@@ -126,14 +126,14 @@ export function SelectField({
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder="Search…"
-                  className="input-field py-2 pl-9 text-sm"
+                  className="input-field py-1.5 pl-8 text-[13px]"
                   autoFocus
                 />
               </div>
             </div>
             <ul className="max-h-56 overflow-y-auto py-1" role="listbox">
               {filtered.length === 0 ? (
-                <li className="px-3 py-2 text-sm text-slate-500">No matches</li>
+                <li className="px-2.5 py-1.5 text-[13px] text-slate-500">No matches</li>
               ) : (
                 filtered.map((o) => (
                   <li key={o.value}>
@@ -148,7 +148,7 @@ export function SelectField({
                         setQuery("");
                       }}
                       className={cn(
-                        "w-full px-3 py-2 text-left text-sm transition-colors hover:bg-slate-50",
+                        "w-full px-2.5 py-1.5 text-left text-[13px] transition-colors hover:bg-slate-50",
                         o.value === value && "bg-brand-navy/5 font-medium text-brand-navy",
                         o.disabled && "cursor-not-allowed opacity-50",
                       )}

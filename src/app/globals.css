@@ -12,12 +12,17 @@
     --brand-text: #0f172a;
     --brand-muted: #64748b;
     --brand-border: #e2e8f0;
-    --sidebar-width: 16rem;
-    --sidebar-collapsed: 4.5rem;
+    --app-font-size: 13px;
+    --control-height: 36px;
+    --card-padding: 14px;
+    --section-gap: 12px;
+    --sidebar-width: 13.75rem;
+    --sidebar-collapsed: 4rem;
   }
 
   html {
     scroll-behavior: smooth;
+    font-size: var(--app-font-size);
   }
 
   body {
@@ -32,19 +37,19 @@
 
 @layer components {
   .page-title {
-    @apply text-2xl font-bold tracking-tight text-slate-900 sm:text-[1.75rem];
+    @apply text-xl font-bold tracking-tight text-slate-900 sm:text-[1.375rem];
   }
 
   .section-title {
-    @apply text-lg font-semibold tracking-tight text-slate-900;
+    @apply text-sm font-semibold tracking-tight text-slate-900;
   }
 
   .card-title {
-    @apply text-base font-semibold text-slate-900;
+    @apply text-sm font-semibold text-slate-900;
   }
 
   .card {
-    @apply rounded-2xl border border-brand-border bg-white p-5 shadow-card transition-shadow duration-200 sm:p-6;
+    @apply rounded-xl border border-brand-border bg-white p-3.5 shadow-card transition-shadow duration-200 sm:p-4;
   }
 
   @media (hover: hover) {
@@ -54,11 +59,11 @@
   }
 
   .grid-3 {
-    @apply grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3;
+    @apply grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3;
   }
 
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex h-9 min-h-[var(--control-height)] items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-semibold transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50;
   }
 
   .btn-primary {
@@ -86,7 +91,7 @@
   }
 
   .filter-tab {
-    @apply inline-flex items-center rounded-xl px-3 py-1.5 text-sm font-medium transition-all duration-200;
+    @apply inline-flex items-center rounded-lg px-2.5 py-1 text-[13px] font-medium transition-all duration-200;
   }
 
   .filter-tab-active {
@@ -98,7 +103,7 @@
   }
 
   .filter-pill {
-    @apply rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors;
+    @apply rounded-full px-2.5 py-0.5 text-[11px] font-medium transition-colors;
   }
 
   .filter-pill-active {
@@ -110,11 +115,11 @@
   }
 
   .filter-card {
-    @apply rounded-2xl border border-brand-border bg-white p-4 shadow-card sm:p-5;
+    @apply rounded-xl border border-brand-border bg-white p-3 shadow-card sm:p-3.5;
   }
 
   .filter-card-label {
-    @apply mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500;
+    @apply mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500;
   }
 
   .filter-scroll {
@@ -124,35 +129,35 @@
   }
 
   .records-stack {
-    @apply flex flex-col gap-3 sm:grid sm:grid-cols-1 sm:gap-4 md:grid-cols-2 lg:hidden;
+    @apply flex flex-col gap-2.5 sm:grid sm:grid-cols-1 sm:gap-3 md:grid-cols-2 lg:hidden;
   }
 
   .record-card {
-    @apply rounded-2xl border border-brand-border bg-white p-4 shadow-card sm:p-5;
+    @apply rounded-xl border border-brand-border bg-white p-3 shadow-card sm:p-3.5;
   }
 
   .record-card-header {
-    @apply border-b border-slate-100 pb-3;
+    @apply border-b border-slate-100 pb-2;
   }
 
   .record-card-title {
-    @apply text-base font-semibold text-slate-900;
+    @apply text-sm font-semibold text-slate-900;
   }
 
   .record-card-subtitle {
-    @apply mt-0.5 text-sm text-slate-600;
+    @apply mt-0.5 text-xs text-slate-600;
   }
 
   .record-card-body {
-    @apply mt-3 text-sm text-slate-800;
+    @apply mt-2 text-[13px] text-slate-800;
   }
 
   .record-card-actions {
-    @apply mt-4 flex flex-wrap gap-2 border-t border-slate-100 pt-4;
+    @apply mt-3 flex flex-wrap gap-1.5 border-t border-slate-100 pt-3;
   }
 
   .table-panel {
-    @apply hidden overflow-hidden rounded-2xl border border-brand-border bg-white shadow-card lg:block;
+    @apply hidden overflow-hidden rounded-xl border border-brand-border bg-white shadow-card lg:block;
   }
 
   .picker-nav-btn {
@@ -172,31 +177,31 @@
   }
 
   .muted {
-    @apply text-sm leading-relaxed text-brand-muted;
+    @apply text-[13px] leading-relaxed text-brand-muted;
   }
 
   .input-field {
-    @apply w-full rounded-xl border border-brand-border bg-white px-3.5 py-2.5 text-sm text-slate-900 shadow-sm transition-colors placeholder:text-slate-400 focus:border-brand-blue focus:ring-2 focus:ring-brand-blue/20;
+    @apply w-full min-h-[var(--control-height)] rounded-lg border border-brand-border bg-white px-3 py-1.5 text-[13px] text-slate-900 shadow-sm transition-colors placeholder:text-slate-400 focus:border-brand-blue focus:ring-2 focus:ring-brand-blue/20;
   }
 
   .label-field {
-    @apply mb-1.5 block text-sm font-medium text-slate-700;
+    @apply mb-1 block text-[11px] font-medium text-slate-700;
   }
 
   .table-shell {
-    @apply overflow-hidden rounded-2xl border border-brand-border bg-white shadow-card;
+    @apply overflow-hidden rounded-xl border border-brand-border bg-white shadow-card;
   }
 
   .table-modern thead {
-    @apply bg-slate-50/90 text-left text-xs font-semibold uppercase tracking-wide text-slate-600;
+    @apply bg-slate-50/90 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-600;
   }
 
   .table-modern th {
-    @apply whitespace-nowrap px-4 py-3.5;
+    @apply whitespace-nowrap px-3 py-2;
   }
 
   .table-modern td {
-    @apply border-t border-brand-border px-4 py-3 text-sm text-slate-800;
+    @apply border-t border-brand-border px-3 py-2 text-[13px] text-slate-800;
   }
 
   .table-modern tbody tr {
@@ -208,11 +213,11 @@
   }
 
   .page-workspace {
-    @apply flex min-h-0 flex-col overflow-hidden rounded-2xl border border-brand-border bg-white shadow-card;
+    @apply flex min-h-0 flex-col overflow-hidden rounded-xl border border-brand-border bg-white shadow-card;
   }
 
   .data-table-shell {
-    @apply overflow-hidden rounded-xl border border-brand-border bg-white shadow-sm;
+    @apply overflow-hidden rounded-lg border border-brand-border bg-white shadow-sm;
   }
 
   .skeleton-shimmer {
@@ -232,7 +237,7 @@
   }
 
   .segment-tab {
-    @apply rounded-lg px-3 py-1.5 text-sm font-medium transition-colors;
+    @apply rounded-md px-2.5 py-1 text-[13px] font-medium transition-colors;
   }
 
   .segment-tab-active {
@@ -244,11 +249,11 @@
   }
 
   .metric-chip {
-    @apply inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium tabular-nums;
+    @apply inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium tabular-nums;
   }
 
   .btn-sm {
-    @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex h-8 min-h-8 items-center justify-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50;
   }
 
   @media (hover: hover) {

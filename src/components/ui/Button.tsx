@@ -72,7 +72,7 @@ export function IconButton({
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        "inline-flex h-9 w-9 items-center justify-center rounded-xl border border-brand-border text-slate-600 transition hover:bg-slate-50 hover:text-slate-900 disabled:opacity-50",
+        "inline-flex h-8 w-8 items-center justify-center rounded-lg border border-brand-border text-slate-600 transition hover:bg-slate-50 hover:text-slate-900 disabled:opacity-50",
         className,
       )}
     >

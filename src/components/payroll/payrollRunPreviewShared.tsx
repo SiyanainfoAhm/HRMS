@@ -41,7 +41,7 @@ export const GOV_PREVIEW_DEDUCTION_FIELDS: { key: keyof GovernmentPreviewMonthly
 ];
 
 export const inpWide =
-  "w-[5.25rem] min-w-[4.75rem] max-w-[6rem] rounded-md border border-sky-300 bg-white px-2 py-1.5 text-right text-sm tabular-nums text-slate-900 shadow-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-400";
+  "h-8 w-[4.75rem] min-w-[4.25rem] max-w-[5.5rem] rounded-md border border-sky-300 bg-white px-1.5 py-0.5 text-right text-[13px] tabular-nums text-slate-900 shadow-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-400";
 
 export function d(m: GovernmentPreviewMonthly | null | undefined, k: keyof GovernmentPreviewMonthly["deductions"]): number {
   return Math.round(Number(m?.deductions?.[k] ?? 0));
@@ -67,12 +67,12 @@ export function FieldChip({
   onChange: (n: number) => void;
 }) {
   return (
-    <div className="flex w-[5.75rem] min-w-[5.75rem] flex-col items-end gap-0.5">
-      <span className="w-full truncate text-right text-[10px] font-medium uppercase tracking-wide text-slate-600">
+    <div className="flex w-[5rem] min-w-[5rem] flex-col items-end gap-0.5">
+      <span className="w-full truncate text-right text-[9px] font-medium uppercase tracking-wide text-slate-600">
         {label}
       </span>
       {readOnly ? (
-        <span className="w-full rounded border border-transparent px-2 py-1.5 text-right text-sm tabular-nums text-slate-900">
+        <span className="w-full rounded border border-transparent px-1.5 py-0.5 text-right text-[13px] tabular-nums text-slate-900">
           {fmtIn(value)}
         </span>
       ) : (
@@ -100,8 +100,8 @@ export function PayrollSectionRow({
 }) {
   return (
     <section className="min-w-max">
-      <p className={`mb-2 text-[11px] font-semibold uppercase tracking-wide ${titleClassName}`}>{title}</p>
-      <div className="flex flex-nowrap gap-2 rounded-lg border border-slate-200/90 bg-white/90 p-2">{children}</div>
+      <p className={`mb-1.5 text-[10px] font-semibold uppercase tracking-wide ${titleClassName}`}>{title}</p>
+      <div className="flex flex-nowrap gap-1.5 rounded-lg border border-slate-200/90 bg-white/90 p-1.5">{children}</div>
     </section>
   );
 }

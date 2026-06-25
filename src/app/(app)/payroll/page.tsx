@@ -831,6 +831,10 @@ function PayrollPageContent() {
   const [slipYear, setSlipYear] = useState(() => String(new Date().getFullYear()));
   const [pdfDownloading, setPdfDownloading] = useState(false);
   const payslipRef = useRef<HTMLDivElement>(null);
+  const slipPeriodKey = `${slipYear}-${slipMonth}`;
+  const hasSlipForPeriod = Boolean(
+    selectedEmployeeId && slipsData?.payslips.some((p) => p.periodMonth === slipPeriodKey),
+  );
 
   useEffect(() => {
     const denom = preview?.daysInMonth ?? preview?.workingDaysInFullMonth;
@@ -927,21 +931,14 @@ function PayrollPageContent() {
           const raw = data.employees ?? [];
           const list = buildPayslipEmployeeOptions(raw, masters);
           setEmployees(list);
-          if (list.length) {
-            const firstUserId = list[0].id;
-            if (!selectedEmployeeId || !list.some((e) => e.id === selectedEmployeeId)) {
-              setSelectedEmployeeId(firstUserId);
-            }
-          } else {
-            setSelectedEmployeeId("");
-          }
+          setSelectedEmployeeId((prev) => (prev && list.some((e) => e.id === prev) ? prev : ""));
         }
       } finally {
         if (!cancelled) setEmployeesLoading(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [tab, canManage, selectedEmployeeId, masters]);
+  }, [tab, canManage, masters]);
 
   useEffect(() => {
     if (tab !== "slips" || !selectedEmployeeId) {
@@ -988,6 +985,8 @@ function PayrollPageContent() {
   }, [tab, selectedEmployeeId]);
 
   async function handleSlipDownloadPdf() {
+    if (!selectedEmployeeId || !slipsData) return;
+    if (!slipsData.payslips.some((p) => p.periodMonth === slipPeriodKey)) return;
     const el = payslipRef.current;
     if (!el) return;
     setPdfDownloading(true);
@@ -1233,14 +1232,7 @@ function PayrollPageContent() {
               const raw = data.employees ?? [];
               const list = buildPayslipEmployeeOptions(raw, masters);
               setEmployees(list);
-              if (list.length) {
-                const firstUserId = list[0].id;
-                if (!selectedEmployeeId || !list.some((e) => e.id === selectedEmployeeId)) {
-                  setSelectedEmployeeId(firstUserId);
-                }
-              } else {
-                setSelectedEmployeeId("");
-              }
+              setSelectedEmployeeId((prev) => (prev && list.some((e) => e.id === prev) ? prev : ""));
             } catch {
               setEmployees([]);
               setSelectedEmployeeId("");
@@ -1268,7 +1260,7 @@ function PayrollPageContent() {
       },
       { kinds: ["payroll_master", "employee"] },
     );
-  }, [canManage, tab, selectedEmployeeId, masters]);
+  }, [canManage, tab, masters]);
 
   useEffect(() => {
     if (!canManage) return;
@@ -1914,13 +1906,13 @@ function PayrollPageContent() {
   const payrollPageTitle = tab === "run" ? "Run Payroll" : "Salary Slips";
 
   return (
-    <section className="flex min-h-0 flex-col gap-4">
+    <section className="flex min-h-0 flex-col gap-3">
       <PageHeader title={payrollPageTitle} className="!mb-0" />
 
       {tab === "run" && (
         <form
           onSubmit={handleRunPayroll}
-          className="page-workspace flex min-h-[min(calc(100dvh-11rem),760px)] flex-col overflow-hidden"
+          className="page-workspace flex min-h-[min(calc(100dvh-9rem),820px)] flex-col overflow-hidden"
         >
           <PayrollPreviewToolbar
             runMonth={runMonth}
@@ -1961,7 +1953,7 @@ function PayrollPageContent() {
             )}
           </PayrollPreviewToolbar>
 
-          <div className="min-h-0 flex-1 overflow-hidden p-3 sm:p-4">
+          <div className="min-h-0 flex-1 overflow-hidden p-2 sm:p-3">
             {previewLoading ? (
               <div className="flex h-full flex-col gap-3 p-3">
                 <SkeletonEmployeeList items={6} />
@@ -2004,8 +1996,8 @@ function PayrollPageContent() {
       )}
 
       {tab === "slips" && (
-        <div className="card space-y-4">
-          <div className="flex flex-wrap items-end gap-3 border-b border-slate-100 pb-4">
+        <div className="card space-y-3">
+          <div className="flex flex-wrap items-end gap-2 border-b border-slate-100 pb-3">
             <SelectField
               label="Employee"
               value={selectedEmployeeId}
@@ -2019,7 +2011,7 @@ function PayrollPageContent() {
               }))}
               className="min-w-[220px] flex-1 max-w-sm"
             />
-            {slipsData && (
+            {selectedEmployeeId && slipsData && (
               <>
                 <SelectField
                   label="Month"
@@ -2046,12 +2038,15 @@ function PayrollPageContent() {
                   })()}
                   className="w-28"
                 />
-                {slipsData.payslips.some((p) => p.periodMonth === `${slipYear}-${slipMonth}`) && (
-                  <Button size="sm" onClick={handleSlipDownloadPdf} loading={pdfDownloading} disabled={pdfDownloading}>
-                    <Download className="h-4 w-4" />
-                    Download PDF
-                  </Button>
-                )}
+                <Button
+                  size="sm"
+                  onClick={handleSlipDownloadPdf}
+                  loading={pdfDownloading}
+                  disabled={pdfDownloading || !hasSlipForPeriod}
+                >
+                  <Download className="h-4 w-4" />
+                  Download PDF
+                </Button>
               </>
             )}
           </div>
@@ -2065,12 +2060,11 @@ function PayrollPageContent() {
           ) : !slipsData || !selectedEmployeeId ? (
             <EmptyState
               icon={FileText}
-              title="No slip selected"
-              description="Choose an employee and payroll period to preview their salary slip."
+              title="Select an employee to preview salary slip."
             />
           ) : (
             (() => {
-              const key = `${slipYear}-${slipMonth}`;
+              const key = slipPeriodKey;
               const slip = slipsData.payslips.find((p) => p.periodMonth === key);
               const company = slipsData.company;
               const user = slipsData.user;
@@ -2147,7 +2141,7 @@ function PayrollPageContent() {
                 <div className="flex justify-center overflow-x-auto py-2">
                 <div
                   ref={payslipRef}
-                  className="payslip-print-area overflow-x-auto rounded-lg border border-black bg-white p-6 print:overflow-visible print:max-w-[190mm]"
+                  className="payslip-print-area overflow-x-auto rounded-lg border border-black bg-white p-4 print:overflow-visible print:max-w-[190mm] print:p-6"
                   style={{ minWidth: "min(100%, 190mm)" }}
                 >
                   <table className="payslip-header-table w-full border-collapse" style={{ border: "1px solid #000" }}>

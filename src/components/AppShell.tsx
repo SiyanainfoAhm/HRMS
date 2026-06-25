@@ -137,7 +137,7 @@ export function AppShell({
           </header>
           <Topbar user={user} />
           <div className="app-main-pad min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
-            <div className="mx-auto w-full max-w-[1600px] p-4 sm:p-5 lg:p-6">{children}</div>
+            <div className="mx-auto w-full max-w-[1680px] p-3 sm:p-4">{children}</div>
           </div>
         </div>
       </div>
