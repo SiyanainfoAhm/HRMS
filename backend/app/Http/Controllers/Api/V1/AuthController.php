@@ -44,6 +44,10 @@ class AuthController extends Controller
 
     public function signup(SignupRequest $request): JsonResponse
     {
+        if (! config('app.allow_public_signup')) {
+            return response()->json(['error' => 'Registration is disabled. Contact your administrator.'], 403);
+        }
+
         $email = mb_strtolower(trim($request->validated('email')));
 
         $existing = HrmsUser::whereRaw('LOWER(email) = ?', [$email])->exists();

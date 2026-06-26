@@ -9,6 +9,7 @@ use App\Models\HrmsUser;
 use App\Services\PayrollMasterService;
 use App\Support\BankDetailsService;
 use App\Support\BankDetailsValidator;
+use App\Support\CompanyAccess;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -22,6 +23,10 @@ class EmployeeController extends Controller
     public function index(Request $request): JsonResponse
     {
         $user = $request->user();
+        if (! $user->role?->isManagerial()) {
+            return response()->json(['error' => 'Forbidden'], 403);
+        }
+
         $query = HrmsEmployee::where('company_id', $user->company_id)
             ->with(['user', 'division', 'department', 'designation', 'role'])
             ->orderBy('first_name');
@@ -40,6 +45,7 @@ class EmployeeController extends Controller
 
     public function show(Request $request, string $id): JsonResponse
     {
+        $authUser = $request->user();
         $employee = HrmsEmployee::with(['user', 'division', 'department', 'designation', 'role', 'manager'])
             ->find($id);
 
@@ -50,7 +56,11 @@ class EmployeeController extends Controller
         }
 
         if (! $employee) {
-            return response()->json(['error' => 'Employee not found'], 404);
+            return CompanyAccess::notFound();
+        }
+
+        if (! CompanyAccess::canViewEmployee($authUser, $employee)) {
+            return CompanyAccess::forbidden();
         }
 
         return response()->json(['employee' => $employee]);
@@ -238,7 +248,11 @@ class EmployeeController extends Controller
             $employee = HrmsEmployee::where('user_id', $id)->first();
         }
         if (! $employee) {
-            return response()->json(['error' => 'Employee not found'], 404);
+            return CompanyAccess::notFound();
+        }
+
+        if (! CompanyAccess::sameCompany($user->company_id, $employee->company_id)) {
+            return CompanyAccess::notFound();
         }
 
         $employee->update($request->only([

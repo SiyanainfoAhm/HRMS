@@ -1,13 +1,42 @@
 import { NextRequest, NextResponse } from "next/server";
 import { TOKEN_COOKIE_NAME } from "@/lib/auth";
 import { getApiBaseUrl } from "@/lib/apiBase";
+import { requireApiAuth, requireAdminApi } from "@/lib/apiAuth";
+
+function laravelPathRequiresAdmin(laravelPath: string, method: string): boolean {
+  const normalizedMethod = method.toUpperCase();
+  const readOnly = normalizedMethod === "GET" || normalizedMethod === "HEAD";
+
+  if (laravelPath.startsWith("/payroll/")) return true;
+  if (laravelPath.startsWith("/payslips/employee")) return true;
+  if (laravelPath === "/employees" || laravelPath.startsWith("/employees?")) return true;
+  if (laravelPath.startsWith("/users")) return true;
+  if (laravelPath === "/company/setup" || laravelPath === "/company/logo") return true;
+
+  if (laravelPath.startsWith("/settings/")) {
+    return !readOnly;
+  }
+
+  if (laravelPath.startsWith("/employees") && !readOnly) return true;
+
+  return false;
+}
 
 export async function proxyBinaryToLaravel(
   request: NextRequest,
   laravelPath: string,
-  options?: { method?: string },
+  options?: { method?: string; requireAdmin?: boolean },
 ): Promise<NextResponse> {
+  const authError = requireApiAuth(request);
+  if (authError) return authError;
+
   const method = options?.method || request.method;
+  const needsAdmin = options?.requireAdmin ?? laravelPathRequiresAdmin(laravelPath, method);
+  if (needsAdmin) {
+    const adminError = requireAdminApi(request);
+    if (adminError) return adminError;
+  }
+
   const url = new URL(request.url);
   const queryString = url.searchParams.toString();
   const targetUrl = `${getApiBaseUrl()}${laravelPath}${queryString ? `?${queryString}` : ""}`;

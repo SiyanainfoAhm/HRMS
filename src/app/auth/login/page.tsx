@@ -5,7 +5,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { Building2, Shield } from "lucide-react";
 import { PasswordField } from "@/components/PasswordField";
-import { setToken } from "@/lib/api";
 import { APP_NAME } from "@/lib/appBranding";
 import { validateLoginEmail, validateLoginPassword } from "@/lib/loginValidators";
 import { isAdminRole } from "@/lib/roles";
@@ -60,7 +59,6 @@ function LoginForm() {
         setLoading(false);
         return;
       }
-      if (data.token) setToken(data.token);
 
       const role = data.user?.role;
       if (isAdminRole(role)) {

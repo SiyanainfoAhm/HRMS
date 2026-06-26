@@ -32,7 +32,7 @@ export async function POST(request: NextRequest) {
       sv: u.sv ?? 0,
     };
     const cookie = createSessionCookie(session);
-    const res = NextResponse.json({ user: session, token: data.token });
+    const res = NextResponse.json({ user: session });
     res.cookies.set(COOKIE_NAME, cookie, getCookieOptions());
     res.cookies.set(TOKEN_COOKIE_NAME, data.token, getCookieOptions());
     return res;

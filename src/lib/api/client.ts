@@ -2,22 +2,16 @@ import { getApiBaseUrl } from "@/lib/apiBase";
 
 let _token: string | null = null;
 
+/** @deprecated Auth uses httpOnly cookies via Next.js API routes; token is not stored in the browser. */
 export function setToken(token: string | null) {
   _token = token;
   if (typeof window !== "undefined") {
-    if (token) {
-      localStorage.setItem("hrms_token", token);
-    } else {
-      localStorage.removeItem("hrms_token");
-    }
+    localStorage.removeItem("hrms_token");
   }
 }
 
+/** In-browser direct Laravel calls are avoided; cookie-backed /api routes attach Authorization server-side. */
 export function getToken(): string | null {
-  if (_token) return _token;
-  if (typeof window !== "undefined") {
-    _token = localStorage.getItem("hrms_token");
-  }
   return _token;
 }
 
@@ -61,7 +55,7 @@ export async function api<T = any>(
     headers["Content-Type"] = "application/json";
   }
 
-  const res = await fetch(url, { ...fetchOpts, headers });
+  const res = await fetch(url, { ...fetchOpts, headers, credentials: "include" });
 
   if (!res.ok) {
     const data = await res.json().catch(() => ({ error: res.statusText }));

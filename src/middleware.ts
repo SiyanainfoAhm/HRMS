@@ -8,17 +8,54 @@ import {
   getSessionFromCookie,
   type SessionUser,
 } from "@/lib/auth";
-import { normalizeRole } from "@/lib/roles";
+import { normalizeRole, isAdminRole } from "@/lib/roles";
 import { getApiBaseUrl } from "@/lib/apiBase";
+import { applyNoStoreHeaders } from "@/lib/apiAuth";
+
+const PUBLIC_PAGE_PREFIXES = ["/auth"];
+
+const ADMIN_ONLY_PREFIXES = ["/payroll", "/settings", "/employees", "/setup", "/approvals"];
+
+function isPublicPage(pathname: string): boolean {
+  if (pathname === "/") return true;
+  return PUBLIC_PAGE_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+}
+
+function isAdminOnlyPage(pathname: string): boolean {
+  return ADMIN_ONLY_PREFIXES.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
+}
 
 function isSessionRole(value: unknown): boolean {
   return typeof value === "string";
 }
 
-/** Keep signed session cookie aligned with Laravel token (role / profile). */
+/** Protect app pages, sync session with Laravel, and block admin routes for employees. */
 export async function middleware(request: NextRequest) {
-  const session = getSessionFromCookie(request.cookies.get(COOKIE_NAME)?.value);
+  const { pathname } = request.nextUrl;
+
+  if (pathname.startsWith("/api/")) {
+    return NextResponse.next();
+  }
+
+  const sessionCookie = request.cookies.get(COOKIE_NAME)?.value;
+  const session = getSessionFromCookie(sessionCookie);
   const apiToken = request.cookies.get(TOKEN_COOKIE_NAME)?.value;
+
+  if (!isPublicPage(pathname)) {
+    if (!session || !apiToken) {
+      const login = new URL("/auth/login", request.url);
+      if (pathname !== "/dashboard") {
+        login.searchParams.set("next", pathname);
+      }
+      return applyNoStoreHeaders(NextResponse.redirect(login));
+    }
+
+    if (isAdminOnlyPage(pathname) && !isAdminRole(session.role)) {
+      return applyNoStoreHeaders(NextResponse.redirect(new URL("/profile?tab=pay", request.url)));
+    }
+  }
 
   if (!session || !apiToken) {
     return NextResponse.next();
@@ -35,20 +72,25 @@ export async function middleware(request: NextRequest) {
       const response = NextResponse.redirect(login);
       response.cookies.set(COOKIE_NAME, "", { ...getCookieOptions(), maxAge: 0 });
       response.cookies.set(TOKEN_COOKIE_NAME, "", { ...getCookieOptions(), maxAge: 0 });
-      return response;
+      return applyNoStoreHeaders(response);
     }
 
     if (!res.ok) {
-      return NextResponse.next();
+      return applyNoStoreHeaders(NextResponse.next());
     }
 
     const data = await res.json();
     const u = data.user;
     if (!u || !isSessionRole(u.role)) {
-      return NextResponse.next();
+      return applyNoStoreHeaders(NextResponse.next());
     }
 
-    const sv = typeof u.sv === "number" ? u.sv : typeof u.authSessionVersion === "number" ? u.authSessionVersion : session.sv;
+    const sv =
+      typeof u.sv === "number"
+        ? u.sv
+        : typeof u.authSessionVersion === "number"
+          ? u.authSessionVersion
+          : session.sv;
 
     const synced: SessionUser = {
       id: String(u.id ?? session.id),
@@ -65,15 +107,14 @@ export async function middleware(request: NextRequest) {
       synced.name === session.name &&
       (synced.sv ?? 0) === (session.sv ?? 0);
 
-    if (unchanged) {
-      return NextResponse.next();
+    const response = unchanged ? NextResponse.next() : NextResponse.next();
+    if (!unchanged) {
+      response.cookies.set(COOKIE_NAME, createSessionCookie(synced), getCookieOptions());
     }
 
-    const response = NextResponse.next();
-    response.cookies.set(COOKIE_NAME, createSessionCookie(synced), getCookieOptions());
-    return response;
+    return applyNoStoreHeaders(response);
   } catch {
-    return NextResponse.next();
+    return applyNoStoreHeaders(NextResponse.next());
   }
 }
 

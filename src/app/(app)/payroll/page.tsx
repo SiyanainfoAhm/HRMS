@@ -590,6 +590,12 @@ function PayrollPageContent() {
 
   const canManage = isAdminRole(role);
 
+  useEffect(() => {
+    if (!canManage) {
+      router.replace("/profile?tab=pay");
+    }
+  }, [canManage, router]);
+
   const [masters, setMasters] = useState<any[]>([]);
   const [mastersLoading, setMastersLoading] = useState(false);
   const [companyPt, setCompanyPt] = useState(200);
@@ -1897,12 +1903,7 @@ function PayrollPageContent() {
   }
 
   if (!canManage) {
-    return (
-      <section className="space-y-6">
-        <h1 className="page-title">Payroll</h1>
-        <p className="muted">You don&apos;t have access to payroll management.</p>
-      </section>
-    );
+    return null;
   }
 
   const payrollPageTitle = tab === "run" ? "Run Payroll" : "Salary Slips";

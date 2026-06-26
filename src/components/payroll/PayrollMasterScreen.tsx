@@ -484,11 +484,11 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     message: string;
     summary: Record<string, number>;
     errors: ImportError[];
-    generatedPasswords?: Array<{
+    generatedPasswordCount?: number;
+    generatedPasswordAccounts?: Array<{
       row: number;
       employeeCode?: string | null;
       employeeName?: string | null;
-      password: string;
     }>;
   } | null>(null);
   const importPreviewRequestRef = useRef(0);
@@ -966,7 +966,9 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
         message: data.message ?? "Import finished",
         summary: data.summary ?? {},
         errors: data.errors ?? [],
-        generatedPasswords: data.generated_passwords ?? data.generatedPasswords ?? [],
+        generatedPasswordCount: data.generated_password_count ?? data.generatedPasswordCount ?? 0,
+        generatedPasswordAccounts:
+          data.generated_password_accounts ?? data.generatedPasswordAccounts ?? [],
       });
       if (data.summary?.inserted_rows || data.summary?.updated_rows) {
         dispatchHrmsChange("payroll_master");
@@ -1879,17 +1881,23 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                         </div>
                       ))}
                     </div>
-                    {(importResult.generatedPasswords?.length ?? 0) > 0 ? (
+                    {(importResult.generatedPasswordCount ?? 0) > 0 ? (
                       <div className="rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-950">
-                        <p className="font-medium">Auto-generated login passwords</p>
-                        <ul className="mt-1 space-y-1">
-                          {importResult.generatedPasswords?.map((gp) => (
+                        <p className="font-medium">
+                          {importResult.generatedPasswordCount} account
+                          {importResult.generatedPasswordCount === 1 ? "" : "s"} received auto-generated passwords.
+                        </p>
+                        <p className="mt-1">
+                          Passwords are not shown here for security. Use the password reset workflow to share
+                          credentials with affected employees.
+                        </p>
+                        <ul className="mt-2 space-y-1">
+                          {importResult.generatedPasswordAccounts?.map((gp) => (
                             <li key={gp.row}>
                               Row {gp.row}
                               {gp.employeeName || gp.employeeCode
                                 ? ` — ${gp.employeeName ?? ""}${gp.employeeCode ? ` / ${gp.employeeCode}` : ""}`
                                 : ""}
-                              : <code className="rounded bg-white px-1">{gp.password}</code>
                             </li>
                           ))}
                         </ul>

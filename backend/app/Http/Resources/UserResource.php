@@ -3,16 +3,35 @@
 namespace App\Http\Resources;
 
 use App\Enums\UserRole;
+use App\Support\SensitiveFieldMask;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
 class UserResource extends JsonResource
 {
+    private function canViewSensitive(Request $request): bool
+    {
+        $viewer = $request->user();
+        if (! $viewer) {
+            return false;
+        }
+
+        if ($viewer->id === $this->id) {
+            return true;
+        }
+
+        return ($viewer->role?->isManagerial() ?? false)
+            && $viewer->company_id !== null
+            && $viewer->company_id === $this->company_id;
+    }
+
     /**
      * @return array<string, mixed>
      */
     public function toArray(Request $request): array
     {
+        $sensitive = $this->canViewSensitive($request);
+
         return [
             'id' => $this->id,
             'email' => $this->email,
@@ -38,10 +57,12 @@ class UserResource extends JsonResource
             'permanentPostalCode' => $this->permanent_postal_code ?? '',
             'emergencyContactName' => $this->emergency_contact_name ?? '',
             'emergencyContactPhone' => $this->emergency_contact_phone ?? '',
-            'bankName' => $this->bank_name ?? '',
-            'bankAccountHolderName' => $this->bank_account_holder_name ?? '',
-            'bankAccountNumber' => $this->bank_account_number ?? '',
-            'bankIfsc' => $this->bank_ifsc ?? '',
+            'bankName' => $sensitive ? ($this->bank_name ?? '') : '',
+            'bankAccountHolderName' => $sensitive ? ($this->bank_account_holder_name ?? '') : '',
+            'bankAccountNumber' => $sensitive
+                ? ($this->bank_account_number ?? '')
+                : SensitiveFieldMask::bankAccount($this->bank_account_number),
+            'bankIfsc' => $sensitive ? ($this->bank_ifsc ?? '') : '',
             'employmentStatus' => $this->employment_status?->value ?? $this->employment_status ?? 'preboarding',
             'ctc' => $this->ctc !== null ? (float) $this->ctc : null,
             'gender' => $this->gender,
@@ -50,8 +71,8 @@ class UserResource extends JsonResource
             'departmentId' => $this->department_id,
             'divisionId' => $this->division_id,
             'shiftId' => $this->shift_id,
-            'aadhaar' => $this->aadhaar ?? '',
-            'pan' => $this->pan ?? '',
+            'aadhaar' => $sensitive ? ($this->aadhaar ?? '') : SensitiveFieldMask::aadhaar($this->aadhaar),
+            'pan' => $sensitive ? ($this->pan ?? '') : SensitiveFieldMask::pan($this->pan),
             'uanNumber' => $this->uan_number ?? '',
             'pfNumber' => $this->pf_number ?? '',
             'esicNumber' => $this->esic_number ?? '',

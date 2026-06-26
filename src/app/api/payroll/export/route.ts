@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { TOKEN_COOKIE_NAME } from "@/lib/auth";
+import { COOKIE_NAME, TOKEN_COOKIE_NAME, getSessionFromCookie } from "@/lib/auth";
+import { isAdminRole } from "@/lib/roles";
 import {
   buildPayrollExcelRow,
   PAYROLL_EXCEL_HEADER,
@@ -66,8 +67,12 @@ export async function GET(request: NextRequest) {
 
   const cookieStore = await cookies();
   const token = cookieStore.get(TOKEN_COOKIE_NAME)?.value;
-  if (!token) {
+  const session = getSessionFromCookie(cookieStore.get(COOKIE_NAME)?.value);
+  if (!token || !session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (!isAdminRole(session.role)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   const res = await fetch(`${getApiBaseUrl()}/payroll/export?period_id=${encodeURIComponent(periodId)}`, {

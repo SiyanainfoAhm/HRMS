@@ -22,4 +22,6 @@ return [
         'store' => env('APP_MAINTENANCE_STORE', 'database'),
     ],
 
+    'allow_public_signup' => (bool) env('ALLOW_PUBLIC_SIGNUP', false),
+
 ];

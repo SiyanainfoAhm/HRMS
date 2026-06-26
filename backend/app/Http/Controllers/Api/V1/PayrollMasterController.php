@@ -9,6 +9,7 @@ use App\Models\HrmsUser;
 use App\Services\PayrollCalculationService;
 use App\Services\PayrollArrearService;
 use App\Services\PayrollMasterService;
+use App\Support\SpreadsheetImportSecurity;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -185,6 +186,22 @@ class PayrollMasterController extends Controller
         return response()->json($result);
     }
 
+    private function validateImportFile(Request $request): ?JsonResponse
+    {
+        $request->validate(['file' => ['required', 'file', 'mimes:csv,xlsx,xls', 'max:10240']]);
+        $file = $request->file('file');
+        if (! $file) {
+            return response()->json(['error' => 'File is required'], 422);
+        }
+
+        $message = SpreadsheetImportSecurity::validateUploadedFile($file);
+        if ($message !== null) {
+            return response()->json(['error' => $message], 422);
+        }
+
+        return null;
+    }
+
     public function import(Request $request): JsonResponse
     {
         $user = $request->user();
@@ -192,7 +209,10 @@ class PayrollMasterController extends Controller
             return $denied;
         }
 
-        $request->validate(['file' => ['required', 'file', 'mimes:csv,xlsx,xls', 'max:10240']]);
+        if ($fileError = $this->validateImportFile($request)) {
+            return $fileError;
+        }
+
         $result = $this->service->importFile($request->file('file'), $user->company_id, $user->id);
         $blocked = str_contains((string) ($result['message'] ?? ''), 'Import blocked');
 
@@ -206,7 +226,10 @@ class PayrollMasterController extends Controller
             return $denied;
         }
 
-        $request->validate(['file' => ['required', 'file', 'mimes:csv,xlsx,xls', 'max:10240']]);
+        if ($fileError = $this->validateImportFile($request)) {
+            return $fileError;
+        }
+
         $result = $this->service->previewImportFile($request->file('file'), $user->company_id);
 
         return response()->json($result);

@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\UserResource;
 use App\Models\HrmsPayrollMaster;
 use App\Models\HrmsUser;
+use App\Support\CompanyAccess;
 use App\Support\BankDetailsService;
 use App\Support\BankDetailsValidator;
 use Illuminate\Http\JsonResponse;
@@ -93,7 +94,15 @@ class UserController extends Controller
 
     public function show(Request $request, string $id): JsonResponse
     {
-        $user = HrmsUser::findOrFail($id);
+        $authUser = $request->user();
+        $user = HrmsUser::find($id);
+        if (! $user) {
+            return CompanyAccess::notFound();
+        }
+
+        if (! CompanyAccess::canViewUser($authUser, $user)) {
+            return CompanyAccess::forbidden();
+        }
 
         return response()->json(['user' => new UserResource($user)]);
     }
@@ -105,7 +114,14 @@ class UserController extends Controller
             return response()->json(['error' => 'Forbidden'], 403);
         }
 
-        $target = HrmsUser::findOrFail($id);
+        $target = HrmsUser::find($id);
+        if (! $target) {
+            return CompanyAccess::notFound();
+        }
+        if (! CompanyAccess::sameCompany($authUser->company_id, $target->company_id)) {
+            return CompanyAccess::notFound();
+        }
+
         $body = $request->all();
         $prevBank = BankDetailsValidator::snapshotFromUser($target);
         $payload = $this->buildUpdatePayload($body, true);

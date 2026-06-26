@@ -66,10 +66,28 @@ class PayrollController extends Controller
 
     public function updatePeriod(Request $request, string $id): JsonResponse
     {
-        $period = HrmsPayrollPeriod::findOrFail($id);
-        $period->update($request->only([
-            'period_name', 'period_start', 'period_end', 'is_locked', 'excel_file_path',
-        ]));
+        $user = $request->user();
+        if (! $user->role?->isManagerial()) {
+            return response()->json(['error' => 'Forbidden'], 403);
+        }
+
+        $period = HrmsPayrollPeriod::where('id', $id)
+            ->where('company_id', $user->company_id)
+            ->first();
+
+        if (! $period) {
+            return response()->json(['error' => 'Not found'], 404);
+        }
+
+        $data = $request->validate([
+            'period_name' => ['sometimes', 'string', 'max:255'],
+            'period_start' => ['sometimes', 'date'],
+            'period_end' => ['sometimes', 'date'],
+            'is_locked' => ['sometimes', 'boolean'],
+            'excel_file_path' => ['sometimes', 'nullable', 'string', 'max:500'],
+        ]);
+
+        $period->update($data);
 
         return response()->json(['period' => $period->refresh()]);
     }

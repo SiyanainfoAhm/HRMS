@@ -12,6 +12,7 @@ use App\Models\HrmsEmployee;
 use App\Models\HrmsPayrollMaster;
 use App\Models\HrmsPayrollMasterHistory;
 use App\Models\HrmsUser;
+use App\Support\SpreadsheetImportSecurity;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -571,7 +572,7 @@ final class PayrollMasterService
             ];
         }
 
-        $generatedPasswords = [];
+        $generatedPasswordAccounts = [];
 
         foreach ($plan['rows'] as $item) {
             try {
@@ -583,11 +584,10 @@ final class PayrollMasterService
                     $summary['inserted_rows']++;
                 }
                 if (! empty($item['generated_password'])) {
-                    $generatedPasswords[] = [
+                    $generatedPasswordAccounts[] = [
                         'row' => $item['row'],
                         'employeeCode' => $item['data']['employee_code'] ?? null,
                         'employeeName' => $item['data']['name'] ?? null,
-                        'password' => $item['generated_password'],
                     ];
                 }
             } catch (\Throwable $e) {
@@ -608,7 +608,8 @@ final class PayrollMasterService
             : 'Import completed with errors';
 
         return array_merge(compact('message', 'summary', 'errors'), [
-            'generated_passwords' => $generatedPasswords,
+            'generated_password_count' => count($generatedPasswordAccounts),
+            'generated_password_accounts' => $generatedPasswordAccounts,
         ]);
     }
 
@@ -2484,8 +2485,9 @@ final class PayrollMasterService
         $path = $file->getRealPath() ?: $file->path();
         $spreadsheet = IOFactory::load($path);
         $sheet = $spreadsheet->getActiveSheet();
+        $rows = $sheet->toArray(null, true, true, false);
 
-        return $sheet->toArray(null, true, true, false);
+        return SpreadsheetImportSecurity::sanitizeSpreadsheetRows($rows);
     }
 
     /** @param  list<mixed>  $header */
@@ -2905,7 +2907,7 @@ final class PayrollMasterService
             'valid' => $item['valid'],
             'errors' => $item['errors'],
             'warnings' => $item['warnings'] ?? [],
-            'generatedPassword' => $item['generated_password'] ?? null,
+            'willGeneratePassword' => ! empty($item['generated_password']),
         ];
     }
 

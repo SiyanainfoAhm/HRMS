@@ -1,22 +1,18 @@
-import { get, post, setToken } from "./client";
+import { get, post } from "./client";
 
 export async function apiLogin(email: string, password: string) {
-  const data = await post("/auth/login", { email, password });
-  setToken(data.token);
-  return data;
+  return post("/auth/login", { email, password });
 }
 
 export async function apiSignup(email: string, password: string, name?: string) {
-  const data = await post("/auth/signup", { email, password, name });
-  setToken(data.token);
-  return data;
+  return post("/auth/signup", { email, password, name });
 }
 
 export async function apiLogout() {
   try {
     await post("/auth/logout");
-  } finally {
-    setToken(null);
+  } catch {
+    // Best-effort remote logout.
   }
 }
 
@@ -25,12 +21,8 @@ export async function apiGetMe() {
 }
 
 export async function apiChangePassword(currentPassword: string, newPassword: string) {
-  const data = await post("/auth/change-password", {
+  return post("/auth/change-password", {
     current_password: currentPassword,
     new_password: newPassword,
   });
-  if (data.token) {
-    setToken(data.token);
-  }
-  return data;
 }
