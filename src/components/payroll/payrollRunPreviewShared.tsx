@@ -22,7 +22,7 @@ export const GOV_PREVIEW_EARNING_FIELDS: { key: keyof GovernmentPreviewMonthly; 
 
 export const GOV_PREVIEW_DEDUCTION_FIELDS: { key: keyof GovernmentPreviewMonthly["deductions"]; label: string }[] = [
   { key: "incomeTax", label: "Inc. tax" },
-  { key: "pt", label: "P. Tax" },
+  { key: "pt", label: "Professional Tax" },
   { key: "lic", label: "LIC" },
   { key: "cpf", label: "CPF" },
   { key: "daCpf", label: "DA CPF" },

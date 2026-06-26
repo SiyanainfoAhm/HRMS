@@ -117,19 +117,16 @@ function StickyMiniSummary({
   gross,
   deductions,
   net,
-  takeHome,
 }: {
   gross: number;
   deductions: number;
   net: number;
-  takeHome: number;
 }) {
   return (
-    <div className="grid grid-cols-2 gap-1.5 border-b border-slate-100 bg-slate-50/80 px-3 py-1.5 sm:grid-cols-4">
+    <div className="grid grid-cols-3 gap-1.5 border-b border-slate-100 bg-slate-50/80 px-3 py-1.5">
       <SummaryStat label="Gross" value={fmtIn(gross)} />
       <SummaryStat label="Deductions" value={fmtIn(deductions)} />
-      <SummaryStat label="Net pay" value={fmtIn(net)} emphasis />
-      <SummaryStat label="Take home" value={fmtIn(takeHome)} emphasis />
+      <SummaryStat label="Net Pay" value={fmtIn(net)} emphasis />
     </div>
   );
 }
@@ -209,12 +206,7 @@ function GovernmentEmployeeDetail({
         hideExpandToggle
       />
 
-      <StickyMiniSummary
-        gross={totalEarn}
-        deductions={totalDed}
-        net={row.netPay}
-        takeHome={row.takeHome}
-      />
+      <StickyMiniSummary gross={totalEarn} deductions={totalDed} net={row.netPay} />
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="flex flex-col lg:flex-row">

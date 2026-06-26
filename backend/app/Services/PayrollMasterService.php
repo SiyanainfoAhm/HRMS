@@ -816,9 +816,6 @@ final class PayrollMasterService
             ['key' => 'gross_basic_pay', 'header' => 'Gross Basic*', 'required_in_template' => true],
             ['key' => 'da_percent', 'header' => 'DA %', 'required_in_template' => false],
             ['key' => 'hra_percent', 'header' => 'HRA %', 'required_in_template' => false],
-            ['key' => 'total_earnings', 'header' => 'Total Earnings', 'required_in_template' => false],
-            ['key' => 'cpf_effective', 'header' => 'CPF', 'required_in_template' => false],
-            ['key' => 'take_home', 'header' => 'Take Home', 'required_in_template' => false],
             ['key' => 'uan', 'header' => 'UAN', 'required_in_template' => false],
             ['key' => 'cpf_no', 'header' => 'CPF No', 'required_in_template' => false],
             ['key' => 'pan', 'header' => 'PAN*', 'required_in_template' => true],
@@ -859,9 +856,6 @@ final class PayrollMasterService
             'gross_basic_pay' => 52000,
             'da_percent' => 60,
             'hra_percent' => 30,
-            'total_earnings' => '',
-            'cpf_effective' => '',
-            'take_home' => '',
             'uan' => 'UAN123',
             'cpf_no' => 'CPF123',
             'pan' => 'ABCDE1234F',
@@ -980,6 +974,11 @@ final class PayrollMasterService
 
         if (empty($row['effective_from'])) {
             $row['effective_from'] = now()->toDateString();
+        }
+
+        $ptRaw = trim((string) ($row['professional_tax'] ?? ''));
+        if ($ptRaw === '') {
+            $row['professional_tax'] = 200;
         }
 
         $password = trim((string) ($row['password'] ?? ''));
@@ -2778,10 +2777,12 @@ final class PayrollMasterService
         $summary['valid_rows'] = 0;
         $summary['invalid_rows'] = 0;
         $summary['warning_rows'] = 0;
+        $summary['error_count'] = 0;
         $summary['insert_rows'] = 0;
         $summary['update_rows'] = 0;
 
         foreach ($planRows as $item) {
+            $summary['error_count'] += count($item['errors'] ?? []);
             if (! $item['valid']) {
                 $summary['invalid_rows']++;
 

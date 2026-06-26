@@ -1667,6 +1667,11 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                       <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-slate-700">
                         {importPreview.summary.total_rows ?? 0} total checked
                       </span>
+                      {(importPreview.summary.error_count ?? 0) > 0 ? (
+                        <span className="rounded-full border border-red-300 bg-red-100 px-2.5 py-1 text-red-900">
+                          {importPreview.summary.error_count ?? 0} errors
+                        </span>
+                      ) : null}
                     </div>
 
                     {!importCanConfirm && importPreview.blockedMessage ? (
@@ -1756,7 +1761,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                             )
                           }
                         >
-                          Download error report
+                          Download Error Report
                         </Button>
                       </div>
                     ) : null}

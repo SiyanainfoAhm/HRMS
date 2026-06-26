@@ -1,10 +1,9 @@
 import type { GovernmentMonthlyComputed } from "@/lib/governmentPayroll";
 
-/** Excel column order: identity + government payslip lines + legacy bank columns. */
+/** Run Payroll Excel export — no duplicate PT/Professional Tax or TakeHome/Net Pay columns. */
 export const PAYROLL_EXCEL_HEADER = [
   "AccountNumber",
   "EmployeeName",
-  "PayrollMode",
   "PayLevel",
   "PayDays",
   "Basic",
@@ -23,7 +22,6 @@ export const PAYROLL_EXCEL_HEADER = [
   "EncashmentDA",
   "GrossTotal",
   "IncomeTax",
-  "PT",
   "LIC",
   "CPF",
   "DACPF",
@@ -50,9 +48,8 @@ export const PAYROLL_EXCEL_HEADER = [
   "EmployerPF",
   "EmployeeESIC",
   "EmployerESIC",
-  "NetPay",
   "ProfessionalTax",
-  "TakeHome",
+  "NetPay",
 ] as const;
 
 export type PayrollExcelHeader = (typeof PAYROLL_EXCEL_HEADER)[number];
@@ -127,10 +124,12 @@ function n(v: unknown): number {
   return Number.isFinite(x) ? x : 0;
 }
 
-function govFromComputed(c: GovernmentMonthlyComputed, payLevel: number): Omit<Record<PayrollExcelHeader, string | number>, "AccountNumber" | "EmployeeName"> {
+function govFromComputed(
+  c: GovernmentMonthlyComputed,
+  payLevel: number,
+): Omit<Record<PayrollExcelHeader, string | number>, "AccountNumber" | "EmployeeName"> {
   const d = c.deductions;
   return {
-    PayrollMode: "government",
     PayLevel: payLevel,
     PayDays: 0,
     Basic: c.basicPaid,
@@ -149,7 +148,6 @@ function govFromComputed(c: GovernmentMonthlyComputed, payLevel: number): Omit<R
     EncashmentDA: c.encashmentDaPaid,
     GrossTotal: c.totalEarnings,
     IncomeTax: d.incomeTax,
-    PT: d.pt,
     LIC: d.lic,
     CPF: d.cpf,
     DACPF: d.daCpf,
@@ -176,15 +174,15 @@ function govFromComputed(c: GovernmentMonthlyComputed, payLevel: number): Omit<R
     EmployerPF: 0,
     EmployeeESIC: 0,
     EmployerESIC: 0,
-    NetPay: 0,
-    ProfessionalTax: 0,
-    TakeHome: 0,
+    ProfessionalTax: d.pt,
+    NetPay: c.netSalary,
   };
 }
 
-function govFromDbRow(r: GovernmentMonthlyRow): Omit<Record<PayrollExcelHeader, string | number>, "AccountNumber" | "EmployeeName"> {
+function govFromDbRow(
+  r: GovernmentMonthlyRow,
+): Omit<Record<PayrollExcelHeader, string | number>, "AccountNumber" | "EmployeeName"> {
   return {
-    PayrollMode: "government",
     PayLevel: n(r.pay_level),
     PayDays: 0,
     Basic: n(r.basic_paid),
@@ -203,7 +201,6 @@ function govFromDbRow(r: GovernmentMonthlyRow): Omit<Record<PayrollExcelHeader, 
     EncashmentDA: n(r.encashment_da_paid),
     GrossTotal: n(r.total_earnings),
     IncomeTax: n(r.income_tax_amount),
-    PT: n(r.pt_amount),
     LIC: n(r.lic_amount),
     CPF: n(r.cpf_amount),
     DACPF: n(r.da_cpf_amount),
@@ -230,9 +227,8 @@ function govFromDbRow(r: GovernmentMonthlyRow): Omit<Record<PayrollExcelHeader, 
     EmployerPF: 0,
     EmployeeESIC: 0,
     EmployerESIC: 0,
-    NetPay: 0,
-    ProfessionalTax: 0,
-    TakeHome: 0,
+    ProfessionalTax: n(r.pt_amount),
+    NetPay: n(r.net_salary),
   };
 }
 
@@ -242,7 +238,7 @@ export type GovernmentExcelSource =
 
 /**
  * One payroll Excel row: government line items when mode is government (from computed run or DB row),
- * plus legacy PF/ESIC columns. TakeHome matches stored payslip net_pay (final credit).
+ * plus legacy PF/ESIC columns. Net Pay is the final payable amount (no separate TakeHome column).
  */
 export function buildPayrollExcelRow(
   p: PayslipExcelInput,
@@ -251,9 +247,10 @@ export function buildPayrollExcelRow(
 ): Record<PayrollExcelHeader, string | number> {
   const accountNum = p.bank_account_number != null ? String(p.bank_account_number) : "";
   const mode = p.payroll_mode === "government" ? "government" : "private";
+  const netPay = n(p.net_pay);
+  const professionalTax = n(p.professional_tax);
 
   const basePrivate: Omit<Record<PayrollExcelHeader, string | number>, "AccountNumber" | "EmployeeName"> = {
-    PayrollMode: mode,
     PayLevel: 0,
     PayDays: n(p.pay_days),
     Basic: n(p.basic),
@@ -272,7 +269,6 @@ export function buildPayrollExcelRow(
     EncashmentDA: 0,
     GrossTotal: n(p.gross_pay),
     IncomeTax: n(p.tds),
-    PT: n(p.professional_tax),
     LIC: 0,
     CPF: 0,
     DACPF: 0,
@@ -299,18 +295,14 @@ export function buildPayrollExcelRow(
     EmployerPF: n(p.pf_employer),
     EmployeeESIC: n(p.esic_employee),
     EmployerESIC: n(p.esic_employer),
-    NetPay: n(p.net_pay),
-    ProfessionalTax: n(p.professional_tax),
-    TakeHome: n(p.net_pay),
+    ProfessionalTax: professionalTax,
+    NetPay: netPay,
   };
 
   let body: Omit<Record<PayrollExcelHeader, string | number>, "AccountNumber" | "EmployeeName">;
 
   if (mode === "government" && gov) {
-    const g =
-      gov.kind === "computed"
-        ? govFromComputed(gov.comp, gov.payLevel)
-        : govFromDbRow(gov.row);
+    const g = gov.kind === "computed" ? govFromComputed(gov.comp, gov.payLevel) : govFromDbRow(gov.row);
     body = {
       ...g,
       PayDays: n(p.pay_days),
@@ -319,14 +311,12 @@ export function buildPayrollExcelRow(
       PRBonus: n(p.pr_bonus),
       Reimbursement: n(p.reimbursement),
       TDS: n(p.tds),
-      // CPF / DA CPF / VPF / PF loan columns carry statutory deductions; payslip pf_employee is the same bundle — omit from legacy PF columns.
       EmployeePF: 0,
       EmployerPF: 0,
       EmployeeESIC: n(p.esic_employee),
       EmployerESIC: n(p.esic_employer),
-      NetPay: n(p.net_pay),
-      ProfessionalTax: n(p.professional_tax),
-      TakeHome: n(p.net_pay),
+      ProfessionalTax: professionalTax > 0 ? professionalTax : n(g.ProfessionalTax),
+      NetPay: netPay > 0 ? netPay : n(g.NetPay),
     };
   } else {
     body = basePrivate;
@@ -339,8 +329,11 @@ export function buildPayrollExcelRow(
   };
 }
 
-/** 0-based column indices to center (all numeric / mode after name). */
+/** Columns that must not appear in Run Payroll export (duplicate / deprecated labels). */
+export const PAYROLL_EXCEL_REMOVED_COLUMNS = ["PayrollMode", "PT", "TakeHome"] as const;
+
+/** 0-based column indices to center (all numeric fields after name). */
 export function payrollExcelAmountColumnIndices(): number[] {
-  const skip = 2; // AccountNumber, EmployeeName — keep default alignment
+  const skip = 2;
   return Array.from({ length: PAYROLL_EXCEL_HEADER.length - skip }, (_, i) => i + skip);
 }
