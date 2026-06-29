@@ -583,6 +583,7 @@ class PayrollController extends Controller
                 'arrearWarnings' => $arrearEnriched['warnings'],
                 'arrearPeriods' => $arrearEnriched['arrearPeriods'] ?? [],
             ]),
+            'payrollConfig' => $payrollConfig,
         ]);
     }
 
@@ -1053,6 +1054,8 @@ class PayrollController extends Controller
             'netArrear' => $num($gov->net_arrear ?? 0),
             'encashmentPaid' => $num($gov->encashment_paid),
             'encashmentDaPaid' => $num($gov->encashment_da_paid),
+            'customEarnings' => $this->customFieldMapFromGov($gov, 'custom_earnings'),
+            'customDeductions' => $this->customFieldMapFromGov($gov, 'custom_deductions'),
             'totalEarnings' => $num($gov->total_earnings),
             'totalDeductions' => $num($gov->total_deductions),
             'netSalary' => $num($gov->net_salary),
@@ -1076,6 +1079,25 @@ class PayrollController extends Controller
                 'other' => $num($gov->other_deduction_amount),
             ],
         ];
+    }
+
+    /** @return array<string, float> */
+    private function customFieldMapFromGov(HrmsGovernmentMonthlyPayroll $gov, string $column): array
+    {
+        $raw = $gov->{$column} ?? null;
+        if (! is_array($raw)) {
+            return [];
+        }
+
+        $out = [];
+        foreach ($raw as $key => $value) {
+            if (! is_string($key) && ! is_int($key)) {
+                continue;
+            }
+            $out[(string) $key] = is_numeric($value) ? (float) $value : 0.0;
+        }
+
+        return $out;
     }
 
     /** cirt_payslips.created_by references cirt_employees.id, not cirt_users.id. */

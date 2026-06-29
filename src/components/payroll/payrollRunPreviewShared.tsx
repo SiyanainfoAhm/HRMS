@@ -60,7 +60,12 @@ export function customFieldAmount(
   fieldKey: string,
   group: "earnings" | "deductions",
 ): number {
-  const bag = group === "earnings" ? g?.customEarnings : g?.customDeductions;
+  const gRecord = g as Record<string, unknown> | null | undefined;
+  const earningsBag =
+    g?.customEarnings ?? (gRecord?.custom_earnings as Record<string, number> | undefined);
+  const deductionsBag =
+    g?.customDeductions ?? (gRecord?.custom_deductions as Record<string, number> | undefined);
+  const bag = group === "earnings" ? earningsBag : deductionsBag;
   const fromComputed = bag?.[fieldKey];
   if (fromComputed != null && Number.isFinite(Number(fromComputed))) {
     return Math.round(Number(fromComputed));

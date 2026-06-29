@@ -23,7 +23,7 @@ import {
   type GovernmentMonthlyComputed,
   type GovernmentOptionalMonthlyEarnings,
 } from "@/lib/governmentPayroll";
-import type { PayrollConfig, PayrollFieldDefinition } from "@/lib/payrollFieldTypes";
+import { customRunFieldsForPreview, type PayrollConfig, type PayrollFieldDefinition } from "@/lib/payrollFieldTypes";
 import { applyAutoArrearsToGovernmentMonthly } from "@/lib/payrollArrearCalc";
 import {
   GovernmentRunPreviewTable,
@@ -763,19 +763,17 @@ function PayrollPageContent() {
     }[]
   >([]);
 
-  const runPayrollCustomEarningFields = useMemo((): PayrollFieldDefinition[] => {
-    const fields = payrollConfig?.fields ?? [];
-    return fields
-      .filter((f) => f.isActive && !f.isSystem && f.showInRunPayroll && f.fieldGroup === "earnings")
-      .sort((a, b) => a.displayOrder - b.displayOrder);
-  }, [payrollConfig?.fields]);
+  const runPayrollCustomEarningFields = useMemo(
+    (): PayrollFieldDefinition[] =>
+      customRunFieldsForPreview(payrollConfig?.fields ?? [], editableRows, "earnings"),
+    [payrollConfig?.fields, editableRows],
+  );
 
-  const runPayrollCustomDeductionFields = useMemo((): PayrollFieldDefinition[] => {
-    const fields = payrollConfig?.fields ?? [];
-    return fields
-      .filter((f) => f.isActive && !f.isSystem && f.showInRunPayroll && f.fieldGroup === "deductions")
-      .sort((a, b) => a.displayOrder - b.displayOrder);
-  }, [payrollConfig?.fields]);
+  const runPayrollCustomDeductionFields = useMemo(
+    (): PayrollFieldDefinition[] =>
+      customRunFieldsForPreview(payrollConfig?.fields ?? [], editableRows, "deductions"),
+    [payrollConfig?.fields, editableRows],
+  );
 
   const previewHasGovernment = useMemo(
     () => !!(preview?.rows?.length && preview.rows.some((r: any) => r.payrollMode === "government")),
@@ -1418,7 +1416,7 @@ function PayrollPageContent() {
         const data = await res.json();
         if (!cancelled && res.ok) {
           setPreview(data.preview ?? null);
-          setPayrollConfig(data.payrollConfig ?? null);
+          setPayrollConfig(data.payrollConfig ?? data.preview?.payrollConfig ?? null);
         }
         else if (!cancelled) {
           setPreview(null);
