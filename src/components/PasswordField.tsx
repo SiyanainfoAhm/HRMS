@@ -36,6 +36,7 @@ export type PasswordFieldProps = {
   className?: string;
   error?: string | null;
   onBlur?: () => void;
+  disabled?: boolean;
 };
 
 export function PasswordField({
@@ -50,6 +51,7 @@ export function PasswordField({
   className = "",
   error = null,
   onBlur,
+  disabled = false,
 }: PasswordFieldProps) {
   const reactId = useId();
   const id = idProp ?? `password-${reactId}`;
@@ -71,14 +73,16 @@ export function PasswordField({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           onBlur={onBlur}
+          disabled={disabled}
           aria-invalid={error ? true : undefined}
           aria-describedby={error ? `${id}-error` : undefined}
           className={`password-field-input input-field !pr-10 ${error ? "!border-red-400 focus:!border-red-500 focus:!ring-red-500/30" : ""}`}
         />
         <button
           type="button"
-          className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+          className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-800 disabled:opacity-50"
           onClick={() => setVisible((v) => !v)}
+          disabled={disabled}
           aria-pressed={visible}
           aria-label={visible ? "Hide password" : "Show password"}
         >

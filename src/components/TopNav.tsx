@@ -1,9 +1,10 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { APP_NAME } from "@/lib/appBranding";
 import type { SessionUser } from "@/lib/auth";
+import { AuthLoadingOverlay } from "@/components/ui/AuthLoadingOverlay";
+import { performLogout } from "@/lib/authNavigation";
 
 function getInitials(name: string | null, email: string): string {
   if (name && name.trim()) {
@@ -30,8 +31,8 @@ export function TopNav({
   onToggleSidebar: () => void;
   sidebarCollapsed: boolean;
 }) {
-  const router = useRouter();
   const [confirmState, setConfirmState] = useState<null | { title: string; message: string; confirmText?: string }>(null);
+  const [loggingOut, setLoggingOut] = useState(false);
   const confirmResolveRef = useState<{ fn: ((v: boolean) => void) | null }>({ fn: null })[0];
 
   function confirmAction(args: { title: string; message: string; confirmText?: string }): Promise<boolean> {
@@ -55,14 +56,18 @@ export function TopNav({
       confirmText: "Logout",
     });
     if (!ok) return;
-    await fetch("/api/auth/logout", { method: "POST" });
-    onLogout();
-    router.push("/");
-    router.refresh();
+    setLoggingOut(true);
+    try {
+      onLogout();
+      await performLogout();
+    } catch {
+      setLoggingOut(false);
+    }
   }
 
   return (
     <>
+      {loggingOut ? <AuthLoadingOverlay message="Signing out…" /> : null}
       {confirmState && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
           <button
@@ -78,8 +83,13 @@ export function TopNav({
               <button type="button" className="btn btn-outline" onClick={() => closeConfirm(false)}>
                 Cancel
               </button>
-              <button type="button" className="btn btn-primary" onClick={() => closeConfirm(true)}>
-                {confirmState.confirmText ?? "Confirm"}
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => closeConfirm(true)}
+                disabled={loggingOut}
+              >
+                {loggingOut ? "Please wait…" : (confirmState.confirmText ?? "Confirm")}
               </button>
             </div>
           </div>
@@ -104,9 +114,10 @@ export function TopNav({
         <button
           type="button"
           onClick={handleLogout}
-          className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          disabled={loggingOut}
+          className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
         >
-          Logout
+          {loggingOut ? "Signing out…" : "Logout"}
         </button>
       </div>
       </header>

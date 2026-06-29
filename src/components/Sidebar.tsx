@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
   Wallet,
@@ -16,7 +16,9 @@ import {
 import { useAuth } from "@/contexts/AuthContext";
 import type { SessionUser } from "@/lib/auth";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { AuthLoadingOverlay } from "@/components/ui/AuthLoadingOverlay";
 import { APP_NAME } from "@/lib/appBranding";
+import { performLogout } from "@/lib/authNavigation";
 import { cn } from "@/lib/cn";
 import { isAdminRole } from "@/lib/roles";
 
@@ -61,7 +63,6 @@ export function Sidebar({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { role } = useAuth();
-  const router = useRouter();
 
   const isPayrollAdmin = isAdminRole(role);
   const isPayrollMasterAdmin = isAdminRole(role);
@@ -83,11 +84,15 @@ export function Sidebar({
   const initials = getInitials(user.name, user.email);
   const brandName = companyBranding?.name?.trim() || APP_NAME;
   const [logoutOpen, setLogoutOpen] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
 
   async function handleLogout() {
-    await fetch("/api/auth/logout", { method: "POST" });
-    router.push("/");
-    router.refresh();
+    setLoggingOut(true);
+    try {
+      await performLogout();
+    } catch {
+      setLoggingOut(false);
+    }
   }
 
   const closeMobile = () => onMobileClose?.();
@@ -108,6 +113,7 @@ export function Sidebar({
 
   return (
     <>
+      {loggingOut ? <AuthLoadingOverlay message="Signing out…" /> : null}
       <ConfirmDialog
         open={logoutOpen}
         title="Logout now?"
@@ -118,7 +124,8 @@ export function Sidebar({
           setLogoutOpen(false);
           void handleLogout();
         }}
-        onCancel={() => setLogoutOpen(false)}
+        onCancel={() => !loggingOut && setLogoutOpen(false)}
+        loading={loggingOut}
       />
 
       <aside
@@ -221,6 +228,7 @@ export function Sidebar({
                 onClick={() => setLogoutOpen(true)}
                 title="Logout"
                 aria-label="Logout"
+                disabled={loggingOut}
               >
                 <LogOut className="h-4 w-4" />
                 {!collapsed && <span className="hidden lg:inline">Logout</span>}

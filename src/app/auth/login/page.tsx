@@ -5,6 +5,8 @@ import { useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { Building2, Shield } from "lucide-react";
 import { PasswordField } from "@/components/PasswordField";
+import { AuthLoadingOverlay } from "@/components/ui/AuthLoadingOverlay";
+import { Loader2 } from "lucide-react";
 import { APP_NAME } from "@/lib/appBranding";
 import { validateLoginEmail, validateLoginPassword } from "@/lib/loginValidators";
 import { isAdminRole } from "@/lib/roles";
@@ -56,6 +58,7 @@ function LoginForm() {
       const data = await res.json();
       if (!res.ok) {
         setError(data.error || "Invalid email or password. Please try again.");
+        setLoading(false);
         return;
       }
 
@@ -75,13 +78,14 @@ function LoginForm() {
       window.location.assign(destination);
     } catch {
       setError("Unable to sign in. Check your connection and try again.");
-    } finally {
       setLoading(false);
     }
   }
 
   return (
-    <div className="flex min-h-screen min-h-[100dvh]">
+    <>
+      {loading ? <AuthLoadingOverlay message="Signing in…" /> : null}
+      <div className="flex min-h-screen min-h-[100dvh]">
       <motion.aside
         initial={{ opacity: 0, x: -20 }}
         animate={{ opacity: 1, x: 0 }}
@@ -141,6 +145,7 @@ function LoginForm() {
                 onBlur={() => setEmailTouched(true)}
                 aria-invalid={emailError ? true : undefined}
                 aria-describedby={emailError ? "email-error" : undefined}
+                disabled={loading}
                 className={`input-field ${emailError ? "!border-red-400 focus:!border-red-500 focus:!ring-red-500/30" : ""}`}
                 placeholder="you@cirtpune.org"
               />
@@ -157,6 +162,7 @@ function LoginForm() {
               onChange={setPassword}
               onBlur={() => setPasswordTouched(true)}
               error={passwordError}
+              disabled={loading}
             />
 
             {error && (
@@ -166,7 +172,14 @@ function LoginForm() {
             )}
 
             <button type="submit" className="btn btn-primary w-full !py-3" disabled={loading || !canSubmit}>
-              {loading ? "Signing in…" : "Sign in"}
+              {loading ? (
+                <span className="inline-flex items-center justify-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                  Signing in…
+                </span>
+              ) : (
+                "Sign in"
+              )}
             </button>
 
             <p className="text-center text-xs text-brand-muted">
@@ -176,6 +189,7 @@ function LoginForm() {
         </motion.div>
       </div>
     </div>
+    </>
   );
 }
 
