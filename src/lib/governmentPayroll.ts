@@ -1,7 +1,11 @@
-/**
- * Government-style payroll (Gross Basic / DA / HRA / transport slab by pay level).
- * Keep in sync with the database RPC hrm_generate_monthly_payroll.
- */
+import {
+  calculateCpfFromBasis,
+  DEFAULT_CPF_BASIS_KEYS,
+  DEFAULT_CPF_PERCENTAGE,
+  type CpfCalculationConfig,
+  runPayrollBasisAmountsFromComputed,
+} from "./payrollCpfCalculation";
+import type { PayrollConfig } from "./payrollFieldTypes";
 
 export type TransportSlab = { transportSlabGroup: string; transportBase: number };
 
@@ -40,7 +44,7 @@ export type GovernmentDeductionDefaults = {
   electricity: number;
   water: number;
   mess: number;
-  horticulture: number;
+  loanRecovery: number;
   welfare: number;
   vehCharge: number;
   other: number;
@@ -76,6 +80,23 @@ export type GovernmentEarningPaidOverrides = Partial<{
   encashmentDaPaid: number;
 }>;
 
+export function governmentMonthlyExtras(
+  gr: { customEarnings?: Record<string, number>; customDeductions?: Record<string, number> },
+  payrollConfig?: PayrollConfig | null,
+): Pick<GovernmentMonthlyInput, "cpfConfig" | "customEarnings" | "customDeductions"> {
+  const cs = payrollConfig?.calculationSettings;
+  return {
+    cpfConfig: cs
+      ? {
+          cpfPercentage: cs.cpfPercentage ?? DEFAULT_CPF_PERCENTAGE,
+          cpfBasisFieldKeys: cs.cpfBasisFieldKeys ?? DEFAULT_CPF_BASIS_KEYS,
+        }
+      : undefined,
+    customEarnings: gr.customEarnings ?? {},
+    customDeductions: gr.customDeductions ?? {},
+  };
+}
+
 export type GovernmentMonthlyInput = {
   grossBasic: number;
   daPercent: number;
@@ -90,6 +111,12 @@ export type GovernmentMonthlyInput = {
   optionalEarnings?: GovernmentOptionalMonthlyEarnings;
   /** Replace specific paid lines (e.g. admin adjustments before finalize). */
   earningPaidOverrides?: GovernmentEarningPaidOverrides;
+  /** Company CPF configuration from Settings */
+  cpfConfig?: CpfCalculationConfig;
+  /** Custom earning field values (non-system) */
+  customEarnings?: Record<string, number>;
+  /** Custom deduction field values (non-system) */
+  customDeductions?: Record<string, number>;
 };
 
 function roundRupees(n: number): number {
@@ -141,6 +168,8 @@ export type GovernmentMonthlyComputed = {
   encashmentDaActual: number;
   encashmentDaPaid: number;
   deductions: GovernmentDeductionDefaults;
+  customEarnings: Record<string, number>;
+  customDeductions: Record<string, number>;
   totalEarnings: number;
   totalDeductions: number;
   netSalary: number;
@@ -204,6 +233,11 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
   const encF = pickPaid(enc, "encashmentPaid");
   const encDaF = pickPaid(encDa, "encashmentDaPaid");
 
+  const customEarnings = input.customEarnings ?? {};
+  const customDeductions = input.customDeductions ?? {};
+  const customEarningsTotal = Object.values(customEarnings).reduce((s, v) => s + (Number(v) || 0), 0);
+  const customDeductionsTotal = Object.values(customDeductions).reduce((s, v) => s + (Number(v) || 0), 0);
+
   const d = input.deductionDefaults;
 
   // Sum order matches government payslip line sequence (Basic → DA → HRA → Medical → TA → SP Pay → others).
@@ -221,11 +255,33 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
     daaF +
     traF +
     encF +
-    encDaF;
+    encDaF +
+    customEarningsTotal;
 
+  const basisAmounts = runPayrollBasisAmountsFromComputed({
+    basicPaid: basicPaidF,
+    daPaid: daPaidF,
+    hraPaid: hraPaidF,
+    medicalPaid: medicalPaidF,
+    transportPaid: transportPaidF,
+    spPayPaid: spF,
+    extraWorkAllowancePaid: ewaF,
+    nightAllowancePaid: naF,
+    uniformAllowancePaid: uaF,
+    educationAllowancePaid: edaF,
+    daArrearsPaid: daaF,
+    transportArrearsPaid: traF,
+  });
+
+  const cpfPct = input.cpfConfig?.cpfPercentage ?? DEFAULT_CPF_PERCENTAGE;
+  const cpfBasis = input.cpfConfig?.cpfBasisFieldKeys ?? DEFAULT_CPF_BASIS_KEYS;
   let cpfFromMaster = roundRupees(d.cpf);
   if (cpfFromMaster <= 0) {
-    cpfFromMaster = roundRupees(totalEarnings * GOVERNMENT_DEFAULT_CPF_RATE_ON_TOTAL_EARNINGS);
+    const basisSum = cpfBasis.reduce((s, k) => {
+      if (customEarnings[k] != null) return s + (Number(customEarnings[k]) || 0);
+      return s + (basisAmounts[k] ?? 0);
+    }, 0);
+    cpfFromMaster = calculateCpfFromBasis(0, basisSum, cpfPct, totalEarnings);
   }
 
   const deductions: GovernmentDeductionDefaults = {
@@ -242,7 +298,7 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
     electricity: roundRupees(d.electricity),
     water: roundRupees(d.water),
     mess: roundRupees(d.mess),
-    horticulture: roundRupees(d.horticulture),
+    loanRecovery: roundRupees(d.loanRecovery),
     welfare: roundRupees(d.welfare),
     vehCharge: roundRupees(d.vehCharge),
     other: roundRupees(d.other),
@@ -262,10 +318,11 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
     deductions.electricity +
     deductions.water +
     deductions.mess +
-    deductions.horticulture +
+    deductions.loanRecovery +
     deductions.welfare +
     deductions.vehCharge +
-    deductions.other;
+    deductions.other +
+    customDeductionsTotal;
 
   const netSalary = roundRupees(totalEarnings - totalDeductions);
 
@@ -300,13 +357,15 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
     encashmentDaActual: encDaF,
     encashmentDaPaid: encDaF,
     deductions,
+    customEarnings,
+    customDeductions,
     totalEarnings,
     totalDeductions,
     netSalary,
   };
 }
 
-/** Reads monthly rupee defaults from payroll_master. CPF: when `cpf_default` is 0, `computeGovernmentMonthlyPayroll` applies 12% of total earnings. */
+/** Reads monthly rupee defaults from payroll_master. CPF: when `cpf_default` is 0, `computeGovernmentMonthlyPayroll` applies configured basis × percentage. */
 export function masterRowToDeductionDefaults(m: Record<string, unknown>): GovernmentDeductionDefaults {
   return {
     incomeTax: Number(m.income_tax_default ?? m.tds ?? 0) || 0,
@@ -315,16 +374,18 @@ export function masterRowToDeductionDefaults(m: Record<string, unknown>): Govern
     cpf: Number(m.cpf_default ?? 0) || 0,
     daCpf: Number(m.da_cpf_default ?? 0) || 0,
     vpf: Number(m.vpf_default ?? 0) || 0,
-    pfLoan: Number(m.pf_loan_default ?? 0) || 0,
+    pfLoan: 0,
     postOffice: Number(m.post_office_default ?? 0) || 0,
     creditSociety: Number(m.credit_society_default ?? 0) || 0,
-    stdLicenceFee: Number(m.std_licence_fee_default ?? 0) || 0,
+    stdLicenceFee: 0,
     electricity: Number(m.electricity_default ?? 0) || 0,
     water: Number(m.water_default ?? 0) || 0,
     mess: Number(m.mess_default ?? 0) || 0,
-    horticulture: Number(m.horticulture_default ?? 0) || 0,
+    loanRecovery:
+      Number(m.loanRecoveryDefault ?? m.loan_recovery_default ?? (m as { horticultureDefault?: number }).horticultureDefault ?? 0) ||
+      0,
     welfare: Number(m.welfare_default ?? 0) || 0,
-    vehCharge: Number(m.veh_charge_default ?? 0) || 0,
+    vehCharge: 0,
     other: Number(m.other_deduction_default ?? 0) || 0,
   };
 }

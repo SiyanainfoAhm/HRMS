@@ -16,11 +16,14 @@ import { computePayrollFromGross, defaultSalaryBreakup } from "@/lib/payrollCalc
 import {
   computeGovernmentMonthlyPayroll,
   deriveTransportSlabFromLevel,
+  governmentMonthlyExtras,
   GOVERNMENT_DEFAULT_CPF_RATE_ON_TOTAL_EARNINGS,
   type GovernmentDeductionDefaults,
   type GovernmentEarningPaidOverrides,
+  type GovernmentMonthlyComputed,
   type GovernmentOptionalMonthlyEarnings,
 } from "@/lib/governmentPayroll";
+import type { PayrollConfig, PayrollFieldDefinition } from "@/lib/payrollFieldTypes";
 import { applyAutoArrearsToGovernmentMonthly } from "@/lib/payrollArrearCalc";
 import {
   GovernmentRunPreviewTable,
@@ -87,7 +90,7 @@ type MasterGridRow = {
   stdLicenceFeeDefault: number;
   electricityDefault: number;
   waterDefault: number;
-  horticultureDefault: number;
+  loanRecoveryDefault: number;
   vehChargeDefault: number;
   otherDeductionDefault: number;
   govTotalEarnings: number;
@@ -143,16 +146,13 @@ const GOV_RUN_EDITABLE_DEDUCTION_KEYS: (keyof GovernmentDeductionDefaults)[] = [
   "cpf",
   "daCpf",
   "vpf",
-  "pfLoan",
   "postOffice",
   "creditSociety",
-  "stdLicenceFee",
   "electricity",
   "water",
   "mess",
-  "horticulture",
+  "loanRecovery",
   "welfare",
-  "vehCharge",
   "other",
 ];
 
@@ -178,14 +178,11 @@ const MASTER_GOVT_DEDUCTION_DEFAULT_COLUMNS: { field: keyof MasterGridRow; label
   { field: "messDefault", label: "Mess" },
   { field: "welfareDefault", label: "Welf." },
   { field: "vpfDefault", label: "VPF" },
-  { field: "pfLoanDefault", label: "PF loan" },
   { field: "postOfficeDefault", label: "P.O." },
   { field: "creditSocietyDefault", label: "Cr. soc." },
-  { field: "stdLicenceFeeDefault", label: "Std lic." },
   { field: "electricityDefault", label: "Elec." },
   { field: "waterDefault", label: "Water" },
-  { field: "horticultureDefault", label: "Hort." },
-  { field: "vehChargeDefault", label: "Veh." },
+  { field: "loanRecoveryDefault", label: "Bank Rec." },
   { field: "otherDeductionDefault", label: "Oth." },
 ];
 
@@ -196,9 +193,33 @@ type GovRecalcPayload = {
   medicalFixed: number;
   payLevel: number;
   deductionDefaults: GovernmentDeductionDefaults;
-  /** Run-preview overrides for paid earning lines (optional). */
   earningPaidOverrides?: GovernmentEarningPaidOverrides;
+  customEarnings?: Record<string, number>;
+  customDeductions?: Record<string, number>;
+  cpfConfig?: { cpfPercentage: number; cpfBasisFieldKeys: string[] };
 };
+
+type GovMonthlyWithArrear = ReturnType<
+  typeof applyAutoArrearsToGovernmentMonthly<GovernmentMonthlyComputed>
+>;
+
+function arrearSnapshotFromRow(row: {
+  daArrear?: number;
+  transportArrear?: number;
+  grossArrear?: number;
+  cpfArrear?: number;
+  netArrear?: number;
+  governmentMonthly?: GovernmentPreviewMonthly | GovMonthlyWithArrear | null | unknown;
+}) {
+  const g = row.governmentMonthly as GovernmentPreviewMonthly | GovMonthlyWithArrear | null | undefined;
+  return {
+    daArrear: Math.round(Number(row.daArrear ?? g?.daArrearsPaid ?? 0) || 0),
+    transportArrear: Math.round(Number(row.transportArrear ?? g?.transportArrearsPaid ?? 0) || 0),
+    grossArrear: Math.round(Number(row.grossArrear ?? g?.grossArrear ?? 0) || 0),
+    cpfArrear: Math.round(Number(row.cpfArrear ?? g?.cpfArrear ?? 0) || 0),
+    netArrear: Math.round(Number(row.netArrear ?? g?.netArrear ?? 0) || 0),
+  };
+}
 
 function govDeductionDefaultsFromMasterRow(row: MasterGridRow): GovernmentDeductionDefaults {
   return {
@@ -215,7 +236,7 @@ function govDeductionDefaultsFromMasterRow(row: MasterGridRow): GovernmentDeduct
     electricity: row.electricityDefault,
     water: row.waterDefault,
     mess: row.messDefault,
-    horticulture: row.horticultureDefault,
+    loanRecovery: row.loanRecoveryDefault,
     welfare: row.welfareDefault,
     vehCharge: row.vehChargeDefault,
     other: row.otherDeductionDefault,
@@ -245,7 +266,7 @@ function computeGovernmentMasterDerived(row: MasterGridRow): Partial<MasterGridR
     });
     const takeHome = Math.max(0, comp.netSalary + row.advanceBonus);
     const cpfLikeRunPayroll =
-      comp.deductions.cpf + comp.deductions.daCpf + comp.deductions.vpf + comp.deductions.pfLoan;
+      comp.deductions.cpf + comp.deductions.daCpf + comp.deductions.vpf;
     return {
       ctc: row.gross,
       takeHome,
@@ -364,7 +385,7 @@ function emptyGovFields(): Pick<
   | "stdLicenceFeeDefault"
   | "electricityDefault"
   | "waterDefault"
-  | "horticultureDefault"
+  | "loanRecoveryDefault"
   | "vehChargeDefault"
   | "otherDeductionDefault"
   | "govTotalEarnings"
@@ -389,7 +410,7 @@ function emptyGovFields(): Pick<
     stdLicenceFeeDefault: 0,
     electricityDefault: 0,
     waterDefault: 0,
-    horticultureDefault: 0,
+    loanRecoveryDefault: 0,
     vehChargeDefault: 0,
     otherDeductionDefault: 0,
     govTotalEarnings: 0,
@@ -468,7 +489,7 @@ function buildMasterGridRow(apiRow: any, companyPt: number): MasterGridRow | nul
     const stdLicenceFeeDefault = Number(m.stdLicenceFeeDefault) || 0;
     const electricityDefault = Number(m.electricityDefault) || 0;
     const waterDefault = Number(m.waterDefault) || 0;
-    const horticultureDefault = Number(m.horticultureDefault) || 0;
+    const loanRecoveryDefault = Number(m.loanRecoveryDefault) || 0;
     const vehChargeDefault = Number(m.vehChargeDefault) || 0;
     const otherDeductionDefault = Number(m.otherDeductionDefault) || 0;
     const base: MasterGridRow = {
@@ -500,7 +521,7 @@ function buildMasterGridRow(apiRow: any, companyPt: number): MasterGridRow | nul
       stdLicenceFeeDefault,
       electricityDefault,
       waterDefault,
-      horticultureDefault,
+      loanRecoveryDefault,
       vehChargeDefault,
       otherDeductionDefault,
       lta: 0,
@@ -698,6 +719,7 @@ function PayrollPageContent() {
     }[];
   } | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [payrollConfig, setPayrollConfig] = useState<PayrollConfig | null>(null);
   const [pastPeriods, setPastPeriods] = useState<{ id: string; periodName: string; periodStart: string; periodEnd: string; excelFilePath: string | null }[]>([]);
   const [pastPeriodsLoading, setPastPeriodsLoading] = useState(false);
   const [editableRows, setEditableRows] = useState<
@@ -733,8 +755,27 @@ function PayrollPageContent() {
       payslipPending?: boolean;
       arrearLineIds?: string[];
       arrearLines?: Array<{ id?: string }>;
+      daArrear?: number;
+      transportArrear?: number;
+      grossArrear?: number;
+      cpfArrear?: number;
+      netArrear?: number;
     }[]
   >([]);
+
+  const runPayrollCustomEarningFields = useMemo((): PayrollFieldDefinition[] => {
+    const fields = payrollConfig?.fields ?? [];
+    return fields
+      .filter((f) => f.isActive && !f.isSystem && f.showInRunPayroll && f.fieldGroup === "earnings")
+      .sort((a, b) => a.displayOrder - b.displayOrder);
+  }, [payrollConfig?.fields]);
+
+  const runPayrollCustomDeductionFields = useMemo((): PayrollFieldDefinition[] => {
+    const fields = payrollConfig?.fields ?? [];
+    return fields
+      .filter((f) => f.isActive && !f.isSystem && f.showInRunPayroll && f.fieldGroup === "deductions")
+      .sort((a, b) => a.displayOrder - b.displayOrder);
+  }, [payrollConfig?.fields]);
 
   const previewHasGovernment = useMemo(
     () => !!(preview?.rows?.length && preview.rows.some((r: any) => r.payrollMode === "government")),
@@ -889,6 +930,7 @@ function PayrollPageContent() {
               unpaidDays,
               deductionDefaults: gr.deductionDefaults,
               earningPaidOverrides: gr.earningPaidOverrides,
+              ...governmentMonthlyExtras(gr, payrollConfig),
               }),
               {
                 daArrear: r.daArrear,
@@ -912,7 +954,7 @@ function PayrollPageContent() {
             base.tds = comp.deductions.incomeTax;
             base.profTax = comp.deductions.pt;
             base.pfEmployee = Math.round(
-              comp.deductions.cpf + comp.deductions.daCpf + comp.deductions.vpf + comp.deductions.pfLoan
+              comp.deductions.cpf + comp.deductions.daCpf + comp.deductions.vpf
             );
             base.takeHome = Math.round(comp.netSalary) +
               Math.round(Number(r.incentive) || 0) +
@@ -925,7 +967,7 @@ function PayrollPageContent() {
     } else {
       setEditableRows([]);
     }
-  }, [preview?.rows, preview?.daysInMonth, preview?.workingDaysInFullMonth]);
+  }, [preview?.rows, preview?.daysInMonth, preview?.workingDaysInFullMonth, payrollConfig]);
 
   useEffect(() => {
     if (tab !== "slips" || !canManage) return;
@@ -1041,54 +1083,59 @@ function PayrollPageContent() {
           const dim = Math.max(1, Math.floor(Number(payDenom) || 30));
           const gr0 = row.govRecalc;
 
-          const applyGovCompute = (gr: GovRecalcPayload, payDaysVal: number) => {
+          const applyGovCompute = (
+            gr: GovRecalcPayload,
+            payDaysVal: number,
+            arrearOverride?: ReturnType<typeof arrearSnapshotFromRow>,
+          ) => {
             const capped = Math.max(0, Math.min(govPayDaysMax, payDaysVal));
             const unpaidDays = Math.max(0, dim - capped);
             const gm = row.governmentMonthly as Record<string, unknown> | null | undefined;
             const optionalEarnings = govOptionalFromComputedMonthly(gm);
             const comp = applyAutoArrearsToGovernmentMonthly(
               computeGovernmentMonthlyPayroll({
-              grossBasic: gr.grossBasic,
-              daPercent: gr.daPercent,
-              hraPercent: gr.hraPercent,
-              medicalFixed: gr.medicalFixed,
-              payLevel: gr.payLevel,
-              daysInMonth: dim,
-              unpaidDays,
-              deductionDefaults: gr.deductionDefaults,
-              optionalEarnings,
-              earningPaidOverrides: gr.earningPaidOverrides,
+                grossBasic: gr.grossBasic,
+                daPercent: gr.daPercent,
+                hraPercent: gr.hraPercent,
+                medicalFixed: gr.medicalFixed,
+                payLevel: gr.payLevel,
+                daysInMonth: dim,
+                unpaidDays,
+                deductionDefaults: gr.deductionDefaults,
+                optionalEarnings,
+                earningPaidOverrides: gr.earningPaidOverrides,
+                ...governmentMonthlyExtras(gr, payrollConfig),
               }),
-              {
-                daArrear: (row as { daArrear?: number }).daArrear,
-                transportArrear: (row as { transportArrear?: number }).transportArrear,
-                cpfArrear: (row as { cpfArrear?: number }).cpfArrear,
-                grossArrear: (row as { grossArrear?: number }).grossArrear,
-                netArrear: (row as { netArrear?: number }).netArrear,
-              },
+              arrearOverride ?? arrearSnapshotFromRow(row),
             );
             return { comp, capped, unpaidDays };
           };
 
           const rowFromGovCompute = (
-            comp: ReturnType<typeof computeGovernmentMonthlyPayroll>,
+            comp: GovMonthlyWithArrear,
             capped: number,
             unpaidDays: number,
             gr: GovRecalcPayload,
             incentiveBase: typeof row,
+            arrear?: ReturnType<typeof arrearSnapshotFromRow>,
           ) => ({
             ...row,
             govRecalc: gr,
             payDays: capped,
             unpaidLeaveDays: unpaidDays,
             governmentMonthly: comp,
+            daArrear: arrear?.daArrear ?? comp.daArrearsPaid,
+            transportArrear: arrear?.transportArrear ?? comp.transportArrearsPaid,
+            grossArrear: arrear?.grossArrear ?? comp.grossArrear,
+            cpfArrear: arrear?.cpfArrear ?? comp.cpfArrear,
+            netArrear: arrear?.netArrear ?? comp.netArrear,
             grossPay: comp.totalEarnings,
             deductions: comp.totalDeductions,
             netPay: comp.netSalary,
             tds: comp.deductions.incomeTax,
             profTax: comp.deductions.pt,
             pfEmployee: Math.round(
-              comp.deductions.cpf + comp.deductions.daCpf + comp.deductions.vpf + comp.deductions.pfLoan,
+              comp.deductions.cpf + comp.deductions.daCpf + comp.deductions.vpf,
             ),
             pfEmployer: 0,
             esicEmployee: 0,
@@ -1099,6 +1146,50 @@ function PayrollPageContent() {
               Math.round(Number(incentiveBase.prBonus) || 0) +
               Math.round(Number(incentiveBase.reimbursement) || 0),
           });
+
+          const ARREAR_FIELDS = ["daArrear", "transportArrear", "grossArrear", "cpfArrear", "netArrear"] as const;
+
+          if (field.startsWith("govCustomDeduction_")) {
+            const key = field.slice("govCustomDeduction_".length);
+            const customDeductions = {
+              ...(gr0.customDeductions ?? {}),
+              [key]: Math.max(0, Math.round(Number(value) || 0)),
+            };
+            const grNext: GovRecalcPayload = { ...gr0, customDeductions };
+            const { comp, capped, unpaidDays } = applyGovCompute(grNext, row.payDays);
+            return rowFromGovCompute(comp, capped, unpaidDays, grNext, row) as typeof row;
+          }
+
+          if (field.startsWith("govCustom_")) {
+            const key = field.slice("govCustom_".length);
+            const customEarnings = { ...(gr0.customEarnings ?? {}), [key]: Math.max(0, Math.round(Number(value) || 0)) };
+            const grNext: GovRecalcPayload = { ...gr0, customEarnings };
+            const { comp, capped, unpaidDays } = applyGovCompute(grNext, row.payDays);
+            return rowFromGovCompute(comp, capped, unpaidDays, grNext, row) as typeof row;
+          }
+
+          if (ARREAR_FIELDS.includes(field as (typeof ARREAR_FIELDS)[number])) {
+            const current = arrearSnapshotFromRow(row);
+            const nextArrear = { ...current, [field]: Math.max(0, Math.round(Number(value) || 0)) };
+            if (field === "daArrear" || field === "transportArrear") {
+              if (!row.grossArrear || row.grossArrear === current.grossArrear) {
+                nextArrear.grossArrear = nextArrear.daArrear + nextArrear.transportArrear;
+              }
+            }
+            if (field === "grossArrear" || field === "cpfArrear") {
+              if (!row.netArrear || row.netArrear === current.netArrear) {
+                nextArrear.netArrear = Math.max(0, nextArrear.grossArrear - nextArrear.cpfArrear);
+              }
+            }
+            const eo: GovernmentEarningPaidOverrides = {
+              ...(gr0.earningPaidOverrides ?? {}),
+              daArrearsPaid: nextArrear.daArrear,
+              transportArrearsPaid: nextArrear.transportArrear,
+            };
+            const grNext: GovRecalcPayload = { ...gr0, earningPaidOverrides: eo };
+            const { comp, capped, unpaidDays } = applyGovCompute(grNext, row.payDays, nextArrear);
+            return rowFromGovCompute(comp, capped, unpaidDays, grNext, row, nextArrear) as typeof row;
+          }
 
           if (field.startsWith("govDeduction_")) {
             const sub = field.slice("govDeduction_".length) as keyof GovernmentDeductionDefaults;
@@ -1131,8 +1222,13 @@ function PayrollPageContent() {
           };
           if (field === "payDays") {
             const { comp, capped, unpaidDays } = applyGovCompute(gr0, value);
-            Object.assign(next, rowFromGovCompute(comp, capped, unpaidDays, gr0, next));
-            return next;
+            return rowFromGovCompute(comp, capped, unpaidDays, gr0, next, arrearSnapshotFromRow(row)) as typeof row;
+          }
+          if (field === "unpaidLeaveDays") {
+            const unpaid = Math.max(0, Math.min(dim, Math.round(Number(value) || 0)));
+            const capped = Math.max(0, dim - unpaid);
+            const { comp, capped: c, unpaidDays } = applyGovCompute(gr0, capped);
+            return rowFromGovCompute(comp, c, unpaidDays, gr0, next, arrearSnapshotFromRow(row)) as typeof row;
           }
           if (["incentive", "prBonus", "reimbursement", "tds"].includes(field)) {
             recalcGovTakeHome();
@@ -1320,8 +1416,14 @@ function PayrollPageContent() {
           `/api/payroll/run?year=${runYear}&month=${runMonth}&runDay=${runDay}`
         );
         const data = await res.json();
-        if (!cancelled && res.ok) setPreview(data.preview ?? null);
-        else if (!cancelled) setPreview(null);
+        if (!cancelled && res.ok) {
+          setPreview(data.preview ?? null);
+          setPayrollConfig(data.payrollConfig ?? null);
+        }
+        else if (!cancelled) {
+          setPreview(null);
+          setPayrollConfig(null);
+        }
       } catch {
         if (!cancelled) setPreview(null);
       } finally {
@@ -1390,7 +1492,7 @@ function PayrollPageContent() {
             electricity: 0,
             water: 0,
             mess: 0,
-            horticulture: 0,
+            loanRecovery: 0,
             welfare: 0,
             vehCharge: 0,
             other: 0,
@@ -1398,7 +1500,7 @@ function PayrollPageContent() {
         });
         const slab = deriveTransportSlabFromLevel(editGovLevel);
         const statutoryCpf =
-          comp.deductions.cpf + comp.deductions.daCpf + comp.deductions.vpf + comp.deductions.pfLoan;
+          comp.deductions.cpf + comp.deductions.daCpf + comp.deductions.vpf;
         return {
           takeHome: comp.netSalary + adv,
           netSalary: comp.netSalary,
@@ -1612,7 +1714,7 @@ function PayrollPageContent() {
             stdLicenceFeeDefault: row.stdLicenceFeeDefault,
             electricityDefault: row.electricityDefault,
             waterDefault: row.waterDefault,
-            horticultureDefault: row.horticultureDefault,
+            loanRecoveryDefault: row.loanRecoveryDefault,
             vehChargeDefault: row.vehChargeDefault,
             otherDeductionDefault: row.otherDeductionDefault,
           }),
@@ -1893,7 +1995,10 @@ function PayrollPageContent() {
         `/api/payroll/run?year=${runYear}&month=${runMonth}&runDay=${runDay}`
       );
       const refreshData = await refreshRes.json();
-      if (refreshRes.ok && refreshData.preview) setPreview(refreshData.preview);
+      if (refreshRes.ok && refreshData.preview) {
+        setPreview(refreshData.preview);
+        setPayrollConfig(refreshData.payrollConfig ?? null);
+      }
     } catch (e: any) {
       setRunError(e?.message || "Failed to run payroll");
       showToast("error", e?.message || "Failed to run payroll");
@@ -1971,6 +2076,8 @@ function PayrollPageContent() {
                       preview.effectiveRunDay ?? preview.workingDaysThroughRunDay ?? preview.daysInMonth
                     }
                       readOnly={!!preview?.alreadyRun}
+                      customEarningFields={runPayrollCustomEarningFields}
+                      customDeductionFields={runPayrollCustomDeductionFields}
                       onUpdate={updateEditableRow}
                     />
                 ) : preview?.daysInMonth ? (

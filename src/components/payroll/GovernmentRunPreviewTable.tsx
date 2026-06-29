@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import type { PayrollFieldDefinition } from "@/lib/payrollFieldTypes";
 import { cn } from "@/lib/cn";
 import { PayrollComponentScroller, type PayrollScrollerHandle } from "./PayrollComponentScroller";
 import { PayrollEmployeeCardHeader } from "./PayrollEmployeeCardHeader";
@@ -11,6 +12,7 @@ import {
   PayrollSectionRow,
   d,
   fmtIn,
+  customFieldAmount,
   inpWide,
   payrollDaysInputClass,
   v,
@@ -32,6 +34,8 @@ export type GovernmentPreviewMonthly = {
   transportArrearsPaid: number;
   encashmentPaid: number;
   encashmentDaPaid: number;
+  customEarnings?: Record<string, number>;
+  customDeductions?: Record<string, number>;
   totalEarnings: number;
   totalDeductions: number;
   netSalary: number;
@@ -52,7 +56,7 @@ export type GovernmentPreviewMonthly = {
     electricity: number;
     water: number;
     mess: number;
-    horticulture: number;
+    loanRecovery: number;
     welfare: number;
     vehCharge: number;
     other: number;
@@ -92,6 +96,10 @@ export type GovernmentRunPreviewRow = {
   grossArrear?: number;
   cpfArrear?: number;
   netArrear?: number;
+  govRecalc?: {
+    customEarnings?: Record<string, number>;
+    customDeductions?: Record<string, number>;
+  };
 };
 
 type Props = {
@@ -99,6 +107,8 @@ type Props = {
   daysInMonth: number;
   effectiveRunDay: number;
   readOnly: boolean;
+  customEarningFields?: PayrollFieldDefinition[];
+  customDeductionFields?: PayrollFieldDefinition[];
   onUpdate: (employeeUserId: string, field: string, value: number) => void;
 };
 
@@ -142,16 +152,45 @@ function resolveUnpaidArrears(row: GovernmentRunPreviewRow) {
   };
 }
 
-function ArrearField({ label, value }: { label: string; value: number }) {
+function ArrearField({
+  label,
+  value,
+  readOnly,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  readOnly: boolean;
+  onChange?: (n: number) => void;
+}) {
   return (
     <div className="flex min-w-[4.5rem] flex-1 flex-col items-center gap-0.5">
       <span className="text-center text-[9px] font-medium uppercase tracking-wide text-slate-600">{label}</span>
-      <span className="text-center text-[13px] tabular-nums text-slate-900">{fmtIn(value)}</span>
+      {readOnly || !onChange ? (
+        <span className="text-center text-[13px] tabular-nums text-slate-900">{fmtIn(value)}</span>
+      ) : (
+        <input
+          type="number"
+          min={0}
+          step={1}
+          value={value}
+          onChange={(e) => onChange(parseInt(e.target.value, 10) || 0)}
+          className={inpWide}
+        />
+      )}
     </div>
   );
 }
 
-function ArrearsUnpaidSection({ row, readOnly }: { row: GovernmentRunPreviewRow; readOnly: boolean }) {
+function ArrearsUnpaidSection({
+  row,
+  readOnly,
+  onUpdate,
+}: {
+  row: GovernmentRunPreviewRow;
+  readOnly: boolean;
+  onUpdate: Props["onUpdate"];
+}) {
   const arrears = resolveUnpaidArrears(row);
   const title = readOnly ? "ARREARS (INCLUDED)" : "ARREARS (UNPAID)";
 
@@ -159,11 +198,36 @@ function ArrearsUnpaidSection({ row, readOnly }: { row: GovernmentRunPreviewRow;
     <section className="w-full shrink-0 border-t border-slate-100 pt-2.5" aria-label={title}>
       <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-violet-900">{title}</p>
       <div className="flex flex-wrap gap-1.5 rounded-lg border border-slate-200/90 bg-white/90 p-1.5 sm:flex-nowrap">
-        <ArrearField label="DA arr." value={arrears.daArrear} />
-        <ArrearField label="Tr. arr." value={arrears.trArrear} />
-        <ArrearField label="Gross arr." value={arrears.grossArrear} />
-        <ArrearField label="CPF arr." value={arrears.cpfArrear} />
-        <ArrearField label="Net arr." value={arrears.netArrear} />
+        <ArrearField
+          label="DA arr."
+          value={arrears.daArrear}
+          readOnly={readOnly}
+          onChange={(n) => onUpdate(row.employeeUserId, "daArrear", n)}
+        />
+        <ArrearField
+          label="Tr. arr."
+          value={arrears.trArrear}
+          readOnly={readOnly}
+          onChange={(n) => onUpdate(row.employeeUserId, "transportArrear", n)}
+        />
+        <ArrearField
+          label="Gross arr."
+          value={arrears.grossArrear}
+          readOnly={readOnly}
+          onChange={(n) => onUpdate(row.employeeUserId, "grossArrear", n)}
+        />
+        <ArrearField
+          label="CPF arr."
+          value={arrears.cpfArrear}
+          readOnly={readOnly}
+          onChange={(n) => onUpdate(row.employeeUserId, "cpfArrear", n)}
+        />
+        <ArrearField
+          label="Net arr."
+          value={arrears.netArrear}
+          readOnly={readOnly}
+          onChange={(n) => onUpdate(row.employeeUserId, "netArrear", n)}
+        />
       </div>
     </section>
   );
@@ -174,12 +238,16 @@ function GovernmentEmployeeDetail({
   daysInMonth,
   effectiveRunDay,
   readOnly,
+  customEarningFields,
+  customDeductionFields,
   onUpdate,
 }: {
   row: GovernmentRunPreviewRow;
   daysInMonth: number;
   effectiveRunDay: number;
   readOnly: boolean;
+  customEarningFields: PayrollFieldDefinition[];
+  customDeductionFields: PayrollFieldDefinition[];
   onUpdate: Props["onUpdate"];
 }) {
   const scrollerRef = useRef<PayrollScrollerHandle>(null);
@@ -232,6 +300,23 @@ function GovernmentEmployeeDetail({
                 )}
               </div>
               <div>
+                <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Leave</p>
+                {readOnly ? (
+                  <p className="text-[13px] tabular-nums text-slate-800">{row.unpaidLeaveDays}</p>
+                ) : (
+                  <input
+                    type="number"
+                    min={0}
+                    max={daysInMonth}
+                    value={row.unpaidLeaveDays}
+                    onChange={(e) =>
+                      onUpdate(row.employeeUserId, "unpaidLeaveDays", parseInt(e.target.value, 10) || 0)
+                    }
+                    className={payrollDaysInputClass}
+                  />
+                )}
+              </div>
+              <div>
                 <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Advance</p>
                 {readOnly ? (
                   <p className="text-[13px] tabular-nums">{fmtIn(row.incentive ?? 0)}</p>
@@ -241,6 +326,52 @@ function GovernmentEmployeeDetail({
                     min={0}
                     value={row.incentive ?? 0}
                     onChange={(e) => onUpdate(row.employeeUserId, "incentive", parseInt(e.target.value, 10) || 0)}
+                    className={inpWide}
+                  />
+                )}
+              </div>
+              <div>
+                <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">PR Bonus</p>
+                {readOnly ? (
+                  <p className="text-[13px] tabular-nums">{fmtIn(row.prBonus ?? 0)}</p>
+                ) : (
+                  <input
+                    type="number"
+                    min={0}
+                    value={row.prBonus ?? 0}
+                    onChange={(e) => onUpdate(row.employeeUserId, "prBonus", parseInt(e.target.value, 10) || 0)}
+                    className={inpWide}
+                  />
+                )}
+              </div>
+              <div>
+                <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">EOL (Enc.)</p>
+                {readOnly ? (
+                  <p className="text-[13px] tabular-nums">{fmtIn(v(g, "encashmentPaid"))}</p>
+                ) : (
+                  <input
+                    type="number"
+                    min={0}
+                    value={v(g, "encashmentPaid")}
+                    onChange={(e) =>
+                      onUpdate(row.employeeUserId, "govEarning_encashmentPaid", parseInt(e.target.value, 10) || 0)
+                    }
+                    className={inpWide}
+                  />
+                )}
+              </div>
+              <div>
+                <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">EOL DA</p>
+                {readOnly ? (
+                  <p className="text-[13px] tabular-nums">{fmtIn(v(g, "encashmentDaPaid"))}</p>
+                ) : (
+                  <input
+                    type="number"
+                    min={0}
+                    value={v(g, "encashmentDaPaid")}
+                    onChange={(e) =>
+                      onUpdate(row.employeeUserId, "govEarning_encashmentDaPaid", parseInt(e.target.value, 10) || 0)
+                    }
                     className={inpWide}
                   />
                 )}
@@ -284,6 +415,15 @@ function GovernmentEmployeeDetail({
                       onChange={(n) => onUpdate(row.employeeUserId, `govEarning_${key}`, n)}
                     />
                   ))}
+                  {customEarningFields.map((f) => (
+                    <FieldChip
+                      key={f.id}
+                      label={f.fieldLabel}
+                      readOnly={readOnly}
+                      value={customFieldAmount(g, row.govRecalc, f.fieldKey, "earnings")}
+                      onChange={(n) => onUpdate(row.employeeUserId, `govCustom_${f.fieldKey}`, n)}
+                    />
+                  ))}
                 </PayrollSectionRow>
                 <PayrollSectionRow title="Deductions" titleClassName="text-rose-900">
                   {GOV_PREVIEW_DEDUCTION_FIELDS.map(({ key, label }) => (
@@ -295,10 +435,19 @@ function GovernmentEmployeeDetail({
                       onChange={(n) => onUpdate(row.employeeUserId, `govDeduction_${key}`, n)}
                     />
                   ))}
+                  {customDeductionFields.map((f) => (
+                    <FieldChip
+                      key={f.id}
+                      label={f.fieldLabel}
+                      readOnly={readOnly}
+                      value={customFieldAmount(g, row.govRecalc, f.fieldKey, "deductions")}
+                      onChange={(n) => onUpdate(row.employeeUserId, `govCustomDeduction_${f.fieldKey}`, n)}
+                    />
+                  ))}
                 </PayrollSectionRow>
               </div>
             </PayrollComponentScroller>
-            <ArrearsUnpaidSection row={row} readOnly={readOnly} />
+            <ArrearsUnpaidSection row={row} readOnly={readOnly} onUpdate={onUpdate} />
           </div>
         </div>
       </div>
@@ -306,7 +455,15 @@ function GovernmentEmployeeDetail({
   );
 }
 
-export function GovernmentRunPreviewTable({ rows, daysInMonth, effectiveRunDay, readOnly, onUpdate }: Props) {
+export function GovernmentRunPreviewTable({
+  rows,
+  daysInMonth,
+  effectiveRunDay,
+  readOnly,
+  customEarningFields = [],
+  customDeductionFields = [],
+  onUpdate,
+}: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -369,6 +526,8 @@ export function GovernmentRunPreviewTable({ rows, daysInMonth, effectiveRunDay, 
               daysInMonth={daysInMonth}
               effectiveRunDay={effectiveRunDay}
               readOnly={readOnly}
+              customEarningFields={customEarningFields}
+              customDeductionFields={customDeductionFields}
               onUpdate={onUpdate}
             />
           ) : (

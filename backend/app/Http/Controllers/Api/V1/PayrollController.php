@@ -12,6 +12,7 @@ use App\Models\HrmsUser;
 use App\Support\BankDetailsService;
 use App\Support\BankDetailsValidator;
 use App\Services\PayrollArrearService;
+use App\Services\PayrollFieldService;
 use App\Services\PayrollMasterService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -22,6 +23,7 @@ class PayrollController extends Controller
     public function __construct(
         private readonly PayrollArrearService $arrearService,
         private readonly PayrollMasterService $masterService,
+        private readonly PayrollFieldService $fieldService,
     ) {}
 
     public function periods(Request $request): JsonResponse
@@ -170,7 +172,7 @@ class PayrollController extends Controller
                         'electricityDefault' => $m->electricity_default,
                         'waterDefault' => $m->water_default,
                         'messDefault' => $m->mess_default,
-                        'horticultureDefault' => $m->horticulture_default,
+                        'loanRecoveryDefault' => $m->loan_recovery_default,
                         'welfareDefault' => $m->welfare_default,
                         'vehChargeDefault' => $m->veh_charge_default,
                         'otherDeductionDefault' => $m->other_deduction_default,
@@ -436,12 +438,22 @@ class PayrollController extends Controller
                         'electricity' => (float) ($m->electricity_default ?? 0),
                         'water' => (float) ($m->water_default ?? 0),
                         'mess' => (float) ($m->mess_default ?? 0),
-                        'horticulture' => (float) ($m->horticulture_default ?? 0),
+                        'loanRecovery' => (float) ($m->loan_recovery_default ?? 0),
                         'welfare' => (float) ($m->welfare_default ?? 0),
                         'vehCharge' => (float) ($m->veh_charge_default ?? 0),
                         'other' => (float) ($m->other_deduction_default ?? 0),
                     ],
                 ];
+                $customValues = $this->fieldService->getCustomFieldValuesForMaster((string) $user->company_id, $m->id);
+                $row['govRecalc']['customEarnings'] = $this->fieldService->customEarningsFromValues((string) $user->company_id, $customValues);
+                $row['govRecalc']['customDeductions'] = $this->fieldService->customDeductionsFromValues((string) $user->company_id, $customValues);
+                $cpfResolved = $this->fieldService->resolveCpfConfigForMaster((string) $user->company_id, $m);
+                $row['govRecalc']['cpfConfig'] = [
+                    'cpfPercentage' => $cpfResolved['cpf_percentage'],
+                    'cpfBasisFieldKeys' => $cpfResolved['cpf_basis_field_keys'],
+                    'source' => $cpfResolved['source'],
+                ];
+                $row['customFieldValues'] = $customValues;
                 $row['grossPay'] = 0;
                 $row['netPay'] = 0;
                 $row['pfEmployee'] = 0;
@@ -491,6 +503,8 @@ class PayrollController extends Controller
             'effectiveRunDay' => $effectiveRunDay,
         ];
 
+        $payrollConfig = $this->fieldService->getPayrollConfig((string) $user->company_id);
+
         if (! $existingPeriod || ! HrmsPayslip::where('payroll_period_id', $existingPeriod->id)->exists()) {
             $arrearEnriched = $this->enrichPreviewWithArrears(
                 $employees,
@@ -511,6 +525,7 @@ class PayrollController extends Controller
                     'arrearWarnings' => $arrearEnriched['warnings'],
                     'arrearPeriods' => $arrearEnriched['arrearPeriods'] ?? [],
                 ]),
+                'payrollConfig' => $payrollConfig,
             ]);
         }
 
@@ -1055,7 +1070,7 @@ class PayrollController extends Controller
                 'electricity' => $num($gov->electricity_amount),
                 'water' => $num($gov->water_amount),
                 'mess' => $num($gov->mess_amount),
-                'horticulture' => $num($gov->horticulture_amount),
+                'loanRecovery' => $num($gov->loan_recovery_amount),
                 'welfare' => $num($gov->welfare_amount),
                 'vehCharge' => $num($gov->veh_charge_amount),
                 'other' => $num($gov->other_deduction_amount),
@@ -1157,7 +1172,7 @@ class PayrollController extends Controller
             'electricity_amount' => $num($ded['electricity'] ?? 0),
             'water_amount' => $num($ded['water'] ?? 0),
             'mess_amount' => $num($ded['mess'] ?? 0),
-            'horticulture_amount' => $num($ded['horticulture'] ?? 0),
+            'loan_recovery_amount' => $num($ded['loanRecovery'] ?? $ded['loan_recovery'] ?? $ded['horticulture'] ?? 0),
             'welfare_amount' => $num($ded['welfare'] ?? 0),
             'veh_charge_amount' => $num($ded['vehCharge'] ?? $ded['veh_charge'] ?? 0),
             'other_deduction_amount' => $num($ded['other'] ?? 0),
@@ -1168,6 +1183,8 @@ class PayrollController extends Controller
             'cpf_arrear' => $num($gm['cpfArrear'] ?? $gm['cpf_arrear'] ?? ($gm['arrearDeductions']['cpfArrear'] ?? 0)),
             'net_arrear' => $num($gm['netArrear'] ?? $gm['net_arrear'] ?? 0),
             'arrear_batch_id' => $gm['arrearBatchId'] ?? $gm['arrear_batch_id'] ?? null,
+            'custom_earnings' => $gm['customEarnings'] ?? $gm['custom_earnings'] ?? null,
+            'custom_deductions' => $gm['customDeductions'] ?? $gm['custom_deductions'] ?? null,
         ]);
 
         return (string) $record->id;

@@ -2962,16 +2962,13 @@ export default function EmployeesPage() {
                               ["cpf_default", "CPF default (0 = auto)"],
                               ["da_cpf_default", "DA CPF"],
                               ["vpf_default", "VPF"],
-                              ["pf_loan_default", "PF loan"],
                               ["post_office_default", "Post office"],
                               ["credit_society_default", "Credit society"],
-                              ["std_licence_fee_default", "Std licence fee"],
                               ["electricity_default", "Electricity"],
                               ["water_default", "Water"],
                               ["mess_default", "Mess"],
-                              ["horticulture_default", "Horticulture"],
+                              ["loan_recovery_default", "Bank Recovery"],
                               ["welfare_default", "Welfare"],
-                              ["veh_charge_default", "Vehicle charge"],
                               ["other_deduction_default", "Other"],
                             ] as const
                           ).map(([key, label]) => (

@@ -19,6 +19,13 @@ function fmt(n: number | null | undefined) {
   return Math.round(n).toLocaleString("en-IN");
 }
 
+function earningAmount(basic: number | null | undefined, percent: number | string | null | undefined) {
+  const b = Number(basic ?? 0);
+  const p = Number(percent ?? 0);
+  if (!Number.isFinite(b) || !Number.isFinite(p)) return null;
+  return Math.round((b * p) / 100);
+}
+
 function statusTone(status: string | null | undefined): "success" | "neutral" | "warning" {
   if (status === "active") return "success";
   if (status === "inactive" || status === "resigned") return "neutral";
@@ -61,30 +68,30 @@ export function PayrollMasterDataGrid({ rows, canWrite, cpfRateLabel, onEdit, on
             <th className={dataTh}>Dept</th>
             <th className={dataTh}>Div</th>
             <th className={dataThNum}>Level</th>
+            <th className={dataTh}>Increment Month</th>
             <th className={dataThNum}>Gross Basic</th>
             <th className={dataThNum}>DA %</th>
+            <th className={dataThNum}>DA Amt</th>
             <th className={dataThNum}>HRA %</th>
+            <th className={dataThNum}>HRA Amt</th>
+            <th className={dataThNum}>Med</th>
+            <th className={dataThNum}>Transport</th>
             <th className={dataThNum}>Total Earn.</th>
             <th className={dataThNum}>CPF</th>
             <th className={dataThNum}>Take Home</th>
             <th className={dataTh}>Status</th>
-            <th className={`${dataThNum} border-l border-slate-200`}>Med</th>
-            <th className="px-2 py-1.5 text-right">Transport</th>
-            <th className="px-2 py-1.5 text-right">DA CPF</th>
+            <th className="px-2 py-1.5 text-right border-l border-slate-200">DA CPF</th>
             <th className="px-2 py-1.5 text-right">PT</th>
             <th className="px-2 py-1.5 text-right">Inc. Tax</th>
             <th className="px-2 py-1.5 text-right">LIC</th>
             <th className="px-2 py-1.5 text-right">Mess</th>
             <th className="px-2 py-1.5 text-right">Welfare</th>
             <th className="px-2 py-1.5 text-right">VPF</th>
-            <th className="px-2 py-1.5 text-right">PF Loan</th>
             <th className="px-2 py-1.5 text-right">P.O.</th>
             <th className="px-2 py-1.5 text-right">Credit</th>
-            <th className="px-2 py-1.5 text-right">Std Lic.</th>
             <th className="px-2 py-1.5 text-right">Elec.</th>
             <th className="px-2 py-1.5 text-right">Water</th>
-            <th className="px-2 py-1.5 text-right">Horti.</th>
-            <th className="px-2 py-1.5 text-right">Vehicle</th>
+            <th className="px-2 py-1.5 text-right">Bank Rec.</th>
             <th className="px-2 py-1.5 text-right">Other</th>
             <th className="px-2 py-1.5 text-right">Advance</th>
             <th className="px-2 py-1.5 text-left">Effective</th>
@@ -107,32 +114,36 @@ export function PayrollMasterDataGrid({ rows, canWrite, cpfRateLabel, onEdit, on
               <td className={dataTdLeft}>{row.department || "—"}</td>
               <td className={dataTdLeft}>{row.division || "—"}</td>
               <td className={dataTdNum}>{row.payLevel ?? "—"}</td>
+              <td className={dataTdLeft}>{row.incrementMonth ?? "—"}</td>
               <td className={dataTdNum}>{fmt(row.grossBasicPay)}</td>
               <td className={dataTdNum}>{row.daPercent ?? row.da_percent ?? "—"}</td>
+              <td className={dataTdNum}>
+                {fmt(row.daAmount ?? earningAmount(row.grossBasicPay, row.daPercent ?? row.da_percent))}
+              </td>
               <td className={dataTdNum}>{row.hraPercent ?? row.hra_percent ?? "—"}</td>
+              <td className={dataTdNum}>
+                {fmt(row.hraAmount ?? earningAmount(row.grossBasicPay, row.hraPercent ?? row.hra_percent))}
+              </td>
+              <td className={dataTdNum}>{fmt(row.medical)}</td>
+              <td className={dataTdNum}>{fmt(row.transportTotal)}</td>
               <td className={`${dataTdNum} font-medium`}>{fmt(row.totalEarnings)}</td>
               <td className={dataTdNum}>{fmt(row.cpfEffective ?? row.cpfDefault)}</td>
               <td className={`${dataTdNum} font-semibold text-slate-900`}>{fmt(row.takeHome)}</td>
               <td className={dataTdLeft}>
                 <Badge tone={statusTone(row.status)}>{row.status ?? "active"}</Badge>
               </td>
-              <td className={`${dataTdNum} border-l border-slate-100`}>{fmt(row.medical)}</td>
-              <td className={dataTdNum}>{fmt(row.transportTotal)}</td>
-              <td className={dataTdNum}>{fmt(row.daCpf)}</td>
+              <td className={`${dataTdNum} border-l border-slate-100`}>{fmt(row.daCpf)}</td>
               <td className={dataTdNum}>{fmt(row.professionalTax)}</td>
               <td className={dataTdNum}>{fmt(row.incomeTax)}</td>
               <td className={dataTdNum}>{fmt(row.lic)}</td>
               <td className={dataTdNum}>{fmt(row.mess)}</td>
               <td className={dataTdNum}>{fmt(row.welfare)}</td>
               <td className={dataTdNum}>{fmt(row.vpf)}</td>
-              <td className={dataTdNum}>{fmt(row.pfLoan)}</td>
               <td className={dataTdNum}>{fmt(row.postOffice)}</td>
               <td className={dataTdNum}>{fmt(row.creditSociety)}</td>
-              <td className={dataTdNum}>{fmt(row.standardLicenceFee)}</td>
               <td className={dataTdNum}>{fmt(row.electricity)}</td>
               <td className={dataTdNum}>{fmt(row.water)}</td>
-              <td className={dataTdNum}>{fmt(row.horticulture)}</td>
-              <td className={dataTdNum}>{fmt(row.vehicleCharge)}</td>
+              <td className={dataTdNum}>{fmt(row.loanRecovery)}</td>
               <td className={dataTdNum}>{fmt(row.otherDeduction)}</td>
               <td className={dataTdNum}>{fmt(row.advance)}</td>
               <td className={dataTdLeft}>{row.effectiveFrom?.slice(0, 10) ?? "—"}</td>

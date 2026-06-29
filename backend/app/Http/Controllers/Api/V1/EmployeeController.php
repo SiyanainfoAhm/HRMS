@@ -397,7 +397,7 @@ class EmployeeController extends Controller
             'electricity_default' => 0,
             'water_default' => 0,
             'mess_default' => 0,
-            'horticulture_default' => 0,
+            'loan_recovery_default' => 0,
             'welfare_default' => 0,
             'veh_charge_default' => 0,
             'other_deduction_default' => 0,

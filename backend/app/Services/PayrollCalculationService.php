@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Support\PayrollFieldRegistry;
+
 /**
  * Government payroll master calculations (aligned with src/lib/governmentPayroll.ts).
  */
@@ -46,13 +48,20 @@ final class PayrollCalculationService
      *   standard_licence_fee: float,
      *   electricity: float,
      *   water: float,
-     *   horticulture: float,
+     *   loan_recovery: float,
      *   vehicle_charge: float,
      *   other_deduction: float,
      *   advance: float,
      * }
      */
-    public function calculateMaster(array $input, ?float $defaultDaPercent = null, ?float $defaultHraPercent = null): array
+    public function calculateMaster(
+        array $input,
+        ?float $defaultDaPercent = null,
+        ?float $defaultHraPercent = null,
+        ?array $cpfConfig = null,
+        ?array $customEarnings = null,
+        ?array $customDeductions = null,
+    ): array
     {
         $payLevel = max(1, (int) ($input['pay_level'] ?? $input['payLevel'] ?? 1));
         $grossBasic = max(0, (float) ($input['gross_basic_pay'] ?? $input['gross_basic'] ?? $input['grossBasicPay'] ?? 0));
@@ -66,26 +75,58 @@ final class PayrollCalculationService
 
         $daAmount = $this->roundRupees($grossBasic * $daPercent / 100);
         $hraAmount = $this->roundRupees($grossBasic * $hraPercent / 100);
-        $totalEarnings = $this->roundRupees($grossBasic + $daAmount + $hraAmount + $medical + $transportTotal);
+
+        $daAmount = $this->optionalAmountOverride($input, ['da_amount', 'daAmount'], $daAmount);
+        $hraAmount = $this->optionalAmountOverride($input, ['hra_amount', 'hraAmount', 'hra'], $hraAmount);
+        $transportBase = $this->optionalAmountOverride($input, ['transport_base', 'transportBase'], $transportBase);
+        $transportDa = $this->optionalAmountOverride($input, ['transport_da', 'transportDa'], $transportDa);
+        $transportTotal = $this->optionalAmountOverride(
+            $input,
+            ['transport_total', 'transportTotal', 'trans'],
+            $this->roundRupees($transportBase + $transportDa),
+        );
+
+        $customEarnings = $customEarnings ?? [];
+        $customDeductions = $customDeductions ?? [];
+        $customEarningsTotal = $this->roundRupees(array_sum(array_map('floatval', $customEarnings)));
+        $totalEarnings = $this->optionalAmountOverride(
+            $input,
+            ['total_earnings', 'totalEarnings', 'ctc'],
+            $this->roundRupees($grossBasic + $daAmount + $hraAmount + $medical + $transportTotal + $customEarningsTotal),
+        );
 
         $deductions = $this->extractDeductions($input);
         $cpfDefault = (float) ($input['cpf_default'] ?? $input['cpfDefault'] ?? $deductions['cpf']);
+        $cpfPercentage = (float) ($cpfConfig['cpf_percentage'] ?? $cpfConfig['cpfPercentage'] ?? PayrollFieldRegistry::DEFAULT_CPF_PERCENTAGE);
+        $cpfBasisKeys = $cpfConfig['cpf_basis_field_keys'] ?? $cpfConfig['cpfBasisFieldKeys'] ?? PayrollFieldRegistry::DEFAULT_CPF_BASIS_KEYS;
+        $partialCalc = [
+            'gross_basic_pay' => $grossBasic,
+            'da_amount' => $daAmount,
+            'hra_amount' => $hraAmount,
+            'medical' => $medical,
+            'transport_total' => $transportTotal,
+        ];
         $cpfEffective = $cpfDefault > 0
             ? $this->roundRupees($cpfDefault)
-            : $this->roundRupees($totalEarnings * self::DEFAULT_CPF_RATE_ON_TOTAL_EARNINGS);
+            : $this->roundRupees(
+                PayrollFieldRegistry::resolveMasterCpfBasisAmount($partialCalc, $cpfBasisKeys, $customEarnings)
+                * ($cpfPercentage / 100),
+            );
 
         $daCpf = $this->roundRupees((float) ($input['da_cpf'] ?? $input['da_cpf_default'] ?? $input['daCpf'] ?? $deductions['da_cpf']));
         $professionalTax = $this->roundRupees($deductions['professional_tax']);
         $incomeTax = $this->roundRupees($deductions['income_tax']);
         $advance = $this->roundRupees($deductions['advance']);
 
+        $customDeductionsTotal = $this->roundRupees(array_sum(array_map('floatval', $customDeductions)));
+
         $totalDeductions = $this->roundRupees(
             $incomeTax + $professionalTax + $deductions['lic'] + $cpfEffective + $daCpf
             + $deductions['vpf'] + $deductions['pf_loan'] + $deductions['post_office']
             + $deductions['credit_society'] + $deductions['standard_licence_fee']
             + $deductions['electricity'] + $deductions['water'] + $deductions['mess']
-            + $deductions['horticulture'] + $deductions['welfare'] + $deductions['vehicle_charge']
-            + $deductions['other_deduction'] + $advance
+            + $deductions['loan_recovery'] + $deductions['welfare'] + $deductions['vehicle_charge']
+            + $deductions['other_deduction'] + $advance + $customDeductionsTotal
         );
 
         $takeHome = $this->roundRupees($totalEarnings - $totalDeductions);
@@ -121,10 +162,14 @@ final class PayrollCalculationService
             'standard_licence_fee' => $deductions['standard_licence_fee'],
             'electricity' => $deductions['electricity'],
             'water' => $deductions['water'],
-            'horticulture' => $deductions['horticulture'],
+            'loan_recovery' => $deductions['loan_recovery'],
             'vehicle_charge' => $deductions['vehicle_charge'],
             'other_deduction' => $deductions['other_deduction'],
             'advance' => $advance,
+            'custom_earnings' => $customEarnings,
+            'custom_deductions' => $customDeductions,
+            'custom_earnings_total' => $customEarningsTotal,
+            'custom_deductions_total' => $customDeductionsTotal,
         ];
     }
 
@@ -171,16 +216,16 @@ final class PayrollCalculationService
             'cpf' => $g(['cpf_default', 'cpfDefault'], 0),
             'da_cpf' => $g(['da_cpf', 'da_cpf_default', 'daCpf'], 0),
             'vpf' => $g(['vpf', 'vpf_default'], 0),
-            'pf_loan' => $g(['pf_loan', 'pf_loan_default', 'pfLoan'], 0),
+            'pf_loan' => 0.0,
             'post_office' => $g(['post_office', 'post_office_default', 'postOffice'], 0),
             'credit_society' => $g(['credit_society', 'credit_society_default', 'creditSociety'], 0),
-            'standard_licence_fee' => $g(['standard_licence_fee', 'std_licence_fee_default', 'standardLicenceFee'], 0),
+            'standard_licence_fee' => 0.0,
             'electricity' => $g(['electricity', 'electricity_default'], 0),
             'water' => $g(['water', 'water_default'], 0),
             'mess' => $g(['mess', 'mess_default'], 0),
-            'horticulture' => $g(['horticulture', 'horticulture_default'], 0),
+            'loan_recovery' => $g(['loan_recovery', 'loan_recovery_default', 'loanRecovery', 'loanRecoveryDefault', 'horticulture', 'horticulture_default', 'horticultureDefault'], 0),
             'welfare' => $g(['welfare', 'welfare_default'], 0),
-            'vehicle_charge' => $g(['vehicle_charge', 'veh_charge_default', 'vehicleCharge'], 0),
+            'vehicle_charge' => 0.0,
             'other_deduction' => $g(['other_deduction', 'other_deduction_default', 'otherDeduction'], 0),
             'advance' => $g(['advance', 'advance_bonus', 'advanceBonus'], 0),
         ];
@@ -198,6 +243,16 @@ final class PayrollCalculationService
         }
 
         return $default;
+    }
+
+    /**
+     * @param  list<string>  $keys
+     */
+    private function optionalAmountOverride(array $input, array $keys, float $computed): float
+    {
+        $value = $this->pick($input, $keys, null);
+
+        return $value === null ? $computed : $this->roundRupees((float) $value);
     }
 
     private function roundRupees(float $n): float

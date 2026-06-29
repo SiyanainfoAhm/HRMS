@@ -18,6 +18,11 @@ class HrmsGovernmentMonthlyPayroll extends Model
 
     protected $guarded = [];
 
+    protected $casts = [
+        'custom_earnings' => 'array',
+        'custom_deductions' => 'array',
+    ];
+
     public function payslip(): BelongsTo
     {
         return $this->belongsTo(HrmsPayslip::class, 'payslip_id');

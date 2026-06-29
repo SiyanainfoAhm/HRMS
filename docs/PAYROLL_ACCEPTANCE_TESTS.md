@@ -114,3 +114,50 @@ Manual and regression checklist for Payroll Master import validation and Run Pay
 | Run Payroll preview | `src/components/payroll/GovernmentRunPreviewTable.tsx` |
 
 Import template columns are defined in `PayrollMasterService::importTemplateColumns()` and are **not** mixed with Run Payroll export columns.
+
+---
+
+## Salary increment (INC-001 – INC-010)
+
+| ID | Scenario | Expected |
+|----|----------|----------|
+| INC-001 | Add employee with increment month January/July | Employee saves; Payroll Master grid shows selected increment month |
+| INC-002 | Submit Add Employee without increment month | Validation: "Increment Month is required." |
+| INC-003 | Import with Increment Month column (January/July) | Row imports successfully; case-insensitive aliases accepted |
+| INC-004 | Import with invalid month (e.g. March) | Row error: "Increment month must be January or July."; import blocked |
+| INC-005 | Settings → Salary Increment → July | Only employees with `increment_month = July` appear |
+| INC-006 | Apply 3% to Gross Basic 48,000 | New Gross Basic = 49,440 (rounded) |
+| INC-007 | Re-apply same employee + effective date | Skipped/blocked with duplicate message |
+| INC-008 | July month + June effective date | "Effective date must be in the selected increment month." |
+| INC-009 | Apply July increment, run payroll for July | Run Payroll uses revised master via `getPayrollMasterForDate` |
+| INC-010 | June payroll before July increment | Confirmed June payroll snapshots unchanged |
+
+**Key files:** `SalaryIncrementService.php`, `SalaryIncrementPanel.tsx`, `IncrementMonth.php`, `08_salary_increment.sql`
+
+**Apply migration:** `php artisan migrate` or run `database/sql/08_salary_increment.sql`.
+
+---
+
+## Dynamic payroll fields (DYN-001 – DYN-012)
+
+| ID | Scenario | Expected |
+|----|----------|----------|
+| DYN-001 | Settings → Payroll Fields → Add "Special Allowance" (Earnings) | Field appears in Payroll Master and Run Payroll |
+| DYN-002 | Add "Bank Recovery" as custom Deduction | Shown in Master Deductions tab and Run Payroll deductions |
+| DYN-003 | Mark custom field required; save employee without value | Validation error |
+| DYN-004 | CPF basis = Basic only, 12% | CPF = Basic × 12% |
+| DYN-005 | CPF basis = Basic + DA, 12% | CPF = (Basic + DA) × 12% |
+| DYN-006 | CPF basis = Basic + HRA + Transport | Uses selected fields only |
+| DYN-007 | Change CPF % from 12 to 10 | Run Payroll recalculates at 10% |
+| DYN-008 | Custom deduction 1000 in run | Total deductions ↑, net pay ↓ |
+| DYN-009 | Custom earning 2000 in run | Total earnings ↑, net pay ↑ |
+| DYN-010 | Salary slip after custom fields in run | Custom lines from monthly snapshot |
+| DYN-011 | Export Payroll Master / Run Payroll | Dynamic columns with correct values |
+| DYN-012 | Deactivate field in Settings | Hidden on new screens; old snapshots intact |
+
+**Key files:** `PayrollFieldService.php`, `PayrollFieldRegistry.php`, `PayrollConfigurationSettings.tsx`, `11_payroll_dynamic_fields.sql`
+
+**Automated:** `backend/tests/Unit/PayrollDynamicFieldsTest.php` (DYN-004–DYN-009, API wiring)
+
+**Apply migration:** `php artisan migrate` or run `database/sql/11_payroll_dynamic_fields.sql`.
+

@@ -4,6 +4,7 @@ namespace Tests\Unit;
 
 use App\Services\PayrollArrearService;
 use App\Services\PayrollCalculationService;
+use App\Services\PayrollFieldService;
 use App\Services\PayrollMasterService;
 use Carbon\Carbon;
 use PHPUnit\Framework\TestCase;
@@ -16,7 +17,7 @@ final class PayrollArrearCalculationTest extends TestCase
     {
         parent::setUp();
         $calculator = new PayrollCalculationService();
-        $this->service = new PayrollArrearService($calculator, new PayrollMasterService($calculator));
+        $this->service = new PayrollArrearService($calculator, new PayrollMasterService($calculator, new PayrollFieldService()));
     }
 
     public function test_excel_example_arrear_calculation(): void

@@ -33,7 +33,7 @@ export const PAYROLL_EXCEL_HEADER = [
   "Electricity",
   "Water",
   "Mess",
-  "Horticulture",
+  "BankRecovery",
   "Welfare",
   "VehCharge",
   "OtherDeduction",
@@ -110,6 +110,7 @@ export type GovernmentMonthlyRow = {
   electricity_amount?: number | null;
   water_amount?: number | null;
   mess_amount?: number | null;
+  loan_recovery_amount?: number | null;
   horticulture_amount?: number | null;
   welfare_amount?: number | null;
   veh_charge_amount?: number | null;
@@ -159,7 +160,7 @@ function govFromComputed(
     Electricity: d.electricity,
     Water: d.water,
     Mess: d.mess,
-    Horticulture: d.horticulture,
+    BankRecovery: d.loanRecovery,
     Welfare: d.welfare,
     VehCharge: d.vehCharge,
     OtherDeduction: d.other,
@@ -212,7 +213,7 @@ function govFromDbRow(
     Electricity: n(r.electricity_amount),
     Water: n(r.water_amount),
     Mess: n(r.mess_amount),
-    Horticulture: n(r.horticulture_amount),
+    BankRecovery: n(r.loan_recovery_amount ?? r.horticulture_amount),
     Welfare: n(r.welfare_amount),
     VehCharge: n(r.veh_charge_amount),
     OtherDeduction: n(r.other_deduction_amount),
@@ -280,7 +281,7 @@ export function buildPayrollExcelRow(
     Electricity: 0,
     Water: 0,
     Mess: 0,
-    Horticulture: 0,
+    BankRecovery: 0,
     Welfare: 0,
     VehCharge: 0,
     OtherDeduction: 0,

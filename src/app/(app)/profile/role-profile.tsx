@@ -20,6 +20,7 @@ import {
 } from "@/lib/employeeValidators";
 import { PASSWORD_COMPLEXITY_HINT, validatePasswordComplexity } from "@/lib/passwordValidators";
 import { GovernmentPayslipPrint } from "@/components/payslip/GovernmentPayslipPrint";
+import { EmployeeCpfSettingsCard } from "@/components/profile/EmployeeCpfSettingsCard";
 import { resolvePayslipDepartment, resolvePayslipDesignation } from "@/lib/payslipUserFields";
 import type { GovernmentMonthlySlip } from "@/lib/governmentPayslipLayout";
 import type { GovernmentLeavePayslipDisplay } from "@/lib/leaveBalancesCompute";
@@ -153,7 +154,7 @@ export function ProfileContent() {
       leavePayslip?: GovernmentLeavePayslipDisplay | null;
     }[];
   } | null>(null);
-  const [myPayrollMaster, setMyPayrollMaster] = useState<{ tds?: number | null } | null>(null);
+  const [myPayrollMaster, setMyPayrollMaster] = useState<Record<string, unknown> | null>(null);
   const [payslipsLoading, setPayslipsLoading] = useState(false);
   const [payslipsError, setPayslipsError] = useState<string | null>(null);
   const [selectedMonth, setSelectedMonth] = useState("");
@@ -341,7 +342,7 @@ export function ProfileContent() {
         const res = await fetch("/api/me/payroll-master");
         const data = await res.json();
         if (!res.ok) throw new Error(data?.error || "Failed to load payroll master");
-        if (!cancelled) setMyPayrollMaster(data?.payrollMaster ?? null);
+        if (!cancelled) setMyPayrollMaster(data?.payrollMaster ?? data?.master ?? null);
       } catch {
         // ignore
       }
@@ -1249,6 +1250,12 @@ export function ProfileContent() {
       )}
 
       {tab === "pay" && (
+        <div className="space-y-4">
+          <EmployeeCpfSettingsCard
+            payrollMaster={myPayrollMaster as Parameters<typeof EmployeeCpfSettingsCard>[0]["payrollMaster"]}
+            onSaved={(master) => setMyPayrollMaster(master as Record<string, unknown>)}
+          />
+
         <div className="card">
           <h2 className="mb-1 text-lg font-semibold text-slate-900">Payslips</h2>
           <p className="muted">Select month and year to view your salary slip. Available from your joining date.</p>
@@ -1264,7 +1271,7 @@ export function ProfileContent() {
               <>
                 <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
                   <span className="text-slate-600">TDS (monthly from master):</span>{" "}
-                  <span className="font-semibold">{myPayrollMaster?.tds != null ? Number(myPayrollMaster.tds).toLocaleString("en-IN") : "0"}</span>
+                  <span className="font-semibold">{myPayrollMaster?.incomeTax != null ? Number(myPayrollMaster.incomeTax).toLocaleString("en-IN") : myPayrollMaster?.tds != null ? Number(myPayrollMaster.tds).toLocaleString("en-IN") : "0"}</span>
                 </div>
                 <div className="mb-4 flex flex-wrap items-center gap-3">
                   <select
@@ -1530,6 +1537,7 @@ export function ProfileContent() {
               </>
             )}
           </div>
+        </div>
         </div>
       )}
 

@@ -12,6 +12,7 @@ use App\Models\HrmsEmployee;
 use App\Models\HrmsPayrollMaster;
 use App\Models\HrmsPayrollMasterHistory;
 use App\Models\HrmsUser;
+use App\Support\IncrementMonth;
 use App\Support\SpreadsheetImportSecurity;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
@@ -30,14 +31,19 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 
 final class PayrollMasterService
 {
+    private ?string $importCompanyContext = null;
+
     public function __construct(
         private readonly PayrollCalculationService $calculator,
+        private readonly PayrollFieldService $fieldService,
     ) {}
 
     /** @return list<array<string, mixed>> */
     public function listForCompany(?string $companyId): array
     {
-        $query = HrmsPayrollMaster::query()->orderBy('created_at');
+        $query = HrmsPayrollMaster::query()
+            ->whereNull('effective_to')
+            ->orderBy('created_at');
 
         if ($companyId) {
             $query->where('company_id', $companyId);
@@ -201,7 +207,7 @@ final class PayrollMasterService
                         'reasonForChange' => $revisionReason,
                     ]);
 
-                    $calc = $this->calculator->calculateMaster($validated, null, null);
+                    $calc = $this->calculateMasterForCompany($companyId, $validated, null, null, $master->id);
                     $attrs = $this->filterExistingColumns(
                         $this->mergeCalculated($validated, $calc, $companyId, $master->created_by ?? $updatedBy, true),
                     );
@@ -320,10 +326,13 @@ final class PayrollMasterService
                     $this->provisionIdentityRecords($validated, $companyId, true);
                 }
                 $defaults = $this->resolveCompanyPayrollDefaults($companyId);
-                $calc = $this->calculator->calculateMaster($validated, $defaults['da'], $defaults['hra']);
+                $calc = $this->calculateMasterForCompany($companyId, $validated, $defaults['da'], $defaults['hra']);
                 $attrs = $this->filterExistingColumns($this->mergeCalculated($validated, $calc, $companyId, $createdBy, true));
 
-                return HrmsPayrollMaster::create($attrs);
+                $master = HrmsPayrollMaster::create($attrs);
+                $this->persistCustomFieldsFromPayload($companyId, $master, $payload);
+
+                return $master;
             }
 
             $validated = $this->validatePayload($payload, $existingMaster->id, $companyId);
@@ -364,10 +373,11 @@ final class PayrollMasterService
                 ]);
             }
 
-            $calc = $this->calculator->calculateMaster($validated, $defaultDa, $defaultHra);
+            $calc = $this->calculateMasterForCompany($companyId, $validated, $defaultDa, $defaultHra, $existingMaster->id);
             $attrs = $this->filterExistingColumns($this->mergeCalculated($validated, $calc, $companyId, $existingMaster->created_by ?? null, true));
             $existingMaster->update($attrs);
             $existingMaster->refresh();
+            $this->persistCustomFieldsFromPayload($companyId, $existingMaster, $payload);
 
             if (config('app.debug')) {
                 Log::debug('payroll_master.update_result', [
@@ -383,10 +393,12 @@ final class PayrollMasterService
 
     public function recalculate(HrmsPayrollMaster $master): HrmsPayrollMaster
     {
-        $calc = $this->calculator->calculateMaster(
+        $calc = $this->calculateMasterForCompany(
+            (string) $master->company_id,
             $this->masterToCalcInput($master),
             null,
             null,
+            $master->id,
         );
         $master->update($this->filterExistingColumns($this->calculatedOnly($calc)));
 
@@ -525,6 +537,7 @@ final class PayrollMasterService
      */
     public function importFile(UploadedFile $file, ?string $companyId, string $createdBy): array
     {
+        $this->importCompanyContext = $companyId;
         $plan = $this->buildImportPlan($file, $companyId);
         $summary = $plan['summary'];
         $errors = [];
@@ -576,11 +589,22 @@ final class PayrollMasterService
 
         foreach ($plan['rows'] as $item) {
             try {
+                $data = $item['data'];
+                if ($companyId) {
+                    $custom = $this->extractCustomFieldValuesFromImportRow($companyId, $data);
+                    if ($custom !== []) {
+                        $data['customFieldValues'] = $custom;
+                    }
+                    $customErrors = $this->fieldService->validateCustomFieldValues($companyId, $custom);
+                    foreach ($customErrors as $ce) {
+                        throw new \InvalidArgumentException($ce['message']);
+                    }
+                }
                 if ($item['action'] === 'update' && $item['existing']) {
-                    $this->update($item['existing'], $item['data'], $companyId ?? $item['existing']->company_id);
+                    $this->update($item['existing'], $data, $companyId ?? $item['existing']->company_id);
                     $summary['updated_rows']++;
                 } else {
-                    $this->create($item['data'], $companyId ?? '', $createdBy, false, true);
+                    $this->create($data, $companyId ?? '', $createdBy, false, true);
                     $summary['inserted_rows']++;
                 }
                 if (! empty($item['generated_password'])) {
@@ -769,8 +793,9 @@ final class PayrollMasterService
         ]);
     }
 
-    public function templateDownload(string $format = 'xlsx'): StreamedResponse
+    public function templateDownload(string $format, ?string $companyId = null): StreamedResponse
     {
+        $this->importCompanyContext = $companyId;
         $spreadsheet = new Spreadsheet;
         $this->writeImportTemplateDataSheet($spreadsheet->getActiveSheet());
         if ($format !== 'csv') {
@@ -798,9 +823,10 @@ final class PayrollMasterService
      */
     private function importTemplateColumns(): array
     {
-        return [
+        $base = [
             ['key' => 'employee_code', 'header' => 'Employee Code*', 'required_in_template' => true],
             ['key' => 'pay_level', 'header' => 'Pay Level*', 'required_in_template' => true],
+            ['key' => 'increment_month', 'header' => 'Increment Month*', 'required_in_template' => true],
             ['key' => 'name', 'header' => 'Name*', 'required_in_template' => true],
             ['key' => 'email', 'header' => 'Email*', 'required_in_template' => true],
             ['key' => 'user_role', 'header' => 'User Role', 'required_in_template' => true],
@@ -827,6 +853,12 @@ final class PayrollMasterService
             ['key' => 'professional_tax', 'header' => 'Professional Tax', 'required_in_template' => false],
             ['key' => 'cpf_default', 'header' => 'PF / CPF %', 'required_in_template' => false],
         ];
+
+        if ($this->importCompanyContext) {
+            $base = array_merge($base, $this->fieldService->customImportColumns($this->importCompanyContext));
+        }
+
+        return $base;
     }
 
     /** @return list<string> */
@@ -841,6 +873,7 @@ final class PayrollMasterService
         $sample = [
             'employee_code' => 'EMP001',
             'pay_level' => 8,
+            'increment_month' => 'July',
             'name' => 'Test Employee',
             'email' => 'test@example.com',
             'user_role' => 'Employee',
@@ -1033,7 +1066,7 @@ final class PayrollMasterService
         return [
             'employee_code', 'name', 'email', 'user_role', 'password', 'confirm_password',
             'phone', 'gender', 'date_of_birth', 'date_of_joining',
-            'designation', 'department', 'division', 'pay_level', 'gross_basic_pay', 'da_percent', 'hra_percent', 'medical',
+            'designation', 'department', 'division', 'pay_level', 'increment_month', 'gross_basic_pay', 'da_percent', 'hra_percent', 'medical',
             'uan', 'cpf_no', 'pan', 'aadhaar', 'bank_name', 'bank_account_number', 'bank_ifsc',
             'status', 'remarks', 'effective_from',
         ];
@@ -1050,7 +1083,7 @@ final class PayrollMasterService
     {
         return [
             'income_tax', 'lic', 'mess', 'welfare', 'vpf', 'pf_loan', 'post_office',
-            'credit_society', 'standard_licence_fee', 'electricity', 'water', 'horticulture', 'vehicle_charge',
+            'credit_society', 'standard_licence_fee', 'electricity', 'water', 'loan_recovery', 'vehicle_charge',
             'other_deduction', 'advance',
         ];
     }
@@ -1196,7 +1229,7 @@ final class PayrollMasterService
             'standard_licence_fee' => 0,
             'electricity' => 0,
             'water' => 0,
-            'horticulture' => 0,
+            'loan_recovery' => 0,
             'vehicle_charge' => 0,
             'other_deduction' => 0,
             'advance' => 0,
@@ -1218,10 +1251,12 @@ final class PayrollMasterService
         }
 
         $defaults = $this->resolveCompanyPayrollDefaults($m->company_id);
-        $calc = $this->calculator->calculateMaster(
+        $calc = $this->calculateMasterForCompany(
+            (string) $m->company_id,
             $this->masterToCalcInput($m),
             $defaults['da'],
             $defaults['hra'],
+            $m->id,
         );
 
         return (float) $calc['take_home'];
@@ -1266,6 +1301,22 @@ final class PayrollMasterService
         }
 
         return $fallback;
+    }
+
+    private function roundDaAmount(HrmsPayrollMaster $m): float
+    {
+        $basic = (float) ($m->gross_basic_pay ?? $m->gross_basic ?? $m->gross_salary ?? 0);
+        $percent = (float) ($m->da_percent ?? PayrollCalculationService::DEFAULT_DA_PERCENT);
+
+        return round($basic * $percent / 100);
+    }
+
+    private function roundHraAmount(HrmsPayrollMaster $m): float
+    {
+        $basic = (float) ($m->gross_basic_pay ?? $m->gross_basic ?? $m->gross_salary ?? 0);
+        $percent = (float) ($m->hra_percent ?? PayrollCalculationService::DEFAULT_HRA_PERCENT);
+
+        return round($basic * $percent / 100);
     }
 
     /** @param  array<string, mixed>  $payload */
@@ -1328,9 +1379,15 @@ final class PayrollMasterService
             'department' => $m->department,
             'division' => $m->division,
             'payLevel' => $m->pay_level ?? $m->getAttributes()['pay_level'] ?? null,
+            'incrementMonth' => $m->increment_month ?? IncrementMonth::DEFAULT,
+            'customFieldValues' => $m->company_id
+                ? $this->fieldService->getCustomFieldValuesForMaster((string) $m->company_id, $m->id)
+                : [],
             'grossBasicPay' => (float) ($m->gross_basic_pay ?? $m->gross_basic ?? $m->gross_salary ?? 0),
             'daPercent' => $this->formatPercentField($m->da_percent, PayrollCalculationService::DEFAULT_DA_PERCENT),
+            'daAmount' => (float) ($m->da_amount ?? $this->roundDaAmount($m)),
             'hraPercent' => $this->formatPercentField($m->hra_percent, PayrollCalculationService::DEFAULT_HRA_PERCENT),
+            'hraAmount' => (float) ($m->hra ?? $this->roundHraAmount($m)),
             'medical' => (float) ($m->medical ?? $m->medical_fixed ?? PayrollCalculationService::DEFAULT_MEDICAL),
             'transportBase' => (float) ($m->transport_base ?? 0),
             'transportDa' => (float) ($m->transport_da ?? 0),
@@ -1338,6 +1395,14 @@ final class PayrollMasterService
             'totalEarnings' => (float) ($m->total_earnings ?? $m->ctc ?? 0),
             'cpfDefault' => (float) ($m->cpf_default ?? 0),
             'cpfEffective' => (float) ($m->cpf_effective ?? 0),
+            'cpfUseCompanySettings' => (bool) ($m->cpf_use_company_settings ?? true),
+            'cpfPercentageOverride' => $m->cpf_percentage_override !== null
+                ? (float) $m->cpf_percentage_override
+                : null,
+            'cpfBasisFieldKeysOverride' => $m->cpf_basis_field_keys_override ?? [],
+            'cpfSettings' => $m->company_id
+                ? $this->fieldService->formatMasterCpfSettings((string) $m->company_id, $m)
+                : null,
             'daCpf' => (float) ($m->da_cpf ?? $m->da_cpf_default ?? 0),
             'professionalTax' => (float) ($m->professional_tax ?? $m->pt_default ?? $m->pt ?? 0),
             'incomeTax' => (float) ($m->income_tax ?? $m->income_tax_default ?? $m->tds ?? 0),
@@ -1351,7 +1416,7 @@ final class PayrollMasterService
             'standardLicenceFee' => (float) ($m->standard_licence_fee ?? $m->std_licence_fee_default ?? 0),
             'electricity' => (float) ($m->electricity ?? $m->electricity_default ?? 0),
             'water' => (float) ($m->water ?? $m->water_default ?? 0),
-            'horticulture' => (float) ($m->horticulture ?? $m->horticulture_default ?? 0),
+            'loanRecovery' => (float) ($m->loan_recovery ?? $m->loan_recovery_default ?? 0),
             'vehicleCharge' => (float) ($m->vehicle_charge ?? $m->veh_charge_default ?? 0),
             'otherDeduction' => (float) ($m->other_deduction ?? $m->other_deduction_default ?? 0),
             'advance' => (float) ($m->advance ?? $m->advance_bonus ?? 0),
@@ -1541,8 +1606,9 @@ final class PayrollMasterService
         $payload['reason_for_change'] = $revisionReason;
         unset($payload['effective_to'], $payload['effectiveTo'], $payload['effective_end_date'], $payload['effectiveEndDate']);
 
+        $historyRow = null;
         if (Schema::hasTable('cirt_payroll_master_history')) {
-            $this->archiveMasterToHistory(
+            $historyRow = $this->archiveMasterToHistory(
                 $master,
                 'REVISION',
                 $revisionReason,
@@ -1553,17 +1619,29 @@ final class PayrollMasterService
             );
         }
 
-        $master->delete();
+        // Soft-close the superseded row so cirt_monthly_payroll FK references remain valid.
+        $supersededMasterId = $master->id;
+        $master->update([
+            'effective_to' => $effectiveTo,
+            'effective_end_date' => $effectiveTo,
+            'updated_at' => now(),
+        ]);
 
-        $validatedInner = $this->validatePayload($payload, null, $companyId);
+        $validatedInner = $this->validatePayload($payload, $supersededMasterId, $companyId, false, true);
         $validatedInner['user_id'] = $payload['user_id'] ?? $payload['employee_user_id'] ?? null;
         $validatedInner['employee_user_id'] = $payload['employee_user_id'] ?? $payload['user_id'] ?? null;
         $defaults = $this->resolveCompanyPayrollDefaults($companyId);
         [$defaultDa, $defaultHra] = $this->resolveCalcDefaults($companyId, $validatedInner);
-        $calc = $this->calculator->calculateMaster($validatedInner, $defaultDa, $defaultHra);
+        $calc = $this->calculateMasterForCompany($companyId, $validatedInner, $defaultDa, $defaultHra, $supersededMasterId);
         $attrs = $this->filterExistingColumns($this->mergeCalculated($validatedInner, $calc, $companyId, $createdBy, true));
 
-        return HrmsPayrollMaster::create($attrs);
+        $newMaster = HrmsPayrollMaster::create($attrs);
+
+        if ($historyRow !== null) {
+            $historyRow->update(['replaced_by_master_id' => $newMaster->id]);
+        }
+
+        return $newMaster;
     }
 
     public function archiveMasterToHistory(
@@ -1635,7 +1713,7 @@ final class PayrollMasterService
         $deductionKeys = [
             'income_tax', 'professional_tax', 'lic', 'mess', 'welfare', 'vpf', 'pf_loan',
             'post_office', 'credit_society', 'standard_licence_fee', 'electricity', 'water',
-            'horticulture', 'vehicle_charge', 'other_deduction', 'advance',
+            'loan_recovery', 'vehicle_charge', 'other_deduction', 'advance',
         ];
         foreach ($deductionKeys as $key) {
             $camel = Str::camel($key);
@@ -1677,6 +1755,7 @@ final class PayrollMasterService
             'department' => $master->department,
             'division' => $master->division,
             'pay_level' => $master->pay_level,
+            'increment_month' => $master->increment_month ?? IncrementMonth::DEFAULT,
             'gross_basic_pay' => $master->gross_basic_pay ?? $master->gross_basic ?? $master->gross_salary,
             'da_percent' => $master->da_percent,
             'hra_percent' => $master->hra_percent,
@@ -1696,7 +1775,7 @@ final class PayrollMasterService
             'standard_licence_fee' => $master->standard_licence_fee ?? $master->std_licence_fee_default,
             'electricity' => $master->electricity ?? $master->electricity_default,
             'water' => $master->water ?? $master->water_default,
-            'horticulture' => $master->horticulture ?? $master->horticulture_default,
+            'loan_recovery' => $master->loan_recovery ?? $master->loan_recovery_default,
             'vehicle_charge' => $master->vehicle_charge ?? $master->veh_charge_default,
             'other_deduction' => $master->other_deduction ?? $master->other_deduction_default,
             'advance' => $master->advance ?? $master->advance_bonus,
@@ -1744,7 +1823,7 @@ final class PayrollMasterService
     }
 
     /** @param  array<string, mixed>  $payload */
-    private function validatePayload(array $payload, ?string $ignoreId, ?string $companyId, bool $salaryPending = false): array
+    private function validatePayload(array $payload, ?string $ignoreId, ?string $companyId, bool $salaryPending = false, bool $isRevision = false): array
     {
         if (empty($payload['name'])) {
             abort(422, 'Name is required');
@@ -1756,10 +1835,23 @@ final class PayrollMasterService
         if (! $salaryPending && $gross <= 0) {
             abort(422, 'Gross basic pay must be greater than 0');
         }
-        if (! $salaryPending && empty($payload['designation'])) {
+        if (! $salaryPending && ! $isRevision && empty($payload['designation'])) {
             abort(422, 'Designation is required');
         }
-        if (! $salaryPending && empty($payload['email'])) {
+        $incrementMonth = IncrementMonth::normalize(
+            (string) ($payload['increment_month'] ?? $payload['incrementMonth'] ?? ''),
+        );
+        if (! $salaryPending && ! $isRevision && $incrementMonth === null) {
+            abort(422, 'Increment Month is required.');
+        }
+        if ($incrementMonth !== null) {
+            $payload['increment_month'] = $incrementMonth;
+            $payload['incrementMonth'] = $incrementMonth;
+        } elseif ($isRevision) {
+            $payload['increment_month'] = IncrementMonth::DEFAULT;
+            $payload['incrementMonth'] = IncrementMonth::DEFAULT;
+        }
+        if (! $salaryPending && ! $isRevision && empty($payload['email'])) {
             abort(422, 'Email is required');
         }
 
@@ -1795,7 +1887,7 @@ final class PayrollMasterService
             }
         }
 
-        foreach ($this->validatePayloadUniquenessErrors($payload, $ignoreId, $companyId, $ignoreUserId, $salaryPending) as $err) {
+        foreach ($this->validatePayloadUniquenessErrors($payload, $ignoreId, $companyId, $ignoreUserId, $salaryPending, $isRevision) as $err) {
             abort(422, $err['message']);
         }
 
@@ -1817,6 +1909,15 @@ final class PayrollMasterService
             }
         }
 
+        if ($companyId) {
+            $customValues = $payload['custom_field_values'] ?? $payload['customFieldValues'] ?? [];
+            if (is_array($customValues)) {
+                foreach ($this->fieldService->validateCustomFieldValues($companyId, $customValues, (bool) $ignoreId) as $err) {
+                    abort(422, $err['message']);
+                }
+            }
+        }
+
         return $payload;
     }
 
@@ -1831,10 +1932,11 @@ final class PayrollMasterService
         ?string $companyId,
         ?string $ignoreUserId,
         bool $salaryPending = false,
+        bool $isRevision = false,
     ): array {
         $errors = [];
 
-        if (! $salaryPending) {
+        if (! $salaryPending && ! $isRevision) {
             $pan = strtoupper(preg_replace('/[^A-Z0-9]/', '', (string) ($payload['pan'] ?? '')));
             if ($pan === '') {
                 $errors[] = ['field' => 'pan', 'message' => 'PAN is required.'];
@@ -1842,6 +1944,11 @@ final class PayrollMasterService
                 $errors[] = ['field' => 'pan', 'message' => 'Enter a valid PAN number.'];
             } elseif ($this->masterNormalizedFieldExists('pan', $pan, $ignoreMasterId, $companyId, fn ($v) => strtoupper(preg_replace('/[^A-Z0-9]/', '', (string) $v)))) {
                 $errors[] = ['field' => 'pan', 'message' => 'PAN number already exists.'];
+            }
+        } elseif ($isRevision) {
+            $pan = strtoupper(preg_replace('/[^A-Z0-9]/', '', (string) ($payload['pan'] ?? '')));
+            if ($pan !== '' && ! preg_match('/^[A-Z]{5}\d{4}[A-Z]$/', $pan)) {
+                $errors[] = ['field' => 'pan', 'message' => 'Enter a valid PAN number.'];
             }
         }
 
@@ -2029,10 +2136,14 @@ final class PayrollMasterService
             'department' => $validated['department'] ?? null,
             'division' => $validated['division'] ?? null,
             'pay_level' => $calc['pay_level'],
+            'increment_month' => IncrementMonth::normalize(
+                (string) ($validated['increment_month'] ?? $validated['incrementMonth'] ?? IncrementMonth::DEFAULT),
+            ) ?? IncrementMonth::DEFAULT,
             'gross_basic_pay' => $calc['gross_basic_pay'],
             'gross_basic' => $calc['gross_basic_pay'],
             'gross_salary' => $calc['gross_basic_pay'],
             'da_percent' => $calc['da_percent'],
+            'da_amount' => $calc['da_amount'],
             'hra_percent' => $calc['hra_percent'],
             'medical_fixed' => $calc['medical'],
             'transport_base' => $calc['transport_base'],
@@ -2047,6 +2158,13 @@ final class PayrollMasterService
             'ctc' => $calc['total_earnings'],
             'cpf_default' => $calc['cpf_default'],
             'cpf_effective' => $calc['cpf_effective'],
+            'cpf_use_company_settings' => (bool) ($validated['cpf_use_company_settings'] ?? $validated['cpfUseCompanySettings'] ?? true),
+            'cpf_percentage_override' => $this->nullableFloat(
+                $validated['cpf_percentage_override'] ?? $validated['cpfPercentageOverride'] ?? null,
+            ),
+            'cpf_basis_field_keys_override' => $this->normalizeCpfBasisOverride(
+                $validated['cpf_basis_field_keys_override'] ?? $validated['cpfBasisFieldKeysOverride'] ?? null,
+            ),
             'da_cpf' => $calc['da_cpf'],
             'da_cpf_default' => $calc['da_cpf'],
             'professional_tax' => $calc['professional_tax'],
@@ -2075,8 +2193,8 @@ final class PayrollMasterService
             'electricity_default' => $calc['electricity'],
             'water' => $calc['water'],
             'water_default' => $calc['water'],
-            'horticulture' => $calc['horticulture'],
-            'horticulture_default' => $calc['horticulture'],
+            'loan_recovery' => $calc['loan_recovery'],
+            'loan_recovery_default' => $calc['loan_recovery'],
             'vehicle_charge' => $calc['vehicle_charge'],
             'veh_charge_default' => $calc['vehicle_charge'],
             'other_deduction' => $calc['other_deduction'],
@@ -2360,6 +2478,8 @@ final class PayrollMasterService
             'gross_basic_pay' => $calc['gross_basic_pay'],
             'gross_basic' => $calc['gross_basic_pay'],
             'gross_salary' => $calc['gross_basic_pay'],
+            'da_amount' => $calc['da_amount'],
+            'hra' => $calc['hra_amount'],
             'transport_base' => $calc['transport_base'],
             'transport_da' => $calc['transport_da'],
             'transport_total' => $calc['transport_total'],
@@ -2377,6 +2497,7 @@ final class PayrollMasterService
     {
         return [
             'da_percent' => $calc['da_percent'],
+            'da_amount' => $calc['da_amount'],
             'hra_percent' => $calc['hra_percent'],
             'hra' => $calc['hra_amount'],
             'basic' => $calc['gross_basic_pay'],
@@ -2416,7 +2537,7 @@ final class PayrollMasterService
             'lic', 'lic_default', 'mess', 'mess_default', 'welfare', 'welfare_default',
             'vpf', 'vpf_default', 'pf_loan', 'pf_loan_default', 'post_office', 'post_office_default',
             'credit_society', 'credit_society_default', 'standard_licence_fee', 'std_licence_fee_default',
-            'electricity', 'electricity_default', 'water', 'water_default', 'horticulture', 'horticulture_default',
+            'electricity', 'electricity_default', 'water', 'water_default', 'loan_recovery', 'loan_recovery_default',
             'vehicle_charge', 'veh_charge_default', 'other_deduction', 'other_deduction_default',
             'advance', 'advance_bonus',
         ]);
@@ -2520,6 +2641,7 @@ final class PayrollMasterService
             'div' => 'division',
             'level' => 'pay_level',
             'pay level' => 'pay_level',
+            'increment month' => 'increment_month',
             'p_level' => 'pay_level',
             'basic' => 'gross_basic_pay',
             'gross basic' => 'gross_basic_pay',
@@ -2558,6 +2680,9 @@ final class PayrollMasterService
             'date of birth' => 'date_of_birth',
             'date of joining' => 'date_of_joining',
             'bank name' => 'bank_name',
+            'bank recovery' => 'loan_recovery',
+            'loan recovery' => 'loan_recovery',
+            'horticulture' => 'loan_recovery',
             'user_role' => 'user_role',
             'confirm_password' => 'confirm_password',
             'employee_code' => 'employee_code',
@@ -2971,6 +3096,10 @@ final class PayrollMasterService
         if (! empty($row['bank_ifsc'])) {
             $row['bank_ifsc'] = strtoupper(preg_replace('/\s+/', '', (string) $row['bank_ifsc']));
         }
+        if (array_key_exists('increment_month', $row)) {
+            $normalizedMonth = IncrementMonth::normalize((string) ($row['increment_month'] ?? ''));
+            $row['increment_month'] = $normalizedMonth;
+        }
 
         return $row;
     }
@@ -3089,6 +3218,13 @@ final class PayrollMasterService
             }
         }
 
+        $incrementRaw = trim((string) ($row['increment_month'] ?? ''));
+        if ($incrementRaw === '') {
+            $errors[] = $this->importIssue('increment_month', 'Increment Month is required.');
+        } elseif ($row['increment_month'] === null) {
+            $errors[] = $this->importIssue('increment_month', 'Increment month must be January or July.');
+        }
+
         $grossRaw = $row['gross_basic_pay'] ?? null;
         if ($grossRaw === null || trim((string) $grossRaw) === '') {
             $errors[] = $this->importIssue('gross_basic_pay', 'Gross Basic Pay is required.');
@@ -3174,5 +3310,138 @@ final class PayrollMasterService
         }
 
         return $errors;
+    }
+
+    /** @return array<string, mixed> */
+    private function calculateMasterForCompany(
+        string $companyId,
+        array $input,
+        ?float $defaultDa = null,
+        ?float $defaultHra = null,
+        ?string $masterId = null,
+        ?HrmsPayrollMaster $existingMaster = null,
+    ): array {
+        $master = $existingMaster;
+        if (! $master && $masterId) {
+            $master = HrmsPayrollMaster::query()->find($masterId);
+        }
+        $cpfConfig = $this->fieldService->resolveCpfConfigForMaster($companyId, $master, $input);
+        $settings = $this->fieldService->getCpfSettingsForCompany($companyId);
+        $cpfConfigPayload = [
+            'cpf_percentage' => $cpfConfig['cpf_percentage'],
+            'cpf_basis_field_keys' => $cpfConfig['cpf_basis_field_keys'],
+        ];
+        $customValues = $input['custom_field_values'] ?? $input['customFieldValues'] ?? [];
+        if ($masterId && $customValues === []) {
+            $customValues = $this->fieldService->getCustomFieldValuesForMaster($companyId, $masterId);
+        }
+
+        return $this->calculator->calculateMaster(
+            $input,
+            $defaultDa,
+            $defaultHra,
+            $cpfConfigPayload,
+            $this->fieldService->customEarningsFromValues($companyId, $customValues),
+            $this->fieldService->customDeductionsFromValues($companyId, $customValues),
+        );
+    }
+
+    /** @param array<string, mixed> $payload */
+    private function persistCustomFieldsFromPayload(string $companyId, HrmsPayrollMaster $master, array $payload): void
+    {
+        $customValues = $payload['custom_field_values'] ?? $payload['customFieldValues'] ?? null;
+        if (! is_array($customValues)) {
+            return;
+        }
+        $this->fieldService->saveCustomFieldValuesForMaster(
+            $companyId,
+            $master->id,
+            $master->employee_id,
+            $customValues,
+        );
+    }
+
+    /** @param array<string, mixed> $row */
+    /** @return array<string, string> */
+    private function extractCustomFieldValuesFromImportRow(string $companyId, array $row): array
+    {
+        $out = [];
+        foreach ($this->fieldService->customImportColumns($companyId) as $col) {
+            $key = $col['key'];
+            if (! array_key_exists($key, $row)) {
+                continue;
+            }
+            $val = trim((string) ($row[$key] ?? ''));
+            if ($val !== '') {
+                $out[$key] = $val;
+            }
+        }
+
+        return $out;
+    }
+
+    private function nullableFloat(mixed $value): ?float
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        return is_numeric($value) ? (float) $value : null;
+    }
+
+    /** @return list<string>|null */
+    private function normalizeCpfBasisOverride(mixed $value): ?array
+    {
+        if (! is_array($value) || $value === []) {
+            return null;
+        }
+
+        return array_values(array_unique(array_map('strval', $value)));
+    }
+
+    /** @param array<string, mixed> $data */
+    public function updateEmployeeCpfSettings(HrmsPayrollMaster $master, array $data, string $companyId): array
+    {
+        if ($master->company_id && $master->company_id !== $companyId) {
+            abort(403, 'Forbidden');
+        }
+
+        $useCompany = (bool) ($data['cpf_use_company_settings'] ?? $data['cpfUseCompanySettings'] ?? true);
+        $pct = $this->nullableFloat($data['cpf_percentage_override'] ?? $data['cpfPercentageOverride'] ?? null);
+        $basis = $this->normalizeCpfBasisOverride(
+            $data['cpf_basis_field_keys_override'] ?? $data['cpfBasisFieldKeysOverride'] ?? null,
+        );
+
+        if (! $useCompany) {
+            if ($pct !== null && $pct < 0) {
+                abort(422, 'CPF percentage must be ≥ 0.');
+            }
+            if ($basis === null || $basis === []) {
+                abort(422, 'Select at least one earning field for PF/CPF calculation.');
+            }
+        }
+
+        $master->update([
+            'cpf_use_company_settings' => $useCompany,
+            'cpf_percentage_override' => $useCompany ? null : $pct,
+            'cpf_basis_field_keys_override' => $useCompany ? null : $basis,
+        ]);
+
+        $defaults = $this->resolveCompanyPayrollDefaults($companyId);
+        $calc = $this->calculateMasterForCompany(
+            $companyId,
+            $master->toArray(),
+            $defaults['da'],
+            $defaults['hra'],
+            $master->id,
+            $master->refresh(),
+        );
+        $master->update([
+            'cpf_effective' => $calc['cpf_effective'],
+            'take_home' => $calc['take_home'],
+            'total_earnings' => $calc['total_earnings'],
+        ]);
+
+        return $this->formatRow($master->refresh());
     }
 }

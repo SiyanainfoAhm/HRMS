@@ -242,7 +242,7 @@ class PayrollMasterController extends Controller
         }
         $format = $request->query('format') === 'csv' ? 'csv' : 'xlsx';
 
-        return $this->service->templateDownload($format);
+        return $this->service->templateDownload($format, $request->user()->company_id);
     }
 
     public function export(Request $request): StreamedResponse

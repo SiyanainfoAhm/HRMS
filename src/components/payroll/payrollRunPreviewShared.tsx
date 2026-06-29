@@ -11,7 +11,7 @@ export const GOV_PREVIEW_EARNING_FIELDS: { key: keyof GovernmentPreviewMonthly; 
   { key: "hraPaid", label: "HRA" },
   { key: "medicalPaid", label: "Medical" },
   { key: "extraWorkAllowancePaid", label: "EWA" },
-  { key: "nightAllowancePaid", label: "Night" },
+  { key: "nightAllowancePaid", label: "N. All." },
   { key: "uniformAllowancePaid", label: "Uniform" },
   { key: "educationAllowancePaid", label: "Education" },
   { key: "daArrearsPaid", label: "DA arr." },
@@ -27,16 +27,13 @@ export const GOV_PREVIEW_DEDUCTION_FIELDS: { key: keyof GovernmentPreviewMonthly
   { key: "cpf", label: "CPF" },
   { key: "daCpf", label: "DA CPF" },
   { key: "vpf", label: "VPF" },
-  { key: "pfLoan", label: "PF loan" },
   { key: "postOffice", label: "Post off." },
   { key: "creditSociety", label: "Cr. society" },
-  { key: "stdLicenceFee", label: "Std licence" },
   { key: "electricity", label: "Electricity" },
   { key: "water", label: "Water" },
   { key: "mess", label: "Mess" },
-  { key: "horticulture", label: "Horticulture" },
+  { key: "loanRecovery", label: "Bank Recovery" },
   { key: "welfare", label: "Welfare" },
-  { key: "vehCharge", label: "Veh. chg." },
   { key: "other", label: "Other" },
 ];
 
@@ -57,6 +54,21 @@ export function fmtIn(n: number): string {
   return n.toLocaleString("en-IN");
 }
 
+export function customFieldAmount(
+  g: GovernmentPreviewMonthly | null | undefined,
+  recalc: { customEarnings?: Record<string, number>; customDeductions?: Record<string, number> } | null | undefined,
+  fieldKey: string,
+  group: "earnings" | "deductions",
+): number {
+  const bag = group === "earnings" ? g?.customEarnings : g?.customDeductions;
+  const fromComputed = bag?.[fieldKey];
+  if (fromComputed != null && Number.isFinite(Number(fromComputed))) {
+    return Math.round(Number(fromComputed));
+  }
+  const recalcBag = group === "earnings" ? recalc?.customEarnings : recalc?.customDeductions;
+  return Math.round(Number(recalcBag?.[fieldKey] ?? 0) || 0);
+}
+
 export function FieldChip({
   label,
   readOnly,
@@ -69,8 +81,8 @@ export function FieldChip({
   onChange: (n: number) => void;
 }) {
   return (
-    <div className="flex w-[6.875rem] min-w-[6.875rem] shrink-0 flex-col gap-0.5">
-      <span className="w-full truncate text-right text-[9px] font-medium uppercase tracking-wide text-slate-600">
+    <div className="flex w-[6.875rem] min-w-[6.875rem] shrink-0 flex-col items-center gap-0.5">
+      <span className="w-full truncate text-center text-[9px] font-medium uppercase tracking-wide text-slate-600">
         {label}
       </span>
       {readOnly ? (

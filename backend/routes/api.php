@@ -7,9 +7,11 @@ use App\Http\Controllers\Api\V1\DesignationController;
 use App\Http\Controllers\Api\V1\DivisionController;
 use App\Http\Controllers\Api\V1\EmployeeController;
 use App\Http\Controllers\Api\V1\PayrollController;
+use App\Http\Controllers\Api\V1\PayrollFieldController;
 use App\Http\Controllers\Api\V1\PayrollMasterController;
 use App\Http\Controllers\Api\V1\PayslipController;
 use App\Http\Controllers\Api\V1\RoleController;
+use App\Http\Controllers\Api\V1\SalaryIncrementController;
 use App\Http\Controllers\Api\V1\UserController;
 use Illuminate\Support\Facades\Route;
 
@@ -34,6 +36,7 @@ Route::prefix('v1')->group(function () {
         Route::get('me', [UserController::class, 'me']);
         Route::put('me', [UserController::class, 'updateMe']);
         Route::get('me/payroll-master', [UserController::class, 'myPayrollMaster']);
+        Route::put('me/payroll-master/cpf-settings', [UserController::class, 'updateMyCpfSettings']);
 
         // Company (read for all authenticated users)
         Route::get('company/me', [CompanyController::class, 'me']);
@@ -87,6 +90,21 @@ Route::prefix('v1')->group(function () {
             Route::post('settings/roles', [RoleController::class, 'store']);
             Route::put('settings/roles/{id}', [RoleController::class, 'update']);
             Route::delete('settings/roles/{id}', [RoleController::class, 'destroy']);
+
+            // Settings: Salary increment
+            Route::get('settings/salary-increment/defaults', [SalaryIncrementController::class, 'defaults']);
+            Route::get('settings/salary-increment/eligible', [SalaryIncrementController::class, 'eligible']);
+            Route::get('settings/salary-increment/history', [SalaryIncrementController::class, 'history']);
+            Route::post('settings/salary-increment/apply', [SalaryIncrementController::class, 'apply']);
+
+            // Settings: Payroll fields & CPF configuration
+            Route::get('settings/payroll-config', [PayrollFieldController::class, 'config']);
+            Route::get('settings/payroll-fields', [PayrollFieldController::class, 'index']);
+            Route::post('settings/payroll-fields', [PayrollFieldController::class, 'store']);
+            Route::put('settings/payroll-fields/{id}', [PayrollFieldController::class, 'update']);
+            Route::post('settings/payroll-fields/{id}/deactivate', [PayrollFieldController::class, 'deactivate']);
+            Route::delete('settings/payroll-fields/{id}', [PayrollFieldController::class, 'destroy']);
+            Route::match(['GET', 'PUT'], 'settings/payroll-calculation-settings', [PayrollFieldController::class, 'calculationSettings']);
 
             // Payroll
             Route::get('payroll/periods', [PayrollController::class, 'periods']);

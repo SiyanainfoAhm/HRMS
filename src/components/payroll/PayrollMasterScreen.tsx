@@ -45,10 +45,17 @@ import {
 } from "@/lib/payrollMasterCalc";
 import { GOVERNMENT_DEFAULT_CPF_RATE_ON_TOTAL_EARNINGS } from "@/lib/governmentPayroll";
 import {
+  DEFAULT_CPF_BASIS_KEYS,
+  resolveEffectiveCpfConfigForMaster,
+} from "@/lib/payrollCpfCalculation";
+import {
   normalizeDigits,
   normalizeIfscInput,
   normalizePanInput,
 } from "@/lib/employeeValidators";
+import { DynamicPayrollFields } from "@/components/payroll/DynamicPayrollFields";
+import { CpfCalculationSettingsForm } from "@/components/payroll/CpfCalculationSettingsForm";
+import type { PayrollFieldDefinition } from "@/lib/payrollFieldTypes";
 import { isAdminRole, normalizeRole, type AppRole } from "@/lib/roles";
 
 export type PayrollMasterRecord = {
@@ -62,12 +69,17 @@ export type PayrollMasterRecord = {
   department?: string | null;
   division?: string | null;
   payLevel?: number | null;
+  incrementMonth?: string | null;
   grossBasicPay?: number | null;
   daPercent?: number | null;
   da_percent?: number | null;
+  daAmount?: number | null;
   hraPercent?: number | null;
   hra_percent?: number | null;
+  hraAmount?: number | null;
   medical?: number | null;
+  transportBase?: number | null;
+  transportDa?: number | null;
   transportTotal?: number | null;
   totalEarnings?: number | null;
   cpfDefault?: number | null;
@@ -85,7 +97,7 @@ export type PayrollMasterRecord = {
   standardLicenceFee?: number | null;
   electricity?: number | null;
   water?: number | null;
-  horticulture?: number | null;
+  loanRecovery?: number | null;
   vehicleCharge?: number | null;
   otherDeduction?: number | null;
   advance?: number | null;
@@ -108,6 +120,17 @@ export type PayrollMasterRecord = {
   rowType?: "CURRENT" | "HISTORY" | "SUPERSEDED" | string;
   archivedAt?: string | null;
   userRole?: AppRole | string | null;
+  customFieldValues?: Record<string, string>;
+  cpfUseCompanySettings?: boolean;
+  cpfPercentageOverride?: number | null;
+  cpfBasisFieldKeysOverride?: string[];
+  cpfSettings?: {
+    cpfUseCompanySettings?: boolean;
+    cpfPercentageOverride?: number | null;
+    cpfBasisFieldKeysOverride?: string[];
+    companySettings?: { cpfFormulaPreview?: string; cpfPercentage?: number; cpfBasisFieldKeys?: string[] };
+    effectiveSettings?: { cpfFormulaPreview?: string; cpfPercentage?: number; cpfBasisFieldKeys?: string[]; source?: string };
+  };
 };
 
 type MasterFormState = {
@@ -123,10 +146,17 @@ type MasterFormState = {
   division: string;
   status: string;
   payLevel: string;
+  incrementMonth: string;
   grossBasicPay: string;
   daPercent: string;
+  daAmount: string;
   hraPercent: string;
+  hraAmount: string;
   medical: string;
+  transportBase: string;
+  transportDa: string;
+  transportTotal: string;
+  totalEarnings: string;
   uan: string;
   cpfNo: string;
   pan: string;
@@ -147,7 +177,7 @@ type MasterFormState = {
   standardLicenceFee: string;
   electricity: string;
   water: string;
-  horticulture: string;
+  loanRecovery: string;
   vehicleCharge: string;
   otherDeduction: string;
   advance: string;
@@ -157,6 +187,10 @@ type MasterFormState = {
   userRole: AppRole;
   password: string;
   confirmPassword: string;
+  customFieldValues: Record<string, string>;
+  cpfUseCompanySettings: boolean;
+  cpfPercentageOverride: string;
+  cpfBasisFieldKeys: string[];
 };
 
 type ImportError = { row: number; field: string; message: string };
@@ -207,73 +241,114 @@ const VARIABLE_DEDUCTION_FIELDS = [
   ["mess", "Mess"],
   ["welfare", "Welfare"],
   ["vpf", "VPF"],
-  ["pfLoan", "PF Loan"],
   ["postOffice", "Post Office"],
   ["creditSociety", "Credit Society"],
-  ["standardLicenceFee", "Std Licence Fee"],
   ["electricity", "Electricity"],
   ["water", "Water"],
-  ["horticulture", "Horticulture"],
-  ["vehicleCharge", "Vehicle Charge"],
+  ["loanRecovery", "Bank Recovery"],
   ["otherDeduction", "Other Deduction"],
   ["advance", "Advance"],
 ] as const;
 
 const EARNINGS_COLUMN_COUNT = 12;
 const DEFAULT_DEDUCTION_COLUMN_COUNT = 3;
-const VARIABLE_DEDUCTION_COLUMN_COUNT = 15;
+const VARIABLE_DEDUCTION_COLUMN_COUNT = 12;
 
-const emptyForm = (defaultDa = DEFAULT_DA_PERCENT, defaultHra = DEFAULT_HRA_PERCENT): MasterFormState => ({
-  employeeCode: "",
-  name: "",
-  email: "",
-  phone: "",
-  gender: "",
-  dateOfBirth: "",
-  dateOfJoining: "",
-  designation: "",
-  department: "",
-  division: "",
-  status: "active",
-  payLevel: "1",
-  grossBasicPay: "",
-  daPercent: String(defaultDa),
-  hraPercent: String(defaultHra),
-  medical: String(DEFAULT_MEDICAL),
-  uan: "",
-  cpfNo: "",
-  pan: "",
-  aadhaar: "",
-  bankName: "",
-  bankAccountNumber: "",
-  bankIfsc: "",
-  cpfDefault: "0",
-  professionalTax: "200",
-  incomeTax: "0",
-  lic: "0",
-  mess: "0",
-  welfare: "0",
-  vpf: "0",
-  pfLoan: "0",
-  postOffice: "0",
-  creditSociety: "0",
-  standardLicenceFee: "0",
-  electricity: "0",
-  water: "0",
-  horticulture: "0",
-  vehicleCharge: "0",
-  otherDeduction: "0",
-  advance: "0",
-  remarks: "",
-  effectiveFrom: new Date().toISOString().slice(0, 10),
-  reasonForChange: "",
-  userRole: "employee",
-  password: "",
-  confirmPassword: "",
-});
+function customEarningsFromForm(
+  values: Record<string, string>,
+  fields: PayrollFieldDefinition[],
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const field of fields) {
+    if (field.fieldGroup !== "earnings" || field.isSystem || !field.isActive) continue;
+    const raw = values[field.fieldKey];
+    if (raw == null || raw === "") continue;
+    out[field.fieldKey] = parseFloat(raw) || 0;
+  }
+  return out;
+}
+
+function previewEarningDefaults(form: Pick<MasterFormState, "payLevel" | "grossBasicPay" | "daPercent" | "hraPercent" | "medical">) {
+  const preview = computePayrollMasterPreview({
+    payLevel: form.payLevel,
+    grossBasicPay: form.grossBasicPay,
+    daPercent: form.daPercent,
+    hraPercent: form.hraPercent,
+    medical: form.medical,
+  });
+  return {
+    daAmount: String(preview.daAmount),
+    hraAmount: String(preview.hraAmount),
+    transportBase: String(preview.transportBase),
+    transportDa: String(preview.transportDa),
+    transportTotal: String(preview.transportTotal),
+    totalEarnings: String(preview.totalEarnings),
+  };
+}
+
+const emptyForm = (defaultDa = DEFAULT_DA_PERCENT, defaultHra = DEFAULT_HRA_PERCENT): MasterFormState => {
+  const base = {
+    employeeCode: "",
+    name: "",
+    email: "",
+    phone: "",
+    gender: "",
+    dateOfBirth: "",
+    dateOfJoining: "",
+    designation: "",
+    department: "",
+    division: "",
+    status: "active",
+    payLevel: "1",
+    incrementMonth: "July",
+    grossBasicPay: "",
+    daPercent: String(defaultDa),
+    hraPercent: String(defaultHra),
+    medical: String(DEFAULT_MEDICAL),
+    uan: "",
+    cpfNo: "",
+    pan: "",
+    aadhaar: "",
+    bankName: "",
+    bankAccountNumber: "",
+    bankIfsc: "",
+    cpfDefault: "0",
+    professionalTax: "200",
+    incomeTax: "0",
+    lic: "0",
+    mess: "0",
+    welfare: "0",
+    vpf: "0",
+    pfLoan: "0",
+    postOffice: "0",
+    creditSociety: "0",
+    standardLicenceFee: "0",
+    electricity: "0",
+    water: "0",
+    loanRecovery: "0",
+    vehicleCharge: "0",
+    otherDeduction: "0",
+    advance: "0",
+    remarks: "",
+    effectiveFrom: new Date().toISOString().slice(0, 10),
+    reasonForChange: "",
+    userRole: "employee" as AppRole,
+    password: "",
+    confirmPassword: "",
+    customFieldValues: {},
+    cpfUseCompanySettings: true,
+    cpfPercentageOverride: "",
+    cpfBasisFieldKeys: [] as string[],
+  };
+
+  return {
+    ...base,
+    ...previewEarningDefaults(base),
+  };
+};
 
 function formFromRecord(r: PayrollMasterRecord): MasterFormState {
-  return {
+  const base = {
     employeeCode: r.employeeCode ?? "",
     name: r.name ?? "",
     email: r.email ?? "",
@@ -286,6 +361,7 @@ function formFromRecord(r: PayrollMasterRecord): MasterFormState {
     division: r.division ?? "",
     status: r.status ?? "active",
     payLevel: String(r.payLevel ?? 1),
+    incrementMonth: r.incrementMonth ?? "July",
     grossBasicPay: String(r.grossBasicPay ?? ""),
     daPercent: String(r.daPercent ?? DEFAULT_DA_PERCENT),
     hraPercent: String(r.hraPercent ?? DEFAULT_HRA_PERCENT),
@@ -310,7 +386,7 @@ function formFromRecord(r: PayrollMasterRecord): MasterFormState {
     standardLicenceFee: String(r.standardLicenceFee ?? 0),
     electricity: String(r.electricity ?? 0),
     water: String(r.water ?? 0),
-    horticulture: String(r.horticulture ?? 0),
+    loanRecovery: String(r.loanRecovery ?? 0),
     vehicleCharge: String(r.vehicleCharge ?? 0),
     otherDeduction: String(r.otherDeduction ?? 0),
     advance: String(r.advance ?? 0),
@@ -320,6 +396,38 @@ function formFromRecord(r: PayrollMasterRecord): MasterFormState {
     userRole: normalizeRole(r.userRole ?? "employee"),
     password: "",
     confirmPassword: "",
+    customFieldValues: { ...(r.customFieldValues ?? {}) },
+    cpfUseCompanySettings: r.cpfSettings?.cpfUseCompanySettings ?? (r as { cpfUseCompanySettings?: boolean }).cpfUseCompanySettings ?? true,
+    cpfPercentageOverride: String(
+      r.cpfSettings?.cpfPercentageOverride ??
+        (r as { cpfPercentageOverride?: number | null }).cpfPercentageOverride ??
+        r.cpfSettings?.effectiveSettings?.cpfPercentage ??
+        "",
+    ),
+    cpfBasisFieldKeys: (() => {
+      const useCompany =
+        r.cpfSettings?.cpfUseCompanySettings ?? (r as { cpfUseCompanySettings?: boolean }).cpfUseCompanySettings ?? true;
+      const override =
+        r.cpfSettings?.cpfBasisFieldKeysOverride ??
+        (r as { cpfBasisFieldKeysOverride?: string[] }).cpfBasisFieldKeysOverride ??
+        [];
+      if (!useCompany) {
+        if (override.length > 0) return override;
+        return r.cpfSettings?.effectiveSettings?.cpfBasisFieldKeys ?? DEFAULT_CPF_BASIS_KEYS;
+      }
+      return override;
+    })(),
+  };
+  const defaults = previewEarningDefaults(base);
+
+  return {
+    ...base,
+    daAmount: r.daAmount != null ? String(r.daAmount) : defaults.daAmount,
+    hraAmount: r.hraAmount != null ? String(r.hraAmount) : defaults.hraAmount,
+    transportBase: r.transportBase != null ? String(r.transportBase) : defaults.transportBase,
+    transportDa: r.transportDa != null ? String(r.transportDa) : defaults.transportDa,
+    transportTotal: r.transportTotal != null ? String(r.transportTotal) : defaults.transportTotal,
+    totalEarnings: r.totalEarnings != null ? String(r.totalEarnings) : defaults.totalEarnings,
   };
 }
 
@@ -337,10 +445,17 @@ function formToPayload(form: MasterFormState) {
     division: form.division.trim() || undefined,
     status: form.status,
     payLevel: parseInt(form.payLevel, 10),
+    incrementMonth: form.incrementMonth,
     grossBasicPay: parseFloat(form.grossBasicPay) || 0,
     daPercent: Number.isFinite(parseFloat(form.daPercent)) ? parseFloat(form.daPercent) : DEFAULT_DA_PERCENT,
+    daAmount: parseFloat(form.daAmount) || 0,
     hraPercent: Number.isFinite(parseFloat(form.hraPercent)) ? parseFloat(form.hraPercent) : DEFAULT_HRA_PERCENT,
+    hraAmount: parseFloat(form.hraAmount) || 0,
     medical: parseFloat(form.medical) || DEFAULT_MEDICAL,
+    transportBase: parseFloat(form.transportBase) || 0,
+    transportDa: parseFloat(form.transportDa) || 0,
+    transportTotal: parseFloat(form.transportTotal) || 0,
+    totalEarnings: parseFloat(form.totalEarnings) || 0,
     uan: form.uan.trim() || undefined,
     cpfNo: form.cpfNo.trim() || undefined,
     pan: form.pan.trim().toUpperCase() || undefined,
@@ -361,7 +476,7 @@ function formToPayload(form: MasterFormState) {
     standardLicenceFee: parseFloat(form.standardLicenceFee) || 0,
     electricity: parseFloat(form.electricity) || 0,
     water: parseFloat(form.water) || 0,
-    horticulture: parseFloat(form.horticulture) || 0,
+    loanRecovery: parseFloat(form.loanRecovery) || 0,
     vehicleCharge: parseFloat(form.vehicleCharge) || 0,
     otherDeduction: parseFloat(form.otherDeduction) || 0,
     advance: parseFloat(form.advance) || 0,
@@ -369,6 +484,12 @@ function formToPayload(form: MasterFormState) {
     effectiveFrom: form.effectiveFrom || undefined,
     reasonForChange: form.reasonForChange.trim() || undefined,
     role: form.userRole,
+    customFieldValues: form.customFieldValues,
+    cpfUseCompanySettings: form.cpfUseCompanySettings,
+    cpfPercentageOverride: form.cpfUseCompanySettings
+      ? null
+      : parseFloat(form.cpfPercentageOverride) || 0,
+    cpfBasisFieldKeysOverride: form.cpfUseCompanySettings ? [] : form.cpfBasisFieldKeys,
     ...(form.password.trim() ? { password: form.password } : {}),
   };
 }
@@ -379,6 +500,12 @@ function payrollStructureChanged(form: MasterFormState, baseline: MasterFormStat
     form.daPercent !== baseline.daPercent ||
     form.hraPercent !== baseline.hraPercent ||
     form.grossBasicPay !== baseline.grossBasicPay ||
+    form.daAmount !== baseline.daAmount ||
+    form.hraAmount !== baseline.hraAmount ||
+    form.transportBase !== baseline.transportBase ||
+    form.transportDa !== baseline.transportDa ||
+    form.transportTotal !== baseline.transportTotal ||
+    form.totalEarnings !== baseline.totalEarnings ||
     form.medical !== baseline.medical ||
     form.professionalTax !== baseline.professionalTax ||
     form.incomeTax !== baseline.incomeTax ||
@@ -392,7 +519,7 @@ function payrollStructureChanged(form: MasterFormState, baseline: MasterFormStat
     form.standardLicenceFee !== baseline.standardLicenceFee ||
     form.electricity !== baseline.electricity ||
     form.water !== baseline.water ||
-    form.horticulture !== baseline.horticulture ||
+    form.loanRecovery !== baseline.loanRecovery ||
     form.vehicleCharge !== baseline.vehicleCharge ||
     form.otherDeduction !== baseline.otherDeduction ||
     form.advance !== baseline.advance
@@ -473,6 +600,12 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [visitedTabs, setVisitedTabs] = useState<Partial<Record<FormTabId, boolean>>>({});
   const [apiFieldErrors, setApiFieldErrors] = useState<Record<string, string>>({});
+  const [payrollFieldDefs, setPayrollFieldDefs] = useState<PayrollFieldDefinition[]>([]);
+  const [companyCpfSettings, setCompanyCpfSettings] = useState<{
+    cpfPercentage?: number;
+    cpfBasisFieldKeys?: string[];
+    cpfFormulaPreview?: string;
+  }>({});
 
   const [importOpen, setImportOpen] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
@@ -496,6 +629,38 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
   const [deactivateTarget, setDeactivateTarget] = useState<PayrollMasterRecord | null>(null);
   const [companyDefaultDa, setCompanyDefaultDa] = useState(DEFAULT_DA_PERCENT);
   const [companyDefaultHra, setCompanyDefaultHra] = useState(DEFAULT_HRA_PERCENT);
+
+  function patchCustomField(key: string, value: string) {
+    setForm((f) => ({
+      ...f,
+      customFieldValues: { ...f.customFieldValues, [key]: value },
+    }));
+  }
+
+  useEffect(() => {
+    if (!canManage) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/settings/payroll-config");
+        const data = await res.json();
+        if (!cancelled && res.ok) {
+          setPayrollFieldDefs((data.fields ?? []) as PayrollFieldDefinition[]);
+          const cs = data.calculationSettings ?? {};
+          setCompanyCpfSettings({
+            cpfPercentage: cs.cpfPercentage ?? 12,
+            cpfBasisFieldKeys: cs.cpfBasisFieldKeys ?? DEFAULT_CPF_BASIS_KEYS,
+            cpfFormulaPreview: cs.cpfFormulaPreview,
+          });
+        }
+      } catch {
+        /* optional config */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [canManage]);
 
   const loadRows = useCallback(async () => {
     setLoading(true);
@@ -652,6 +817,12 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
         daPercent: form.daPercent,
         hraPercent: form.hraPercent,
         medical: form.medical,
+        daAmount: form.daAmount,
+        hraAmount: form.hraAmount,
+        transportBase: form.transportBase,
+        transportDa: form.transportDa,
+        transportTotal: form.transportTotal,
+        totalEarnings: form.totalEarnings,
         cpfDefault: 0,
         professionalTax: form.professionalTax,
         incomeTax: form.incomeTax,
@@ -665,12 +836,30 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
         standardLicenceFee: form.standardLicenceFee,
         electricity: form.electricity,
         water: form.water,
-        horticulture: form.horticulture,
+        loanRecovery: form.loanRecovery,
         vehicleCharge: form.vehicleCharge,
         otherDeduction: form.otherDeduction,
         advance: form.advance,
+        cpfUseCompanySettings: form.cpfUseCompanySettings,
+        cpfPercentageOverride: form.cpfPercentageOverride,
+        cpfBasisFieldKeysOverride: form.cpfBasisFieldKeys,
+        companyCpfPercentage: companyCpfSettings.cpfPercentage,
+        companyCpfBasisFieldKeys: companyCpfSettings.cpfBasisFieldKeys,
+        customEarnings: customEarningsFromForm(form.customFieldValues, payrollFieldDefs),
       }),
-    [form],
+    [form, companyCpfSettings, payrollFieldDefs],
+  );
+
+  const effectiveCpfConfig = useMemo(
+    () =>
+      resolveEffectiveCpfConfigForMaster({
+        cpfUseCompanySettings: form.cpfUseCompanySettings,
+        cpfPercentageOverride: form.cpfPercentageOverride,
+        cpfBasisFieldKeysOverride: form.cpfBasisFieldKeys,
+        companyCpfPercentage: companyCpfSettings.cpfPercentage,
+        companyCpfBasisFieldKeys: companyCpfSettings.cpfBasisFieldKeys,
+      }),
+    [form.cpfUseCompanySettings, form.cpfPercentageOverride, form.cpfBasisFieldKeys, companyCpfSettings],
   );
 
   function openAdd() {
@@ -690,7 +879,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
   async function openEdit(row: PayrollMasterRecord) {
     setEditing(row);
     resetFormValidationState();
-    setFormSection("basic");
+    setFormSection("payroll");
     setFormOpen(true);
     setFormLoading(true);
     setMasterHistory([]);
@@ -708,6 +897,14 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
       const loadedForm = formFromRecord(masterData.master ?? row);
       setForm(loadedForm);
       setEditBaseline(loadedForm);
+      const companyCs = masterData.master?.cpfSettings?.companySettings;
+      if (companyCs) {
+        setCompanyCpfSettings({
+          cpfPercentage: companyCs.cpfPercentage ?? 12,
+          cpfBasisFieldKeys: companyCs.cpfBasisFieldKeys ?? DEFAULT_CPF_BASIS_KEYS,
+          cpfFormulaPreview: companyCs.cpfFormulaPreview,
+        });
+      }
       if (historyRes.ok) {
         setMasterHistory(historyData.history ?? []);
       }
@@ -1186,6 +1383,21 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                         onBlur={() => touchField("payLevel")}
                       />
                     </FormField>
+                    <FormField label="Increment Month" required error={showError("incrementMonth")}>
+                      <SelectField
+                        value={form.incrementMonth}
+                        onChange={(v) => {
+                          patchForm({ incrementMonth: v });
+                          touchField("incrementMonth");
+                        }}
+                        error={showError("incrementMonth")}
+                        options={[
+                          { value: "January", label: "January" },
+                          { value: "July", label: "July" },
+                        ]}
+                        required
+                      />
+                    </FormField>
                     <FormField label="Name" required error={showError("name")}>
                       <Input
                         id={fieldDomId("name")}
@@ -1308,82 +1520,176 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                       />
                     </FormField>
                   </div>
+                  <DynamicPayrollFields
+                    fields={payrollFieldDefs}
+                    group="basic"
+                    values={form.customFieldValues}
+                    errors={apiFieldErrors}
+                    onChange={patchCustomField}
+                  />
                 </section>
                 )}
 
                 {formSection === "payroll" && (
-                <section>
-                  <h4 className="mb-3 text-sm font-semibold text-slate-800">Payroll details</h4>
-                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                    <FormField label="Gross Basic Pay" required error={showError("grossBasicPay")}>
-                      <Input
-                        id={fieldDomId("grossBasicPay")}
-                        type="number"
-                        min={0}
-                        step={100}
-                        numeric
-                        invalid={Boolean(showError("grossBasicPay"))}
-                        value={form.grossBasicPay}
-                        onChange={(e) => patchForm({ grossBasicPay: e.target.value })}
-                        onBlur={() => touchField("grossBasicPay")}
-                      />
-                    </FormField>
-                    <FormField label="DA %" required error={showError("daPercent")}>
-                      <Input
-                        id={fieldDomId("daPercent")}
-                        type="number"
-                        step="0.01"
-                        invalid={Boolean(showError("daPercent"))}
-                        value={form.daPercent}
-                        onChange={(e) => patchForm({ daPercent: e.target.value })}
-                        onBlur={() => touchField("daPercent")}
-                      />
-                    </FormField>
-                    <FormField label="HRA %" required error={showError("hraPercent")}>
-                      <Input
-                        id={fieldDomId("hraPercent")}
-                        type="number"
-                        step="0.01"
-                        invalid={Boolean(showError("hraPercent"))}
-                        value={form.hraPercent}
-                        onChange={(e) => patchForm({ hraPercent: e.target.value })}
-                        onBlur={() => touchField("hraPercent")}
-                      />
-                    </FormField>
-                    <FormField label="Medical" error={showError("medical")}>
-                      <Input
-                        id={fieldDomId("medical")}
-                        type="number"
-                        numeric
-                        invalid={Boolean(showError("medical"))}
-                        value={form.medical}
-                        onChange={(e) => patchForm({ medical: e.target.value })}
-                        onBlur={() => touchField("medical")}
-                      />
-                    </FormField>
-                    <FormField label="Effective From" required error={showError("effectiveFrom")}>
-                      <DatePickerField
-                        id={fieldDomId("effectiveFrom")}
-                        value={form.effectiveFrom}
-                        onChange={(v) => {
-                          patchForm({ effectiveFrom: v });
-                          touchField("effectiveFrom");
-                        }}
-                        error={showError("effectiveFrom")}
-                      />
-                    </FormField>
-                    {editing ? (
-                      <FormField label="Reason for change" error={showError("reasonForChange")} className="sm:col-span-2">
+                <section className="space-y-5">
+                  <div>
+                    <h4 className="mb-1 text-sm font-semibold text-slate-800">Earnings & allowances</h4>
+                    <p className="mb-3 text-xs text-slate-500">
+                      All earning components can be edited directly. Percentages and amounts are saved as entered.
+                    </p>
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                      <FormField label="Pay Level" required error={showError("payLevel")}>
                         <Input
-                          id={fieldDomId("reasonForChange")}
-                          invalid={Boolean(showError("reasonForChange"))}
-                          value={form.reasonForChange}
-                          onChange={(e) => patchForm({ reasonForChange: e.target.value })}
-                          onBlur={() => touchField("reasonForChange")}
-                          placeholder="When changing effective date"
+                          id={fieldDomId("payLevel")}
+                          type="number"
+                          min={1}
+                          invalid={Boolean(showError("payLevel"))}
+                          value={form.payLevel}
+                          onChange={(e) => patchForm({ payLevel: e.target.value })}
+                          onBlur={() => touchField("payLevel")}
                         />
                       </FormField>
-                    ) : null}
+                      <FormField label="Gross Basic Pay" required error={showError("grossBasicPay")}>
+                        <Input
+                          id={fieldDomId("grossBasicPay")}
+                          type="number"
+                          min={0}
+                          step={100}
+                          numeric
+                          invalid={Boolean(showError("grossBasicPay"))}
+                          value={form.grossBasicPay}
+                          onChange={(e) => patchForm({ grossBasicPay: e.target.value })}
+                          onBlur={() => touchField("grossBasicPay")}
+                        />
+                      </FormField>
+                      <FormField label="DA %" required error={showError("daPercent")}>
+                        <Input
+                          id={fieldDomId("daPercent")}
+                          type="number"
+                          step="0.01"
+                          invalid={Boolean(showError("daPercent"))}
+                          value={form.daPercent}
+                          onChange={(e) => patchForm({ daPercent: e.target.value })}
+                          onBlur={() => touchField("daPercent")}
+                        />
+                      </FormField>
+                      <FormField label="DA Amount">
+                        <Input
+                          type="number"
+                          numeric
+                          value={form.daAmount}
+                          onChange={(e) => patchForm({ daAmount: e.target.value })}
+                        />
+                      </FormField>
+                      <FormField label="HRA %" required error={showError("hraPercent")}>
+                        <Input
+                          id={fieldDomId("hraPercent")}
+                          type="number"
+                          step="0.01"
+                          invalid={Boolean(showError("hraPercent"))}
+                          value={form.hraPercent}
+                          onChange={(e) => patchForm({ hraPercent: e.target.value })}
+                          onBlur={() => touchField("hraPercent")}
+                        />
+                      </FormField>
+                      <FormField label="HRA Amount">
+                        <Input
+                          type="number"
+                          numeric
+                          value={form.hraAmount}
+                          onChange={(e) => patchForm({ hraAmount: e.target.value })}
+                        />
+                      </FormField>
+                      <FormField label="Medical" error={showError("medical")}>
+                        <Input
+                          id={fieldDomId("medical")}
+                          type="number"
+                          numeric
+                          invalid={Boolean(showError("medical"))}
+                          value={form.medical}
+                          onChange={(e) => patchForm({ medical: e.target.value })}
+                          onBlur={() => touchField("medical")}
+                        />
+                      </FormField>
+                      <FormField label="Transport Base">
+                        <Input
+                          type="number"
+                          numeric
+                          value={form.transportBase}
+                          onChange={(e) => patchForm({ transportBase: e.target.value })}
+                        />
+                      </FormField>
+                      <FormField label="Transport DA">
+                        <Input
+                          type="number"
+                          numeric
+                          value={form.transportDa}
+                          onChange={(e) => patchForm({ transportDa: e.target.value })}
+                        />
+                      </FormField>
+                      <FormField label="Transport Total">
+                        <Input
+                          type="number"
+                          numeric
+                          value={form.transportTotal}
+                          onChange={(e) => patchForm({ transportTotal: e.target.value })}
+                        />
+                      </FormField>
+                      <FormField label="Total Earnings">
+                        <Input
+                          type="number"
+                          numeric
+                          value={form.totalEarnings}
+                          onChange={(e) => patchForm({ totalEarnings: e.target.value })}
+                          className="font-semibold text-emerald-900"
+                        />
+                      </FormField>
+                    </div>
+                  </div>
+                  <DynamicPayrollFields
+                    fields={payrollFieldDefs}
+                    group="earnings"
+                    values={form.customFieldValues}
+                    errors={apiFieldErrors}
+                    onChange={patchCustomField}
+                  />
+                  <div className="rounded-xl border border-brand-border bg-slate-50/80 p-4">
+                    <h4 className="mb-3 text-sm font-semibold text-slate-800">Pay summary</h4>
+                    <div className="grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                      <div>PF (CPF): <strong>{fmt(preview.cpfEffective)}</strong></div>
+                      <div>Total deductions: <strong>{fmt(preview.totalDeductions)}</strong></div>
+                      <div className="sm:col-span-2 font-semibold text-emerald-800">
+                        Take home: {fmt(preview.takeHome)}
+                      </div>
+                    </div>
+                  </div>
+                  <div>
+                    <h4 className="mb-3 text-sm font-semibold text-slate-800">Effective date</h4>
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                      <FormField label="Effective From" required error={showError("effectiveFrom")}>
+                        <DatePickerField
+                          id={fieldDomId("effectiveFrom")}
+                          value={form.effectiveFrom}
+                          onChange={(v) => {
+                            patchForm({ effectiveFrom: v });
+                            touchField("effectiveFrom");
+                          }}
+                          error={showError("effectiveFrom")}
+                        />
+                      </FormField>
+                      {editing ? (
+                        <FormField label="Reason for change" error={showError("reasonForChange")} className="sm:col-span-2">
+                          <Input
+                            id={fieldDomId("reasonForChange")}
+                            invalid={Boolean(showError("reasonForChange"))}
+                            value={form.reasonForChange}
+                            onChange={(e) => patchForm({ reasonForChange: e.target.value })}
+                            onBlur={() => touchField("reasonForChange")}
+                            placeholder="When changing effective date"
+                          />
+                        </FormField>
+                      ) : null}
+                    </div>
                   </div>
                 </section>
                 )}
@@ -1420,7 +1726,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                   </div>
                   <h4 className="mb-3 mt-5 text-sm font-semibold text-slate-800">Default deductions</h4>
                   <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                    <FormField label={`PF (CPF) — ${Math.round(GOVERNMENT_DEFAULT_CPF_RATE_ON_TOTAL_EARNINGS * 100)}%`}>
+                    <FormField label={`PF (CPF) — ${effectiveCpfConfig.cpfPercentage}%`}>
                       <Input readOnly value={fmt(preview.cpfEffective)} />
                     </FormField>
                     {DEFAULT_DEDUCTION_FIELDS.map(([key, label]) => (
@@ -1438,6 +1744,62 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                       </FormField>
                     ))}
                   </div>
+
+                  <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50/50 p-4">
+                    <h4 className="mb-2 text-sm font-semibold text-slate-800">Employee CPF calculation</h4>
+                    <p className="mb-4 text-xs text-slate-600">
+                      Override institute CPF defaults for this employee. They can also update this from Profile → My Pay.
+                    </p>
+                    <CpfCalculationSettingsForm
+                      earningFields={payrollFieldDefs.filter(
+                        (f) => f.fieldGroup === "earnings" && f.isActive,
+                      )}
+                      cpfPercentage={
+                        form.cpfUseCompanySettings
+                          ? String(companyCpfSettings.cpfPercentage ?? 12)
+                          : form.cpfPercentageOverride || String(companyCpfSettings.cpfPercentage ?? 12)
+                      }
+                      cpfBasisKeys={
+                        form.cpfUseCompanySettings
+                          ? companyCpfSettings.cpfBasisFieldKeys ?? DEFAULT_CPF_BASIS_KEYS
+                          : form.cpfBasisFieldKeys
+                      }
+                      onCpfPercentageChange={(v) => patchForm({ cpfPercentageOverride: v })}
+                      onToggleBasisKey={(key) =>
+                        patchForm({
+                          cpfBasisFieldKeys: form.cpfBasisFieldKeys.includes(key)
+                            ? form.cpfBasisFieldKeys.filter((k) => k !== key)
+                            : [...form.cpfBasisFieldKeys, key],
+                        })
+                      }
+                      useCompanyDefault={form.cpfUseCompanySettings}
+                      onUseCompanyDefaultChange={(v) => {
+                        if (!v && form.cpfBasisFieldKeys.length === 0) {
+                          patchForm({
+                            cpfUseCompanySettings: v,
+                            cpfBasisFieldKeys: companyCpfSettings.cpfBasisFieldKeys ?? DEFAULT_CPF_BASIS_KEYS,
+                            cpfPercentageOverride:
+                              form.cpfPercentageOverride || String(companyCpfSettings.cpfPercentage ?? 12),
+                          });
+                          return;
+                        }
+                        patchForm({ cpfUseCompanySettings: v });
+                      }}
+                      companyPreview={
+                        companyCpfSettings.cpfFormulaPreview ??
+                        (editing as PayrollMasterRecord & { cpfSettings?: { companySettings?: { cpfFormulaPreview?: string } } })
+                          ?.cpfSettings?.companySettings?.cpfFormulaPreview
+                      }
+                      idPrefix="master-cpf"
+                    />
+                  </div>
+                  <DynamicPayrollFields
+                    fields={payrollFieldDefs}
+                    group="statutory"
+                    values={form.customFieldValues}
+                    errors={apiFieldErrors}
+                    onChange={patchCustomField}
+                  />
                 </section>
                 )}
 
@@ -1460,6 +1822,13 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                       </FormField>
                     ))}
                   </div>
+                  <DynamicPayrollFields
+                    fields={payrollFieldDefs}
+                    group="deductions"
+                    values={form.customFieldValues}
+                    errors={apiFieldErrors}
+                    onChange={patchCustomField}
+                  />
                 </section>
                 )}
 
@@ -1502,6 +1871,13 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                       />
                     </FormField>
                   </div>
+                  <DynamicPayrollFields
+                    fields={payrollFieldDefs}
+                    group="bank"
+                    values={form.customFieldValues}
+                    errors={apiFieldErrors}
+                    onChange={patchCustomField}
+                  />
                 </section>
                 )}
 

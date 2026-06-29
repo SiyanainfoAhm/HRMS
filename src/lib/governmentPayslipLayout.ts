@@ -36,6 +36,40 @@ function gnum(gov: GovernmentMonthlySlip, key: string): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+function titleFromFieldKey(key: string): string {
+  return key
+    .split("_")
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+function customSnapshotPairs(
+  gov: GovernmentMonthlySlip,
+  column: "custom_earnings" | "custom_deductions",
+  fieldLabels?: Record<string, string>,
+): [string, number][] {
+  const raw = gov[column];
+  if (raw == null || raw === "") return [];
+  let obj: Record<string, unknown> = {};
+  if (typeof raw === "string") {
+    try {
+      obj = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return [];
+    }
+  } else if (typeof raw === "object") {
+    obj = raw as Record<string, unknown>;
+  }
+  const out: [string, number][] = [];
+  for (const [key, val] of Object.entries(obj)) {
+    const n = Number(val);
+    if (!Number.isFinite(n) || n === 0) continue;
+    out.push([fieldLabels?.[key] ?? titleFromFieldKey(key), n]);
+  }
+  return out;
+}
+
 export type GovernmentTAccountRow = {
   earningLabel: string;
   earningPaid: number | null;
@@ -44,8 +78,11 @@ export type GovernmentTAccountRow = {
 };
 
 /** Earnings lines in display order (paid column for the month). */
-export function governmentPayslipEarningPairs(gov: GovernmentMonthlySlip): [string, number][] {
-  return [
+export function governmentPayslipEarningPairs(
+  gov: GovernmentMonthlySlip,
+  fieldLabels?: Record<string, string>,
+): [string, number][] {
+  const base: [string, number][] = [
     ["Basic", gnum(gov, "basic_paid")],
     ["SP. Pay", gnum(gov, "sp_pay_paid")],
     ["DA", gnum(gov, "da_paid")],
@@ -61,11 +98,15 @@ export function governmentPayslipEarningPairs(gov: GovernmentMonthlySlip): [stri
     ["Encashment", gnum(gov, "encashment_paid")],
     ["Encashment DA", gnum(gov, "encashment_da_paid")],
   ];
+  return [...base, ...customSnapshotPairs(gov, "custom_earnings", fieldLabels)];
 }
 
 /** Deduction lines in display order. */
-export function governmentPayslipDeductionPairs(gov: GovernmentMonthlySlip): [string, number][] {
-  return [
+export function governmentPayslipDeductionPairs(
+  gov: GovernmentMonthlySlip,
+  fieldLabels?: Record<string, string>,
+): [string, number][] {
+  const base: [string, number][] = [
     ["Income Tax", gnum(gov, "income_tax_amount")],
     ["P.Tax", gnum(gov, "pt_amount")],
     ["LIC", gnum(gov, "lic_amount")],
@@ -73,18 +114,16 @@ export function governmentPayslipDeductionPairs(gov: GovernmentMonthlySlip): [st
     ["DA CPF", gnum(gov, "da_cpf_amount")],
     ["CPF on DA/Transport Arrears", gnum(gov, "cpf_arrear")],
     ["VPF", gnum(gov, "vpf_amount")],
-    ["PF Loan", gnum(gov, "pf_loan_amount")],
     ["Post Office", gnum(gov, "post_office_amount")],
     ["Credit Society", gnum(gov, "credit_society_amount")],
-    ["Std Licence fee", gnum(gov, "std_licence_fee_amount")],
     ["Electricity", gnum(gov, "electricity_amount")],
     ["Water", gnum(gov, "water_amount")],
     ["Mess", gnum(gov, "mess_amount")],
-    ["Horticulture", gnum(gov, "horticulture_amount")],
+    ["Bank Recovery", gnum(gov, "loan_recovery_amount") || gnum(gov, "horticulture_amount")],
     ["Welfare", gnum(gov, "welfare_amount")],
-    ["Veh Charge", gnum(gov, "veh_charge_amount")],
     ["Other", gnum(gov, "other_deduction_amount")],
   ];
+  return [...base, ...customSnapshotPairs(gov, "custom_deductions", fieldLabels)];
 }
 
 /** Pairs earning and deduction rows for a 4-column T-account body. */

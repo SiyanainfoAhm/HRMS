@@ -23,6 +23,7 @@ export type MasterFormLike = {
   division: string;
   status: string;
   payLevel: string;
+  incrementMonth: string;
   grossBasicPay: string;
   daPercent: string;
   hraPercent: string;
@@ -46,7 +47,7 @@ export type MasterFormLike = {
   standardLicenceFee: string;
   electricity: string;
   water: string;
-  horticulture: string;
+  loanRecovery: string;
   vehicleCharge: string;
   otherDeduction: string;
   advance: string;
@@ -83,14 +84,11 @@ const VARIABLE_DEDUCTION_KEYS = [
   "mess",
   "welfare",
   "vpf",
-  "pfLoan",
   "postOffice",
   "creditSociety",
-  "standardLicenceFee",
   "electricity",
   "water",
-  "horticulture",
-  "vehicleCharge",
+  "loanRecovery",
   "otherDeduction",
   "advance",
 ] as const;
@@ -104,6 +102,7 @@ const TAB_FIELD_ORDER: Record<FormTabId, readonly string[]> = {
     "password",
     "confirmPassword",
     "payLevel",
+    "incrementMonth",
     "designation",
     "status",
     "phone",
@@ -178,6 +177,12 @@ export function validateBasicDetails(form: MasterFormLike, editing: boolean): Re
   const level = parseInt(form.payLevel, 10);
   if (!form.payLevel.trim() || !Number.isFinite(level) || level < 1) {
     errors.payLevel = "Pay level is required.";
+  }
+
+  if (!form.incrementMonth.trim()) {
+    errors.incrementMonth = "Increment Month is required.";
+  } else if (!["January", "July"].includes(form.incrementMonth)) {
+    errors.incrementMonth = "Increment month must be January or July.";
   }
 
   if (!form.status.trim()) errors.status = "Status is required.";
@@ -279,14 +284,11 @@ export function validateDeductions(form: MasterFormLike): Record<string, string>
     mess: "Mess",
     welfare: "Welfare",
     vpf: "VPF",
-    pfLoan: "PF Loan",
     postOffice: "Post Office",
     creditSociety: "Credit Society",
-    standardLicenceFee: "Std Licence Fee",
     electricity: "Electricity",
     water: "Water",
-    horticulture: "Horticulture",
-    vehicleCharge: "Vehicle Charge",
+    loanRecovery: "Bank Recovery",
     otherDeduction: "Other Deduction",
     advance: "Advance",
   };
