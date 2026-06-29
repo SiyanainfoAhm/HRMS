@@ -880,15 +880,15 @@ function PayrollPageContent() {
             const unpaidDays = Math.max(0, dim - payDays);
             const comp = applyAutoArrearsToGovernmentMonthly(
               computeGovernmentMonthlyPayroll({
-                grossBasic: gr.grossBasic,
-                daPercent: gr.daPercent,
-                hraPercent: gr.hraPercent,
-                medicalFixed: gr.medicalFixed,
-                payLevel: gr.payLevel,
-                daysInMonth: dim,
-                unpaidDays,
-                deductionDefaults: gr.deductionDefaults,
-                earningPaidOverrides: gr.earningPaidOverrides,
+              grossBasic: gr.grossBasic,
+              daPercent: gr.daPercent,
+              hraPercent: gr.hraPercent,
+              medicalFixed: gr.medicalFixed,
+              payLevel: gr.payLevel,
+              daysInMonth: dim,
+              unpaidDays,
+              deductionDefaults: gr.deductionDefaults,
+              earningPaidOverrides: gr.earningPaidOverrides,
               }),
               {
                 daArrear: r.daArrear,
@@ -1048,16 +1048,16 @@ function PayrollPageContent() {
             const optionalEarnings = govOptionalFromComputedMonthly(gm);
             const comp = applyAutoArrearsToGovernmentMonthly(
               computeGovernmentMonthlyPayroll({
-                grossBasic: gr.grossBasic,
-                daPercent: gr.daPercent,
-                hraPercent: gr.hraPercent,
-                medicalFixed: gr.medicalFixed,
-                payLevel: gr.payLevel,
-                daysInMonth: dim,
-                unpaidDays,
-                deductionDefaults: gr.deductionDefaults,
-                optionalEarnings,
-                earningPaidOverrides: gr.earningPaidOverrides,
+              grossBasic: gr.grossBasic,
+              daPercent: gr.daPercent,
+              hraPercent: gr.hraPercent,
+              medicalFixed: gr.medicalFixed,
+              payLevel: gr.payLevel,
+              daysInMonth: dim,
+              unpaidDays,
+              deductionDefaults: gr.deductionDefaults,
+              optionalEarnings,
+              earningPaidOverrides: gr.earningPaidOverrides,
               }),
               {
                 daArrear: (row as { daArrear?: number }).daArrear,
@@ -1908,12 +1908,12 @@ function PayrollPageContent() {
 
   const payrollPageTitle = tab === "run" ? "Run Payroll" : "Salary Slips";
 
-  return (
+                        return (
     <section className="flex min-h-0 flex-col gap-3">
       <PageHeader title={payrollPageTitle} className="!mb-0" />
 
       {tab === "run" && (
-        <form
+            <form
           onSubmit={handleRunPayroll}
           className="page-workspace flex min-h-[min(calc(100dvh-9rem),820px)] flex-col overflow-hidden"
         >
@@ -1934,45 +1934,45 @@ function PayrollPageContent() {
             filteredCount={filteredEditableRows.length}
             totalCount={editableRows.length}
           >
-            {runError && <p className="text-sm text-red-600">{runError}</p>}
-            {preview?.alreadyRun && (
+              {runError && <p className="text-sm text-red-600">{runError}</p>}
+              {preview?.alreadyRun && (
               <div className="flex flex-wrap items-center gap-2 text-sm">
                 <span className="rounded-lg bg-amber-50 px-2.5 py-1 text-amber-900">
-                  Payroll already run for this period.
+                    Payroll already run for this period.
                   {preview.payrollComplete === false && typeof preview.missingPayslipCount === "number"
                     ? ` ${preview.missingPayslipCount} missing slip(s).`
                     : null}
-                </span>
-                {preview?.existingPeriodId && (
-                  <a
-                    href={`/api/payroll/export?periodId=${preview.existingPeriodId}`}
-                    download
+                      </span>
+                  {preview?.existingPeriodId && (
+                    <a
+                      href={`/api/payroll/export?periodId=${preview.existingPeriodId}`}
+                      download
                     className="btn btn-outline btn-sm"
-                  >
-                    Download Excel
-                  </a>
-                )}
-              </div>
-            )}
+                    >
+                      Download Excel
+                    </a>
+                  )}
+                </div>
+              )}
           </PayrollPreviewToolbar>
 
           <div className="min-h-0 flex-1 overflow-hidden p-2 sm:p-3">
-            {previewLoading ? (
+              {previewLoading ? (
               <div className="flex h-full flex-col gap-3 p-3">
                 <SkeletonEmployeeList items={6} />
-              </div>
-            ) : editableRows.length ? (
+                </div>
+              ) : editableRows.length ? (
               filteredEditableRows.length ? (
                 previewAllGovernment && preview?.daysInMonth ? (
-                  <GovernmentRunPreviewTable
+                    <GovernmentRunPreviewTable
                     rows={filteredEditableRows as GovernmentRunPreviewRow[]}
-                    daysInMonth={preview.daysInMonth}
+                      daysInMonth={preview.daysInMonth}
                     effectiveRunDay={
                       preview.effectiveRunDay ?? preview.workingDaysThroughRunDay ?? preview.daysInMonth
                     }
-                    readOnly={!!preview?.alreadyRun}
-                    onUpdate={updateEditableRow}
-                  />
+                      readOnly={!!preview?.alreadyRun}
+                      onUpdate={updateEditableRow}
+                    />
                 ) : preview?.daysInMonth ? (
                   <PrivateRunPreviewCards
                     rows={filteredEditableRows}
@@ -2003,7 +2003,7 @@ function PayrollPageContent() {
           <div className="flex flex-wrap items-end gap-2 border-b border-slate-100 pb-3">
             <SelectField
               label="Employee"
-              value={selectedEmployeeId}
+                value={selectedEmployeeId}
               onChange={setSelectedEmployeeId}
               loading={employeesLoading}
               searchable
@@ -2018,7 +2018,7 @@ function PayrollPageContent() {
               <>
                 <SelectField
                   label="Month"
-                  value={slipMonth}
+                    value={slipMonth}
                   onChange={setSlipMonth}
                   options={[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((m) => ({
                     value: String(m).padStart(2, "0"),
@@ -2028,22 +2028,22 @@ function PayrollPageContent() {
                 />
                 <SelectField
                   label="Year"
-                  value={slipYear}
+                    value={slipYear}
                   onChange={setSlipYear}
                   options={(() => {
-                    const joinYear = slipsData.user?.dateOfJoining
-                      ? parseInt(slipsData.user.dateOfJoining.slice(0, 4), 10)
-                      : new Date().getFullYear() - 2;
-                    const currentYear = new Date().getFullYear();
-                    const years = [];
-                    for (let y = currentYear; y >= Math.max(joinYear, 2020); y--) years.push(y);
+                      const joinYear = slipsData.user?.dateOfJoining
+                        ? parseInt(slipsData.user.dateOfJoining.slice(0, 4), 10)
+                        : new Date().getFullYear() - 2;
+                      const currentYear = new Date().getFullYear();
+                      const years = [];
+                      for (let y = currentYear; y >= Math.max(joinYear, 2020); y--) years.push(y);
                     return years.map((y) => ({ value: String(y), label: String(y) }));
-                  })()}
+                    })()}
                   className="w-28"
                 />
                 <Button
                   size="sm"
-                  onClick={handleSlipDownloadPdf}
+                    onClick={handleSlipDownloadPdf}
                   loading={pdfDownloading}
                   disabled={pdfDownloading || !hasSlipForPeriod}
                 >
@@ -2111,7 +2111,7 @@ function PayrollPageContent() {
               if (gov) {
                 return (
                   <div className="flex justify-center overflow-x-auto py-2">
-                    <GovernmentPayslipPrint
+                  <GovernmentPayslipPrint
                     ref={payslipRef}
                     company={company}
                     user={{

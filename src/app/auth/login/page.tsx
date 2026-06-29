@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useMemo, useState, Suspense } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { Building2, Shield } from "lucide-react";
 import { PasswordField } from "@/components/PasswordField";
@@ -11,7 +11,6 @@ import { isAdminRole } from "@/lib/roles";
 import { fadeInUp, staggerContainer, staggerItem } from "@/lib/motion";
 
 function LoginForm() {
-  const router = useRouter();
   const params = useSearchParams();
   const [email, setEmail] = useState(params.get("email") ?? "");
   const [password, setPassword] = useState("");
@@ -51,30 +50,32 @@ function LoginForm() {
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
       });
       const data = await res.json();
       if (!res.ok) {
         setError(data.error || "Invalid email or password. Please try again.");
-        setLoading(false);
         return;
       }
 
       const role = data.user?.role;
+      const nextParam = params.get("next");
+      let destination = nextParam && nextParam.startsWith("/") ? nextParam : "/dashboard";
+
       if (isAdminRole(role)) {
-        const companyRes = await fetch("/api/company/me");
+        const companyRes = await fetch("/api/company/me", { credentials: "include" });
         const companyData = await companyRes.json().catch(() => ({}));
         if (!companyData?.company) {
-          router.push("/setup/company");
-          router.refresh();
-          return;
+          destination = "/setup/company";
         }
       }
 
-      router.push("/dashboard");
-      router.refresh();
+      // Full navigation so httpOnly cookies are applied before the app layout loads.
+      window.location.assign(destination);
     } catch {
       setError("Unable to sign in. Check your connection and try again.");
+    } finally {
       setLoading(false);
     }
   }
