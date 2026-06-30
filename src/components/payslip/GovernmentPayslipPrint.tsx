@@ -5,7 +5,9 @@ import {
   governmentPayslipPeriodTitle,
   governmentPayslipTAccountRows,
   type GovernmentMonthlySlip,
+  type PayslipFieldMeta,
 } from "@/lib/governmentPayslipLayout";
+import type { PayrollFieldDefinition } from "@/lib/payrollFieldTypes";
 import type { GovernmentLeavePayslipDisplay } from "@/lib/leaveBalancesCompute";
 import { resolvePayslipDepartment, resolvePayslipDesignation } from "@/lib/payslipUserFields";
 
@@ -44,7 +46,21 @@ export type GovernmentPayslipPrintProps = {
   gov: GovernmentMonthlySlip;
   /** Leave lines for government slip; labels are fixed (Casual / Earned / HPL / HL + total). */
   leavePayslip?: GovernmentLeavePayslipDisplay | null;
+  payrollFieldDefs?: PayrollFieldDefinition[];
 };
+
+function payslipFieldMetas(fields?: PayrollFieldDefinition[]): PayslipFieldMeta[] | undefined {
+  if (!fields?.length) return undefined;
+  return fields
+    .filter((f) => f.isActive && !f.isSystem)
+    .map((f) => ({
+      fieldKey: f.fieldKey,
+      fieldLabel: f.fieldLabel,
+      fieldGroup: f.fieldGroup,
+      showInSalarySlip: f.showInSalarySlip,
+      displayOrder: f.displayOrder,
+    }));
+}
 
 function fmtDmy(iso: string) {
   if (!iso) return "—";
@@ -61,7 +77,7 @@ function fmtSalaryDate(iso: string) {
 }
 
 export const GovernmentPayslipPrint = forwardRef<HTMLDivElement, GovernmentPayslipPrintProps>(
-  function GovernmentPayslipPrint({ company, user, slip, gov, leavePayslip }, ref) {
+  function GovernmentPayslipPrint({ company, user, slip, gov, leavePayslip, payrollFieldDefs }, ref) {
     const n = (x: number) => (Number(x) || 0).toLocaleString("en-IN");
     const cellClass = "border border-black px-2 py-1.5 align-top text-sm";
     const thClass = "border border-black px-2 py-1.5 text-left text-xs font-semibold uppercase tracking-wide";
@@ -192,7 +208,7 @@ export const GovernmentPayslipPrint = forwardRef<HTMLDivElement, GovernmentPaysl
                     </tr>
                   </thead>
                   <tbody>
-                    {governmentPayslipTAccountRows(gov).map((row, i) => (
+                    {governmentPayslipTAccountRows(gov, payslipFieldMetas(payrollFieldDefs)).map((row, i) => (
                       <tr key={i}>
                         <td className={cellClass}>{row.earningLabel}</td>
                         <td className={`${cellClass} text-right tabular-nums`}>

@@ -47,27 +47,50 @@ function titleFromFieldKey(key: string): string {
 function customSnapshotPairs(
   gov: GovernmentMonthlySlip,
   column: "custom_earnings" | "custom_deductions",
-  fieldLabels?: Record<string, string>,
+  fieldMetas?: PayslipFieldMeta[],
 ): [string, number][] {
   const raw = gov[column];
-  if (raw == null || raw === "") return [];
   let obj: Record<string, unknown> = {};
-  if (typeof raw === "string") {
-    try {
-      obj = JSON.parse(raw) as Record<string, unknown>;
-    } catch {
-      return [];
+  if (raw != null && raw !== "") {
+    if (typeof raw === "string") {
+      try {
+        obj = JSON.parse(raw) as Record<string, unknown>;
+      } catch {
+        obj = {};
+      }
+    } else if (typeof raw === "object") {
+      obj = raw as Record<string, unknown>;
     }
-  } else if (typeof raw === "object") {
-    obj = raw as Record<string, unknown>;
   }
+
+  const group: "earnings" | "deductions" = column === "custom_earnings" ? "earnings" : "deductions";
+  if (fieldMetas?.length) {
+    return fieldMetas
+      .filter((m) => m.showInSalarySlip && payslipFieldMatchesGroup(m, group))
+      .sort((a, b) => a.displayOrder - b.displayOrder)
+      .map((m) => [m.fieldLabel, Math.round(Number(obj[m.fieldKey] ?? 0) || 0)] as [string, number]);
+  }
+
   const out: [string, number][] = [];
   for (const [key, val] of Object.entries(obj)) {
     const n = Number(val);
     if (!Number.isFinite(n) || n === 0) continue;
-    out.push([fieldLabels?.[key] ?? titleFromFieldKey(key), n]);
+    out.push([titleFromFieldKey(key), n]);
   }
   return out;
+}
+
+export type PayslipFieldMeta = {
+  fieldKey: string;
+  fieldLabel: string;
+  fieldGroup: string;
+  showInSalarySlip: boolean;
+  displayOrder: number;
+};
+
+function payslipFieldMatchesGroup(meta: PayslipFieldMeta, group: "earnings" | "deductions"): boolean {
+  if (group === "earnings") return meta.fieldGroup === "earnings";
+  return meta.fieldGroup === "deductions" || meta.fieldGroup === "statutory";
 }
 
 export type GovernmentTAccountRow = {
@@ -80,7 +103,7 @@ export type GovernmentTAccountRow = {
 /** Earnings lines in display order (paid column for the month). */
 export function governmentPayslipEarningPairs(
   gov: GovernmentMonthlySlip,
-  fieldLabels?: Record<string, string>,
+  fieldMetas?: PayslipFieldMeta[],
 ): [string, number][] {
   const base: [string, number][] = [
     ["Basic", gnum(gov, "basic_paid")],
@@ -98,13 +121,13 @@ export function governmentPayslipEarningPairs(
     ["Encashment", gnum(gov, "encashment_paid")],
     ["Encashment DA", gnum(gov, "encashment_da_paid")],
   ];
-  return [...base, ...customSnapshotPairs(gov, "custom_earnings", fieldLabels)];
+  return [...base, ...customSnapshotPairs(gov, "custom_earnings", fieldMetas)];
 }
 
 /** Deduction lines in display order. */
 export function governmentPayslipDeductionPairs(
   gov: GovernmentMonthlySlip,
-  fieldLabels?: Record<string, string>,
+  fieldMetas?: PayslipFieldMeta[],
 ): [string, number][] {
   const base: [string, number][] = [
     ["Income Tax", gnum(gov, "income_tax_amount")],
@@ -123,13 +146,16 @@ export function governmentPayslipDeductionPairs(
     ["Welfare", gnum(gov, "welfare_amount")],
     ["Other", gnum(gov, "other_deduction_amount")],
   ];
-  return [...base, ...customSnapshotPairs(gov, "custom_deductions", fieldLabels)];
+  return [...base, ...customSnapshotPairs(gov, "custom_deductions", fieldMetas)];
 }
 
 /** Pairs earning and deduction rows for a 4-column T-account body. */
-export function governmentPayslipTAccountRows(gov: GovernmentMonthlySlip): GovernmentTAccountRow[] {
-  const left = governmentPayslipEarningPairs(gov);
-  const right = governmentPayslipDeductionPairs(gov);
+export function governmentPayslipTAccountRows(
+  gov: GovernmentMonthlySlip,
+  fieldMetas?: PayslipFieldMeta[],
+): GovernmentTAccountRow[] {
+  const left = governmentPayslipEarningPairs(gov, fieldMetas);
+  const right = governmentPayslipDeductionPairs(gov, fieldMetas);
   const len = Math.max(left.length, right.length);
   const out: GovernmentTAccountRow[] = [];
   for (let i = 0; i < len; i++) {

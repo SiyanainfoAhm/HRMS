@@ -6,6 +6,7 @@ import {
   runPayrollBasisAmountsFromComputed,
 } from "./payrollCpfCalculation";
 import type { PayrollConfig } from "./payrollFieldTypes";
+import { sumCustomBagForTotal } from "./payrollFieldTypes";
 
 export type TransportSlab = { transportSlabGroup: string; transportBase: number };
 
@@ -94,6 +95,7 @@ export function governmentMonthlyExtras(
       : undefined,
     customEarnings: gr.customEarnings ?? {},
     customDeductions: gr.customDeductions ?? {},
+    payrollFieldDefs: payrollConfig?.fields,
   };
 }
 
@@ -117,6 +119,8 @@ export type GovernmentMonthlyInput = {
   customEarnings?: Record<string, number>;
   /** Custom deduction field values (non-system) */
   customDeductions?: Record<string, number>;
+  /** Active payroll field definitions for include-in-total rules */
+  payrollFieldDefs?: import("./payrollFieldTypes").PayrollFieldDefinition[];
 };
 
 function roundRupees(n: number): number {
@@ -235,8 +239,8 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
 
   const customEarnings = input.customEarnings ?? {};
   const customDeductions = input.customDeductions ?? {};
-  const customEarningsTotal = Object.values(customEarnings).reduce((s, v) => s + (Number(v) || 0), 0);
-  const customDeductionsTotal = Object.values(customDeductions).reduce((s, v) => s + (Number(v) || 0), 0);
+  const customEarningsTotal = sumCustomBagForTotal(customEarnings, input.payrollFieldDefs, "earnings");
+  const customDeductionsTotal = sumCustomBagForTotal(customDeductions, input.payrollFieldDefs, "deductions");
 
   const d = input.deductionDefaults;
 

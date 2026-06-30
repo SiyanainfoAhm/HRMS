@@ -43,12 +43,23 @@ type Props = {
   rows: PayrollMasterRecord[];
   canWrite: boolean;
   cpfRateLabel: string;
+  customColumns?: { key: string; label: string; fieldType: string }[];
   onEdit: (row: PayrollMasterRecord) => void;
   onDeactivate: (row: PayrollMasterRecord) => void;
   resetKey?: string | number;
 };
 
-export function PayrollMasterDataGrid({ rows, canWrite, cpfRateLabel, onEdit, onDeactivate, resetKey }: Props) {
+function customCellValue(row: PayrollMasterRecord, key: string, fieldType: string) {
+  const raw = row.customFieldValues?.[key];
+  if (raw == null || raw === "") return "—";
+  if (fieldType === "number" || fieldType === "percentage") {
+    const n = Number(raw);
+    return Number.isFinite(n) ? fmt(n) : raw;
+  }
+  return raw;
+}
+
+export function PayrollMasterDataGrid({ rows, canWrite, cpfRateLabel, customColumns = [], onEdit, onDeactivate, resetKey }: Props) {
   return (
     <DataTableShell
       resetScrollKey={resetKey ?? rows.length}
@@ -94,6 +105,11 @@ export function PayrollMasterDataGrid({ rows, canWrite, cpfRateLabel, onEdit, on
             <th className="px-2 py-1.5 text-right">Bank Rec.</th>
             <th className="px-2 py-1.5 text-right">Other</th>
             <th className="px-2 py-1.5 text-right">Advance</th>
+            {customColumns.map((col) => (
+              <th key={col.key} className="px-2 py-1.5 text-right whitespace-nowrap">
+                {col.label}
+              </th>
+            ))}
             <th className="px-2 py-1.5 text-left">Effective</th>
             {canWrite ? <th className={`${dataTh} ${stickyRight} min-w-[7rem]`}>Actions</th> : null}
           </tr>
@@ -146,6 +162,11 @@ export function PayrollMasterDataGrid({ rows, canWrite, cpfRateLabel, onEdit, on
               <td className={dataTdNum}>{fmt(row.loanRecovery)}</td>
               <td className={dataTdNum}>{fmt(row.otherDeduction)}</td>
               <td className={dataTdNum}>{fmt(row.advance)}</td>
+              {customColumns.map((col) => (
+                <td key={col.key} className={dataTdNum}>
+                  {customCellValue(row, col.key, col.fieldType)}
+                </td>
+              ))}
               <td className={dataTdLeft}>{row.effectiveFrom?.slice(0, 10) ?? "—"}</td>
               {canWrite && (
                 <td className={`${dataTd} ${stickyRight} !px-2`}>

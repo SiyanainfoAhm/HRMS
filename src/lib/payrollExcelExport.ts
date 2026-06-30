@@ -118,7 +118,85 @@ export type GovernmentMonthlyRow = {
   total_earnings?: number | null;
   total_deductions?: number | null;
   net_salary?: number | null;
+  custom_earnings?: unknown;
+  custom_deductions?: unknown;
 };
+
+/** Dynamic columns appended after fixed headers (admin-configured earning/deduction fields). */
+export type DynamicPayrollExcelColumn = { key: string; label: string };
+
+function parseCustomBag(raw: unknown): Record<string, number> {
+  if (raw == null || raw === "") return {};
+  let obj: Record<string, unknown> = {};
+  if (typeof raw === "string") {
+    try {
+      obj = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  } else if (typeof raw === "object") {
+    obj = raw as Record<string, unknown>;
+  }
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    const n = Number(v);
+    if (Number.isFinite(n)) out[k] = n;
+  }
+  return out;
+}
+
+function titleFromFieldKey(key: string): string {
+  return key
+    .split("_")
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+/** Collect unique dynamic field keys from government monthly rows for export. */
+export function collectDynamicPayrollExcelColumns(
+  govRows: Array<Record<string, unknown>>,
+  fieldLabelByKey?: Map<string, string>,
+): DynamicPayrollExcelColumn[] {
+  const seen = new Set<string>();
+  const cols: DynamicPayrollExcelColumn[] = [];
+  for (const g of govRows) {
+    for (const bag of [
+      parseCustomBag(g.customEarnings ?? g.custom_earnings),
+      parseCustomBag(g.customDeductions ?? g.custom_deductions),
+    ]) {
+      for (const key of Object.keys(bag)) {
+        if (seen.has(key)) continue;
+        seen.add(key);
+        cols.push({
+          key: `dyn_${key}`,
+          label: fieldLabelByKey?.get(key) ?? titleFromFieldKey(key),
+        });
+      }
+    }
+  }
+  return cols;
+}
+
+export function buildPayrollExcelHeaders(dynamicCols: DynamicPayrollExcelColumn[] = []): string[] {
+  return [...PAYROLL_EXCEL_HEADER, ...dynamicCols.map((c) => c.label)];
+}
+
+function dynamicValuesFromGov(
+  gov: GovernmentMonthlyRow | null | undefined,
+  dynamicCols: DynamicPayrollExcelColumn[],
+): Record<string, number | string> {
+  if (!gov || dynamicCols.length === 0) return {};
+  const earnings = parseCustomBag(gov.custom_earnings);
+  const deductions = parseCustomBag(gov.custom_deductions);
+  const merged = { ...earnings, ...deductions };
+  const out: Record<string, number | string> = {};
+  for (const col of dynamicCols) {
+    const fieldKey = col.key.replace(/^dyn_/, "");
+    out[col.label] = merged[fieldKey] ?? 0;
+  }
+  return out;
+}
 
 function n(v: unknown): number {
   const x = Number(v);
@@ -245,7 +323,8 @@ export function buildPayrollExcelRow(
   p: PayslipExcelInput,
   userName: string,
   gov: GovernmentExcelSource | null | undefined,
-): Record<PayrollExcelHeader, string | number> {
+  dynamicCols: DynamicPayrollExcelColumn[] = [],
+): Record<string, string | number> {
   const accountNum = p.bank_account_number != null ? String(p.bank_account_number) : "";
   const mode = p.payroll_mode === "government" ? "government" : "private";
   const netPay = n(p.net_pay);
@@ -323,10 +402,13 @@ export function buildPayrollExcelRow(
     body = basePrivate;
   }
 
+  const govRow = gov?.kind === "row" ? gov.row : null;
+
   return {
     AccountNumber: accountNum,
     EmployeeName: userName,
     ...body,
+    ...dynamicValuesFromGov(govRow, dynamicCols),
   };
 }
 
@@ -334,7 +416,7 @@ export function buildPayrollExcelRow(
 export const PAYROLL_EXCEL_REMOVED_COLUMNS = ["PayrollMode", "PT", "TakeHome"] as const;
 
 /** 0-based column indices to center (all numeric fields after name). */
-export function payrollExcelAmountColumnIndices(): number[] {
+export function payrollExcelAmountColumnIndices(headerCount: number): number[] {
   const skip = 2;
-  return Array.from({ length: PAYROLL_EXCEL_HEADER.length - skip }, (_, i) => i + skip);
+  return Array.from({ length: Math.max(0, headerCount - skip) }, (_, i) => i + skip);
 }

@@ -56,6 +56,9 @@ import {
 import { DynamicPayrollFields } from "@/components/payroll/DynamicPayrollFields";
 import { CpfCalculationSettingsForm } from "@/components/payroll/CpfCalculationSettingsForm";
 import type { PayrollFieldDefinition } from "@/lib/payrollFieldTypes";
+import {
+  customNumericBagForTotalFromValues,
+} from "@/lib/payrollFieldTypes";
 import { isAdminRole, normalizeRole, type AppRole } from "@/lib/roles";
 
 export type PayrollMasterRecord = {
@@ -253,20 +256,6 @@ const VARIABLE_DEDUCTION_FIELDS = [
 const EARNINGS_COLUMN_COUNT = 12;
 const DEFAULT_DEDUCTION_COLUMN_COUNT = 3;
 const VARIABLE_DEDUCTION_COLUMN_COUNT = 12;
-
-function customEarningsFromForm(
-  values: Record<string, string>,
-  fields: PayrollFieldDefinition[],
-): Record<string, number> {
-  const out: Record<string, number> = {};
-  for (const field of fields) {
-    if (field.fieldGroup !== "earnings" || field.isSystem || !field.isActive) continue;
-    const raw = values[field.fieldKey];
-    if (raw == null || raw === "") continue;
-    out[field.fieldKey] = parseFloat(raw) || 0;
-  }
-  return out;
-}
 
 function previewEarningDefaults(form: Pick<MasterFormState, "payLevel" | "grossBasicPay" | "daPercent" | "hraPercent" | "medical">) {
   const preview = computePayrollMasterPreview({
@@ -845,9 +834,20 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
         cpfBasisFieldKeysOverride: form.cpfBasisFieldKeys,
         companyCpfPercentage: companyCpfSettings.cpfPercentage,
         companyCpfBasisFieldKeys: companyCpfSettings.cpfBasisFieldKeys,
-        customEarnings: customEarningsFromForm(form.customFieldValues, payrollFieldDefs),
+        customEarnings: customNumericBagForTotalFromValues(form.customFieldValues, payrollFieldDefs, "earnings"),
+        customDeductions: customNumericBagForTotalFromValues(form.customFieldValues, payrollFieldDefs, "deductions"),
+        payrollFieldDefs,
       }),
     [form, companyCpfSettings, payrollFieldDefs],
+  );
+
+  const masterGridCustomColumns = useMemo(
+    () =>
+      payrollFieldDefs
+        .filter((f) => f.isActive && !f.isSystem && f.showInPayrollMaster)
+        .sort((a, b) => a.displayOrder - b.displayOrder)
+        .map((f) => ({ key: f.fieldKey, label: f.fieldLabel, fieldType: f.fieldType })),
+    [payrollFieldDefs],
   );
 
   const effectiveCpfConfig = useMemo(
@@ -1282,6 +1282,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
             rows={rows}
             canWrite={canWrite}
             cpfRateLabel={cpfBadge}
+            customColumns={masterGridCustomColumns}
             resetKey={rows.map((r) => r.id).join(",")}
             onEdit={openEdit}
             onDeactivate={setDeactivateTarget}

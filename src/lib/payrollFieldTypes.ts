@@ -98,6 +98,11 @@ function savedCustomBag(
   return out;
 }
 
+function fieldMatchesRunGroup(field: PayrollFieldDefinition, group: "earnings" | "deductions"): boolean {
+  if (group === "earnings") return field.fieldGroup === "earnings";
+  return field.fieldGroup === "deductions" || field.fieldGroup === "statutory";
+}
+
 /** Include saved custom field values in run preview when payroll was already generated. */
 export function customRunFieldsForPreview(
   allFields: PayrollFieldDefinition[],
@@ -105,7 +110,7 @@ export function customRunFieldsForPreview(
   group: "earnings" | "deductions",
 ): PayrollFieldDefinition[] {
   const base = allFields
-    .filter((f) => f.isActive && !f.isSystem && f.showInRunPayroll && f.fieldGroup === group)
+    .filter((f) => f.isActive && !f.isSystem && f.showInRunPayroll && fieldMatchesRunGroup(f, group))
     .sort((a, b) => a.displayOrder - b.displayOrder);
 
   const known = new Set(base.map((f) => f.fieldKey));
@@ -140,4 +145,56 @@ export function customRunFieldsForPreview(
   }
 
   return [...base, ...extras].sort((a, b) => a.displayOrder - b.displayOrder);
+}
+
+/** Sum custom field amounts included in payroll totals (earnings or deductions). */
+export function sumCustomBagForTotal(
+  bag: Record<string, number>,
+  fields: PayrollFieldDefinition[] | undefined,
+  group: "earnings" | "deductions",
+): number {
+  let sum = 0;
+  for (const [key, val] of Object.entries(bag)) {
+    const n = Number(val);
+    if (!Number.isFinite(n)) continue;
+    const def = fields?.find((f) => f.fieldKey === key);
+    if (def) {
+      if (group === "earnings" && !def.includeInTotalEarnings) continue;
+      if (group === "deductions" && !def.includeInTotalDeductions) continue;
+    }
+    sum += n;
+  }
+  return Math.round(sum);
+}
+
+export function customNumericBagFromValues(
+  values: Record<string, string>,
+  fields: PayrollFieldDefinition[],
+  group: "earnings" | "deductions",
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const field of fields) {
+    if (!field.isActive || field.isSystem || !fieldMatchesRunGroup(field, group)) continue;
+    const raw = values[field.fieldKey];
+    if (raw == null || raw === "") continue;
+    const n = parseFloat(raw);
+    if (Number.isFinite(n)) out[field.fieldKey] = n;
+  }
+  return out;
+}
+
+export function customNumericBagForTotalFromValues(
+  values: Record<string, string>,
+  fields: PayrollFieldDefinition[],
+  group: "earnings" | "deductions",
+): Record<string, number> {
+  const bag = customNumericBagFromValues(values, fields, group);
+  const out: Record<string, number> = {};
+  for (const [key, val] of Object.entries(bag)) {
+    const def = fields.find((f) => f.fieldKey === key);
+    if (group === "earnings" && def && !def.includeInTotalEarnings) continue;
+    if (group === "deductions" && def && !def.includeInTotalDeductions) continue;
+    out[key] = val;
+  }
+  return out;
 }

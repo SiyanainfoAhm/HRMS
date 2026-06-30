@@ -474,6 +474,104 @@ class PayrollFieldService
         return $errors;
     }
 
+    /** @return list<array{0: string, 1: string, 2: string, 3: string, 4: string, 5: string, 6: string, 7: string}> */
+    public function templateInstructionFieldRows(string $companyId): array
+    {
+        $this->ensureCompanyDefaults($companyId);
+
+        return HrmsPayrollFieldDefinition::query()
+            ->where('company_id', $companyId)
+            ->where('is_active', true)
+            ->where('is_system', false)
+            ->where('show_in_payroll_master', true)
+            ->orderBy('display_order')
+            ->orderBy('field_label')
+            ->get()
+            ->map(function (HrmsPayrollFieldDefinition $f) {
+                $allowed = '';
+                if ($f->field_type === 'dropdown' && is_array($f->dropdown_options) && $f->dropdown_options !== []) {
+                    $allowed = implode(', ', $f->dropdown_options);
+                }
+
+                return [
+                    $f->field_label,
+                    $f->field_key,
+                    ucfirst((string) $f->field_group),
+                    $f->field_type,
+                    $f->is_required ? 'Yes' : 'No',
+                    $f->include_in_total_earnings ? 'Yes' : 'No',
+                    $f->include_in_total_deductions ? 'Yes' : 'No',
+                    $allowed,
+                ];
+            })
+            ->values()
+            ->all();
+    }
+
+    /** @return list<array<string, mixed>> */
+    public function masterDisplayFields(string $companyId): array
+    {
+        $this->ensureCompanyDefaults($companyId);
+
+        return HrmsPayrollFieldDefinition::query()
+            ->where('company_id', $companyId)
+            ->where('is_active', true)
+            ->where('is_system', false)
+            ->where('show_in_payroll_master', true)
+            ->orderBy('display_order')
+            ->orderBy('field_label')
+            ->get()
+            ->map(fn (HrmsPayrollFieldDefinition $f) => $this->formatField($f))
+            ->values()
+            ->all();
+    }
+
+    /** @return array<string, float> */
+    public function customEarningsForTotal(string $companyId, array $values): array
+    {
+        $out = [];
+        $fields = HrmsPayrollFieldDefinition::query()
+            ->where('company_id', $companyId)
+            ->where('is_active', true)
+            ->where('is_system', false)
+            ->where('field_group', 'earnings')
+            ->where('include_in_total_earnings', true)
+            ->get();
+
+        foreach ($fields as $field) {
+            $raw = $values[$field->field_key] ?? null;
+            if ($raw === null || $raw === '') {
+                continue;
+            }
+            $out[$field->field_key] = (float) $raw;
+        }
+
+        return $out;
+    }
+
+    /** @return array<string, float> */
+    public function customDeductionsForTotal(string $companyId, array $values): array
+    {
+        $out = [];
+        $fields = HrmsPayrollFieldDefinition::query()
+            ->where('company_id', $companyId)
+            ->where('is_active', true)
+            ->where('is_system', false)
+            ->whereIn('field_group', ['deductions', 'statutory'])
+            ->where('include_in_total_deductions', true)
+            ->get();
+
+        foreach ($fields as $field) {
+            $raw = $values[$field->field_key] ?? null;
+            if ($raw === null || $raw === '') {
+                continue;
+            }
+            $out[$field->field_key] = (float) $raw;
+        }
+
+        return $out;
+    }
+
     /** @return array<string, float> */
     public function customEarningsFromValues(string $companyId, array $values): array
     {
@@ -504,7 +602,7 @@ class PayrollFieldService
             ->where('company_id', $companyId)
             ->where('is_active', true)
             ->where('is_system', false)
-            ->where('field_group', 'deductions')
+            ->whereIn('field_group', ['deductions', 'statutory'])
             ->get();
 
         foreach ($fields as $field) {

@@ -2241,6 +2241,7 @@ function PayrollPageContent() {
                     }}
                     gov={gov as GovernmentMonthlySlip}
                     leavePayslip={slip.leavePayslip ?? null}
+                    payrollFieldDefs={payrollConfig?.fields}
                   />
                   </div>
                 );

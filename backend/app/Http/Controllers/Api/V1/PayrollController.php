@@ -985,6 +985,7 @@ class PayrollController extends Controller
             'payslips' => $payslips,
             'users' => $users,
             'governmentMonthly' => $governmentMonthly,
+            'payrollConfig' => $this->fieldService->getPayrollConfig((string) $user->company_id),
         ]);
     }
 

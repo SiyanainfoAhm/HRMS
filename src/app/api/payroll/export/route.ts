@@ -4,7 +4,8 @@ import { COOKIE_NAME, TOKEN_COOKIE_NAME, getSessionFromCookie } from "@/lib/auth
 import { isAdminRole } from "@/lib/roles";
 import {
   buildPayrollExcelRow,
-  PAYROLL_EXCEL_HEADER,
+  buildPayrollExcelHeaders,
+  collectDynamicPayrollExcelColumns,
   payrollExcelAmountColumnIndices,
   type GovernmentMonthlyRow,
 } from "@/lib/payrollExcelExport";
@@ -106,6 +107,21 @@ export async function GET(request: NextRequest) {
     ]),
   );
 
+  const payrollFields = (payload.payrollConfig?.fields ?? payload.payrollFields ?? []) as Array<{
+    fieldKey?: string;
+    field_key?: string;
+    fieldLabel?: string;
+    field_label?: string;
+  }>;
+  const fieldLabelByKey = new Map(
+    payrollFields.map((f) => [
+      String(f.fieldKey ?? f.field_key ?? ""),
+      String(f.fieldLabel ?? f.field_label ?? ""),
+    ]),
+  );
+  const dynamicCols = collectDynamicPayrollExcelColumns(govList, fieldLabelByKey);
+  const excelHeaders = buildPayrollExcelHeaders(dynamicCols);
+
   const periodStart = String(payload.period?.periodStart ?? payload.period?.period_start ?? "");
   const [y, m] = periodStart.split("-").map(Number);
   const fileName =
@@ -122,12 +138,13 @@ export async function GET(request: NextRequest) {
       slip,
       nameById.get(uid) ?? "",
       govRow ? { kind: "row", row: govRow } : null,
+      dynamicCols,
     );
   });
 
-  const ws = XLSX.utils.json_to_sheet(rows, { header: [...PAYROLL_EXCEL_HEADER] });
-  ws["!cols"] = PAYROLL_EXCEL_HEADER.map((_, i) => ({ wch: i < 2 ? 20 : 12 }));
-  const amountCols = payrollExcelAmountColumnIndices();
+  const ws = XLSX.utils.json_to_sheet(rows, { header: excelHeaders });
+  ws["!cols"] = excelHeaders.map((_, i) => ({ wch: i < 2 ? 20 : 12 }));
+  const amountCols = payrollExcelAmountColumnIndices(excelHeaders.length);
   const rowCount = rows.length + 1;
   for (let r = 1; r <= rowCount; r++) {
     for (const c of amountCols) {

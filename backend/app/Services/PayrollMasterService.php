@@ -503,6 +503,7 @@ final class PayrollMasterService
      */
     public function previewImportFile(UploadedFile $file, ?string $companyId): array
     {
+        $this->importCompanyContext = $companyId;
         $plan = $this->buildImportPlan($file, $companyId);
         $issues = $this->flattenImportIssues($plan);
 
@@ -772,9 +773,10 @@ final class PayrollMasterService
 
     public function exportSpreadsheet(?string $companyId, string $format = 'xlsx'): StreamedResponse
     {
+        $this->importCompanyContext = $companyId;
         $rows = $this->listForCompany($companyId);
         $sheet = new Spreadsheet;
-        $this->writeSpreadsheetWithGroupedHeaders($sheet, $rows);
+        $this->writeMasterExportSheet($sheet, $rows);
 
         $filename = 'cirt_payroll_master_'.date('Ymd_His').'.'.($format === 'csv' ? 'csv' : 'xlsx');
 
@@ -801,7 +803,7 @@ final class PayrollMasterService
         if ($format !== 'csv') {
             $instructions = $spreadsheet->createSheet();
             $instructions->setTitle('Instructions');
-            $this->writeImportTemplateInstructionsSheet($instructions);
+            $this->writeImportTemplateInstructionsSheet($instructions, $companyId);
         }
         $spreadsheet->setActiveSheetIndex(0);
 
@@ -913,7 +915,7 @@ final class PayrollMasterService
         $sheet->getStyle('A1:'.$lastCol.'1')->getFont()->setBold(true);
     }
 
-    private function writeImportTemplateInstructionsSheet(\PhpOffice\PhpSpreadsheet\Worksheet\Worksheet $sheet): void
+    private function writeImportTemplateInstructionsSheet(\PhpOffice\PhpSpreadsheet\Worksheet\Worksheet $sheet, ?string $companyId = null): void
     {
         $lines = [
             ['Payroll Master Import — Instructions'],
@@ -929,9 +931,29 @@ final class PayrollMasterService
             [''],
             ['Download a fresh template if you see "Missing required columns: User Role, Password, Confirm Password".'],
         ];
+
+        if ($companyId) {
+            $fieldRows = $this->fieldService->templateInstructionFieldRows($companyId);
+            if ($fieldRows !== []) {
+                $lines[] = [''];
+                $lines[] = ['Dynamic payroll fields (configured in Settings → Payroll Fields)'];
+                $lines[] = ['Label', 'Key', 'Group', 'Type', 'Required', 'In total earnings', 'In total deductions', 'Allowed values'];
+                foreach ($fieldRows as $row) {
+                    $lines[] = $row;
+                }
+            }
+        }
+
         $sheet->fromArray($lines, null, 'A1');
         $sheet->getStyle('A1')->getFont()->setBold(true);
-        $sheet->getColumnDimension('A')->setWidth(100);
+        $sheet->getColumnDimension('A')->setWidth(28);
+        $sheet->getColumnDimension('B')->setWidth(22);
+        $sheet->getColumnDimension('C')->setWidth(14);
+        $sheet->getColumnDimension('D')->setWidth(12);
+        $sheet->getColumnDimension('E')->setWidth(10);
+        $sheet->getColumnDimension('F')->setWidth(16);
+        $sheet->getColumnDimension('G')->setWidth(18);
+        $sheet->getColumnDimension('H')->setWidth(36);
     }
 
     private function importColumnDisplayName(string $key): string
@@ -1241,7 +1263,60 @@ final class PayrollMasterService
     /** @param  array<string, mixed>  $r */
     private function rowToExport(array $r): array
     {
-        return array_map(fn ($h) => $r[$h] ?? $r[Str::camel($h)] ?? '', $this->templateHeaders());
+        $customValues = is_array($r['customFieldValues'] ?? null) ? $r['customFieldValues'] : [];
+
+        return array_map(function (array $col) use ($r, $customValues) {
+            $key = $col['key'];
+            if (array_key_exists($key, $customValues)) {
+                return $customValues[$key];
+            }
+
+            return $r[$key] ?? $r[Str::camel($key)] ?? '';
+        }, $this->masterExportColumnDefs());
+    }
+
+    /** @return list<array{key: string, header: string}> */
+    private function masterExportColumnDefs(): array
+    {
+        $defs = [];
+        $seen = [];
+        foreach ($this->templateHeaders() as $key) {
+            $defs[] = ['key' => $key, 'header' => $this->importColumnDisplayName($key)];
+            $seen[$key] = true;
+        }
+        if ($this->importCompanyContext) {
+            foreach ($this->fieldService->customImportColumns($this->importCompanyContext) as $col) {
+                if (isset($seen[$col['key']])) {
+                    continue;
+                }
+                $defs[] = ['key' => $col['key'], 'header' => rtrim($col['header'], '*')];
+                $seen[$col['key']] = true;
+            }
+        }
+
+        return $defs;
+    }
+
+    /** @return list<string> */
+    private function exportDisplayHeaders(): array
+    {
+        return array_map(fn (array $col) => $col['header'], $this->masterExportColumnDefs());
+    }
+
+    /** @param  list<array<string, mixed>>  $rows */
+    private function writeMasterExportSheet(Spreadsheet $sheet, array $rows): void
+    {
+        $activeSheet = $sheet->getActiveSheet();
+        $activeSheet->setTitle('Payroll Master');
+        $headers = $this->exportDisplayHeaders();
+        $activeSheet->fromArray($headers, null, 'A1');
+        $lastCol = Coordinate::stringFromColumnIndex(max(1, count($headers)));
+        $activeSheet->getStyle('A1:'.$lastCol.'1')->getFont()->setBold(true);
+        $i = 2;
+        foreach ($rows as $r) {
+            $activeSheet->fromArray($this->rowToExport($r), null, 'A'.$i);
+            $i++;
+        }
     }
 
     private function resolveTakeHome(HrmsPayrollMaster $m): float
@@ -3309,7 +3384,27 @@ final class PayrollMasterService
             $errors[] = $this->importIssue($dup['field'], $dup['message']);
         }
 
+        if ($companyId) {
+            $customValues = $this->customValuesFromImportRow($companyId, $row);
+            foreach ($this->fieldService->validateCustomFieldValues($companyId, $customValues) as $ce) {
+                $errors[] = $this->importIssue($ce['field'], $ce['message']);
+            }
+        }
+
         return $errors;
+    }
+
+    /** @param array<string, mixed> $row */
+    /** @return array<string, string> */
+    private function customValuesFromImportRow(string $companyId, array $row): array
+    {
+        $out = [];
+        foreach ($this->fieldService->customImportColumns($companyId) as $col) {
+            $key = $col['key'];
+            $out[$key] = trim((string) ($row[$key] ?? ''));
+        }
+
+        return $out;
     }
 
     /** @return array<string, mixed> */
@@ -3341,8 +3436,8 @@ final class PayrollMasterService
             $defaultDa,
             $defaultHra,
             $cpfConfigPayload,
-            $this->fieldService->customEarningsFromValues($companyId, $customValues),
-            $this->fieldService->customDeductionsFromValues($companyId, $customValues),
+            $this->fieldService->customEarningsForTotal($companyId, $customValues),
+            $this->fieldService->customDeductionsForTotal($companyId, $customValues),
         );
     }
 
@@ -3366,12 +3461,7 @@ final class PayrollMasterService
     private function extractCustomFieldValuesFromImportRow(string $companyId, array $row): array
     {
         $out = [];
-        foreach ($this->fieldService->customImportColumns($companyId) as $col) {
-            $key = $col['key'];
-            if (! array_key_exists($key, $row)) {
-                continue;
-            }
-            $val = trim((string) ($row[$key] ?? ''));
+        foreach ($this->customValuesFromImportRow($companyId, $row) as $key => $val) {
             if ($val !== '') {
                 $out[$key] = $val;
             }

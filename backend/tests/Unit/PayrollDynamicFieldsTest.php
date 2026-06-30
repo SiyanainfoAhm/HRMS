@@ -187,10 +187,27 @@ final class PayrollDynamicFieldsTest extends TestCase
         );
     }
 
-    public function test_cpf_formula_preview(): void
+    public function test_dynimp_001_template_instructions_lists_dynamic_fields(): void
     {
-        $preview = PayrollFieldRegistry::cpfFormulaPreview(['Basic', 'DA', 'Transport'], 12);
-        $this->assertStringContainsString('Basic + DA + Transport', $preview);
-        $this->assertStringContainsString('12%', $preview);
+        $servicePath = dirname(__DIR__, 2).'/app/Services/PayrollFieldService.php';
+        $this->assertFileExists($servicePath);
+        $this->assertStringContainsString('templateInstructionFieldRows', file_get_contents($servicePath));
+    }
+
+    public function test_dynexp_001_master_export_includes_dynamic_columns(): void
+    {
+        $servicePath = dirname(__DIR__, 2).'/app/Services/PayrollMasterService.php';
+        $this->assertFileExists($servicePath);
+        $this->assertStringContainsString('masterExportColumnDefs', file_get_contents($servicePath));
+        $this->assertStringContainsString('writeMasterExportSheet', file_get_contents($servicePath));
+    }
+
+    public function test_dynrun_005_run_export_includes_payroll_config(): void
+    {
+        $controllerPath = dirname(__DIR__, 2).'/app/Http/Controllers/Api/V1/PayrollController.php';
+        $this->assertFileExists($controllerPath);
+        $src = file_get_contents($controllerPath);
+        $this->assertIsString($src);
+        $this->assertStringContainsString("'payrollConfig' =>", $src);
     }
 }

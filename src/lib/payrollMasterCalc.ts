@@ -7,6 +7,7 @@ import {
   resolveEffectiveCpfConfigForMaster,
   resolveMasterCpfBasisAmount,
 } from "./payrollCpfCalculation";
+import { sumCustomBagForTotal, type PayrollFieldDefinition } from "./payrollFieldTypes";
 
 export const DEFAULT_DA_PERCENT = 53;
 export const DEFAULT_HRA_PERCENT = 30;
@@ -49,6 +50,8 @@ export type PayrollMasterPreviewInput = {
   companyCpfPercentage?: number | string;
   companyCpfBasisFieldKeys?: string[];
   customEarnings?: Record<string, number>;
+  customDeductions?: Record<string, number>;
+  payrollFieldDefs?: import("./payrollFieldTypes").PayrollFieldDefinition[];
 };
 
 export type PayrollMasterPreview = {
@@ -123,6 +126,12 @@ export function computePayrollMasterPreview(input: PayrollMasterPreviewInput): P
   }
 
   let totalEarnings = roundRupees(grossBasic + daAmount + hraAmount + medical + transportTotal);
+  const customEarningsTotal = sumCustomBagForTotal(
+    input.customEarnings ?? {},
+    input.payrollFieldDefs,
+    "earnings",
+  );
+  totalEarnings = roundRupees(totalEarnings + customEarningsTotal);
   if (input.totalEarnings !== undefined && input.totalEarnings !== "") {
     totalEarnings = roundRupees(num(input.totalEarnings, totalEarnings));
   }
@@ -171,6 +180,12 @@ export function computePayrollMasterPreview(input: PayrollMasterPreviewInput): P
   const otherDeduction = roundRupees(num(input.otherDeduction, 0));
   const advance = roundRupees(num(input.advance, 0));
 
+  const customDeductionsTotal = sumCustomBagForTotal(
+    input.customDeductions ?? {},
+    input.payrollFieldDefs,
+    "deductions",
+  );
+
   const totalDeductions = roundRupees(
     incomeTax +
       professionalTax +
@@ -189,7 +204,8 @@ export function computePayrollMasterPreview(input: PayrollMasterPreviewInput): P
       welfare +
       vehicleCharge +
       otherDeduction +
-      advance,
+      advance +
+      customDeductionsTotal,
   );
 
   const takeHome = roundRupees(totalEarnings - totalDeductions);
