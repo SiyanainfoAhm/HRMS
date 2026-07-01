@@ -13,6 +13,7 @@ use App\Support\BankDetailsService;
 use App\Support\BankDetailsValidator;
 use App\Services\PayrollArrearService;
 use App\Services\PayrollFieldService;
+use App\Services\QuarterService;
 use App\Services\PayrollMasterService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -24,6 +25,7 @@ class PayrollController extends Controller
         private readonly PayrollArrearService $arrearService,
         private readonly PayrollMasterService $masterService,
         private readonly PayrollFieldService $fieldService,
+        private readonly QuarterService $quarterService,
     ) {}
 
     public function periods(Request $request): JsonResponse
@@ -418,12 +420,19 @@ class PayrollController extends Controller
             ];
 
             if ($payrollMode === 'government') {
+                $quarterMeta = $this->quarterService->quarterMetaForMaster($m, (string) $user->company_id);
+                $row = array_merge($row, $quarterMeta);
                 $row['govRecalc'] = [
                     'grossBasic' => $grossBasic,
                     'daPercent' => $daPercent,
                     'hraPercent' => $hraPercent,
                     'medicalFixed' => $medicalFixed,
                     'payLevel' => $payLevel,
+                    'hasQuarter' => $quarterMeta['hasQuarter'],
+                    'quarterRent' => $quarterMeta['quarterRent'],
+                    'quarterId' => $quarterMeta['quarterId'],
+                    'quarterName' => $quarterMeta['quarterName'],
+                    'quarterType' => $quarterMeta['quarterType'],
                     'deductionDefaults' => [
                         'incomeTax' => $tds,
                         'pt' => $ptDefault,
@@ -442,6 +451,7 @@ class PayrollController extends Controller
                         'welfare' => (float) ($m->welfare_default ?? 0),
                         'vehCharge' => (float) ($m->veh_charge_default ?? 0),
                         'other' => (float) ($m->other_deduction_default ?? 0),
+                        'quarterRent' => $quarterMeta['hasQuarter'] ? (float) $quarterMeta['quarterRent'] : 0,
                     ],
                 ];
                 $customValues = $this->fieldService->getCustomFieldValuesForMaster((string) $user->company_id, $m->id);
@@ -1208,6 +1218,11 @@ class PayrollController extends Controller
             'arrear_batch_id' => $gm['arrearBatchId'] ?? $gm['arrear_batch_id'] ?? null,
             'custom_earnings' => $gm['customEarnings'] ?? $gm['custom_earnings'] ?? null,
             'custom_deductions' => $gm['customDeductions'] ?? $gm['custom_deductions'] ?? null,
+            'quarter_rent_amount' => $num($ded['quarterRent'] ?? $ded['quarter_rent'] ?? 0),
+            'has_quarter' => (bool) ($gm['hasQuarter'] ?? $gm['has_quarter'] ?? false),
+            'quarter_id' => $gm['quarterId'] ?? $gm['quarter_id'] ?? null,
+            'quarter_name' => $gm['quarterName'] ?? $gm['quarter_name'] ?? null,
+            'quarter_type' => $gm['quarterType'] ?? $gm['quarter_type'] ?? null,
         ]);
 
         return (string) $record->id;

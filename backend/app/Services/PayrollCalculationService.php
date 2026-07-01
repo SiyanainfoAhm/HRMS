@@ -77,7 +77,12 @@ final class PayrollCalculationService
         $hraAmount = $this->roundRupees($grossBasic * $hraPercent / 100);
 
         $daAmount = $this->optionalAmountOverride($input, ['da_amount', 'daAmount'], $daAmount);
-        $hraAmount = $this->optionalAmountOverride($input, ['hra_amount', 'hraAmount', 'hra'], $hraAmount);
+        $hasQuarter = $this->employeeHasQuarter($input);
+        if ($hasQuarter) {
+            $hraAmount = 0.0;
+        } else {
+            $hraAmount = $this->optionalAmountOverride($input, ['hra_amount', 'hraAmount', 'hra'], $hraAmount);
+        }
         $transportBase = $this->optionalAmountOverride($input, ['transport_base', 'transportBase'], $transportBase);
         $transportDa = $this->optionalAmountOverride($input, ['transport_da', 'transportDa'], $transportDa);
         $transportTotal = $this->optionalAmountOverride(
@@ -119,6 +124,9 @@ final class PayrollCalculationService
         $advance = $this->roundRupees($deductions['advance']);
 
         $customDeductionsTotal = $this->roundRupees(array_sum(array_map('floatval', $customDeductions)));
+        $quarterRent = $hasQuarter
+            ? $this->roundRupees((float) $this->pick($input, ['quarter_rent', 'quarterRent'], 0))
+            : 0.0;
 
         $totalDeductions = $this->roundRupees(
             $incomeTax + $professionalTax + $deductions['lic'] + $cpfEffective + $daCpf
@@ -126,7 +134,7 @@ final class PayrollCalculationService
             + $deductions['credit_society'] + $deductions['standard_licence_fee']
             + $deductions['electricity'] + $deductions['water'] + $deductions['mess']
             + $deductions['loan_recovery'] + $deductions['welfare'] + $deductions['vehicle_charge']
-            + $deductions['other_deduction'] + $advance + $customDeductionsTotal
+            + $deductions['other_deduction'] + $advance + $quarterRent + $customDeductionsTotal
         );
 
         $takeHome = $this->roundRupees($totalEarnings - $totalDeductions);
@@ -166,6 +174,8 @@ final class PayrollCalculationService
             'vehicle_charge' => $deductions['vehicle_charge'],
             'other_deduction' => $deductions['other_deduction'],
             'advance' => $advance,
+            'quarter_rent' => $quarterRent,
+            'has_quarter' => $hasQuarter,
             'custom_earnings' => $customEarnings,
             'custom_deductions' => $customDeductions,
             'custom_earnings_total' => $customEarningsTotal,
@@ -253,6 +263,23 @@ final class PayrollCalculationService
         $value = $this->pick($input, $keys, null);
 
         return $value === null ? $computed : $this->roundRupees((float) $value);
+    }
+
+    /** @param array<string, mixed> $input */
+    private function employeeHasQuarter(array $input): bool
+    {
+        if (! empty($input['quarter_id'] ?? $input['quarterId'] ?? null)) {
+            return true;
+        }
+
+        $flag = $input['has_quarter'] ?? $input['hasQuarter'] ?? $input['quarter_assigned'] ?? $input['quarterAssigned'] ?? false;
+        if (is_string($flag)) {
+            $v = strtolower(trim($flag));
+
+            return in_array($v, ['yes', 'y', 'true', '1'], true);
+        }
+
+        return (bool) $flag;
     }
 
     private function roundRupees(float $n): float

@@ -49,6 +49,11 @@ export const PAYROLL_EXCEL_HEADER = [
   "EmployeeESIC",
   "EmployerESIC",
   "ProfessionalTax",
+  "QuarterAssigned",
+  "QuarterName",
+  "QuarterType",
+  "QuarterRent",
+  "QuarterRentDeduction",
   "NetPay",
 ] as const;
 
@@ -120,6 +125,10 @@ export type GovernmentMonthlyRow = {
   net_salary?: number | null;
   custom_earnings?: unknown;
   custom_deductions?: unknown;
+  has_quarter?: boolean | null;
+  quarter_name?: string | null;
+  quarter_type?: string | null;
+  quarter_rent_amount?: number | null;
 };
 
 /** Dynamic columns appended after fixed headers (admin-configured earning/deduction fields). */
@@ -403,12 +412,34 @@ export function buildPayrollExcelRow(
   }
 
   const govRow = gov?.kind === "row" ? gov.row : null;
+  const quarterExport = quarterExportFromGov(govRow);
 
   return {
     AccountNumber: accountNum,
     EmployeeName: userName,
     ...body,
     ...dynamicValuesFromGov(govRow, dynamicCols),
+    ...quarterExport,
+  };
+}
+
+function quarterExportFromGov(gov: GovernmentMonthlyRow | null | undefined): Record<string, string | number> {
+  if (!gov) {
+    return {
+      QuarterAssigned: "No",
+      QuarterName: "",
+      QuarterType: "",
+      QuarterRent: 0,
+      QuarterRentDeduction: 0,
+    };
+  }
+  const hasQuarter = Boolean(gov.has_quarter);
+  return {
+    QuarterAssigned: hasQuarter ? "Yes" : "No",
+    QuarterName: String(gov.quarter_name ?? ""),
+    QuarterType: String(gov.quarter_type ?? ""),
+    QuarterRent: n(gov.quarter_rent_amount),
+    QuarterRentDeduction: hasQuarter ? n(gov.quarter_rent_amount) : 0,
   };
 }
 

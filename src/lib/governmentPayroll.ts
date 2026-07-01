@@ -49,6 +49,7 @@ export type GovernmentDeductionDefaults = {
   welfare: number;
   vehCharge: number;
   other: number;
+  quarterRent: number;
 };
 
 export type GovernmentOptionalMonthlyEarnings = {
@@ -96,6 +97,8 @@ export function governmentMonthlyExtras(
     customEarnings: gr.customEarnings ?? {},
     customDeductions: gr.customDeductions ?? {},
     payrollFieldDefs: payrollConfig?.fields,
+    hasQuarter: Boolean(gr.hasQuarter ?? gr.has_quarter),
+    quarterRent: Number(gr.quarterRent ?? gr.quarter_rent ?? 0) || 0,
   };
 }
 
@@ -119,6 +122,9 @@ export type GovernmentMonthlyInput = {
   customEarnings?: Record<string, number>;
   /** Custom deduction field values (non-system) */
   customDeductions?: Record<string, number>;
+  /** Employee has official quarter — HRA is not applicable */
+  hasQuarter?: boolean;
+  quarterRent?: number;
   /** Active payroll field definitions for include-in-total rules */
   payrollFieldDefs?: import("./payrollFieldTypes").PayrollFieldDefinition[];
 };
@@ -193,7 +199,8 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
 
   const basicActual = gb;
   const daActual = roundRupees((gb * daPct) / 100);
-  const hraActual = roundRupees((gb * hraPct) / 100);
+  const hasQuarter = Boolean(input.hasQuarter);
+  const hraActual = hasQuarter ? 0 : roundRupees((gb * hraPct) / 100);
   const medicalActual = medFixed;
 
   const dim = Math.max(1, Math.floor(input.daysInMonth));
@@ -306,6 +313,7 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
     welfare: roundRupees(d.welfare),
     vehCharge: roundRupees(d.vehCharge),
     other: roundRupees(d.other),
+    quarterRent: hasQuarter ? roundRupees(Number(input.quarterRent ?? d.quarterRent ?? 0) || 0) : 0,
   };
 
   const totalDeductions =
@@ -326,6 +334,7 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
     deductions.welfare +
     deductions.vehCharge +
     deductions.other +
+    deductions.quarterRent +
     customDeductionsTotal;
 
   const netSalary = roundRupees(totalEarnings - totalDeductions);
@@ -363,6 +372,8 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
     deductions,
     customEarnings,
     customDeductions,
+    hasQuarter,
+    quarterRent: deductions.quarterRent,
     totalEarnings,
     totalDeductions,
     netSalary,
@@ -391,5 +402,6 @@ export function masterRowToDeductionDefaults(m: Record<string, unknown>): Govern
     welfare: Number(m.welfare_default ?? 0) || 0,
     vehCharge: 0,
     other: Number(m.other_deduction_default ?? 0) || 0,
+    quarterRent: Number(m.quarter_rent ?? m.quarterRent ?? 0) || 0,
   };
 }

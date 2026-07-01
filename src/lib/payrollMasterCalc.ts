@@ -51,6 +51,9 @@ export type PayrollMasterPreviewInput = {
   companyCpfBasisFieldKeys?: string[];
   customEarnings?: Record<string, number>;
   customDeductions?: Record<string, number>;
+  hasQuarter?: boolean;
+  quarterId?: string | null;
+  quarterRent?: number;
   payrollFieldDefs?: import("./payrollFieldTypes").PayrollFieldDefinition[];
 };
 
@@ -106,6 +109,11 @@ export function computePayrollMasterPreview(input: PayrollMasterPreviewInput): P
 
   let daAmount = roundRupees(grossBasic * daPercent / 100);
   let hraAmount = roundRupees(grossBasic * hraPercent / 100);
+
+  const hasQuarter = Boolean(input.hasQuarter || input.quarterId);
+  if (hasQuarter) {
+    hraAmount = 0;
+  }
 
   if (input.daAmount !== undefined && input.daAmount !== "") {
     daAmount = roundRupees(num(input.daAmount, daAmount));
@@ -185,6 +193,7 @@ export function computePayrollMasterPreview(input: PayrollMasterPreviewInput): P
     input.payrollFieldDefs,
     "deductions",
   );
+  const quarterRentDeduction = hasQuarter ? roundRupees(num(input.quarterRent, 0)) : 0;
 
   const totalDeductions = roundRupees(
     incomeTax +
@@ -205,6 +214,7 @@ export function computePayrollMasterPreview(input: PayrollMasterPreviewInput): P
       vehicleCharge +
       otherDeduction +
       advance +
+      quarterRentDeduction +
       customDeductionsTotal,
   );
 
@@ -220,5 +230,33 @@ export function computePayrollMasterPreview(input: PayrollMasterPreviewInput): P
     totalDeductions,
     takeHome,
     cpfEffective,
+  };
+}
+
+/** Recompute earning amounts from drivers only (ignores stored amount overrides). */
+export function deriveEarningFieldValues(
+  input: PayrollMasterPreviewInput,
+): Pick<
+  PayrollMasterPreview,
+  "daAmount" | "hraAmount" | "transportBase" | "transportDa" | "transportTotal" | "totalEarnings"
+> {
+  const preview = computePayrollMasterPreview({
+    payLevel: input.payLevel,
+    grossBasicPay: input.grossBasicPay,
+    daPercent: input.daPercent,
+    hraPercent: input.hraPercent,
+    medical: input.medical,
+    hasQuarter: input.hasQuarter,
+    quarterId: input.quarterId,
+    customEarnings: input.customEarnings,
+    payrollFieldDefs: input.payrollFieldDefs,
+  });
+  return {
+    daAmount: preview.daAmount,
+    hraAmount: preview.hraAmount,
+    transportBase: preview.transportBase,
+    transportDa: preview.transportDa,
+    transportTotal: preview.transportTotal,
+    totalEarnings: preview.totalEarnings,
   };
 }

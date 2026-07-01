@@ -34,6 +34,7 @@ export const GOV_PREVIEW_DEDUCTION_FIELDS: { key: keyof GovernmentPreviewMonthly
   { key: "mess", label: "Mess" },
   { key: "loanRecovery", label: "Bank Recovery" },
   { key: "welfare", label: "Welfare" },
+  { key: "quarterRent", label: "Quarter Rent" },
   { key: "other", label: "Other" },
 ];
 

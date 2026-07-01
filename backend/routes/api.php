@@ -11,7 +11,7 @@ use App\Http\Controllers\Api\V1\PayrollFieldController;
 use App\Http\Controllers\Api\V1\PayrollMasterController;
 use App\Http\Controllers\Api\V1\PayslipController;
 use App\Http\Controllers\Api\V1\RoleController;
-use App\Http\Controllers\Api\V1\SalaryIncrementController;
+use App\Http\Controllers\Api\V1\QuarterController;
 use App\Http\Controllers\Api\V1\UserController;
 use Illuminate\Support\Facades\Route;
 
@@ -105,6 +105,14 @@ Route::prefix('v1')->group(function () {
             Route::post('settings/payroll-fields/{id}/deactivate', [PayrollFieldController::class, 'deactivate']);
             Route::delete('settings/payroll-fields/{id}', [PayrollFieldController::class, 'destroy']);
             Route::match(['GET', 'PUT'], 'settings/payroll-calculation-settings', [PayrollFieldController::class, 'calculationSettings']);
+
+            // Settings: Government quarters / accommodation
+            Route::get('settings/quarters', [QuarterController::class, 'index']);
+            Route::post('settings/quarters', [QuarterController::class, 'store']);
+            Route::put('settings/quarters/{id}', [QuarterController::class, 'update']);
+            Route::post('settings/quarters/{id}/assign', [QuarterController::class, 'assign']);
+            Route::post('settings/quarters/{id}/unassign', [QuarterController::class, 'unassign']);
+            Route::post('settings/quarters/{id}/deactivate', [QuarterController::class, 'deactivate']);
 
             // Payroll
             Route::get('payroll/periods', [PayrollController::class, 'periods']);

@@ -60,6 +60,7 @@ export type GovernmentPreviewMonthly = {
     welfare: number;
     vehCharge: number;
     other: number;
+    quarterRent: number;
   };
 };
 
@@ -96,6 +97,10 @@ export type GovernmentRunPreviewRow = {
   grossArrear?: number;
   cpfArrear?: number;
   netArrear?: number;
+  hasQuarter?: boolean;
+  quarterName?: string | null;
+  quarterType?: string | null;
+  hraEligible?: boolean;
   govRecalc?: {
     customEarnings?: Record<string, number>;
     customDeductions?: Record<string, number>;

@@ -120,6 +120,18 @@ export const GovernmentPayslipPrint = forwardRef<HTMLDivElement, GovernmentPaysl
                   <div>
                     <span className="text-slate-600">Department:</span> {resolvePayslipDepartment(user)}
                   </div>
+                  {(gov as { quarter_name?: string; quarter_type?: string; has_quarter?: boolean }).has_quarter ? (
+                    <div>
+                      <span className="text-slate-600">Quarter:</span>{" "}
+                      {(gov as { quarter_name?: string }).quarter_name || "—"}
+                      {(gov as { quarter_type?: string }).quarter_type
+                        ? ` / ${(gov as { quarter_type?: string }).quarter_type}`
+                        : ""}
+                    </div>
+                  ) : null}
+                  {(gov as { has_quarter?: boolean }).has_quarter ? (
+                    <div className="text-amber-900">HRA Eligibility: Not applicable (quarter assigned)</div>
+                  ) : null}
                   <div>
                     <span className="text-slate-600">Date of Joining:</span>{" "}
                     {user?.dateOfJoining ? fmtDmy(String(user.dateOfJoining)) : "—"}

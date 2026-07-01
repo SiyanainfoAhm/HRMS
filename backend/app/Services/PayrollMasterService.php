@@ -36,6 +36,7 @@ final class PayrollMasterService
     public function __construct(
         private readonly PayrollCalculationService $calculator,
         private readonly PayrollFieldService $fieldService,
+        private readonly QuarterService $quarterService,
     ) {}
 
     /** @return list<array<string, mixed>> */
@@ -331,8 +332,9 @@ final class PayrollMasterService
 
                 $master = HrmsPayrollMaster::create($attrs);
                 $this->persistCustomFieldsFromPayload($companyId, $master, $payload);
+                $this->quarterService->syncFromMasterPayload($master->refresh(), $payload, $companyId, $createdBy);
 
-                return $master;
+                return $master->refresh();
             }
 
             $validated = $this->validatePayload($payload, $existingMaster->id, $companyId);
@@ -378,6 +380,7 @@ final class PayrollMasterService
             $existingMaster->update($attrs);
             $existingMaster->refresh();
             $this->persistCustomFieldsFromPayload($companyId, $existingMaster, $payload);
+            $this->quarterService->syncFromMasterPayload($existingMaster, $payload, $companyId, $createdBy ?: (string) ($existingMaster->created_by ?? ''));
 
             if (config('app.debug')) {
                 Log::debug('payroll_master.update_result', [
@@ -728,6 +731,7 @@ final class PayrollMasterService
             $repair = $this->repairImportRowAlignment($row);
             $row = $repair['row'];
             $rowWarnings = $this->applyImportRowDefaults($row);
+            $rowWarnings = array_merge($rowWarnings, $this->resolveQuarterFieldsForImportRow($row, $companyId, $existing));
             if (! empty($row['status'])) {
                 $row['status'] = mb_strtolower(trim((string) $row['status']));
             }
@@ -852,6 +856,10 @@ final class PayrollMasterService
             ['key' => 'bank_name', 'header' => 'Bank Name', 'required_in_template' => false],
             ['key' => 'bank_account_number', 'header' => 'Bank Account Number*', 'required_in_template' => true],
             ['key' => 'bank_ifsc', 'header' => 'IFSC Code', 'required_in_template' => false],
+            ['key' => 'quarter_assigned', 'header' => 'Quarter Assigned', 'required_in_template' => false],
+            ['key' => 'quarter_name', 'header' => 'Quarter Number/Name', 'required_in_template' => false],
+            ['key' => 'quarter_type', 'header' => 'Quarter Type', 'required_in_template' => false],
+            ['key' => 'quarter_rent', 'header' => 'Quarter Rent', 'required_in_template' => false],
             ['key' => 'professional_tax', 'header' => 'Professional Tax', 'required_in_template' => false],
             ['key' => 'cpf_default', 'header' => 'PF / CPF %', 'required_in_template' => false],
         ];
@@ -1090,6 +1098,7 @@ final class PayrollMasterService
             'phone', 'gender', 'date_of_birth', 'date_of_joining',
             'designation', 'department', 'division', 'pay_level', 'increment_month', 'gross_basic_pay', 'da_percent', 'hra_percent', 'medical',
             'uan', 'cpf_no', 'pan', 'aadhaar', 'bank_name', 'bank_account_number', 'bank_ifsc',
+            'quarter_assigned', 'quarter_name', 'quarter_type', 'quarter_rent', 'hra_eligible',
             'status', 'remarks', 'effective_from',
         ];
     }
@@ -1267,6 +1276,16 @@ final class PayrollMasterService
 
         return array_map(function (array $col) use ($r, $customValues) {
             $key = $col['key'];
+            $quarterExport = [
+                'quarter_assigned' => ($r['quarterAssigned'] ?? $r['hasQuarter'] ?? false) ? 'Yes' : 'No',
+                'quarter_name' => $r['quarterName'] ?? '',
+                'quarter_type' => $r['quarterType'] ?? '',
+                'quarter_rent' => $r['quarterRent'] ?? 0,
+                'hra_eligible' => ($r['hraEligible'] ?? !($r['hasQuarter'] ?? false)) ? 'Yes' : 'No',
+            ];
+            if (array_key_exists($key, $quarterExport)) {
+                return $quarterExport[$key];
+            }
             if (array_key_exists($key, $customValues)) {
                 return $customValues[$key];
             }
@@ -1515,6 +1534,8 @@ final class PayrollMasterService
             'archivedAt' => null,
             'updatedAt' => $m->updated_at?->toIso8601String(),
             'payrollMode' => $m->payroll_mode ?? 'government',
+            ...$this->quarterService->quarterMetaForMaster($m, (string) $m->company_id),
+            'quarterAssigned' => (bool) ($m->has_quarter ?? false),
         ];
     }
 
@@ -2293,6 +2314,9 @@ final class PayrollMasterService
             'effective_start_date' => $effectiveFrom,
             'effective_to' => $effectiveTo,
             'effective_end_date' => $effectiveTo,
+            'has_quarter' => (bool) ($calc['has_quarter'] ?? $validated['has_quarter'] ?? $validated['hasQuarter'] ?? false),
+            'quarter_id' => $validated['quarter_id'] ?? $validated['quarterId'] ?? null,
+            'quarter_rent' => (float) ($calc['quarter_rent'] ?? $validated['quarter_rent'] ?? $validated['quarterRent'] ?? 0),
             'payroll_mode' => 'government',
             'pf_eligible' => false,
             'esic_eligible' => false,
@@ -2615,6 +2639,7 @@ final class PayrollMasterService
             'electricity', 'electricity_default', 'water', 'water_default', 'loan_recovery', 'loan_recovery_default',
             'vehicle_charge', 'veh_charge_default', 'other_deduction', 'other_deduction_default',
             'advance', 'advance_bonus',
+            'has_quarter', 'quarter_id', 'quarter_rent',
         ]);
     }
 
@@ -3389,9 +3414,106 @@ final class PayrollMasterService
             foreach ($this->fieldService->validateCustomFieldValues($companyId, $customValues) as $ce) {
                 $errors[] = $this->importIssue($ce['field'], $ce['message']);
             }
+            foreach ($this->validateQuarterImportRow($row, $companyId, $existing) as $qe) {
+                $errors[] = $this->importIssue($qe['field'], $qe['message']);
+            }
         }
 
         return $errors;
+    }
+
+    /**
+     * @param  array<string, mixed>  $row
+     * @return list<array{field: string, message: string}>
+     */
+    private function validateQuarterImportRow(array $row, string $companyId, ?HrmsPayrollMaster $existing): array
+    {
+        $errors = [];
+        $assigned = $this->importRowHasQuarter($row);
+        if (! $assigned) {
+            return $errors;
+        }
+
+        $name = trim((string) ($row['quarter_name'] ?? ''));
+        if ($name === '') {
+            $errors[] = ['field' => 'quarter_name', 'message' => 'Quarter Number/Name is required when Quarter Assigned is Yes.'];
+
+            return $errors;
+        }
+
+        $quarter = $this->quarterService->findByName($companyId, $name);
+        if (! $quarter) {
+            $errors[] = ['field' => 'quarter_name', 'message' => 'Quarter does not exist in Settings.'];
+
+            return $errors;
+        }
+        if ($quarter->status === 'inactive') {
+            $errors[] = ['field' => 'quarter_name', 'message' => 'Cannot assign an inactive quarter.'];
+        }
+
+        $employeeUserId = $existing?->employee_user_id ?? $existing?->user_id;
+        if (
+            $quarter->assigned_employee_id
+            && $quarter->status === 'assigned'
+            && $employeeUserId
+            && $quarter->assigned_employee_id !== $employeeUserId
+        ) {
+            $errors[] = ['field' => 'quarter_name', 'message' => 'This quarter is already assigned to another employee.'];
+        }
+
+        return $errors;
+    }
+
+    /**
+     * @param  array<string, mixed>  $row
+     * @return list<array{field: string, message: string, type?: string}>
+     */
+    private function resolveQuarterFieldsForImportRow(array &$row, ?string $companyId, ?HrmsPayrollMaster $existing): array
+    {
+        $warnings = [];
+        if (! $companyId) {
+            return $warnings;
+        }
+
+        $assigned = $this->importRowHasQuarter($row);
+        if (! $assigned) {
+            $row['has_quarter'] = false;
+            $row['hasQuarter'] = false;
+            $row['quarter_id'] = null;
+            $row['quarterId'] = null;
+            $row['quarter_rent'] = 0;
+            $row['quarterRent'] = 0;
+
+            return $warnings;
+        }
+
+        $name = trim((string) ($row['quarter_name'] ?? ''));
+        $quarter = $name !== '' ? $this->quarterService->findByName($companyId, $name) : null;
+        if ($quarter) {
+            $row['quarter_id'] = $quarter->id;
+            $row['quarterId'] = $quarter->id;
+            $row['has_quarter'] = true;
+            $row['hasQuarter'] = true;
+            $row['quarter_rent'] = (float) $quarter->monthly_rent;
+            $row['quarterRent'] = (float) $quarter->monthly_rent;
+            $row['quarter_type'] = $quarter->quarter_type;
+            $row['quarterType'] = $quarter->quarter_type;
+        }
+
+        return $warnings;
+    }
+
+    /** @param array<string, mixed> $row */
+    private function importRowHasQuarter(array $row): bool
+    {
+        $flag = $row['quarter_assigned'] ?? $row['quarterAssigned'] ?? $row['has_quarter'] ?? $row['hasQuarter'] ?? false;
+        if (is_string($flag)) {
+            $v = strtolower(trim($flag));
+
+            return in_array($v, ['yes', 'y', 'true', '1'], true);
+        }
+
+        return (bool) $flag;
     }
 
     /** @param array<string, mixed> $row */

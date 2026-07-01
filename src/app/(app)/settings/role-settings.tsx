@@ -12,6 +12,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { SalaryIncrementPanel } from "@/components/settings/SalaryIncrementPanel";
 import { PayrollConfigurationSettings } from "@/components/settings/PayrollConfigurationSettings";
+import { QuartersSettings } from "@/components/settings/QuartersSettings";
 import { cn } from "@/lib/cn";
 
 export function SettingsContent() {
@@ -21,7 +22,7 @@ export function SettingsContent() {
   const isAdmin = isAdminRole(role);
   const canViewCompanySettings = useMemo(() => isAdminRole(role), [role]);
 
-  const [activeTab, setActiveTab] = useState<"company" | "roles" | "org" | "designations" | "increment" | "payroll-fields">("company");
+  const [activeTab, setActiveTab] = useState<"company" | "roles" | "org" | "designations" | "increment" | "payroll-fields" | "quarters">("company");
 
   const [company, setCompany] = useState<any | null>(null);
   const [loading, setLoading] = useState(false);
@@ -594,6 +595,7 @@ export function SettingsContent() {
             {tabBtn("designations", "Designations")}
             {isAdmin ? tabBtn("increment", "Salary Increment") : null}
             {isAdmin ? tabBtn("payroll-fields", "Payroll Fields") : null}
+            {isAdmin ? tabBtn("quarters", "Quarters") : null}
           </div>
 
           {moduleError && <p className="text-sm text-red-600">{moduleError}</p>}
@@ -984,6 +986,8 @@ export function SettingsContent() {
           {activeTab === "increment" && isAdmin && <SalaryIncrementPanel />}
 
           {activeTab === "payroll-fields" && isAdmin && <PayrollConfigurationSettings />}
+
+          {activeTab === "quarters" && isAdmin && <QuartersSettings />}
 
           {activeTab === "org" && (
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">

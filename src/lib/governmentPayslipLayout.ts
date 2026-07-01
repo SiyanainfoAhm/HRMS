@@ -144,8 +144,12 @@ export function governmentPayslipDeductionPairs(
     ["Mess", gnum(gov, "mess_amount")],
     ["Bank Recovery", gnum(gov, "loan_recovery_amount") || gnum(gov, "horticulture_amount")],
     ["Welfare", gnum(gov, "welfare_amount")],
-    ["Other", gnum(gov, "other_deduction_amount")],
   ];
+  const quarterRent = gnum(gov, "quarter_rent_amount");
+  if (quarterRent > 0 || Boolean((gov as { has_quarter?: boolean }).has_quarter)) {
+    base.push(["Quarter Rent", quarterRent]);
+  }
+  base.push(["Other", gnum(gov, "other_deduction_amount")]);
   return [...base, ...customSnapshotPairs(gov, "custom_deductions", fieldMetas)];
 }
 

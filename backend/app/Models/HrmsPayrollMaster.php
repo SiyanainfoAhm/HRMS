@@ -38,6 +38,7 @@ class HrmsPayrollMaster extends Model
         'uan', 'cpf_no', 'pan', 'aadhaar',
         'bank_name', 'bank_account_number', 'bank_ifsc',
         'date_of_joining', 'date_of_birth', 'status', 'remarks',
+        'quarter_id', 'has_quarter', 'quarter_rent',
     ];
 
     protected function casts(): array
@@ -56,6 +57,8 @@ class HrmsPayrollMaster extends Model
             'cpf_use_company_settings' => 'boolean',
             'cpf_percentage_override' => 'decimal:2',
             'cpf_basis_field_keys_override' => 'array',
+            'has_quarter' => 'boolean',
+            'quarter_rent' => 'decimal:2',
         ];
     }
 

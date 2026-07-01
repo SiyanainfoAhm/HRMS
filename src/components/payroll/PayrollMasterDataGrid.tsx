@@ -91,6 +91,10 @@ export function PayrollMasterDataGrid({ rows, canWrite, cpfRateLabel, customColu
             <th className={dataThNum}>CPF</th>
             <th className={dataThNum}>Take Home</th>
             <th className={dataTh}>Status</th>
+            <th className={dataTh}>Quarter</th>
+            <th className={dataTh}>Type</th>
+            <th className={dataThNum}>Q. Rent</th>
+            <th className={dataTh}>HRA Elig.</th>
             <th className="px-2 py-1.5 text-right border-l border-slate-200">DA CPF</th>
             <th className="px-2 py-1.5 text-right">PT</th>
             <th className="px-2 py-1.5 text-right">Inc. Tax</th>
@@ -148,6 +152,10 @@ export function PayrollMasterDataGrid({ rows, canWrite, cpfRateLabel, customColu
               <td className={dataTdLeft}>
                 <Badge tone={statusTone(row.status)}>{row.status ?? "active"}</Badge>
               </td>
+              <td className={dataTdLeft}>{row.quarterName || "—"}</td>
+              <td className={dataTdLeft}>{row.quarterType || "—"}</td>
+              <td className={dataTdNum}>{fmt(row.quarterRent ?? 0)}</td>
+              <td className={dataTdLeft}>{row.hraEligible === false ? "No" : "Yes"}</td>
               <td className={`${dataTdNum} border-l border-slate-100`}>{fmt(row.daCpf)}</td>
               <td className={dataTdNum}>{fmt(row.professionalTax)}</td>
               <td className={dataTdNum}>{fmt(row.incomeTax)}</td>

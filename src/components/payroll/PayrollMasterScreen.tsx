@@ -39,6 +39,7 @@ import { PasswordField } from "@/components/PasswordField";
 import { dispatchHrmsChange, onHrmsChange } from "@/lib/hrmsChangeBus";
 import {
   computePayrollMasterPreview,
+  deriveEarningFieldValues,
   DEFAULT_DA_PERCENT,
   DEFAULT_HRA_PERCENT,
   DEFAULT_MEDICAL,
@@ -124,6 +125,12 @@ export type PayrollMasterRecord = {
   archivedAt?: string | null;
   userRole?: AppRole | string | null;
   customFieldValues?: Record<string, string>;
+  hasQuarter?: boolean;
+  quarterId?: string | null;
+  quarterName?: string | null;
+  quarterType?: string | null;
+  quarterRent?: number | null;
+  hraEligible?: boolean;
   cpfUseCompanySettings?: boolean;
   cpfPercentageOverride?: number | null;
   cpfBasisFieldKeysOverride?: string[];
@@ -194,6 +201,9 @@ type MasterFormState = {
   cpfUseCompanySettings: boolean;
   cpfPercentageOverride: string;
   cpfBasisFieldKeys: string[];
+  hasQuarter: boolean;
+  quarterId: string;
+  quarterRent: string;
 };
 
 type ImportError = { row: number; field: string; message: string };
@@ -257,21 +267,33 @@ const EARNINGS_COLUMN_COUNT = 12;
 const DEFAULT_DEDUCTION_COLUMN_COUNT = 3;
 const VARIABLE_DEDUCTION_COLUMN_COUNT = 12;
 
-function previewEarningDefaults(form: Pick<MasterFormState, "payLevel" | "grossBasicPay" | "daPercent" | "hraPercent" | "medical">) {
-  const preview = computePayrollMasterPreview({
+const EARNING_DRIVER_KEYS = new Set([
+  "payLevel",
+  "grossBasicPay",
+  "daPercent",
+  "hraPercent",
+  "medical",
+  "hasQuarter",
+]);
+
+function previewEarningDefaults(
+  form: Pick<MasterFormState, "payLevel" | "grossBasicPay" | "daPercent" | "hraPercent" | "medical" | "hasQuarter">,
+) {
+  const derived = deriveEarningFieldValues({
     payLevel: form.payLevel,
     grossBasicPay: form.grossBasicPay,
     daPercent: form.daPercent,
     hraPercent: form.hraPercent,
     medical: form.medical,
+    hasQuarter: form.hasQuarter,
   });
   return {
-    daAmount: String(preview.daAmount),
-    hraAmount: String(preview.hraAmount),
-    transportBase: String(preview.transportBase),
-    transportDa: String(preview.transportDa),
-    transportTotal: String(preview.transportTotal),
-    totalEarnings: String(preview.totalEarnings),
+    daAmount: String(derived.daAmount),
+    hraAmount: String(derived.hraAmount),
+    transportBase: String(derived.transportBase),
+    transportDa: String(derived.transportDa),
+    transportTotal: String(derived.transportTotal),
+    totalEarnings: String(derived.totalEarnings),
   };
 }
 
@@ -328,6 +350,9 @@ const emptyForm = (defaultDa = DEFAULT_DA_PERCENT, defaultHra = DEFAULT_HRA_PERC
     cpfUseCompanySettings: true,
     cpfPercentageOverride: "",
     cpfBasisFieldKeys: [] as string[],
+    hasQuarter: false,
+    quarterId: "",
+    quarterRent: "0",
   };
 
   return {
@@ -406,6 +431,9 @@ function formFromRecord(r: PayrollMasterRecord): MasterFormState {
       }
       return override;
     })(),
+    hasQuarter: Boolean(r.hasQuarter),
+    quarterId: r.quarterId ?? "",
+    quarterRent: String(r.quarterRent ?? 0),
   };
   const defaults = previewEarningDefaults(base);
 
@@ -479,6 +507,9 @@ function formToPayload(form: MasterFormState) {
       ? null
       : parseFloat(form.cpfPercentageOverride) || 0,
     cpfBasisFieldKeysOverride: form.cpfUseCompanySettings ? [] : form.cpfBasisFieldKeys,
+    hasQuarter: form.hasQuarter,
+    quarterId: form.hasQuarter ? form.quarterId || null : null,
+    quarterRent: form.hasQuarter ? parseFloat(form.quarterRent) || 0 : 0,
     ...(form.password.trim() ? { password: form.password } : {}),
   };
 }
@@ -618,12 +649,44 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
   const [deactivateTarget, setDeactivateTarget] = useState<PayrollMasterRecord | null>(null);
   const [companyDefaultDa, setCompanyDefaultDa] = useState(DEFAULT_DA_PERCENT);
   const [companyDefaultHra, setCompanyDefaultHra] = useState(DEFAULT_HRA_PERCENT);
+  const [quarterOptions, setQuarterOptions] = useState<
+    Array<{ id: string; quarterName: string; quarterType: string; monthlyRent: number }>
+  >([]);
+
+  useEffect(() => {
+    if (!formOpen || !canManage) return;
+    let cancelled = false;
+    const q = form.quarterId ? `&current_quarter_id=${encodeURIComponent(form.quarterId)}` : "";
+    (async () => {
+      try {
+        const res = await fetch(`/api/settings/quarters?for_employee_form=1${q}`);
+        const data = await res.json();
+        if (!cancelled && res.ok) {
+          setQuarterOptions(
+            ((data.quarters ?? []) as Array<{ id: string; quarterName: string; quarterType: string; monthlyRent: number }>),
+          );
+        }
+      } catch {
+        /* optional */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [formOpen, canManage, form.quarterId]);
 
   function patchCustomField(key: string, value: string) {
-    setForm((f) => ({
-      ...f,
-      customFieldValues: { ...f.customFieldValues, [key]: value },
-    }));
+    setForm((f) => {
+      const next = {
+        ...f,
+        customFieldValues: { ...f.customFieldValues, [key]: value },
+      };
+      const def = payrollFieldDefs.find((field) => field.fieldKey === key);
+      if (def?.fieldGroup === "earnings") {
+        return { ...next, totalEarnings: earningStringsFromForm(next).totalEarnings };
+      }
+      return next;
+    });
   }
 
   useEffect(() => {
@@ -837,6 +900,9 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
         customEarnings: customNumericBagForTotalFromValues(form.customFieldValues, payrollFieldDefs, "earnings"),
         customDeductions: customNumericBagForTotalFromValues(form.customFieldValues, payrollFieldDefs, "deductions"),
         payrollFieldDefs,
+        hasQuarter: form.hasQuarter,
+        quarterId: form.hasQuarter ? form.quarterId : null,
+        quarterRent: form.hasQuarter ? parseFloat(form.quarterRent) || 0 : 0,
       }),
     [form, companyCpfSettings, payrollFieldDefs],
   );
@@ -920,8 +986,36 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     }
   }
 
+  function earningStringsFromForm(f: MasterFormState) {
+    const derived = deriveEarningFieldValues({
+      payLevel: f.payLevel,
+      grossBasicPay: f.grossBasicPay,
+      daPercent: f.daPercent,
+      hraPercent: f.hraPercent,
+      medical: f.medical,
+      hasQuarter: f.hasQuarter,
+      quarterId: f.hasQuarter ? f.quarterId : null,
+      customEarnings: customNumericBagForTotalFromValues(f.customFieldValues, payrollFieldDefs, "earnings"),
+      payrollFieldDefs,
+    });
+    return {
+      daAmount: String(derived.daAmount),
+      hraAmount: String(derived.hraAmount),
+      transportBase: String(derived.transportBase),
+      transportDa: String(derived.transportDa),
+      transportTotal: String(derived.transportTotal),
+      totalEarnings: String(derived.totalEarnings),
+    };
+  }
+
   function patchForm(patch: Partial<MasterFormState>) {
-    setForm((f) => ({ ...f, ...patch }));
+    setForm((f) => {
+      const next = { ...f, ...patch };
+      if (![...EARNING_DRIVER_KEYS].some((key) => key in patch)) {
+        return next;
+      }
+      return { ...next, ...earningStringsFromForm(next) };
+    });
   }
 
   async function handleSave(e: FormEvent) {
@@ -942,6 +1036,11 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     if (!validation.isValid) {
       showToast("error", "Please complete the highlighted fields.");
       focusFirstInvalidField(validation.firstErrorField, validation.firstErrorTab);
+      return;
+    }
+
+    if (form.hasQuarter && !form.quarterId) {
+      showToast("error", "Please select assigned quarter.");
       return;
     }
 
@@ -1563,6 +1662,53 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                           onBlur={() => touchField("grossBasicPay")}
                         />
                       </FormField>
+                      <div className="sm:col-span-2 rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+                        <label className="flex items-center gap-2 text-sm font-medium text-slate-800">
+                          <input
+                            type="checkbox"
+                            checked={form.hasQuarter}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              patchForm({
+                                hasQuarter: checked,
+                                quarterId: checked ? form.quarterId : "",
+                                quarterRent: checked ? form.quarterRent : "0",
+                              });
+                            }}
+                          />
+                          Quarter Assigned
+                        </label>
+                        {form.hasQuarter ? (
+                          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                            <FormField label="Quarter" required>
+                              <SelectField
+                                value={form.quarterId}
+                                onChange={(v) => {
+                                  const selected = quarterOptions.find((q) => q.id === v);
+                                  patchForm({
+                                    quarterId: v,
+                                    quarterRent: selected ? String(selected.monthlyRent) : "0",
+                                  });
+                                }}
+                                options={[
+                                  { value: "", label: "Select quarter…" },
+                                  ...quarterOptions.map((q) => ({
+                                    value: q.id,
+                                    label: `${q.quarterName} - ${q.quarterType} - ₹${Math.round(q.monthlyRent).toLocaleString("en-IN")}/month`,
+                                  })),
+                                ]}
+                                required
+                              />
+                            </FormField>
+                            <FormField label="Quarter Rent">
+                              <Input type="number" numeric readOnly value={form.quarterRent} />
+                            </FormField>
+                            <p className="sm:col-span-2 text-xs text-amber-800">
+                              HRA is not applicable when official quarter is assigned.
+                            </p>
+                          </div>
+                        ) : null}
+                      </div>
                       <FormField label="DA %" required error={showError("daPercent")}>
                         <Input
                           id={fieldDomId("daPercent")}
@@ -1597,7 +1743,8 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                         <Input
                           type="number"
                           numeric
-                          value={form.hraAmount}
+                          value={form.hasQuarter ? "0" : form.hraAmount}
+                          readOnly={form.hasQuarter}
                           onChange={(e) => patchForm({ hraAmount: e.target.value })}
                         />
                       </FormField>
