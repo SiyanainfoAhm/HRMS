@@ -309,11 +309,11 @@ class PayrollFieldService
                 $useCompany = (bool) ($input['cpf_use_company_settings'] ?? $input['cpfUseCompanySettings'] ?? true);
             }
             if (array_key_exists('cpf_percentage_override', $input) || array_key_exists('cpfPercentageOverride', $input)) {
-                $raw = $input['cpf_percentage_override'] ?? $input['cpfPercentageOverride'];
+                $raw = $input['cpf_percentage_override'] ?? ($input['cpfPercentageOverride'] ?? null);
                 $pctOverride = $raw === '' || $raw === null ? null : (float) $raw;
             }
             if (array_key_exists('cpf_basis_field_keys_override', $input) || array_key_exists('cpfBasisFieldKeysOverride', $input)) {
-                $raw = $input['cpf_basis_field_keys_override'] ?? $input['cpfBasisFieldKeysOverride'];
+                $raw = $input['cpf_basis_field_keys_override'] ?? ($input['cpfBasisFieldKeysOverride'] ?? null);
                 $basisOverride = is_array($raw) ? $raw : null;
             }
         }

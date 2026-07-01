@@ -2220,6 +2220,8 @@ final class PayrollMasterService
         $effectiveFrom = $validated['effective_from'] ?? $validated['effectiveFrom'] ?? now()->toDateString();
         $effectiveTo = $forceCurrentRow ? null : ($validated['effective_to'] ?? $validated['effectiveTo'] ?? null);
 
+        $useCompanyCpf = (bool) ($validated['cpf_use_company_settings'] ?? $validated['cpfUseCompanySettings'] ?? true);
+
         $attrs = [
             'company_id' => $companyId,
             'employee_id' => $validated['employee_id'] ?? $validated['employeeId'] ?? null,
@@ -2254,13 +2256,17 @@ final class PayrollMasterService
             'ctc' => $calc['total_earnings'],
             'cpf_default' => $calc['cpf_default'],
             'cpf_effective' => $calc['cpf_effective'],
-            'cpf_use_company_settings' => (bool) ($validated['cpf_use_company_settings'] ?? $validated['cpfUseCompanySettings'] ?? true),
-            'cpf_percentage_override' => $this->nullableFloat(
-                $validated['cpf_percentage_override'] ?? $validated['cpfPercentageOverride'] ?? null,
-            ),
-            'cpf_basis_field_keys_override' => $this->normalizeCpfBasisOverride(
-                $validated['cpf_basis_field_keys_override'] ?? $validated['cpfBasisFieldKeysOverride'] ?? null,
-            ),
+            'cpf_use_company_settings' => $useCompanyCpf,
+            'cpf_percentage_override' => $useCompanyCpf
+                ? null
+                : $this->nullableFloat(
+                    $validated['cpf_percentage_override'] ?? ($validated['cpfPercentageOverride'] ?? null),
+                ),
+            'cpf_basis_field_keys_override' => $useCompanyCpf
+                ? null
+                : $this->normalizeCpfBasisOverride(
+                    $validated['cpf_basis_field_keys_override'] ?? ($validated['cpfBasisFieldKeysOverride'] ?? null),
+                ),
             'da_cpf' => $calc['da_cpf'],
             'da_cpf_default' => $calc['da_cpf'],
             'professional_tax' => $calc['professional_tax'],
@@ -3619,9 +3625,9 @@ final class PayrollMasterService
         }
 
         $useCompany = (bool) ($data['cpf_use_company_settings'] ?? $data['cpfUseCompanySettings'] ?? true);
-        $pct = $this->nullableFloat($data['cpf_percentage_override'] ?? $data['cpfPercentageOverride'] ?? null);
+        $pct = $this->nullableFloat($data['cpf_percentage_override'] ?? ($data['cpfPercentageOverride'] ?? null));
         $basis = $this->normalizeCpfBasisOverride(
-            $data['cpf_basis_field_keys_override'] ?? $data['cpfBasisFieldKeysOverride'] ?? null,
+            $data['cpf_basis_field_keys_override'] ?? ($data['cpfBasisFieldKeysOverride'] ?? null),
         );
 
         if (! $useCompany) {
