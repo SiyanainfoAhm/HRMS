@@ -6,7 +6,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { FormEvent, useEffect, useState, useRef, useMemo, Suspense } from "react";
 import { useToast } from "@/components/ToastProvider";
 import { dispatchHrmsChange, onHrmsChange } from "@/lib/hrmsChangeBus";
-import { SkeletonTable, SkeletonPayslip, SkeletonEmployeeList } from "@/components/Skeleton";
+import { AppPageError } from "@/components/ui/AppPageError";
+import { AppPageLoader } from "@/components/ui/AppPageLoader";
 import { DatePickerField } from "@/components/ui/DatePickerField";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -93,6 +94,8 @@ type MasterGridRow = {
   loanRecoveryDefault: number;
   vehChargeDefault: number;
   otherDeductionDefault: number;
+  hasQuarter: boolean;
+  quarterRent: number;
   govTotalEarnings: number;
   govTransportPaid: number;
   govTransportSlabGroup: string;
@@ -153,6 +156,7 @@ const GOV_RUN_EDITABLE_DEDUCTION_KEYS: (keyof GovernmentDeductionDefaults)[] = [
   "mess",
   "loanRecovery",
   "welfare",
+  "quarterRent",
   "other",
 ];
 
@@ -240,6 +244,7 @@ function govDeductionDefaultsFromMasterRow(row: MasterGridRow): GovernmentDeduct
     welfare: row.welfareDefault,
     vehCharge: row.vehChargeDefault,
     other: row.otherDeductionDefault,
+    quarterRent: row.hasQuarter ? row.quarterRent : 0,
   };
 }
 
@@ -262,6 +267,8 @@ function computeGovernmentMasterDerived(row: MasterGridRow): Partial<MasterGridR
       payLevel: row.governmentPayLevel,
       daysInMonth: 30,
       unpaidDays: 0,
+      hasQuarter: row.hasQuarter,
+      quarterRent: row.quarterRent,
       deductionDefaults: govDeductionDefaultsFromMasterRow(row),
     });
     const takeHome = Math.max(0, comp.netSalary + row.advanceBonus);
@@ -388,6 +395,8 @@ function emptyGovFields(): Pick<
   | "loanRecoveryDefault"
   | "vehChargeDefault"
   | "otherDeductionDefault"
+  | "hasQuarter"
+  | "quarterRent"
   | "govTotalEarnings"
   | "govTransportPaid"
   | "govTransportSlabGroup"
@@ -413,6 +422,8 @@ function emptyGovFields(): Pick<
     loanRecoveryDefault: 0,
     vehChargeDefault: 0,
     otherDeductionDefault: 0,
+    hasQuarter: false,
+    quarterRent: 0,
     govTotalEarnings: 0,
     govTransportPaid: 0,
     govTransportSlabGroup: "",
@@ -492,6 +503,8 @@ function buildMasterGridRow(apiRow: any, companyPt: number): MasterGridRow | nul
     const loanRecoveryDefault = Number(m.loanRecoveryDefault) || 0;
     const vehChargeDefault = Number(m.vehChargeDefault) || 0;
     const otherDeductionDefault = Number(m.otherDeductionDefault) || 0;
+    const hasQuarter = Boolean(m.hasQuarter);
+    const quarterRent = hasQuarter ? Number(m.quarterRent) || 0 : 0;
     const base: MasterGridRow = {
       employeeUserId: apiRow.employeeUserId,
       employeeName: apiRow.employeeName,
@@ -524,6 +537,8 @@ function buildMasterGridRow(apiRow: any, companyPt: number): MasterGridRow | nul
       loanRecoveryDefault,
       vehChargeDefault,
       otherDeductionDefault,
+      hasQuarter,
+      quarterRent,
       lta: 0,
       personal: 0,
       basic: 0,
@@ -613,12 +628,12 @@ function PayrollPageContent() {
 
   useEffect(() => {
     if (!canManage) {
-      router.replace("/profile?tab=pay");
+      router.replace("/employee/dashboard");
     }
   }, [canManage, router]);
 
   const [masters, setMasters] = useState<any[]>([]);
-  const [mastersLoading, setMastersLoading] = useState(false);
+  const [mastersLoading, setMastersLoading] = useState(true);
   const [companyPt, setCompanyPt] = useState(200);
   const [masterGrid, setMasterGrid] = useState<MasterGridRow[]>([]);
   const [masterRowSaving, setMasterRowSaving] = useState<string | null>(null);
@@ -718,7 +733,7 @@ function PayrollPageContent() {
       payslipPending?: boolean;
     }[];
   } | null>(null);
-  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(tab === "run");
   const [payrollConfig, setPayrollConfig] = useState<PayrollConfig | null>(null);
   const [pastPeriods, setPastPeriods] = useState<{ id: string; periodName: string; periodStart: string; periodEnd: string; excelFilePath: string | null }[]>([]);
   const [pastPeriodsLoading, setPastPeriodsLoading] = useState(false);
@@ -822,7 +837,7 @@ function PayrollPageContent() {
 
   // Salary slips tab (admin/HR view employee payslips)
   const [employees, setEmployees] = useState<{ id: string; name: string | null; email: string }[]>([]);
-  const [employeesLoading, setEmployeesLoading] = useState(false);
+  const [employeesLoading, setEmployeesLoading] = useState(tab === "slips");
   const [selectedEmployeeId, setSelectedEmployeeId] = useState("");
   const [slipsData, setSlipsData] = useState<{
     company: { name: string; address: string; logoUrl: string | null } | null;
@@ -1494,6 +1509,7 @@ function PayrollPageContent() {
             welfare: 0,
             vehCharge: 0,
             other: 0,
+            quarterRent: 0,
           },
         });
         const slab = deriveTransportSlabFromLevel(editGovLevel);
@@ -2010,12 +2026,17 @@ function PayrollPageContent() {
   }
 
   const payrollPageTitle = tab === "run" ? "Run Payroll" : "Salary Slips";
+  const runInitialLoading = tab === "run" && previewLoading && preview === null;
+  const slipsPageLoading =
+    tab === "slips" && (employeesLoading || (Boolean(selectedEmployeeId) && slipsLoading));
 
                         return (
     <section className="flex min-h-0 flex-col gap-3">
       <PageHeader title={payrollPageTitle} className="!mb-0" />
 
-      {tab === "run" && (
+      {runInitialLoading ? (
+        <AppPageLoader message="Loading payroll run..." />
+      ) : tab === "run" && (
             <form
           onSubmit={handleRunPayroll}
           className="page-workspace flex min-h-[min(calc(100dvh-9rem),820px)] flex-col overflow-hidden"
@@ -2061,9 +2082,7 @@ function PayrollPageContent() {
 
           <div className="min-h-0 flex-1 overflow-hidden p-2 sm:p-3">
               {previewLoading ? (
-              <div className="flex h-full flex-col gap-3 p-3">
-                <SkeletonEmployeeList items={6} />
-                </div>
+              <AppPageLoader variant="inline" message="Loading payroll run..." submessage="" />
               ) : editableRows.length ? (
               filteredEditableRows.length ? (
                 previewAllGovernment && preview?.daysInMonth ? (
@@ -2103,7 +2122,9 @@ function PayrollPageContent() {
         </form>
       )}
 
-      {tab === "slips" && (
+      {slipsPageLoading ? (
+        <AppPageLoader message="Loading salary slips..." />
+      ) : tab === "slips" && (
         <div className="card space-y-3">
           <div className="flex flex-wrap items-end gap-2 border-b border-slate-100 pb-3">
             <SelectField
@@ -2159,12 +2180,36 @@ function PayrollPageContent() {
             )}
           </div>
 
-          {employeesLoading ? (
-            <SkeletonTable rows={4} columns={4} />
-          ) : slipsLoading ? (
-            <SkeletonPayslip />
-          ) : slipsError ? (
-            <p className="text-sm text-red-600">{slipsError}</p>
+          {slipsError ? (
+            <AppPageError
+              message="Unable to load data. Please try again."
+              onRetry={() => {
+                if (selectedEmployeeId) {
+                  setSlipsError(null);
+                  setSlipsLoading(true);
+                  void (async () => {
+                    try {
+                      const qs = new URLSearchParams({
+                        user_id: selectedEmployeeId,
+                        employeeUserId: selectedEmployeeId,
+                      });
+                      const res = await fetch(`/api/payslips/employee?${qs.toString()}`);
+                      const data = await res.json();
+                      if (!res.ok) throw new Error(data?.error || "Failed to load payslips");
+                      setSlipsData({
+                        company: data.company,
+                        user: data.user,
+                        payslips: data.payslips || [],
+                      });
+                    } catch (e: unknown) {
+                      setSlipsError(e instanceof Error ? e.message : "Failed to load payslips");
+                    } finally {
+                      setSlipsLoading(false);
+                    }
+                  })();
+                }
+              }}
+            />
           ) : !slipsData || !selectedEmployeeId ? (
             <EmptyState
               icon={FileText}
@@ -2411,14 +2456,7 @@ function PayrollPageContent() {
 
 export default function PayrollPage() {
   return (
-    <Suspense
-      fallback={
-        <section className="space-y-6">
-          <h1 className="page-title">Payroll</h1>
-          <SkeletonTable rows={8} columns={12} />
-        </section>
-      }
-    >
+    <Suspense fallback={<AppPageLoader message="Loading payroll run..." />}>
       <PayrollPageContent />
     </Suspense>
   );

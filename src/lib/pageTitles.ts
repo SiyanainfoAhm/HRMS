@@ -2,7 +2,9 @@
 const TITLES: Record<string, string> = {
   "/payroll": "Payroll",
   "/payroll/master": "Payroll Master",
-  "/profile": "My Salary Slips",
+  "/profile": "Profile",
+  "/employee/dashboard": "Dashboard",
+  "/employee/payroll-history": "Payroll History",
   "/settings": "Settings",
   "/employees": "Employees",
   "/setup/company": "CIRT Institute Setup",
@@ -28,7 +30,10 @@ export function breadcrumbForPathname(pathname: string): { label: string; href?:
     return [{ label: title }];
   }
   if (pathname.startsWith("/profile")) {
-    return [{ label: "My Salary Slips" }];
+    return [{ label: "Profile" }];
+  }
+  if (pathname.startsWith("/employee")) {
+    return [{ label: title }];
   }
   return [{ label: "Home", href: "/payroll/master" }, { label: title }];
 }

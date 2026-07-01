@@ -19,5 +19,5 @@ export default async function DashboardPage() {
     redirect("/payroll/master");
   }
 
-  redirect("/profile?tab=pay");
+  redirect("/employee/dashboard");
 }

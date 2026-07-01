@@ -6,7 +6,8 @@ import { isAdminRole, normalizeRole, type AppRole } from "@/lib/roles";
 import { useAuth } from "@/contexts/AuthContext";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useToast } from "@/components/ToastProvider";
-import { SkeletonList, SkeletonTable, SkeletonText } from "@/components/Skeleton";
+import { AppPageError } from "@/components/ui/AppPageError";
+import { AppPageLoader } from "@/components/ui/AppPageLoader";
 import { DatePickerField } from "@/components/ui/DatePickerField";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -25,7 +26,7 @@ export function SettingsContent() {
   const [activeTab, setActiveTab] = useState<"company" | "roles" | "org" | "designations" | "increment" | "payroll-fields" | "quarters">("company");
 
   const [company, setCompany] = useState<any | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const [isCompanyDialogOpen, setIsCompanyDialogOpen] = useState(false);
@@ -613,13 +614,27 @@ export function SettingsContent() {
                 )}
               </div>
               {loading ? (
-                <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  {Array.from({ length: 6 }).map((_, i) => (
-                    <div key={i} className="h-10 animate-pulse rounded-lg bg-slate-100" />
-                  ))}
-                </div>
+                <AppPageLoader variant="inline" message="Loading settings..." submessage="" />
               ) : error ? (
-                <p className="mt-4 text-sm text-red-600">{error}</p>
+                <AppPageError
+                  message="Unable to load data. Please try again."
+                  onRetry={() => {
+                    setLoading(true);
+                    setError(null);
+                    void (async () => {
+                      try {
+                        const res = await fetch("/api/company/me");
+                        const data = await res.json();
+                        if (!res.ok) throw new Error(data?.error || "Failed to load company profile");
+                        setCompany(data.company);
+                      } catch (e: unknown) {
+                        setError(e instanceof Error ? e.message : "Failed to load company profile");
+                      } finally {
+                        setLoading(false);
+                      }
+                    })();
+                  }}
+                />
               ) : (
                 <dl className="mt-4 grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
                   <div>
@@ -720,7 +735,7 @@ export function SettingsContent() {
                 )}
               </div>
               {moduleTabLoading ? (
-                <SkeletonTable rows={5} columns={6} />
+                <AppPageLoader variant="inline" message="Loading settings..." submessage="" />
               ) : shifts.length === 0 ? (
                 <p className="muted">No shifts yet.</p>
               ) : (
@@ -817,7 +832,7 @@ export function SettingsContent() {
                 )}
               </div>
               {moduleTabLoading ? (
-                <SkeletonTable rows={5} columns={5} />
+                <AppPageLoader variant="inline" message="Loading settings..." submessage="" />
               ) : roles.length === 0 ? (
                 <EmptyState title="No roles" description="Add roles to assign permissions." />
               ) : (
@@ -918,7 +933,7 @@ export function SettingsContent() {
                 )}
               </div>
               {moduleTabLoading ? (
-                <SkeletonTable rows={5} columns={4} />
+                <AppPageLoader variant="inline" message="Loading settings..." submessage="" />
               ) : designations.length === 0 ? (
                 <p className="muted">No designations yet.</p>
               ) : (
@@ -1013,7 +1028,7 @@ export function SettingsContent() {
                   )}
                 </div>
                 {moduleTabLoading ? (
-                  <SkeletonList items={4} />
+                  <AppPageLoader variant="inline" message="Loading settings..." submessage="" />
                 ) : divisions.length === 0 ? (
                   <p className="muted">No divisions yet.</p>
                 ) : (
@@ -1087,7 +1102,7 @@ export function SettingsContent() {
                   )}
                 </div>
                 {moduleTabLoading ? (
-                  <SkeletonList items={4} />
+                  <AppPageLoader variant="inline" message="Loading settings..." submessage="" />
                 ) : departments.length === 0 ? (
                   <p className="muted">No departments yet.</p>
                 ) : (

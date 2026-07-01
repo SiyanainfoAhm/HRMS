@@ -45,7 +45,7 @@ export function middleware(request: NextRequest) {
     }
 
     if (isAdminOnlyPage(pathname) && session && !isAdminRole(session.role)) {
-      return applyNoStoreHeaders(NextResponse.redirect(new URL("/profile?tab=pay", request.url)));
+      return applyNoStoreHeaders(NextResponse.redirect(new URL("/employee/dashboard", request.url)));
     }
   }
 

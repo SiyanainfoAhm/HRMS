@@ -13,7 +13,7 @@ export default function PayrollMasterPage() {
 
   useEffect(() => {
     if (!canManage) {
-      router.replace("/profile?tab=pay");
+      router.replace("/employee/dashboard");
     }
   }, [canManage, router]);
 

@@ -1,6 +1,6 @@
 import { isAdminRole } from "@/lib/roles";
 
-const ALLOWED_NEXT_PREFIXES = ["/payroll", "/profile", "/settings", "/employees", "/setup"];
+const ALLOWED_NEXT_PREFIXES = ["/payroll", "/profile", "/employee", "/settings", "/employees", "/setup"];
 
 function isSafeNextPath(path: string): boolean {
   if (!path.startsWith("/") || path.startsWith("//")) {
@@ -14,7 +14,7 @@ function isSafeNextPath(path: string): boolean {
 
 /** Default landing page after sign-in (must match an existing app route). */
 export function getDefaultLandingPath(role: string | null | undefined): string {
-  return isAdminRole(role) ? "/payroll/master" : "/profile?tab=pay";
+  return isAdminRole(role) ? "/payroll/master" : "/employee/dashboard";
 }
 
 /** Resolve post-login destination, honoring a safe `next` query param when present. */

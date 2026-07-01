@@ -3,7 +3,7 @@
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
-import { useEffect, useMemo, useState, useRef, FormEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useState, useRef, FormEvent } from "react";
 import { DatePickerField } from "@/components/ui/DatePickerField";
 import { PasswordField } from "@/components/PasswordField";
 import { upload as apiUpload } from "@/lib/api";
@@ -20,8 +20,12 @@ import {
 } from "@/lib/employeeValidators";
 import { PASSWORD_COMPLEXITY_HINT, validatePasswordComplexity } from "@/lib/passwordValidators";
 import { GovernmentPayslipPrint } from "@/components/payslip/GovernmentPayslipPrint";
-import { EmployeeCpfSettingsCard } from "@/components/profile/EmployeeCpfSettingsCard";
+import { EmployeeProfileReadOnly } from "@/components/employee/EmployeeProfileReadOnly";
+import { EmployeeSalarySlipPanel, type PayslipBundle } from "@/components/employee/EmployeeSalarySlipPanel";
 import { resolvePayslipDepartment, resolvePayslipDesignation } from "@/lib/payslipUserFields";
+import type { EmployeePayrollMaster, EmployeeProfileUser } from "@/lib/employeeDashboard";
+import { AppPageError } from "@/components/ui/AppPageError";
+import { AppPageLoader } from "@/components/ui/AppPageLoader";
 import type { GovernmentMonthlySlip } from "@/lib/governmentPayslipLayout";
 import type { GovernmentLeavePayslipDisplay } from "@/lib/leaveBalancesCompute";
 
@@ -30,13 +34,15 @@ export function ProfileContent() {
   const params = useSearchParams();
   const router = useRouter();
   const isEmployeeSelfService = !isAdminRole(role);
-  const tab = params.get("tab") || (isEmployeeSelfService ? "pay" : "profile");
+  const tab = params.get("tab") || (isEmployeeSelfService ? "profile" : "profile");
+  const urlMonth = params.get("month") ?? undefined;
+  const urlYear = params.get("year") ?? undefined;
 
   useEffect(() => {
-    if (isEmployeeSelfService && tab !== "pay") {
-      router.replace("/profile?tab=pay");
+    if (isEmployeeSelfService && !params.get("tab") && tab === "profile") {
+      router.replace("/profile?tab=profile");
     }
-  }, [isEmployeeSelfService, tab, router]);
+  }, [isEmployeeSelfService, params, tab, router]);
 
   const canEditEmployment = useMemo(() => isAdminRole(role), [role]);
   const canEditOrgFields = useMemo(() => isAdminRole(role), [role]);
@@ -155,7 +161,14 @@ export function ProfileContent() {
     }[];
   } | null>(null);
   const [myPayrollMaster, setMyPayrollMaster] = useState<Record<string, unknown> | null>(null);
+  const [employeeProfileUser, setEmployeeProfileUser] = useState<EmployeeProfileUser | null>(null);
+  const [employeeMaster, setEmployeeMaster] = useState<EmployeePayrollMaster | null>(null);
+  const [employeePayslips, setEmployeePayslips] = useState<PayslipBundle | null>(null);
+  const [employeeProfileLoading, setEmployeeProfileLoading] = useState(isEmployeeSelfService);
+  const [employeeProfileError, setEmployeeProfileError] = useState<string | null>(null);
+  const [employeeProfileReloadKey, setEmployeeProfileReloadKey] = useState(0);
   const [payslipsLoading, setPayslipsLoading] = useState(false);
+  const [payslipsReloadKey, setPayslipsReloadKey] = useState(0);
   const [payslipsError, setPayslipsError] = useState<string | null>(null);
   const [selectedMonth, setSelectedMonth] = useState("");
   const [selectedYear, setSelectedYear] = useState("");
@@ -336,21 +349,38 @@ export function ProfileContent() {
   }, []);
 
   useEffect(() => {
+    if (!isEmployeeSelfService) return;
     let cancelled = false;
     (async () => {
+      setEmployeeProfileLoading(true);
+      setEmployeeProfileError(null);
       try {
-        const res = await fetch("/api/me/payroll-master");
+        const res = await fetch("/api/profile/me");
         const data = await res.json();
-        if (!res.ok) throw new Error(data?.error || "Failed to load payroll master");
-        if (!cancelled) setMyPayrollMaster(data?.payrollMaster ?? data?.master ?? null);
-      } catch {
-        // ignore
+        if (!res.ok) throw new Error(data?.error || "Failed to load profile");
+        if (!cancelled) {
+          setEmployeeProfileUser(data.user ?? null);
+          setEmployeeMaster(data.payrollMaster ?? null);
+          setMyPayrollMaster(data.payrollMaster ?? null);
+        }
+      } catch (e: unknown) {
+        if (!cancelled) {
+          setEmployeeProfileError(e instanceof Error ? e.message : "Failed to load profile");
+        }
+      } finally {
+        if (!cancelled) setEmployeeProfileLoading(false);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [isEmployeeSelfService, employeeProfileReloadKey]);
+
+  useLayoutEffect(() => {
+    if (isEmployeeSelfService && tab === "pay") {
+      setPayslipsLoading(true);
+    }
+  }, [isEmployeeSelfService, tab, payslipsReloadKey]);
 
   useEffect(() => {
     if (tab !== "documents") return;
@@ -402,7 +432,37 @@ export function ProfileContent() {
   }, [tab, isAdmin]);
 
   useEffect(() => {
-    if (tab !== "pay") return;
+    if (!isEmployeeSelfService || tab !== "pay") return;
+    let cancelled = false;
+    (async () => {
+      setPayslipsLoading(true);
+      setPayslipsError(null);
+      try {
+        const res = await fetch("/api/payslips/me");
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.error || "Failed to load payslips");
+        if (!cancelled) {
+          const bundle = {
+            company: data.company,
+            user: data.user,
+            payslips: data.payslips || [],
+          };
+          setPayslipsData(bundle);
+          setEmployeePayslips(bundle);
+        }
+      } catch (e: unknown) {
+        if (!cancelled) setPayslipsError(e instanceof Error ? e.message : "Failed to load payslips");
+      } finally {
+        if (!cancelled) setPayslipsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tab, isEmployeeSelfService, payslipsReloadKey]);
+
+  useEffect(() => {
+    if (isEmployeeSelfService || tab !== "pay") return;
     let cancelled = false;
     (async () => {
       setPayslipsLoading(true);
@@ -632,11 +692,35 @@ export function ProfileContent() {
       )}
 
     <section className="space-y-4">
+      {isEmployeeSelfService && tab === "profile" && employeeProfileLoading ? (
+        <AppPageLoader message="Loading your profile..." />
+      ) : isEmployeeSelfService && tab === "profile" && employeeProfileError ? (
+        <AppPageError
+          message="Unable to load profile. Please try again."
+          onRetry={() => setEmployeeProfileReloadKey((k) => k + 1)}
+        />
+      ) : isEmployeeSelfService && tab === "pay" && payslipsLoading ? (
+        <AppPageLoader message="Loading salary slips..." />
+      ) : isEmployeeSelfService && tab === "pay" && payslipsError ? (
+        <AppPageError
+          message="Unable to load salary slips. Please try again."
+          onRetry={() => setPayslipsReloadKey((k) => k + 1)}
+        />
+      ) : (
+        <>
       <div>
-        <h1 className="page-title">{isEmployeeSelfService ? "My Salary Slips" : "Profile"}</h1>
+        <h1 className="page-title">
+          {isEmployeeSelfService
+            ? tab === "pay"
+              ? "My Salary Slips"
+              : "My Profile"
+            : "Profile"}
+        </h1>
         <p className="muted">
           {isEmployeeSelfService
-            ? "View and download your salary slips."
+            ? tab === "pay"
+              ? "View and download your salary slips."
+              : "View your employment details. Contact HR to update records."
             : isAdmin
               ? "You are the master admin. Manage companies and edit company details—employee fields do not apply to you."
               : "For employees this shows personal, bank and emergency contact information."}
@@ -662,7 +746,46 @@ export function ProfileContent() {
       </div>
       )}
 
-      {tab === "profile" && (
+      {tab === "profile" && isEmployeeSelfService && (
+        <div className="space-y-4">
+          <EmployeeProfileReadOnly user={employeeProfileUser} master={employeeMaster} />
+          <form onSubmit={handleChangePassword} className="card space-y-4">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">Change password</h2>
+              <p className="muted text-sm">Update your sign-in password.</p>
+            </div>
+            {passwordError ? <p className="text-sm text-red-600">{passwordError}</p> : null}
+            {passwordSuccess ? <p className="text-sm text-emerald-700">{passwordSuccess}</p> : null}
+            <div className="grid max-w-md gap-3">
+              <PasswordField
+                label="Current password"
+                autoComplete="current-password"
+                value={currentPassword}
+                onChange={setCurrentPassword}
+              />
+              <PasswordField
+                label="New password"
+                autoComplete="new-password"
+                value={newPassword}
+                onChange={setNewPassword}
+                onBlur={() => setNewPasswordTouched(true)}
+                error={newPasswordError}
+              />
+              <PasswordField
+                label="Confirm new password"
+                autoComplete="new-password"
+                value={confirmPassword}
+                onChange={setConfirmPassword}
+              />
+            </div>
+            <button type="submit" className="btn btn-primary" disabled={passwordSaving}>
+              {passwordSaving ? "Updating…" : "Update password"}
+            </button>
+          </form>
+        </div>
+      )}
+
+      {tab === "profile" && !isEmployeeSelfService && (
         <>
         <form onSubmit={handleSave} className="card space-y-6">
           <div className="flex items-start justify-between gap-4">
@@ -1249,13 +1372,20 @@ export function ProfileContent() {
         </>
       )}
 
-      {tab === "pay" && (
+      {tab === "pay" && isEmployeeSelfService && (
         <div className="space-y-4">
-          <EmployeeCpfSettingsCard
-            payrollMaster={myPayrollMaster as Parameters<typeof EmployeeCpfSettingsCard>[0]["payrollMaster"]}
-            onSaved={(master) => setMyPayrollMaster(master as Record<string, unknown>)}
+          <EmployeeSalarySlipPanel
+            data={employeePayslips}
+            error={payslipsError}
+            initialMonth={urlMonth}
+            initialYear={urlYear}
+            title="Payslips"
           />
+        </div>
+      )}
 
+      {tab === "pay" && !isEmployeeSelfService && (
+        <div className="space-y-4">
         <div className="card">
           <h2 className="mb-1 text-lg font-semibold text-slate-900">Payslips</h2>
           <p className="muted">Select month and year to view your salary slip. Available from your joining date.</p>
@@ -1678,6 +1808,8 @@ export function ProfileContent() {
             </div>
           )}
         </div>
+      )}
+        </>
       )}
     </section>
     </>

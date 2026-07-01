@@ -21,8 +21,10 @@ import {
 } from "@/lib/payrollMasterImportReport";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/components/ToastProvider";
-import { SkeletonTable, SkeletonCard } from "@/components/Skeleton";
+import { SkeletonCard } from "@/components/Skeleton";
 import { AppCard } from "@/components/ui/AppCard";
+import { AppPageError } from "@/components/ui/AppPageError";
+import { AppPageLoader } from "@/components/ui/AppPageLoader";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
@@ -1317,6 +1319,16 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     ...(editing ? [{ id: "history" as const, label: "History" }] : []),
   ];
 
+  if (loading) {
+    return <AppPageLoader message="Loading payroll master..." />;
+  }
+
+  if (loadError) {
+    return (
+      <AppPageError message="Unable to load data. Please try again." onRetry={() => void loadRows()} />
+    );
+  }
+
   return (
     <div className="space-y-4">
       <PageHeader
@@ -1337,7 +1349,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                 Download Template
               </Button>
               <Button size="sm" variant="outline" onClick={handleExport} loading={busy === "export"} disabled={busy === "export"}>
-                Export Master
+                {busy === "export" ? "Exporting..." : "Export Master"}
               </Button>
               <Button size="sm" variant="outline" onClick={handleSync} loading={busy === "sync"} disabled={busy === "sync"}>
                 Sync Employees
@@ -1348,21 +1360,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
       />
 
       <AppCard padding={false} className="overflow-hidden">
-        {loading ? (
-          <div className="p-4">
-            <SkeletonTable rows={8} columns={10} />
-          </div>
-        ) : loadError ? (
-          <div className="p-5">
-            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-              <p className="font-medium">Could not load payroll master</p>
-              <p className="mt-1">{loadError}</p>
-              <Button variant="outline" size="sm" className="mt-3" onClick={() => loadRows()}>
-                Retry
-              </Button>
-            </div>
-          </div>
-        ) : rows.length === 0 ? (
+        {rows.length === 0 ? (
           <div className="p-6">
             <EmptyState
               title="No employees yet"
@@ -1896,7 +1894,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                   <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50/50 p-4">
                     <h4 className="mb-2 text-sm font-semibold text-slate-800">Employee CPF calculation</h4>
                     <p className="mb-4 text-xs text-slate-600">
-                      Override institute CPF defaults for this employee. They can also update this from Profile → My Pay.
+                      Override institute CPF defaults for this employee. Admins manage this in Payroll Master.
                     </p>
                     <CpfCalculationSettingsForm
                       earningFields={payrollFieldDefs.filter(
@@ -2160,7 +2158,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
               disabled={importing || importPreviewing || !importFile || !importCanConfirm}
               onClick={handleImport}
             >
-              Confirm import
+              {importing ? "Importing payroll master..." : "Confirm import"}
             </Button>
           </>
         }
@@ -2172,11 +2170,15 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                   disabled={importing || importPreviewing}
                 />
 
-                {importFile && importPreviewing && (
-                  <SkeletonTable rows={4} columns={6} />
+                {importFile && (importPreviewing || importing) && (
+                  <AppPageLoader
+                    variant="inline"
+                    message={importing ? "Importing payroll master..." : "Validating import file..."}
+                    submessage=""
+                  />
                 )}
 
-                {importPreview && !importPreviewing && (
+                {importPreview && !importPreviewing && !importing && (
                   <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
                     <div className="flex flex-wrap gap-2 text-xs">
                       <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-emerald-800">

@@ -306,4 +306,145 @@ class PayslipController extends Controller
 
         return sprintf('%02d %s %s', (int) $d, $months[max(0, min(11, $mi - 1))] ?? '', $y);
     }
+
+    public function myPayrollHistory(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if (! $user->company_id) {
+            return response()->json(['history' => []]);
+        }
+
+        $limit = min(24, max(1, (int) $request->query('limit', 12)));
+        $data = $this->buildPayslipsResponse((string) $user->company_id, $user->id);
+        $history = array_slice($data['payslips'], 0, $limit);
+
+        return response()->json([
+            'history' => array_map(fn (array $slip) => $this->formatPayrollHistoryRow($slip), $history),
+        ]);
+    }
+
+    public function myLatestPayroll(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if (! $user->company_id) {
+            return response()->json(['latest' => null]);
+        }
+
+        $data = $this->buildPayslipsResponse((string) $user->company_id, $user->id);
+        $slips = $data['payslips'];
+        if ($slips === []) {
+            return response()->json(['latest' => null]);
+        }
+
+        return response()->json([
+            'latest' => $this->formatLatestPayrollRow($slips[0]),
+        ]);
+    }
+
+    public function myPayslipByPeriod(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if (! $user->company_id) {
+            return response()->json(['payslip' => null, 'company' => null, 'user' => null]);
+        }
+
+        $month = str_pad((string) ($request->query('month') ?? ''), 2, '0', STR_PAD_LEFT);
+        $year = trim((string) ($request->query('year') ?? ''));
+        if (! preg_match('/^\d{2}$/', $month) || ! preg_match('/^\d{4}$/', $year)) {
+            return response()->json(['error' => 'Valid month and year are required.'], 422);
+        }
+
+        $periodKey = "{$year}-{$month}";
+        $data = $this->buildPayslipsResponse((string) $user->company_id, $user->id);
+        foreach ($data['payslips'] as $slip) {
+            if (($slip['periodMonth'] ?? '') === $periodKey) {
+                return response()->json([
+                    'payslip' => $slip,
+                    'company' => $data['company'],
+                    'user' => $data['user'],
+                ]);
+            }
+        }
+
+        return response()->json([
+            'payslip' => null,
+            'company' => $data['company'],
+            'user' => $data['user'],
+        ]);
+    }
+
+    /** @param array<string, mixed> $slip */
+    private function formatPayrollHistoryRow(array $slip): array
+    {
+        $periodMonth = (string) ($slip['periodMonth'] ?? '');
+        [$year, $month] = array_pad(explode('-', $periodMonth), 2, '0');
+        $amounts = $this->resolveSlipAmounts($slip);
+
+        return [
+            'id' => $slip['id'] ?? null,
+            'month' => (int) $month,
+            'year' => (int) $year,
+            'periodMonth' => $periodMonth,
+            'periodLabel' => $this->periodLabelFromKey($periodMonth),
+            'grossEarnings' => $amounts['gross'],
+            'deductions' => $amounts['deductions'],
+            'netPay' => (float) ($slip['netPay'] ?? 0),
+            'payDays' => (float) ($slip['payDays'] ?? 0),
+            'workingDays' => $this->workingDaysFromSlip($slip),
+            'status' => 'Paid',
+            'generatedAt' => $slip['generatedAt'] ?? null,
+        ];
+    }
+
+    /** @param array<string, mixed> $slip */
+    private function formatLatestPayrollRow(array $slip): array
+    {
+        $row = $this->formatPayrollHistoryRow($slip);
+        $row['periodFormatted'] = $slip['periodFormatted'] ?? $row['periodLabel'];
+
+        return $row;
+    }
+
+    /** @param array<string, mixed> $slip */
+    private function resolveSlipAmounts(array $slip): array
+    {
+        $gov = is_array($slip['governmentMonthly'] ?? null) ? $slip['governmentMonthly'] : null;
+        if ($gov) {
+            $gross = (float) ($gov['total_earnings'] ?? $gov['totalEarnings'] ?? $slip['grossPay'] ?? 0);
+            $deductions = (float) ($gov['total_deductions'] ?? $gov['totalDeductions'] ?? $slip['deductions'] ?? 0);
+        } else {
+            $gross = (float) ($slip['grossPay'] ?? 0);
+            $deductions = (float) ($slip['deductions'] ?? 0);
+        }
+
+        return ['gross' => $gross, 'deductions' => $deductions];
+    }
+
+    /** @param array<string, mixed> $slip */
+    private function workingDaysFromSlip(array $slip): int
+    {
+        $start = (string) ($slip['periodStart'] ?? '');
+        $end = (string) ($slip['periodEnd'] ?? '');
+        if ($start === '' || $end === '') {
+            return 0;
+        }
+        $startTs = strtotime($start);
+        $endTs = strtotime($end);
+        if ($startTs === false || $endTs === false) {
+            return 0;
+        }
+
+        return (int) round(($endTs - $startTs) / 86400) + 1;
+    }
+
+    private function periodLabelFromKey(string $periodMonth): string
+    {
+        if (! preg_match('/^(\d{4})-(\d{2})$/', $periodMonth, $m)) {
+            return $periodMonth;
+        }
+        $months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        $mi = (int) $m[2];
+
+        return ($months[max(0, min(11, $mi - 1))] ?? $m[2]).' '.$m[1];
+    }
 }

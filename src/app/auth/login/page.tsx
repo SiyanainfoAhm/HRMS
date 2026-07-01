@@ -9,6 +9,7 @@ import { AuthLoadingOverlay } from "@/components/ui/AuthLoadingOverlay";
 import { Loader2 } from "lucide-react";
 import { APP_NAME } from "@/lib/appBranding";
 import { validateLoginEmail, validateLoginPassword } from "@/lib/loginValidators";
+import { resolvePostLoginPath } from "@/lib/postLoginRedirect";
 import { isAdminRole } from "@/lib/roles";
 import { fadeInUp, staggerContainer, staggerItem } from "@/lib/motion";
 
@@ -64,7 +65,7 @@ function LoginForm() {
 
       const role = data.user?.role;
       const nextParam = params.get("next");
-      let destination = nextParam && nextParam.startsWith("/") ? nextParam : "/dashboard";
+      let destination = resolvePostLoginPath(role, nextParam);
 
       if (isAdminRole(role)) {
         const companyRes = await fetch("/api/company/me", { credentials: "include" });

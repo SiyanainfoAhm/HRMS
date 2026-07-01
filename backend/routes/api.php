@@ -36,13 +36,16 @@ Route::prefix('v1')->group(function () {
         Route::get('me', [UserController::class, 'me']);
         Route::put('me', [UserController::class, 'updateMe']);
         Route::get('me/payroll-master', [UserController::class, 'myPayrollMaster']);
-        Route::put('me/payroll-master/cpf-settings', [UserController::class, 'updateMyCpfSettings']);
+        Route::get('me/profile-summary', [UserController::class, 'myProfileSummary']);
 
         // Company (read for all authenticated users)
         Route::get('company/me', [CompanyController::class, 'me']);
 
         // Payslips (employee self-service)
         Route::get('payslips/me', [PayslipController::class, 'me']);
+        Route::get('me/payroll-history', [PayslipController::class, 'myPayrollHistory']);
+        Route::get('me/latest-payroll', [PayslipController::class, 'myLatestPayroll']);
+        Route::get('me/payslip', [PayslipController::class, 'myPayslipByPeriod']);
 
         // Employee self lookup (controller enforces company + self/managerial)
         Route::get('employees/{id}', [EmployeeController::class, 'show']);

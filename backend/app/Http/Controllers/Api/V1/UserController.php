@@ -150,6 +150,34 @@ class UserController extends Controller
     public function myPayrollMaster(Request $request): JsonResponse
     {
         $user = $request->user();
+        $master = $this->resolveMyPayrollMaster($user);
+
+        if (! $master) {
+            return response()->json(['master' => null, 'payrollMaster' => null]);
+        }
+
+        $formatted = $this->payrollMasterService->formatRow($master);
+
+        return response()->json([
+            'master' => $formatted,
+            'payrollMaster' => $formatted,
+        ]);
+    }
+
+    public function myProfileSummary(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        $master = $this->resolveMyPayrollMaster($user);
+        $formatted = $master ? $this->payrollMasterService->formatRow($master) : null;
+
+        return response()->json([
+            'user' => new UserResource($user),
+            'payrollMaster' => $formatted,
+        ]);
+    }
+
+    private function resolveMyPayrollMaster(HrmsUser $user): ?HrmsPayrollMaster
+    {
         $master = HrmsPayrollMaster::query()
             ->where('employee_user_id', $user->id)
             ->where(function ($q) {
@@ -166,50 +194,7 @@ class UserController extends Controller
                 ->first();
         }
 
-        if (! $master) {
-            return response()->json(['master' => null, 'payrollMaster' => null]);
-        }
-
-        $formatted = $this->payrollMasterService->formatRow($master);
-
-        return response()->json([
-            'master' => $formatted,
-            'payrollMaster' => $formatted,
-        ]);
-    }
-
-    public function updateMyCpfSettings(Request $request): JsonResponse
-    {
-        $user = $request->user();
-        $data = $request->validate([
-            'cpf_use_company_settings' => ['nullable', 'boolean'],
-            'cpfUseCompanySettings' => ['nullable', 'boolean'],
-            'cpf_percentage_override' => ['nullable', 'numeric', 'min:0'],
-            'cpfPercentageOverride' => ['nullable', 'numeric', 'min:0'],
-            'cpf_basis_field_keys_override' => ['nullable', 'array'],
-            'cpfBasisFieldKeysOverride' => ['nullable', 'array'],
-        ]);
-
-        $master = HrmsPayrollMaster::query()
-            ->where('employee_user_id', $user->id)
-            ->whereNull('effective_to')
-            ->orderByDesc('effective_from')
-            ->first();
-
-        if (! $master) {
-            return response()->json(['error' => 'Payroll master record not found.'], 404);
-        }
-
-        $updated = $this->payrollMasterService->updateEmployeeCpfSettings(
-            $master,
-            $data,
-            (string) $user->company_id,
-        );
-
-        return response()->json([
-            'master' => $updated,
-            'payrollMaster' => $updated,
-        ]);
+        return $master;
     }
 
     private function buildUpdatePayload(array $body, bool $isManagerial): array

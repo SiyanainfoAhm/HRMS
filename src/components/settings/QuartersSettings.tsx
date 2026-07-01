@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { AppPageLoader } from "@/components/ui/AppPageLoader";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
@@ -147,7 +148,7 @@ export function QuartersSettings() {
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
 
       {loading ? (
-        <p className="text-sm text-slate-500">Loading quarters…</p>
+        <AppPageLoader variant="inline" message="Loading settings..." submessage="" />
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[720px] border-collapse text-sm">

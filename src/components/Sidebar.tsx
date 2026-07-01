@@ -12,6 +12,8 @@ import {
   ChevronLeft,
   ChevronRight,
   LogOut,
+  LayoutDashboard,
+  History,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import type { SessionUser } from "@/lib/auth";
@@ -78,7 +80,12 @@ export function Sidebar({
         { href: "/settings", label: "Settings", icon: <Settings className={iconCls} /> },
       ]
     : isEmployee
-      ? [{ href: "/profile?tab=pay", label: "My Salary Slips", icon: <UserCircle className={iconCls} /> }]
+      ? [
+          { href: "/employee/dashboard", label: "Dashboard", icon: <LayoutDashboard className={iconCls} /> },
+          { href: "/profile?tab=pay", label: "My Salary Slips", icon: <FileText className={iconCls} /> },
+          { href: "/employee/payroll-history", label: "Payroll History", icon: <History className={iconCls} /> },
+          { href: "/profile?tab=profile", label: "Profile", icon: <UserCircle className={iconCls} /> },
+        ]
       : [{ href: "/profile?tab=pay", label: "My Salary Slips", icon: <UserCircle className={iconCls} /> }];
 
   const initials = getInitials(user.name, user.email);
@@ -106,7 +113,16 @@ export function Sidebar({
       return pathname === "/payroll" && (searchParams.get("tab") || "run") === tab;
     }
     if (href.startsWith("/profile")) {
-      return pathname === "/profile";
+      if (pathname !== "/profile") return false;
+      const hrefTab = new URL(href, "http://local").searchParams.get("tab") || "profile";
+      const currentTab = searchParams.get("tab") || "profile";
+      return hrefTab === currentTab;
+    }
+    if (href === "/employee/dashboard") {
+      return pathname === "/employee/dashboard";
+    }
+    if (href === "/employee/payroll-history") {
+      return pathname === "/employee/payroll-history";
     }
     return pathname === href || pathname.startsWith(href + "/");
   }
@@ -144,7 +160,7 @@ export function Sidebar({
             )}
           >
             <Link
-              href={isPayrollMasterAdmin ? "/payroll/master" : "/payroll?tab=run"}
+              href={isPayrollAdmin ? "/payroll/master" : "/employee/dashboard"}
               title={collapsed ? `${brandName} — ${APP_NAME}` : APP_NAME}
               aria-label={`${brandName} — ${APP_NAME}`}
               onClick={closeMobile}

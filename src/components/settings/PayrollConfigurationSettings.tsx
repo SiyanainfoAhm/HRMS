@@ -10,7 +10,7 @@ import { FormField } from "@/components/ui/FormField";
 import { Input } from "@/components/ui/Input";
 import { Modal } from "@/components/ui/Modal";
 import { SelectField } from "@/components/ui/SelectField";
-import { SkeletonTable } from "@/components/Skeleton";
+import { AppPageLoader } from "@/components/ui/AppPageLoader";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { cn } from "@/lib/cn";
 import {
@@ -399,7 +399,7 @@ export function PayrollConfigurationSettings() {
             </div>
 
             {loading ? (
-              <SkeletonTable rows={6} columns={8} />
+              <AppPageLoader variant="inline" message="Loading settings..." submessage="" />
             ) : filteredFields.length === 0 ? (
               <EmptyState
                 title="No payroll fields"
@@ -488,12 +488,11 @@ export function PayrollConfigurationSettings() {
         ) : (
           <div className="space-y-4">
             <p className="text-sm text-slate-600">
-              These defaults apply to all employees unless an employee chooses custom CPF settings on{" "}
-              <strong>Profile → My Pay</strong> or an admin sets overrides in Payroll Master.
+              These defaults apply to all employees unless an admin sets per-employee overrides in Payroll Master.
             </p>
 
             {loading ? (
-              <p className="text-sm text-slate-500">Loading…</p>
+              <AppPageLoader variant="inline" message="Loading settings..." submessage="" />
             ) : (
               <CpfCalculationSettingsForm
                 earningFields={earningFields}
