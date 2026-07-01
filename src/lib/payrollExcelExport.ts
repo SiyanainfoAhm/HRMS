@@ -212,6 +212,28 @@ function n(v: unknown): number {
   return Number.isFinite(x) ? x : 0;
 }
 
+type QuarterExcelFields = Pick<
+  Record<PayrollExcelHeader, string | number>,
+  "QuarterAssigned" | "QuarterName" | "QuarterType" | "QuarterRent" | "QuarterRentDeduction"
+>;
+
+function quarterExcelColumns(opts: {
+  hasQuarter?: boolean | null;
+  quarterName?: string | null;
+  quarterType?: string | null;
+  quarterRent?: number | null;
+}): QuarterExcelFields {
+  const hasQuarter = Boolean(opts.hasQuarter);
+  const rent = n(opts.quarterRent);
+  return {
+    QuarterAssigned: hasQuarter ? "Yes" : "No",
+    QuarterName: String(opts.quarterName ?? ""),
+    QuarterType: String(opts.quarterType ?? ""),
+    QuarterRent: rent,
+    QuarterRentDeduction: hasQuarter ? rent : 0,
+  };
+}
+
 function govFromComputed(
   c: GovernmentMonthlyComputed,
   payLevel: number,
@@ -263,6 +285,10 @@ function govFromComputed(
     EmployeeESIC: 0,
     EmployerESIC: 0,
     ProfessionalTax: d.pt,
+    ...quarterExcelColumns({
+      hasQuarter: c.hasQuarter,
+      quarterRent: c.quarterRent,
+    }),
     NetPay: c.netSalary,
   };
 }
@@ -316,6 +342,12 @@ function govFromDbRow(
     EmployeeESIC: 0,
     EmployerESIC: 0,
     ProfessionalTax: n(r.pt_amount),
+    ...quarterExcelColumns({
+      hasQuarter: r.has_quarter,
+      quarterName: r.quarter_name,
+      quarterType: r.quarter_type,
+      quarterRent: r.quarter_rent_amount,
+    }),
     NetPay: n(r.net_salary),
   };
 }
@@ -385,6 +417,7 @@ export function buildPayrollExcelRow(
     EmployeeESIC: n(p.esic_employee),
     EmployerESIC: n(p.esic_employer),
     ProfessionalTax: professionalTax,
+    ...quarterExcelColumns({}),
     NetPay: netPay,
   };
 
@@ -423,24 +456,14 @@ export function buildPayrollExcelRow(
   };
 }
 
-function quarterExportFromGov(gov: GovernmentMonthlyRow | null | undefined): Record<string, string | number> {
-  if (!gov) {
-    return {
-      QuarterAssigned: "No",
-      QuarterName: "",
-      QuarterType: "",
-      QuarterRent: 0,
-      QuarterRentDeduction: 0,
-    };
-  }
-  const hasQuarter = Boolean(gov.has_quarter);
-  return {
-    QuarterAssigned: hasQuarter ? "Yes" : "No",
-    QuarterName: String(gov.quarter_name ?? ""),
-    QuarterType: String(gov.quarter_type ?? ""),
-    QuarterRent: n(gov.quarter_rent_amount),
-    QuarterRentDeduction: hasQuarter ? n(gov.quarter_rent_amount) : 0,
-  };
+function quarterExportFromGov(gov: GovernmentMonthlyRow | null | undefined): QuarterExcelFields {
+  if (!gov) return quarterExcelColumns({});
+  return quarterExcelColumns({
+    hasQuarter: gov.has_quarter,
+    quarterName: gov.quarter_name,
+    quarterType: gov.quarter_type,
+    quarterRent: gov.quarter_rent_amount,
+  });
 }
 
 /** Columns that must not appear in Run Payroll export (duplicate / deprecated labels). */

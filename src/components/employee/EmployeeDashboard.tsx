@@ -44,7 +44,7 @@ function SalaryRow({ label, value }: { label: string; value: string }) {
 }
 
 export function EmployeeDashboard() {
-  const { user } = useAuth();
+  const user = useAuth();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [profileUser, setProfileUser] = useState<EmployeeProfileUser | null>(null);

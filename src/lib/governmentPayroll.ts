@@ -83,9 +83,19 @@ export type GovernmentEarningPaidOverrides = Partial<{
 }>;
 
 export function governmentMonthlyExtras(
-  gr: { customEarnings?: Record<string, number>; customDeductions?: Record<string, number> },
+  gr: {
+    customEarnings?: Record<string, number>;
+    customDeductions?: Record<string, number>;
+    hasQuarter?: boolean;
+    has_quarter?: boolean;
+    quarterRent?: number;
+    quarter_rent?: number;
+  },
   payrollConfig?: PayrollConfig | null,
-): Pick<GovernmentMonthlyInput, "cpfConfig" | "customEarnings" | "customDeductions"> {
+): Pick<
+  GovernmentMonthlyInput,
+  "cpfConfig" | "customEarnings" | "customDeductions" | "payrollFieldDefs" | "hasQuarter" | "quarterRent"
+> {
   const cs = payrollConfig?.calculationSettings;
   return {
     cpfConfig: cs
@@ -180,6 +190,8 @@ export type GovernmentMonthlyComputed = {
   deductions: GovernmentDeductionDefaults;
   customEarnings: Record<string, number>;
   customDeductions: Record<string, number>;
+  hasQuarter: boolean;
+  quarterRent: number;
   totalEarnings: number;
   totalDeductions: number;
   netSalary: number;
