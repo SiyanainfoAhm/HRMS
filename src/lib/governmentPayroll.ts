@@ -7,6 +7,7 @@ import {
 } from "./payrollCpfCalculation";
 import type { PayrollConfig } from "./payrollFieldTypes";
 import { sumCustomBagForTotal } from "./payrollFieldTypes";
+import { computeHplEolEarningsReduction, applyHplEolToPaidAmounts } from "./hplEolDeductions";
 
 export type TransportSlab = { transportSlabGroup: string; transportBase: number };
 
@@ -47,6 +48,8 @@ export type GovernmentDeductionDefaults = {
   mess: number;
   loanRecovery: number;
   welfare: number;
+  hpl: number;
+  eol: number;
   vehCharge: number;
   other: number;
   quarterRent: number;
@@ -121,6 +124,10 @@ export type GovernmentMonthlyInput = {
   payLevel: number;
   daysInMonth: number;
   unpaidDays: number;
+  /** Half-pay leave days this month (2 HPL days = 1 day salary effect on Basic + DA). */
+  hplDays?: number;
+  /** Extra ordinary leave days this month (1 day effect on Basic, DA, HRA, Transport). */
+  eolDays?: number;
   deductionDefaults: GovernmentDeductionDefaults;
   /** Manual / variable earning heads (actual = paid) */
   optionalEarnings?: GovernmentOptionalMonthlyEarnings;
@@ -195,6 +202,8 @@ export type GovernmentMonthlyComputed = {
   totalEarnings: number;
   totalDeductions: number;
   netSalary: number;
+  hplDays?: number;
+  eolDays?: number;
 };
 
 export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): GovernmentMonthlyComputed {
@@ -241,11 +250,30 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
     return computed;
   };
 
-  const basicPaidF = pickPaid(basicPaid, "basicPaid");
-  const daPaidF = pickPaid(daPaid, "daPaid");
-  const hraPaidF = pickPaid(hraPaid, "hraPaid");
+  const basicPaidF0 = pickPaid(basicPaid, "basicPaid");
+  const daPaidF0 = pickPaid(daPaid, "daPaid");
+  const hraPaidF0 = pickPaid(hraPaid, "hraPaid");
   const medicalPaidF = pickPaid(medicalPaid, "medicalPaid");
-  const transportPaidF = pickPaid(transportPaid, "transportPaid");
+  const transportPaidF0 = pickPaid(transportPaid, "transportPaid");
+
+  const leaveReduce = computeHplEolEarningsReduction({
+    hplDays: input.hplDays,
+    eolDays: input.eolDays,
+    basicActual,
+    daActual,
+    hraActual,
+    transportActual,
+    daysInMonth: dim,
+  });
+  const leavePaid = applyHplEolToPaidAmounts(
+    { basic: basicPaidF0, da: daPaidF0, hra: hraPaidF0, transport: transportPaidF0 },
+    leaveReduce,
+  );
+  const basicPaidF = leavePaid.basic;
+  const daPaidF = leavePaid.da;
+  const hraPaidF = leavePaid.hra;
+  const transportPaidF = leavePaid.transport;
+
   const spF = pickPaid(sp, "spPayPaid");
   const ewaF = pickPaid(ewa, "extraWorkAllowancePaid");
   const naF = pickPaid(na, "nightAllowancePaid");
@@ -323,6 +351,8 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
     mess: roundRupees(d.mess),
     loanRecovery: roundRupees(d.loanRecovery),
     welfare: roundRupees(d.welfare),
+    hpl: 0,
+    eol: 0,
     vehCharge: roundRupees(d.vehCharge),
     other: roundRupees(d.other),
     quarterRent: hasQuarter ? roundRupees(Number(input.quarterRent ?? d.quarterRent ?? 0) || 0) : 0,
@@ -344,6 +374,8 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
     deductions.mess +
     deductions.loanRecovery +
     deductions.welfare +
+    deductions.hpl +
+    deductions.eol +
     deductions.vehCharge +
     deductions.other +
     deductions.quarterRent +
@@ -389,6 +421,8 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
     totalEarnings,
     totalDeductions,
     netSalary,
+    hplDays: leaveReduce.hplDays,
+    eolDays: leaveReduce.eolDays,
   };
 }
 
@@ -412,6 +446,8 @@ export function masterRowToDeductionDefaults(m: Record<string, unknown>): Govern
       Number(m.loanRecoveryDefault ?? m.loan_recovery_default ?? (m as { horticultureDefault?: number }).horticultureDefault ?? 0) ||
       0,
     welfare: Number(m.welfare_default ?? 0) || 0,
+    hpl: 0,
+    eol: 0,
     vehCharge: 0,
     other: Number(m.other_deduction_default ?? 0) || 0,
     quarterRent: Number(m.quarter_rent ?? m.quarterRent ?? 0) || 0,

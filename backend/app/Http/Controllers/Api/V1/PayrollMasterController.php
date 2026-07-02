@@ -67,7 +67,13 @@ class PayrollMasterController extends Controller
             return $denied;
         }
 
-        $master = $this->service->create($request->all(), (string) $user->company_id, $user->id);
+        $master = $this->service->create(
+            $request->all(),
+            (string) $user->company_id,
+            $user->id,
+            $request->boolean('autosave') || $request->boolean('autoSave'),
+            ! ($request->boolean('autosave') || $request->boolean('autoSave')),
+        );
 
         return response()->json(['master' => $this->service->formatRow($master)], 201);
     }
@@ -101,7 +107,12 @@ class PayrollMasterController extends Controller
                 'payload_da' => $request->input('da_percent') ?? $request->input('daPercent'),
             ]);
         }
-        $master = $this->service->update($master, $request->all(), (string) $user->company_id);
+        $master = $this->service->update(
+            $master,
+            $request->all(),
+            (string) $user->company_id,
+            $request->boolean('autosave') || $request->boolean('autoSave'),
+        );
 
         return response()->json(['master' => $this->service->formatRow($master)]);
     }

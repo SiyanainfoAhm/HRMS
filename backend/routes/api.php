@@ -12,6 +12,7 @@ use App\Http\Controllers\Api\V1\PayrollMasterController;
 use App\Http\Controllers\Api\V1\PayslipController;
 use App\Http\Controllers\Api\V1\RoleController;
 use App\Http\Controllers\Api\V1\QuarterController;
+use App\Http\Controllers\Api\V1\SalaryIncrementController;
 use App\Http\Controllers\Api\V1\UserController;
 use Illuminate\Support\Facades\Route;
 

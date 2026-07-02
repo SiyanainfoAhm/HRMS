@@ -76,7 +76,22 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const res = await fetch(`${getApiBaseUrl()}/payroll/export?period_id=${encodeURIComponent(periodId)}`, {
+  const exportParams = new URLSearchParams({ period_id: periodId });
+  for (const [key, target] of [
+    ["divisionId", "division_id"],
+    ["division_id", "division_id"],
+    ["departmentId", "department_id"],
+    ["department_id", "department_id"],
+    ["employeeUserIds", "employee_user_ids"],
+    ["employee_user_ids", "employee_user_ids"],
+    ["division", "division"],
+    ["department", "department"],
+  ] as const) {
+    const v = request.nextUrl.searchParams.get(key);
+    if (v) exportParams.set(target, v);
+  }
+
+  const res = await fetch(`${getApiBaseUrl()}/payroll/export?${exportParams.toString()}`, {
     headers: {
       Accept: "application/json",
       Authorization: `Bearer ${token}`,

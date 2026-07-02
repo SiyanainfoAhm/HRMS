@@ -18,6 +18,15 @@ import {
   v,
 } from "./payrollRunPreviewShared";
 
+function leaveDaysFromRow(row: GovernmentRunPreviewRow) {
+  const gr = row.govRecalc as { hplDays?: number; eolDays?: number } | undefined;
+  const gm = row.governmentMonthly as { hplDays?: number; eolDays?: number } | undefined;
+  return {
+    hplDays: gr?.hplDays ?? gm?.hplDays ?? 0,
+    eolDays: gr?.eolDays ?? gm?.eolDays ?? 0,
+  };
+}
+
 /** Monthly compute snapshot from `/api/payroll/run` preview (same shape as `computeGovernmentMonthlyPayroll` result). */
 export type GovernmentPreviewMonthly = {
   basicPaid: number;
@@ -39,9 +48,8 @@ export type GovernmentPreviewMonthly = {
   totalEarnings: number;
   totalDeductions: number;
   netSalary: number;
-  grossArrear?: number;
-  cpfArrear?: number;
-  netArrear?: number;
+  hplDays?: number;
+  eolDays?: number;
   deductions: {
     incomeTax: number;
     pt: number;
@@ -58,10 +66,15 @@ export type GovernmentPreviewMonthly = {
     mess: number;
     loanRecovery: number;
     welfare: number;
+    hpl: number;
+    eol: number;
     vehCharge: number;
     other: number;
     quarterRent: number;
   };
+  grossArrear?: number;
+  cpfArrear?: number;
+  netArrear?: number;
 };
 
 export type GovernmentRunPreviewRow = {
@@ -104,6 +117,8 @@ export type GovernmentRunPreviewRow = {
   govRecalc?: {
     customEarnings?: Record<string, number>;
     customDeductions?: Record<string, number>;
+    hplDays?: number;
+    eolDays?: number;
   };
 };
 
@@ -289,10 +304,7 @@ function GovernmentEmployeeDetail({
               <div>
                 <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Days</p>
                 {readOnly ? (
-                  <p className="text-[13px] tabular-nums text-slate-800">
-                    {row.payDays}
-                    {row.unpaidLeaveDays > 0 ? ` (−${row.unpaidLeaveDays})` : ""}
-                  </p>
+                  <p className="text-[13px] tabular-nums text-slate-800">{row.payDays}</p>
                 ) : (
                   <input
                     type="number"
@@ -305,19 +317,38 @@ function GovernmentEmployeeDetail({
                 )}
               </div>
               <div>
-                <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Leave</p>
+                <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">HPL days</p>
                 {readOnly ? (
-                  <p className="text-[13px] tabular-nums text-slate-800">{row.unpaidLeaveDays}</p>
+                  <p className="text-[13px] tabular-nums text-slate-800">{leaveDaysFromRow(row).hplDays}</p>
                 ) : (
                   <input
                     type="number"
                     min={0}
                     max={daysInMonth}
-                    value={row.unpaidLeaveDays}
+                    value={leaveDaysFromRow(row).hplDays}
                     onChange={(e) =>
-                      onUpdate(row.employeeUserId, "unpaidLeaveDays", parseInt(e.target.value, 10) || 0)
+                      onUpdate(row.employeeUserId, "hplDays", parseInt(e.target.value, 10) || 0)
                     }
                     className={payrollDaysInputClass}
+                    title="Half pay leave — 2 days = 1 day effect on Basic + DA"
+                  />
+                )}
+              </div>
+              <div>
+                <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">EOL days</p>
+                {readOnly ? (
+                  <p className="text-[13px] tabular-nums text-slate-800">{leaveDaysFromRow(row).eolDays}</p>
+                ) : (
+                  <input
+                    type="number"
+                    min={0}
+                    max={daysInMonth}
+                    value={leaveDaysFromRow(row).eolDays}
+                    onChange={(e) =>
+                      onUpdate(row.employeeUserId, "eolDays", parseInt(e.target.value, 10) || 0)
+                    }
+                    className={payrollDaysInputClass}
+                    title="EOL — 1 day effect each on Basic, DA, HRA, Transport"
                   />
                 )}
               </div>

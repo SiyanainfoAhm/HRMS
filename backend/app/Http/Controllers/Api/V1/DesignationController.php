@@ -4,6 +4,8 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Models\HrmsDesignation;
+use App\Models\HrmsEmployee;
+use App\Models\HrmsUser;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -66,8 +68,23 @@ class DesignationController extends Controller
 
     public function destroy(Request $request, string $id): JsonResponse
     {
-        HrmsDesignation::findOrFail($id)->update(['is_active' => false]);
+        $companyId = (string) $request->user()->company_id;
+        $item = HrmsDesignation::where('company_id', $companyId)->findOrFail($id);
 
-        return response()->json(['message' => 'Deactivated']);
+        $employeeCount = HrmsEmployee::where('company_id', $companyId)
+            ->where('designation_id', $id)
+            ->count();
+        $userCount = HrmsUser::where('company_id', $companyId)
+            ->where('designation_id', $id)
+            ->count();
+        if ($employeeCount + $userCount > 0) {
+            return response()->json([
+                'error' => 'Cannot delete: employees are assigned to this designation.',
+            ], 409);
+        }
+
+        $item->delete();
+
+        return response()->json(['message' => 'Deleted']);
     }
 }

@@ -4,6 +4,8 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Models\HrmsDepartment;
+use App\Models\HrmsEmployee;
+use App\Models\HrmsUser;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -69,8 +71,23 @@ class DepartmentController extends Controller
 
     public function destroy(Request $request, string $id): JsonResponse
     {
-        HrmsDepartment::findOrFail($id)->update(['is_active' => false]);
+        $companyId = (string) $request->user()->company_id;
+        $dept = HrmsDepartment::where('company_id', $companyId)->findOrFail($id);
 
-        return response()->json(['message' => 'Deactivated']);
+        $employeeCount = HrmsEmployee::where('company_id', $companyId)
+            ->where('department_id', $id)
+            ->count();
+        $userCount = HrmsUser::where('company_id', $companyId)
+            ->where('department_id', $id)
+            ->count();
+        if ($employeeCount + $userCount > 0) {
+            return response()->json([
+                'error' => 'Cannot delete: employees are assigned to this department.',
+            ], 409);
+        }
+
+        $dept->delete();
+
+        return response()->json(['message' => 'Deleted']);
     }
 }

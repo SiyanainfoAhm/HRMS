@@ -36,6 +36,11 @@ import { Input } from "@/components/ui/Input";
 import { Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { SelectField } from "@/components/ui/SelectField";
+import {
+  getUnresolvedOrgInput,
+  OrgLookupCombobox,
+  type OrgLookupOption,
+} from "@/components/ui/OrgLookupCombobox";
 import { PayrollMasterDataGrid } from "@/components/payroll/PayrollMasterDataGrid";
 import { PasswordField } from "@/components/PasswordField";
 import { dispatchHrmsChange, onHrmsChange } from "@/lib/hrmsChangeBus";
@@ -63,6 +68,17 @@ import {
   customNumericBagForTotalFromValues,
 } from "@/lib/payrollFieldTypes";
 import { isAdminRole, normalizeRole, type AppRole } from "@/lib/roles";
+import {
+  assessAutosaveReadiness,
+  autosaveDebounceMs,
+  hasMeaningfulAddDraft,
+  meetsServerDraftThreshold,
+  parseAddDraft,
+  PAYROLL_MASTER_ADD_DRAFT_KEY,
+  readAutosaveEnabled,
+  serializeAddDraft,
+  writeAutosaveEnabled,
+} from "@/lib/payrollMasterAutosave";
 
 export type PayrollMasterRecord = {
   id: string;
@@ -154,8 +170,11 @@ type MasterFormState = {
   dateOfBirth: string;
   dateOfJoining: string;
   designation: string;
+  designationId: string;
   department: string;
+  departmentId: string;
   division: string;
+  divisionId: string;
   status: string;
   payLevel: string;
   incrementMonth: string;
@@ -269,6 +288,32 @@ const EARNINGS_COLUMN_COUNT = 12;
 const DEFAULT_DEDUCTION_COLUMN_COUNT = 3;
 const VARIABLE_DEDUCTION_COLUMN_COUNT = 12;
 
+type OrgDivision = { id: string; name: string };
+type OrgDepartment = { id: string; name: string; divisionId: string | null };
+type OrgDesignation = { id: string; title: string };
+
+function syncOrgIdsFromNames(
+  f: MasterFormState,
+  divs: OrgDivision[],
+  deps: OrgDepartment[],
+  desigs: OrgDesignation[],
+): MasterFormState {
+  const next = { ...f };
+  if (!next.divisionId.trim() && next.division.trim()) {
+    const division = divs.find((d) => d.name.toLowerCase() === next.division.trim().toLowerCase());
+    if (division) next.divisionId = division.id;
+  }
+  if (!next.designationId.trim() && next.designation.trim()) {
+    const designation = desigs.find((d) => d.title.toLowerCase() === next.designation.trim().toLowerCase());
+    if (designation) next.designationId = designation.id;
+  }
+  if (!next.departmentId.trim() && next.department.trim()) {
+    const department = deps.find((d) => d.name.toLowerCase() === next.department.trim().toLowerCase());
+    if (department) next.departmentId = department.id;
+  }
+  return next;
+}
+
 const EARNING_DRIVER_KEYS = new Set([
   "payLevel",
   "grossBasicPay",
@@ -309,8 +354,11 @@ const emptyForm = (defaultDa = DEFAULT_DA_PERCENT, defaultHra = DEFAULT_HRA_PERC
     dateOfBirth: "",
     dateOfJoining: "",
     designation: "",
+    designationId: "",
     department: "",
+    departmentId: "",
     division: "",
+    divisionId: "",
     status: "active",
     payLevel: "1",
     incrementMonth: "July",
@@ -373,8 +421,11 @@ function formFromRecord(r: PayrollMasterRecord): MasterFormState {
     dateOfBirth: r.dateOfBirth?.slice(0, 10) ?? "",
     dateOfJoining: r.dateOfJoining?.slice(0, 10) ?? "",
     designation: r.designation ?? "",
+    designationId: "",
     department: r.department ?? "",
+    departmentId: "",
     division: r.division ?? "",
+    divisionId: "",
     status: r.status ?? "active",
     payLevel: String(r.payLevel ?? 1),
     incrementMonth: r.incrementMonth ?? "July",
@@ -516,6 +567,13 @@ function formToPayload(form: MasterFormState) {
   };
 }
 
+function formAutosaveSnapshot(f: MasterFormState): string {
+  const { password, confirmPassword, ...rest } = f;
+  void password;
+  void confirmPassword;
+  return JSON.stringify({ ...rest, password: "", confirmPassword: "" });
+}
+
 function payrollStructureChanged(form: MasterFormState, baseline: MasterFormState): boolean {
   return (
     form.effectiveFrom !== baseline.effectiveFrom ||
@@ -647,6 +705,17 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     }>;
   } | null>(null);
   const importPreviewRequestRef = useRef(0);
+  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autosaveInFlightRef = useRef(false);
+  const formOpenRef = useRef(false);
+
+  const [autosaveEnabled, setAutosaveEnabled] = useState(true);
+  const [autosaveStatus, setAutosaveStatus] = useState<"idle" | "saving" | "saved" | "paused">("idle");
+  const [autosaveHint, setAutosaveHint] = useState<string | null>(null);
+  const [autosaveBaseline, setAutosaveBaseline] = useState("");
+  const [draftOnlyMaster, setDraftOnlyMaster] = useState(false);
+  const [manualSaveCompleted, setManualSaveCompleted] = useState(false);
+  const [addDraftRestore, setAddDraftRestore] = useState<MasterFormState | null>(null);
 
   const [deactivateTarget, setDeactivateTarget] = useState<PayrollMasterRecord | null>(null);
   const [companyDefaultDa, setCompanyDefaultDa] = useState(DEFAULT_DA_PERCENT);
@@ -654,6 +723,208 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
   const [quarterOptions, setQuarterOptions] = useState<
     Array<{ id: string; quarterName: string; quarterType: string; monthlyRent: number }>
   >([]);
+  const [divisions, setDivisions] = useState<OrgDivision[]>([]);
+  const [departments, setDepartments] = useState<OrgDepartment[]>([]);
+  const [designations, setDesignations] = useState<OrgDesignation[]>([]);
+  const [orgListsLoading, setOrgListsLoading] = useState(false);
+
+  useEffect(() => {
+    if (!formOpen || !canManage) return;
+    let cancelled = false;
+    setOrgListsLoading(true);
+    (async () => {
+      try {
+        const [divRes, depRes, desRes] = await Promise.all([
+          fetch("/api/settings/divisions"),
+          fetch("/api/settings/departments"),
+          fetch("/api/settings/designations"),
+        ]);
+        if (cancelled) return;
+        const divData = await divRes.json();
+        const depData = await depRes.json();
+        const desData = await desRes.json();
+        const nextDivisions: OrgDivision[] = divRes.ok
+          ? (divData.divisions ?? [])
+              .filter((d: { is_active?: boolean }) => d.is_active !== false)
+              .map((d: { id: string; name: string }) => ({ id: d.id, name: d.name }))
+          : [];
+        const nextDepartments: OrgDepartment[] = depRes.ok
+          ? (depData.departments ?? [])
+              .filter((d: { is_active?: boolean }) => d.is_active !== false)
+              .map((d: { id: string; name: string; division_id?: string | null }) => ({
+                id: d.id,
+                name: d.name,
+                divisionId: d.division_id ?? null,
+              }))
+          : [];
+        const nextDesignations: OrgDesignation[] = desRes.ok
+          ? (desData.designations ?? [])
+              .filter((d: { is_active?: boolean }) => d.is_active !== false)
+              .map((d: { id: string; title: string }) => ({ id: d.id, title: d.title }))
+          : [];
+        setDivisions(nextDivisions);
+        setDepartments(nextDepartments);
+        setDesignations(nextDesignations);
+      } catch {
+        /* optional */
+      } finally {
+        if (!cancelled) setOrgListsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [formOpen, canManage]);
+
+  useEffect(() => {
+    if (!formOpen || orgListsLoading) return;
+    setForm((f) => syncOrgIdsFromNames(f, divisions, departments, designations));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sync ids when org lists load; do not reset autosave baseline
+  }, [formOpen, orgListsLoading, divisions, departments, designations]);
+
+  const divisionOptions = useMemo<OrgLookupOption[]>(
+    () => divisions.map((d) => ({ id: d.id, label: d.name })),
+    [divisions],
+  );
+  const departmentOptions = useMemo<OrgLookupOption[]>(() => {
+    if (!form.divisionId) return [];
+    return departments
+      .filter((d) => d.divisionId === form.divisionId)
+      .map((d) => ({ id: d.id, label: d.name }));
+  }, [departments, form.divisionId]);
+  const designationOptions = useMemo<OrgLookupOption[]>(
+    () => designations.map((d) => ({ id: d.id, label: d.title })),
+    [designations],
+  );
+
+  function getPendingOrgAdd():
+    | { kind: "division" | "department" | "designation"; name: string }
+    | null {
+    const divPending = getUnresolvedOrgInput(form.division, form.divisionId, divisionOptions);
+    if (divPending) return { kind: "division", name: divPending };
+    const depPending = getUnresolvedOrgInput(form.department, form.departmentId, departmentOptions);
+    if (depPending) return { kind: "department", name: depPending };
+    const desPending = getUnresolvedOrgInput(form.designation, form.designationId, designationOptions);
+    if (desPending) return { kind: "designation", name: desPending };
+    return null;
+  }
+
+  async function createOrgEntity(
+    kind: "division" | "department" | "designation",
+    name: string,
+  ): Promise<boolean> {
+    try {
+      if (kind === "division") {
+        const res = await fetch("/api/settings/divisions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.error || "Failed to add division");
+        const item = { id: data.division.id as string, name: data.division.name as string };
+        setDivisions((prev) => [...prev, item]);
+        setForm((f) => ({ ...f, divisionId: item.id, division: item.name }));
+        showToast("success", "Division added");
+        return true;
+      }
+      if (kind === "department") {
+        if (!form.divisionId) {
+          showToast("error", "Select a division before adding a department");
+          return false;
+        }
+        const res = await fetch("/api/settings/departments", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, division_id: form.divisionId }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.error || "Failed to add department");
+        const item = {
+          id: data.department.id as string,
+          name: data.department.name as string,
+          divisionId: (data.department.division_id as string | null) ?? form.divisionId,
+        };
+        setDepartments((prev) => [...prev, item]);
+        setForm((f) => ({ ...f, departmentId: item.id, department: item.name }));
+        showToast("success", "Department added");
+        return true;
+      }
+      const res = await fetch("/api/settings/designations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: name }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Failed to add designation");
+      const item = { id: data.designation.id as string, title: data.designation.title as string };
+      setDesignations((prev) => [...prev, item]);
+      setForm((f) => ({ ...f, designationId: item.id, designation: item.title }));
+      showToast("success", "Designation added");
+      return true;
+    } catch (e: unknown) {
+      showToast("error", e instanceof Error ? e.message : "Failed to add");
+      return false;
+    }
+  }
+
+  function requestFormSection(next: typeof formSection) {
+    if (next === formSection) return;
+    setFormSection(next);
+    visitTab(next);
+  }
+
+  function patchDivisionInput(text: string) {
+    setForm((f) => {
+      const sel = divisions.find((d) => d.id === f.divisionId);
+      const keepId = sel && sel.name.toLowerCase() === text.trim().toLowerCase() ? f.divisionId : "";
+      const next = { ...f, division: text, divisionId: keepId };
+      if (!keepId && f.departmentId) {
+        next.departmentId = "";
+        next.department = "";
+      }
+      return next;
+    });
+  }
+
+  function patchDepartmentInput(text: string) {
+    setForm((f) => {
+      const sel = departments.find((d) => d.id === f.departmentId);
+      const keepId = sel && sel.name.toLowerCase() === text.trim().toLowerCase() ? f.departmentId : "";
+      return { ...f, department: text, departmentId: keepId };
+    });
+  }
+
+  function patchDesignationInput(text: string) {
+    setForm((f) => {
+      const sel = designations.find((d) => d.id === f.designationId);
+      const keepId = sel && sel.title.toLowerCase() === text.trim().toLowerCase() ? f.designationId : "";
+      return { ...f, designation: text, designationId: keepId };
+    });
+  }
+
+  function selectDivision(id: string, label: string) {
+    setForm((f) => {
+      const dep = departments.find((d) => d.id === f.departmentId);
+      const clearDepartment = Boolean(dep && dep.divisionId && dep.divisionId !== id);
+      return {
+        ...f,
+        divisionId: id,
+        division: label,
+        ...(clearDepartment ? { departmentId: "", department: "" } : {}),
+      };
+    });
+    touchField("division");
+  }
+
+  function selectDepartment(id: string, label: string) {
+    patchForm({ departmentId: id, department: label });
+  }
+
+  function selectDesignation(id: string, label: string) {
+    patchForm({ designationId: id, designation: label });
+    touchField("designation");
+  }
 
   useEffect(() => {
     if (!formOpen || !canManage) return;
@@ -749,9 +1020,14 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
   }, [canManage, loadRows]);
 
   useEffect(() => {
+    formOpenRef.current = formOpen;
+  }, [formOpen]);
+
+  useEffect(() => {
     if (!canManage) return;
     return onHrmsChange((kind) => {
-      if (kind === "payroll_master") void loadRows();
+      // Avoid grid flicker while the add/edit modal is open (autosave updates in place).
+      if (kind === "payroll_master" && !formOpenRef.current) void loadRows();
     }, { kinds: ["payroll_master"] });
   }, [canManage, loadRows]);
 
@@ -851,6 +1127,146 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     setConfirmPasswordTouched(false);
   }
 
+  useEffect(() => {
+    setAutosaveEnabled(readAutosaveEnabled());
+  }, []);
+
+  const persistLocalAddDraft = useCallback(
+    (f: MasterFormState) => {
+      if (typeof window === "undefined" || editing) return;
+      const empty = emptyForm(companyDefaultDa, companyDefaultHra);
+      if (!hasMeaningfulAddDraft(f, empty)) {
+        window.localStorage.removeItem(PAYROLL_MASTER_ADD_DRAFT_KEY);
+        return;
+      }
+      window.localStorage.setItem(PAYROLL_MASTER_ADD_DRAFT_KEY, serializeAddDraft(f));
+    },
+    [editing, companyDefaultDa, companyDefaultHra],
+  );
+
+  const discardDraftMaster = useCallback(async () => {
+    if (!draftOnlyMaster || !editing?.id || manualSaveCompleted) return;
+    try {
+      await fetch(`/api/payroll/master/${editing.id}/deactivate`, { method: "POST" });
+      dispatchHrmsChange("payroll_master");
+    } catch {
+      /* best effort */
+    }
+  }, [draftOnlyMaster, editing?.id, manualSaveCompleted]);
+
+  const closeFormModal = useCallback(async () => {
+    if (autosaveTimerRef.current) {
+      clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
+    }
+    await discardDraftMaster();
+    if (typeof window !== "undefined" && !editing) {
+      window.localStorage.removeItem(PAYROLL_MASTER_ADD_DRAFT_KEY);
+    }
+    resetFormValidationState();
+    setAutosaveStatus("idle");
+    setAutosaveHint(null);
+    setAutosaveBaseline("");
+    setDraftOnlyMaster(false);
+    setManualSaveCompleted(false);
+    setFormOpen(false);
+  }, [discardDraftMaster, editing]);
+
+  const performAutosave = useCallback(async () => {
+    if (!formOpen || formSaving || formLoading || autosaveInFlightRef.current || !autosaveEnabled) {
+      return;
+    }
+    if (getPendingOrgAdd()) {
+      setAutosaveStatus("paused");
+      setAutosaveHint("Use Add new in Basic Details to save a new division, department, or designation.");
+      return;
+    }
+    if (form.hasQuarter && !form.quarterId) {
+      setAutosaveStatus("paused");
+      setAutosaveHint("Select assigned quarter before autosave.");
+      return;
+    }
+
+    const snapshot = formAutosaveSnapshot(form);
+    if (snapshot === autosaveBaseline) return;
+
+    // Add employee: keep draft on this device only — do not POST partial rows to the database.
+    if (!editing?.id) {
+      persistLocalAddDraft(form);
+      setAutosaveBaseline(snapshot);
+      if (meetsServerDraftThreshold(form)) {
+        setAutosaveStatus("saved");
+        setAutosaveHint("Draft saved on this device. Click Add Employee to save to the database.");
+      } else {
+        setAutosaveStatus("paused");
+        setAutosaveHint("Enter employee code, name, and pay level to keep a local draft.");
+      }
+      return;
+    }
+
+    const readiness = assessAutosaveReadiness(
+      form,
+      true,
+      editBaseline,
+      existingForUniqueness,
+      editing.id,
+    );
+    if (!readiness.ok) {
+      setAutosaveStatus("paused");
+      setAutosaveHint(readiness.reason ?? "Complete required fields to autosave.");
+      return;
+    }
+
+    autosaveInFlightRef.current = true;
+    setAutosaveStatus("saving");
+    setAutosaveHint(null);
+    try {
+      const payload = { ...formToPayload(form), autosave: true };
+      const res = await fetch(`/api/payroll/master/${editing.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        cache: "no-store",
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.message || data?.error || "Autosave failed");
+      }
+      setAutosaveBaseline(snapshot);
+      setAutosaveStatus("saved");
+    } catch (e: unknown) {
+      setAutosaveStatus("paused");
+      setAutosaveHint(e instanceof Error ? e.message : "Autosave failed");
+    } finally {
+      autosaveInFlightRef.current = false;
+    }
+  }, [
+    formOpen,
+    formSaving,
+    formLoading,
+    autosaveEnabled,
+    form,
+    autosaveBaseline,
+    editing,
+    editBaseline,
+    existingForUniqueness,
+    persistLocalAddDraft,
+  ]);
+
+  useEffect(() => {
+    if (!formOpen || !autosaveEnabled || formSaving || formLoading) return;
+    if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    autosaveTimerRef.current = setTimeout(() => {
+      void performAutosave();
+    }, autosaveDebounceMs());
+    return () => {
+      if (autosaveTimerRef.current) {
+        clearTimeout(autosaveTimerRef.current);
+        autosaveTimerRef.current = null;
+      }
+    };
+  }, [form, formOpen, autosaveEnabled, formSaving, formLoading, performAutosave]);
+
   function focusFirstInvalidField(field: string | null, tab: FormTabId | null) {
     if (tab) setFormSection(tab);
     if (!field) return;
@@ -935,10 +1351,32 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     setEditBaseline(null);
     setMasterHistory([]);
     setArrearHistory([]);
-    setForm({
+    const base = {
       ...emptyForm(companyDefaultDa, companyDefaultHra),
       employeeCode: generateNextEmployeeCode(rows.map((r) => r.employeeCode ?? "").filter(Boolean)),
-    });
+    };
+    const storedDraft =
+      typeof window !== "undefined" ? parseAddDraft(window.localStorage.getItem(PAYROLL_MASTER_ADD_DRAFT_KEY)) : null;
+    const empty = emptyForm(companyDefaultDa, companyDefaultHra);
+    if (storedDraft && hasMeaningfulAddDraft(storedDraft, empty)) {
+      const merged: MasterFormState = {
+        ...base,
+        ...storedDraft,
+        employeeCode: storedDraft.employeeCode || base.employeeCode,
+        userRole: normalizeRole(storedDraft.userRole ?? base.userRole),
+      };
+      setAddDraftRestore(merged);
+      setForm(base);
+      setAutosaveBaseline(formAutosaveSnapshot(base));
+    } else {
+      setAddDraftRestore(null);
+      setForm(base);
+      setAutosaveBaseline(formAutosaveSnapshot(base));
+    }
+    setDraftOnlyMaster(false);
+    setManualSaveCompleted(false);
+    setAutosaveStatus("idle");
+    setAutosaveHint(null);
     resetFormValidationState();
     setFormSection("basic");
     setFormOpen(true);
@@ -965,6 +1403,11 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
       const loadedForm = formFromRecord(masterData.master ?? row);
       setForm(loadedForm);
       setEditBaseline(loadedForm);
+      setAutosaveBaseline(formAutosaveSnapshot(loadedForm));
+      setDraftOnlyMaster(false);
+      setManualSaveCompleted(true);
+      setAutosaveStatus("idle");
+      setAutosaveHint(null);
       const companyCs = masterData.master?.cpfSettings?.companySettings;
       if (companyCs) {
         setCompanyCpfSettings({
@@ -1089,6 +1532,12 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
         setRows((prev) => prev.map((r) => (r.id === saved.id ? { ...r, ...saved } : r)));
       }
       showToast("success", editing ? "Employee updated" : "Employee added");
+      setManualSaveCompleted(true);
+      setDraftOnlyMaster(false);
+      if (typeof window !== "undefined") {
+        window.localStorage.removeItem(PAYROLL_MASTER_ADD_DRAFT_KEY);
+      }
+      setAutosaveBaseline(formAutosaveSnapshot(form));
       resetFormValidationState();
       setFormOpen(false);
       dispatchHrmsChange("payroll_master");
@@ -1390,22 +1839,63 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
       <Modal
         open={formOpen}
         onClose={() => {
-          resetFormValidationState();
-          setFormOpen(false);
+          void closeFormModal();
         }}
         title={editing ? "Edit Employee" : "Add Employee"}
         description={editing ? `${form.employeeCode || "—"} · ${form.name || form.email}` : "Payroll master record"}
-        headerExtra={editing ? <Badge tone={form.status === "active" ? "success" : "neutral"}>{form.status}</Badge> : null}
+        headerExtra={
+          <div className="flex flex-wrap items-center gap-2">
+            {editing ? <Badge tone={form.status === "active" ? "success" : "neutral"}>{form.status}</Badge> : null}
+            {draftOnlyMaster && !manualSaveCompleted ? (
+              <Badge tone="warning">Draft</Badge>
+            ) : null}
+          </div>
+        }
         size="2xl"
         asForm
         onSubmit={handleSave}
         footer={
           <>
+            <div className="mr-auto flex min-w-0 flex-col gap-1 text-xs text-slate-500 sm:flex-row sm:items-center sm:gap-3">
+              <label className="inline-flex cursor-pointer items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={autosaveEnabled}
+                  onChange={(e) => {
+                    const on = e.target.checked;
+                    setAutosaveEnabled(on);
+                    writeAutosaveEnabled(on);
+                    if (on) {
+                      setAutosaveStatus("idle");
+                      setAutosaveHint(null);
+                    }
+                  }}
+                  className="rounded border-slate-300"
+                />
+                <span>Autosave</span>
+              </label>
+              {autosaveEnabled ? (
+                <span className="truncate">
+                  {autosaveStatus === "saving"
+                    ? "Saving…"
+                    : autosaveStatus === "saved"
+                      ? "All changes saved"
+                      : autosaveStatus === "paused" && autosaveHint
+                        ? autosaveHint
+                        : !editing?.id
+                          ? meetsServerDraftThreshold(form)
+                            ? "Draft on this device until you click Add Employee"
+                            : "Local draft starts after code, name & pay level"
+                          : null}
+                </span>
+              ) : (
+                <span>Autosave off — use Update to save</span>
+              )}
+            </div>
             <Button
               variant="outline"
               onClick={() => {
-                resetFormValidationState();
-                setFormOpen(false);
+                void closeFormModal();
               }}
               disabled={formSaving || formLoading}
             >
@@ -1438,8 +1928,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                     key={s.id}
                     type="button"
                     onClick={() => {
-                      setFormSection(s.id);
-                      visitTab(s.id);
+                      requestFormSection(s.id);
                     }}
                     className={cn(
                       "segment-tab flex w-full items-center justify-between gap-2 whitespace-nowrap text-left",
@@ -1588,23 +2077,50 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                     <FormField label="Date of Joining">
                       <DatePickerField label="" value={form.dateOfJoining} onChange={(v) => patchForm({ dateOfJoining: v })} />
                     </FormField>
-                    <FormField label="Designation" required error={showError("designation")}>
-                      <Input
-                        id={fieldDomId("designation")}
-                        invalid={Boolean(showError("designation"))}
-                        value={form.designation}
-                        onChange={(e) => patchForm({ designation: e.target.value })}
-                        onBlur={() => touchField("designation")}
-                      />
-                    </FormField>
-                    <div>
-                      <label className={labelCls}>Department</label>
-                      <input className={inputCls} value={form.department} onChange={(e) => patchForm({ department: e.target.value })} />
-                    </div>
-                    <div>
-                      <label className={labelCls}>Division</label>
-                      <input className={inputCls} value={form.division} onChange={(e) => patchForm({ division: e.target.value })} />
-                    </div>
+                    <OrgLookupCombobox
+                      label="Division"
+                      value={form.divisionId}
+                      inputValue={form.division}
+                      options={divisionOptions}
+                      entityName="division"
+                      loading={orgListsLoading}
+                      placeholder="Select or search division"
+                      onInputChange={patchDivisionInput}
+                      onSelect={selectDivision}
+                      onAddNew={(name) => void createOrgEntity("division", name)}
+                    />
+                    <OrgLookupCombobox
+                      label="Department"
+                      value={form.departmentId}
+                      inputValue={form.department}
+                      options={departmentOptions}
+                      entityName="department"
+                      loading={orgListsLoading}
+                      disabled={!form.divisionId && !orgListsLoading}
+                      placeholder={form.divisionId ? "Select or search department" : "Select division first"}
+                      addDisabled={!form.divisionId}
+                      addDisabledHint="Select a division before adding a department"
+                      onInputChange={patchDepartmentInput}
+                      onSelect={selectDepartment}
+                      onAddNew={(name) => void createOrgEntity("department", name)}
+                    />
+                    <OrgLookupCombobox
+                      label="Designation"
+                      required
+                      value={form.designationId}
+                      inputValue={form.designation}
+                      options={designationOptions}
+                      entityName="designation"
+                      loading={orgListsLoading}
+                      error={showError("designation")}
+                      placeholder="Select or search designation"
+                      onInputChange={(text) => {
+                        patchDesignationInput(text);
+                        if (showError("designation")) touchField("designation");
+                      }}
+                      onSelect={selectDesignation}
+                      onAddNew={(name) => void createOrgEntity("designation", name)}
+                    />
                     <FormField label="Status" required error={showError("status")}>
                       <SelectField
                         value={form.status}
@@ -2455,6 +2971,33 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                 )}
               </div>
       </Modal>
+
+      <ConfirmDialog
+        open={!!addDraftRestore}
+        title="Restore unsaved draft?"
+        message="You have a locally saved add-employee draft on this device. Restore it?"
+        confirmText="Restore draft"
+        cancelText="Start fresh"
+        onConfirm={() => {
+          if (addDraftRestore) {
+            setForm(addDraftRestore);
+            setAutosaveBaseline(formAutosaveSnapshot(addDraftRestore));
+          }
+          setAddDraftRestore(null);
+        }}
+        onCancel={() => {
+          const base = {
+            ...emptyForm(companyDefaultDa, companyDefaultHra),
+            employeeCode: generateNextEmployeeCode(rows.map((r) => r.employeeCode ?? "").filter(Boolean)),
+          };
+          setForm(base);
+          setAutosaveBaseline(formAutosaveSnapshot(base));
+          setAddDraftRestore(null);
+          if (typeof window !== "undefined") {
+            window.localStorage.removeItem(PAYROLL_MASTER_ADD_DRAFT_KEY);
+          }
+        }}
+      />
 
       <ConfirmDialog
         open={!!deactivateTarget}

@@ -189,6 +189,20 @@ export const GovernmentPayslipPrint = forwardRef<HTMLDivElement, GovernmentPaysl
                   <div>
                     <span className="text-slate-600">Unpaid leave days:</span> {slip.unpaidLeaves ?? 0}
                   </div>
+                  {Number((gov as { hpl_days?: number }).hpl_days ?? 0) > 0 ? (
+                    <div>
+                      <span className="text-slate-600">HPL (this month):</span>{" "}
+                      {Number((gov as { hpl_days?: number }).hpl_days)} day
+                      {Number((gov as { hpl_days?: number }).hpl_days) === 1 ? "" : "s"}
+                    </div>
+                  ) : null}
+                  {Number((gov as { eol_days?: number }).eol_days ?? 0) > 0 ? (
+                    <div>
+                      <span className="text-slate-600">EOL (this month):</span>{" "}
+                      {Number((gov as { eol_days?: number }).eol_days)} day
+                      {Number((gov as { eol_days?: number }).eol_days) === 1 ? "" : "s"}
+                    </div>
+                  ) : null}
                 </div>
               </td>
               <td className={cellClass}>

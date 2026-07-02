@@ -133,7 +133,8 @@ final class PayrollCalculationService
             + $deductions['vpf'] + $deductions['pf_loan'] + $deductions['post_office']
             + $deductions['credit_society'] + $deductions['standard_licence_fee']
             + $deductions['electricity'] + $deductions['water'] + $deductions['mess']
-            + $deductions['loan_recovery'] + $deductions['welfare'] + $deductions['vehicle_charge']
+            + $deductions['loan_recovery'] + $deductions['welfare'] + $deductions['hpl'] + $deductions['eol']
+            + $deductions['vehicle_charge']
             + $deductions['other_deduction'] + $advance + $quarterRent + $customDeductionsTotal
         );
 
@@ -171,6 +172,9 @@ final class PayrollCalculationService
             'electricity' => $deductions['electricity'],
             'water' => $deductions['water'],
             'loan_recovery' => $deductions['loan_recovery'],
+            'welfare' => $deductions['welfare'],
+            'hpl' => $deductions['hpl'],
+            'eol' => $deductions['eol'],
             'vehicle_charge' => $deductions['vehicle_charge'],
             'other_deduction' => $deductions['other_deduction'],
             'advance' => $advance,
@@ -235,6 +239,8 @@ final class PayrollCalculationService
             'mess' => $g(['mess', 'mess_default'], 0),
             'loan_recovery' => $g(['loan_recovery', 'loan_recovery_default', 'loanRecovery', 'loanRecoveryDefault', 'horticulture', 'horticulture_default', 'horticultureDefault'], 0),
             'welfare' => $g(['welfare', 'welfare_default'], 0),
+            'hpl' => $g(['hpl'], 0),
+            'eol' => $g(['eol'], 0),
             'vehicle_charge' => 0.0,
             'other_deduction' => $g(['other_deduction', 'other_deduction_default', 'otherDeduction'], 0),
             'advance' => $g(['advance', 'advance_bonus', 'advanceBonus'], 0),

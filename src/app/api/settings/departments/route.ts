@@ -27,5 +27,5 @@ export async function DELETE(request: NextRequest) {
   const url = new URL(request.url);
   const id = url.searchParams.get("id");
   if (!id) return NextResponse.json({ error: "ID is required" }, { status: 400 });
-  return proxyToLaravel(request, `/settings/departments/${id}`);
+  return proxyToLaravel(request, `/settings/departments/${id}`, { method: "DELETE" });
 }

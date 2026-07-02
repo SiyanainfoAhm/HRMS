@@ -26,6 +26,13 @@ type Props = {
   generateLabel: string;
   search: string;
   onSearchChange: (v: string) => void;
+  divisionFilter: string;
+  onDivisionFilterChange: (v: string) => void;
+  divisionOptions: { value: string; label: string }[];
+  departmentFilter: string;
+  onDepartmentFilterChange: (v: string) => void;
+  departmentOptions: { value: string; label: string }[];
+  orgFiltersLoading?: boolean;
   totals: Totals;
   filteredCount: number;
   totalCount: number;
@@ -43,6 +50,13 @@ export function PayrollPreviewToolbar({
   generateLabel,
   search,
   onSearchChange,
+  divisionFilter,
+  onDivisionFilterChange,
+  divisionOptions,
+  departmentFilter,
+  onDepartmentFilterChange,
+  departmentOptions,
+  orgFiltersLoading,
   totals,
   filteredCount,
   totalCount,
@@ -78,6 +92,26 @@ export function PayrollPreviewToolbar({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <SelectField
+            label="Division"
+            value={divisionFilter}
+            onChange={onDivisionFilterChange}
+            options={divisionOptions}
+            loading={orgFiltersLoading}
+            placeholder="All divisions"
+            searchable
+            className="w-44"
+          />
+          <SelectField
+            label="Department"
+            value={departmentFilter}
+            onChange={onDepartmentFilterChange}
+            options={departmentOptions}
+            loading={orgFiltersLoading}
+            placeholder={divisionFilter ? "All in division" : "All departments"}
+            searchable
+            className="w-48"
+          />
           <div className="relative min-w-[180px] flex-1 max-w-md">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
             <input

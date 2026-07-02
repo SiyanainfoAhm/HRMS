@@ -3,7 +3,10 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Models\HrmsDepartment;
 use App\Models\HrmsDivision;
+use App\Models\HrmsEmployee;
+use App\Models\HrmsUser;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -66,9 +69,32 @@ class DivisionController extends Controller
 
     public function destroy(Request $request, string $id): JsonResponse
     {
-        $division = HrmsDivision::findOrFail($id);
-        $division->update(['is_active' => false]);
+        $companyId = (string) $request->user()->company_id;
+        $division = HrmsDivision::where('company_id', $companyId)->findOrFail($id);
 
-        return response()->json(['message' => 'Deactivated']);
+        $departmentCount = HrmsDepartment::where('company_id', $companyId)
+            ->where('division_id', $id)
+            ->count();
+        if ($departmentCount > 0) {
+            return response()->json([
+                'error' => 'Cannot delete: departments are linked to this division. Reassign or delete them first.',
+            ], 409);
+        }
+
+        $employeeCount = HrmsEmployee::where('company_id', $companyId)
+            ->where('division_id', $id)
+            ->count();
+        $userCount = HrmsUser::where('company_id', $companyId)
+            ->where('division_id', $id)
+            ->count();
+        if ($employeeCount + $userCount > 0) {
+            return response()->json([
+                'error' => 'Cannot delete: employees are assigned to this division.',
+            ], 409);
+        }
+
+        $division->delete();
+
+        return response()->json(['message' => 'Deleted']);
     }
 }

@@ -196,6 +196,8 @@ type GovRecalcPayload = {
   hraPercent: number;
   medicalFixed: number;
   payLevel: number;
+  hplDays?: number;
+  eolDays?: number;
   deductionDefaults: GovernmentDeductionDefaults;
   earningPaidOverrides?: GovernmentEarningPaidOverrides;
   customEarnings?: Record<string, number>;
@@ -242,6 +244,8 @@ function govDeductionDefaultsFromMasterRow(row: MasterGridRow): GovernmentDeduct
     mess: row.messDefault,
     loanRecovery: row.loanRecoveryDefault,
     welfare: row.welfareDefault,
+    hpl: 0,
+    eol: 0,
     vehCharge: row.vehChargeDefault,
     other: row.otherDeductionDefault,
     quarterRent: row.hasQuarter ? row.quarterRent : 0,
@@ -676,11 +680,59 @@ function PayrollPageContent() {
   const [runError, setRunError] = useState<string | null>(null);
   const [previewSearch, setPreviewSearch] = useState("");
   const [debouncedPreviewSearch, setDebouncedPreviewSearch] = useState("");
+  const [previewDivisionFilter, setPreviewDivisionFilter] = useState("");
+  const [previewDepartmentFilter, setPreviewDepartmentFilter] = useState("");
+  const [runDivisions, setRunDivisions] = useState<Array<{ id: string; name: string }>>([]);
+  const [runDepartments, setRunDepartments] = useState<Array<{ id: string; name: string; divisionId: string | null }>>([]);
+  const [runOrgFiltersLoading, setRunOrgFiltersLoading] = useState(false);
 
   useEffect(() => {
     const t = window.setTimeout(() => setDebouncedPreviewSearch(previewSearch), 200);
     return () => window.clearTimeout(t);
   }, [previewSearch]);
+
+  useEffect(() => {
+    if (tab !== "run" || !canManage) return;
+    let cancelled = false;
+    setRunOrgFiltersLoading(true);
+    (async () => {
+      try {
+        const [divRes, depRes] = await Promise.all([
+          fetch("/api/settings/divisions"),
+          fetch("/api/settings/departments"),
+        ]);
+        if (cancelled) return;
+        const divData = await divRes.json();
+        const depData = await depRes.json();
+        if (divRes.ok) {
+          setRunDivisions(
+            (divData.divisions ?? [])
+              .filter((d: { is_active?: boolean }) => d.is_active !== false)
+              .map((d: { id: string; name: string }) => ({ id: d.id, name: d.name })),
+          );
+        }
+        if (depRes.ok) {
+          setRunDepartments(
+            (depData.departments ?? [])
+              .filter((d: { is_active?: boolean }) => d.is_active !== false)
+              .map((d: { id: string; name: string; division_id?: string | null }) => ({
+                id: d.id,
+                name: d.name,
+                divisionId: d.division_id ?? null,
+              })),
+          );
+        }
+      } catch {
+        /* optional */
+      } finally {
+        if (!cancelled) setRunOrgFiltersLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tab, canManage]);
+
   const [preview, setPreview] = useState<{
     periodName: string;
     periodStart: string;
@@ -742,6 +794,10 @@ function PayrollPageContent() {
       employeeUserId: string;
       employeeName: string | null;
       employeeEmail: string;
+      department?: string | null;
+      division?: string | null;
+      departmentId?: string | null;
+      divisionId?: string | null;
       payDays: number;
       rawPayDays?: number;
       attendanceQualifyingDays?: number;
@@ -803,13 +859,63 @@ function PayrollPageContent() {
 
   const filteredEditableRows = useMemo(() => {
     const q = debouncedPreviewSearch.trim().toLowerCase();
-    if (!q) return editableRows;
     return editableRows.filter((r) => {
+      if (previewDivisionFilter && (r.divisionId ?? "") !== previewDivisionFilter) return false;
+      if (previewDepartmentFilter && (r.departmentId ?? "") !== previewDepartmentFilter) return false;
+      if (!q) return true;
       const name = (r.employeeName ?? "").toLowerCase();
       const email = (r.employeeEmail ?? "").toLowerCase();
       return name.includes(q) || email.includes(q);
     });
-  }, [editableRows, debouncedPreviewSearch]);
+  }, [editableRows, debouncedPreviewSearch, previewDivisionFilter, previewDepartmentFilter]);
+
+  const runDivisionFilterOptions = useMemo(
+    () => [
+      { value: "", label: "All divisions" },
+      ...runDivisions
+        .slice()
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((d) => ({ value: d.id, label: d.name })),
+    ],
+    [runDivisions],
+  );
+
+  const runDepartmentFilterOptions = useMemo(() => {
+    const deps = previewDivisionFilter
+      ? runDepartments.filter((d) => d.divisionId === previewDivisionFilter)
+      : runDepartments;
+    return [
+      { value: "", label: previewDivisionFilter ? "All in division" : "All departments" },
+      ...deps
+        .slice()
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((d) => ({ value: d.id, label: d.name })),
+    ];
+  }, [runDepartments, previewDivisionFilter]);
+
+  const hasActiveRunFilters = Boolean(
+    previewDivisionFilter || previewDepartmentFilter || debouncedPreviewSearch.trim(),
+  );
+
+  const payrollExportUrl = useMemo(() => {
+    if (!preview?.existingPeriodId) return null;
+    const params = new URLSearchParams({ periodId: preview.existingPeriodId });
+    if (previewDivisionFilter) params.set("divisionId", previewDivisionFilter);
+    if (previewDepartmentFilter) params.set("departmentId", previewDepartmentFilter);
+    if (hasActiveRunFilters && filteredEditableRows.length > 0) {
+      params.set(
+        "employeeUserIds",
+        filteredEditableRows.map((r) => r.employeeUserId).join(","),
+      );
+    }
+    return `/api/payroll/export?${params.toString()}`;
+  }, [
+    preview?.existingPeriodId,
+    previewDivisionFilter,
+    previewDepartmentFilter,
+    hasActiveRunFilters,
+    filteredEditableRows,
+  ]);
 
   const previewTotals = useMemo(() => {
     let gross = 0;
@@ -899,6 +1005,14 @@ function PayrollPageContent() {
   );
 
   useEffect(() => {
+    if (!previewDepartmentFilter) return;
+    const allowed = new Set(runDepartmentFilterOptions.map((o) => o.value));
+    if (!allowed.has(previewDepartmentFilter)) {
+      setPreviewDepartmentFilter("");
+    }
+  }, [previewDepartmentFilter, runDepartmentFilterOptions]);
+
+  useEffect(() => {
     const denom = preview?.daysInMonth ?? preview?.workingDaysInFullMonth;
     if (preview?.rows?.length && denom) {
       setEditableRows(
@@ -927,6 +1041,14 @@ function PayrollPageContent() {
             governmentMonthly: r.governmentMonthly ?? null,
             govRecalc: r.govRecalc,
           };
+          if (r.payrollMode === "government" && r.govRecalc) {
+            const gm0 = r.governmentMonthly as { hplDays?: number; eolDays?: number } | null | undefined;
+            base.govRecalc = {
+              ...r.govRecalc,
+              hplDays: r.govRecalc.hplDays ?? gm0?.hplDays ?? 0,
+              eolDays: r.govRecalc.eolDays ?? gm0?.eolDays ?? 0,
+            };
+          }
           if (r.payrollMode === "government" && r.govRecalc && !r.governmentMonthly) {
             const gr = r.govRecalc;
             const dim = Math.max(1, Math.floor(Number(denom) || 30));
@@ -941,6 +1063,8 @@ function PayrollPageContent() {
               payLevel: gr.payLevel,
               daysInMonth: dim,
               unpaidDays,
+              hplDays: gr.hplDays ?? 0,
+              eolDays: gr.eolDays ?? 0,
               deductionDefaults: gr.deductionDefaults,
               earningPaidOverrides: gr.earningPaidOverrides,
               ...governmentMonthlyExtras(gr, payrollConfig),
@@ -1107,16 +1231,18 @@ function PayrollPageContent() {
             const optionalEarnings = govOptionalFromComputedMonthly(gm);
             const comp = applyAutoArrearsToGovernmentMonthly(
               computeGovernmentMonthlyPayroll({
-                grossBasic: gr.grossBasic,
-                daPercent: gr.daPercent,
-                hraPercent: gr.hraPercent,
-                medicalFixed: gr.medicalFixed,
-                payLevel: gr.payLevel,
-                daysInMonth: dim,
-                unpaidDays,
-                deductionDefaults: gr.deductionDefaults,
-                optionalEarnings,
-                earningPaidOverrides: gr.earningPaidOverrides,
+              grossBasic: gr.grossBasic,
+              daPercent: gr.daPercent,
+              hraPercent: gr.hraPercent,
+              medicalFixed: gr.medicalFixed,
+              payLevel: gr.payLevel,
+              daysInMonth: dim,
+              unpaidDays,
+                hplDays: gr.hplDays ?? 0,
+                eolDays: gr.eolDays ?? 0,
+              deductionDefaults: gr.deductionDefaults,
+              optionalEarnings,
+              earningPaidOverrides: gr.earningPaidOverrides,
                 ...governmentMonthlyExtras(gr, payrollConfig),
               }),
               arrearOverride ?? arrearSnapshotFromRow(row),
@@ -1209,6 +1335,15 @@ function PayrollPageContent() {
             if (!GOV_RUN_EDITABLE_DEDUCTION_KEYS.includes(sub)) return row;
             const ded = { ...gr0.deductionDefaults, [sub]: Math.max(0, Math.round(Number(value) || 0)) };
             const grNext: GovRecalcPayload = { ...gr0, deductionDefaults: ded };
+            const { comp, capped, unpaidDays } = applyGovCompute(grNext, row.payDays);
+            return rowFromGovCompute(comp, capped, unpaidDays, grNext, row) as typeof row;
+          }
+
+          if (field === "hplDays" || field === "eolDays") {
+            const grNext: GovRecalcPayload = {
+              ...gr0,
+              [field]: Math.max(0, Math.min(dim, Math.round(Number(value) || 0))),
+            };
             const { comp, capped, unpaidDays } = applyGovCompute(grNext, row.payDays);
             return rowFromGovCompute(comp, capped, unpaidDays, grNext, row) as typeof row;
           }
@@ -1507,6 +1642,8 @@ function PayrollPageContent() {
             mess: 0,
             loanRecovery: 0,
             welfare: 0,
+            hpl: 0,
+            eol: 0,
             vehCharge: 0,
             other: 0,
             quarterRent: 0,
@@ -1931,8 +2068,8 @@ function PayrollPageContent() {
     try {
       const useCompleteMissing = Boolean(preview?.alreadyRun && preview?.payrollComplete === false);
       const sourceRows = useCompleteMissing
-        ? editableRows.filter((r) => r.payslipPending)
-        : editableRows;
+        ? filteredEditableRows.filter((r) => r.payslipPending)
+        : filteredEditableRows;
       if (useCompleteMissing && sourceRows.length === 0) {
         throw new Error("No pending employees to add payslips for.");
       }
@@ -2048,12 +2185,31 @@ function PayrollPageContent() {
             onYearChange={setRunYear}
             periodName={preview?.periodName}
             running={running}
-            generateDisabled={!!preview?.alreadyRun && preview?.payrollComplete !== false}
+            generateDisabled={
+              (!!preview?.alreadyRun && preview?.payrollComplete !== false) ||
+              (editableRows.length > 0 && filteredEditableRows.length === 0)
+            }
             generateLabel={
-              preview?.alreadyRun && preview?.payrollComplete === false ? "Add missing payslips" : "Generate"
+              preview?.alreadyRun && preview?.payrollComplete === false
+                ? hasActiveRunFilters
+                  ? "Add missing (filtered)"
+                  : "Add missing payslips"
+                : hasActiveRunFilters && (previewDivisionFilter || previewDepartmentFilter)
+                  ? "Generate (filtered)"
+                  : "Generate"
             }
             search={previewSearch}
             onSearchChange={setPreviewSearch}
+            divisionFilter={previewDivisionFilter}
+            onDivisionFilterChange={(v) => {
+              setPreviewDivisionFilter(v);
+              setPreviewDepartmentFilter("");
+            }}
+            divisionOptions={runDivisionFilterOptions}
+            departmentFilter={previewDepartmentFilter}
+            onDepartmentFilterChange={setPreviewDepartmentFilter}
+            departmentOptions={runDepartmentFilterOptions}
+            orgFiltersLoading={runOrgFiltersLoading}
             totals={previewTotals}
             filteredCount={filteredEditableRows.length}
             totalCount={editableRows.length}
@@ -2067,13 +2223,13 @@ function PayrollPageContent() {
                     ? ` ${preview.missingPayslipCount} missing slip(s).`
                     : null}
                       </span>
-                  {preview?.existingPeriodId && (
+                  {preview?.existingPeriodId && payrollExportUrl && (
                     <a
-                      href={`/api/payroll/export?periodId=${preview.existingPeriodId}`}
+                      href={payrollExportUrl}
                       download
                     className="btn btn-outline btn-sm"
                     >
-                      Download Excel
+                      Download Excel{hasActiveRunFilters ? " (filtered)" : ""}
                     </a>
                   )}
                 </div>
@@ -2110,7 +2266,10 @@ function PayrollPageContent() {
                   />
                 ) : null
               ) : (
-                <EmptyState title="No matches" description="Try a different name or email." />
+                <EmptyState
+                  title="No matches"
+                  description="Try a different division, department, or search term."
+                />
               )
             ) : !preview?.alreadyRun ? (
               <EmptyState

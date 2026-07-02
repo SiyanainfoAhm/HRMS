@@ -35,6 +35,8 @@ export const PAYROLL_EXCEL_HEADER = [
   "Mess",
   "BankRecovery",
   "Welfare",
+  "HPL",
+  "EOL",
   "VehCharge",
   "OtherDeduction",
   "TotalDeductions",
@@ -118,6 +120,8 @@ export type GovernmentMonthlyRow = {
   loan_recovery_amount?: number | null;
   horticulture_amount?: number | null;
   welfare_amount?: number | null;
+  hpl_amount?: number | null;
+  eol_amount?: number | null;
   veh_charge_amount?: number | null;
   other_deduction_amount?: number | null;
   total_earnings?: number | null;
@@ -271,6 +275,8 @@ function govFromComputed(
     Mess: d.mess,
     BankRecovery: d.loanRecovery,
     Welfare: d.welfare,
+    HPL: d.hpl,
+    EOL: d.eol,
     VehCharge: d.vehCharge,
     OtherDeduction: d.other,
     TotalDeductions: c.totalDeductions,
@@ -328,6 +334,8 @@ function govFromDbRow(
     Mess: n(r.mess_amount),
     BankRecovery: n(r.loan_recovery_amount ?? r.horticulture_amount),
     Welfare: n(r.welfare_amount),
+    HPL: n(r.hpl_amount),
+    EOL: n(r.eol_amount),
     VehCharge: n(r.veh_charge_amount),
     OtherDeduction: n(r.other_deduction_amount),
     TotalDeductions: n(r.total_deductions),
@@ -403,6 +411,8 @@ export function buildPayrollExcelRow(
     Mess: 0,
     BankRecovery: 0,
     Welfare: 0,
+    HPL: 0,
+    EOL: 0,
     VehCharge: 0,
     OtherDeduction: 0,
     TotalDeductions: n(p.deductions),

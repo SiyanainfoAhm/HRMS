@@ -44,6 +44,10 @@ final class PayrollMasterService
     {
         $query = HrmsPayrollMaster::query()
             ->whereNull('effective_to')
+            ->where(function ($q) {
+                // Hide incomplete autosave stubs (no login user linked yet).
+                $q->whereNotNull('employee_user_id')->orWhereNotNull('user_id');
+            })
             ->orderBy('created_at');
 
         if ($companyId) {
@@ -271,20 +275,21 @@ final class PayrollMasterService
         );
     }
 
-    public function create(array $payload, string $companyId, string $createdBy, bool $salaryPending = false, bool $provisionUser = true): HrmsPayrollMaster
+        public function create(array $payload, string $companyId, string $createdBy, bool $salaryPending = false, bool $provisionUser = true): HrmsPayrollMaster
     {
-        return $this->createOrUpdatePayrollMasterRevision($payload, $companyId, $createdBy, null, $salaryPending, $provisionUser);
+        return $this->createOrUpdatePayrollMasterRevision($payload, $companyId, $createdBy, null, $salaryPending, $provisionUser, false);
     }
 
-    public function update(HrmsPayrollMaster $master, array $payload, string $companyId): HrmsPayrollMaster
+    public function update(HrmsPayrollMaster $master, array $payload, string $companyId, bool $autosave = false): HrmsPayrollMaster
     {
         return $this->createOrUpdatePayrollMasterRevision(
             $payload,
             $companyId,
             (string) ($master->created_by ?? ''),
             $master,
-            false,
-            false,
+            $autosave,
+            ! $autosave,
+            $autosave,
         );
     }
 
@@ -298,8 +303,9 @@ final class PayrollMasterService
         ?HrmsPayrollMaster $existingMaster = null,
         bool $salaryPending = false,
         bool $provisionUser = true,
+        bool $autosave = false,
     ): HrmsPayrollMaster {
-        return DB::transaction(function () use ($payload, $companyId, $createdBy, $existingMaster, $salaryPending, $provisionUser) {
+        return DB::transaction(function () use ($payload, $companyId, $createdBy, $existingMaster, $salaryPending, $provisionUser, $autosave) {
             if ($existingMaster) {
                 if ($existingMaster->company_id && $existingMaster->company_id !== $companyId) {
                     abort(403, 'Forbidden');
@@ -322,7 +328,7 @@ final class PayrollMasterService
             }
 
             if (! $existingMaster) {
-                $validated = $this->validatePayload($payload, null, $companyId, $salaryPending);
+                $validated = $this->validatePayload($payload, null, $companyId, $salaryPending, false, $autosave);
                 if ($provisionUser) {
                     $this->provisionIdentityRecords($validated, $companyId, true);
                 }
@@ -337,7 +343,7 @@ final class PayrollMasterService
                 return $master->refresh();
             }
 
-            $validated = $this->validatePayload($payload, $existingMaster->id, $companyId);
+            $validated = $this->validatePayload($payload, $existingMaster->id, $companyId, $salaryPending, false, $autosave);
             $needsUser = ! ($existingMaster->employee_user_id ?? $existingMaster->user_id);
             if (! $needsUser) {
                 $validated['user_id'] = $existingMaster->user_id ?? $existingMaster->employee_user_id;
@@ -352,7 +358,7 @@ final class PayrollMasterService
             $effectiveFromChanged = $newEffectiveFrom && $currentEffectiveFrom && $newEffectiveFrom !== $currentEffectiveFrom;
             $structureChanged = $this->salaryStructureChanged($existingMaster, $validated);
 
-            if ($effectiveFromChanged) {
+            if ($effectiveFromChanged && ! $autosave) {
                 $this->requireRevisionReason($reason, $structureChanged);
 
                 return $this->reviseMasterRecord(
@@ -1919,7 +1925,7 @@ final class PayrollMasterService
     }
 
     /** @param  array<string, mixed>  $payload */
-    private function validatePayload(array $payload, ?string $ignoreId, ?string $companyId, bool $salaryPending = false, bool $isRevision = false): array
+    private function validatePayload(array $payload, ?string $ignoreId, ?string $companyId, bool $salaryPending = false, bool $isRevision = false, bool $autosave = false): array
     {
         if (empty($payload['name'])) {
             abort(422, 'Name is required');
@@ -1928,16 +1934,16 @@ final class PayrollMasterService
             abort(422, 'Pay level is required');
         }
         $gross = (float) ($payload['gross_basic_pay'] ?? $payload['grossBasicPay'] ?? 0);
-        if (! $salaryPending && $gross <= 0) {
+        if (! $salaryPending && ! $autosave && $gross <= 0) {
             abort(422, 'Gross basic pay must be greater than 0');
         }
-        if (! $salaryPending && ! $isRevision && empty($payload['designation'])) {
+        if (! $salaryPending && ! $autosave && ! $isRevision && empty($payload['designation'])) {
             abort(422, 'Designation is required');
         }
         $incrementMonth = IncrementMonth::normalize(
             (string) ($payload['increment_month'] ?? $payload['incrementMonth'] ?? ''),
         );
-        if (! $salaryPending && ! $isRevision && $incrementMonth === null) {
+        if (! $salaryPending && ! $autosave && ! $isRevision && $incrementMonth === null) {
             abort(422, 'Increment Month is required.');
         }
         if ($incrementMonth !== null) {
@@ -1947,7 +1953,7 @@ final class PayrollMasterService
             $payload['increment_month'] = IncrementMonth::DEFAULT;
             $payload['incrementMonth'] = IncrementMonth::DEFAULT;
         }
-        if (! $salaryPending && ! $isRevision && empty($payload['email'])) {
+        if (! $salaryPending && ! $autosave && ! $isRevision && empty($payload['email'])) {
             abort(422, 'Email is required');
         }
 
@@ -1983,7 +1989,7 @@ final class PayrollMasterService
             }
         }
 
-        foreach ($this->validatePayloadUniquenessErrors($payload, $ignoreId, $companyId, $ignoreUserId, $salaryPending, $isRevision) as $err) {
+        foreach ($this->validatePayloadUniquenessErrors($payload, $ignoreId, $companyId, $ignoreUserId, $salaryPending, $isRevision, $autosave) as $err) {
             abort(422, $err['message']);
         }
 
@@ -2029,10 +2035,11 @@ final class PayrollMasterService
         ?string $ignoreUserId,
         bool $salaryPending = false,
         bool $isRevision = false,
+        bool $autosave = false,
     ): array {
         $errors = [];
 
-        if (! $salaryPending && ! $isRevision) {
+        if (! $salaryPending && ! $isRevision && ! $autosave) {
             $pan = strtoupper(preg_replace('/[^A-Z0-9]/', '', (string) ($payload['pan'] ?? '')));
             if ($pan === '') {
                 $errors[] = ['field' => 'pan', 'message' => 'PAN is required.'];

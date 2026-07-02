@@ -18,13 +18,14 @@ class PayrollFieldService
             return;
         }
 
-        if (HrmsPayrollFieldDefinition::query()->where('company_id', $companyId)->exists()) {
-            $this->ensureCalculationSettings($companyId);
-
-            return;
-        }
-
         foreach (PayrollFieldRegistry::systemFieldDefinitions() as $def) {
+            $exists = HrmsPayrollFieldDefinition::query()
+                ->where('company_id', $companyId)
+                ->where('field_key', $def['field_key'])
+                ->exists();
+            if ($exists) {
+                continue;
+            }
             HrmsPayrollFieldDefinition::create([
                 'id' => (string) Str::uuid(),
                 'company_id' => $companyId,

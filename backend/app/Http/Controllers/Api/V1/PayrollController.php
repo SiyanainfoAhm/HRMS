@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Models\HrmsDepartment;
+use App\Models\HrmsDivision;
 use App\Models\HrmsEmployee;
 use App\Models\HrmsGovernmentMonthlyPayroll;
 use App\Models\HrmsPayrollMaster;
@@ -353,22 +355,44 @@ class PayrollController extends Controller
             ->whereDate('period_start', $periodStart)
             ->first();
 
-        $employeeUserIds = $this->collectPayrollEmployeeUserIds((string) $user->company_id);
+        $companyId = (string) $user->company_id;
+        $employeeUserIds = $this->collectPayrollEmployeeUserIds($companyId);
+
+        $usersById = HrmsUser::whereIn('id', $employeeUserIds)->get()->keyBy('id');
+        $employeesByUserId = HrmsEmployee::whereIn('user_id', $employeeUserIds)
+            ->with(['division', 'department'])
+            ->get()
+            ->keyBy('user_id');
+
+        $companyDivisions = HrmsDivision::where('company_id', $companyId)
+            ->where('is_active', true)
+            ->get();
+        $companyDepartments = HrmsDepartment::where('company_id', $companyId)
+            ->where('is_active', true)
+            ->get();
+        $divisionsById = $companyDivisions->keyBy('id');
+        $departmentsById = $companyDepartments->keyBy('id');
+        $divisionsByNameLower = $companyDivisions->keyBy(
+            fn (HrmsDivision $d) => strtolower(trim((string) $d->name)),
+        );
+        $departmentsByNameLower = $companyDepartments->keyBy(
+            fn (HrmsDepartment $d) => strtolower(trim((string) $d->name)),
+        );
 
         $employees = [];
         foreach ($employeeUserIds as $employeeUserId) {
-            $m = $this->resolveMasterForPayrollDate((string) $user->company_id, $employeeUserId, $periodEnd)
-                ?? $this->currentMasterForEmployee((string) $user->company_id, $employeeUserId);
+            $m = $this->resolveMasterForPayrollDate($companyId, $employeeUserId, $periodEnd)
+                ?? $this->currentMasterForEmployee($companyId, $employeeUserId);
             if (! $m) {
                 continue;
             }
 
-            $empUser = HrmsUser::find($employeeUserId);
+            $empUser = $usersById->get($employeeUserId);
             if (! $empUser) {
                 continue;
             }
 
-            $empRecord = HrmsEmployee::where('user_id', $empUser->id)->first();
+            $empRecord = $employeesByUserId->get($employeeUserId);
             $dateOfJoining = $empUser->date_of_joining?->format('Y-m-d')
                 ?? $empRecord?->date_of_joining?->format('Y-m-d')
                 ?? $m->date_of_joining?->format('Y-m-d');
@@ -396,11 +420,24 @@ class PayrollController extends Controller
             $ptDefault = (float) ($m->professional_tax ?? $m->pt_default ?? $m->pt ?? 200);
             $advanceBonus = (float) ($m->advance ?? $m->advance_bonus ?? 0);
             $payLevel = (int) ($m->pay_level ?? $empUser->government_pay_level ?? 5);
+            $org = $this->resolveEmployeeOrgFromSettings(
+                $empUser,
+                $empRecord,
+                $m,
+                $divisionsById,
+                $departmentsById,
+                $divisionsByNameLower,
+                $departmentsByNameLower,
+            );
 
             $row = [
                 'employeeUserId' => $employeeUserId,
                 'employeeName' => $empUser->name,
                 'employeeEmail' => $empUser->email,
+                'department' => $org['department'],
+                'division' => $org['division'],
+                'departmentId' => $org['departmentId'],
+                'divisionId' => $org['divisionId'],
                 'payrollMode' => $payrollMode,
                 'governmentPayLevel' => $payLevel,
                 'dateOfJoining' => $dateOfJoining,
@@ -428,6 +465,8 @@ class PayrollController extends Controller
                     'hraPercent' => $hraPercent,
                     'medicalFixed' => $medicalFixed,
                     'payLevel' => $payLevel,
+                    'hplDays' => 0,
+                    'eolDays' => 0,
                     'hasQuarter' => $quarterMeta['hasQuarter'],
                     'quarterRent' => $quarterMeta['quarterRent'],
                     'quarterId' => $quarterMeta['quarterId'],
@@ -449,6 +488,8 @@ class PayrollController extends Controller
                         'mess' => (float) ($m->mess_default ?? 0),
                         'loanRecovery' => (float) ($m->loan_recovery_default ?? 0),
                         'welfare' => (float) ($m->welfare_default ?? 0),
+                        'hpl' => 0,
+                        'eol' => 0,
                         'vehCharge' => (float) ($m->veh_charge_default ?? 0),
                         'other' => (float) ($m->other_deduction_default ?? 0),
                         'quarterRent' => $quarterMeta['hasQuarter'] ? (float) $quarterMeta['quarterRent'] : 0,
@@ -561,10 +602,18 @@ class PayrollController extends Controller
             $uid = $fr['employeeUserId'];
             $slip = $payslips->get($uid);
             if ($slip) {
-                $merged[] = $this->mapSavedPayslipToPreviewRow(
-                    $slip,
-                    $usersById->get($uid),
-                    $govRows->get($uid),
+                $merged[] = array_merge(
+                    $this->mapSavedPayslipToPreviewRow(
+                        $slip,
+                        $usersById->get($uid),
+                        $govRows->get($uid),
+                    ),
+                    [
+                        'department' => $fr['department'] ?? null,
+                        'division' => $fr['division'] ?? null,
+                        'departmentId' => $fr['departmentId'] ?? null,
+                        'divisionId' => $fr['divisionId'] ?? null,
+                    ],
                 );
             } else {
                 $merged[] = array_merge($fr, ['payslipPending' => true]);
@@ -979,11 +1028,75 @@ class PayrollController extends Controller
             return response()->json(['error' => 'No payslips found for this period'], 404);
         }
 
+        $employeeUserIdsRaw = $request->input('employee_user_ids') ?? $request->input('employeeUserIds');
+        $divisionIdFilter = trim((string) ($request->input('division_id') ?? $request->input('divisionId') ?? ''));
+        $departmentIdFilter = trim((string) ($request->input('department_id') ?? $request->input('departmentId') ?? ''));
+        $divisionFilter = trim((string) ($request->input('division') ?? ''));
+        $departmentFilter = trim((string) ($request->input('department') ?? ''));
+
+        if (is_string($employeeUserIdsRaw) && trim($employeeUserIdsRaw) !== '') {
+            $allowedIds = collect(explode(',', $employeeUserIdsRaw))
+                ->map(fn (string $id) => trim($id))
+                ->filter()
+                ->values();
+            $payslips = $payslips->whereIn('employee_user_id', $allowedIds)->values();
+        } elseif ($divisionIdFilter !== '' || $departmentIdFilter !== '' || $divisionFilter !== '' || $departmentFilter !== '') {
+            $slipUserIds = $payslips->pluck('employee_user_id')->filter()->unique();
+            $employeesByUserId = HrmsEmployee::whereIn('user_id', $slipUserIds)
+                ->with(['division', 'department'])
+                ->get()
+                ->keyBy('user_id');
+            $usersById = HrmsUser::whereIn('id', $slipUserIds)
+                ->get(['id', 'division_id', 'department_id'])
+                ->keyBy('id');
+
+            $payslips = $payslips->filter(function (HrmsPayslip $slip) use (
+                $employeesByUserId,
+                $usersById,
+                $divisionIdFilter,
+                $departmentIdFilter,
+                $divisionFilter,
+                $departmentFilter,
+            ) {
+                $uid = (string) $slip->employee_user_id;
+                $emp = $employeesByUserId->get($uid);
+                $usr = $usersById->get($uid);
+                $divId = $emp?->division_id ?? $usr?->division_id;
+                $depId = $emp?->department_id ?? $usr?->department_id;
+
+                if ($divisionIdFilter !== '' && (string) $divId !== $divisionIdFilter) {
+                    return false;
+                }
+                if ($departmentIdFilter !== '' && (string) $depId !== $departmentIdFilter) {
+                    return false;
+                }
+                if ($divisionFilter !== '' && $divisionIdFilter === '') {
+                    $divName = $emp?->division?->name ?? '';
+                    if (strcasecmp(trim((string) $divName), $divisionFilter) !== 0) {
+                        return false;
+                    }
+                }
+                if ($departmentFilter !== '' && $departmentIdFilter === '') {
+                    $depName = $emp?->department?->name ?? '';
+                    if (strcasecmp(trim((string) $depName), $departmentFilter) !== 0) {
+                        return false;
+                    }
+                }
+
+                return true;
+            })->values();
+        }
+
+        if ($payslips->isEmpty()) {
+            return response()->json(['error' => 'No payslips match the selected filters'], 404);
+        }
+
         $userIds = $payslips->pluck('employee_user_id')->filter()->unique()->values();
         $users = HrmsUser::whereIn('id', $userIds)->get(['id', 'name', 'email']);
 
         $governmentMonthly = HrmsGovernmentMonthlyPayroll::where('payroll_period_id', $periodId)
             ->where('company_id', $user->company_id)
+            ->whereIn('employee_user_id', $userIds)
             ->get();
 
         return response()->json([
@@ -1070,6 +1183,10 @@ class PayrollController extends Controller
             'totalEarnings' => $num($gov->total_earnings),
             'totalDeductions' => $num($gov->total_deductions),
             'netSalary' => $num($gov->net_salary),
+            'hplDays' => (int) ($gov->hpl_days ?? 0),
+            'eolDays' => (int) ($gov->eol_days ?? 0),
+            'hpl_days' => (int) ($gov->hpl_days ?? 0),
+            'eol_days' => (int) ($gov->eol_days ?? 0),
             'deductions' => [
                 'incomeTax' => $num($gov->income_tax_amount),
                 'pt' => $num($gov->pt_amount),
@@ -1086,8 +1203,11 @@ class PayrollController extends Controller
                 'mess' => $num($gov->mess_amount),
                 'loanRecovery' => $num($gov->loan_recovery_amount),
                 'welfare' => $num($gov->welfare_amount),
+                'hpl' => $num($gov->hpl_amount ?? 0),
+                'eol' => $num($gov->eol_amount ?? 0),
                 'vehCharge' => $num($gov->veh_charge_amount),
                 'other' => $num($gov->other_deduction_amount),
+                'quarterRent' => $num($gov->quarter_rent_amount ?? 0),
             ],
         ];
     }
@@ -1207,6 +1327,10 @@ class PayrollController extends Controller
             'mess_amount' => $num($ded['mess'] ?? 0),
             'loan_recovery_amount' => $num($ded['loanRecovery'] ?? $ded['loan_recovery'] ?? $ded['horticulture'] ?? 0),
             'welfare_amount' => $num($ded['welfare'] ?? 0),
+            'hpl_amount' => 0,
+            'hpl_days' => max(0, (int) ($gm['hplDays'] ?? $gm['hpl_days'] ?? 0)),
+            'eol_amount' => 0,
+            'eol_days' => max(0, (int) ($gm['eolDays'] ?? $gm['eol_days'] ?? 0)),
             'veh_charge_amount' => $num($ded['vehCharge'] ?? $ded['veh_charge'] ?? 0),
             'other_deduction_amount' => $num($ded['other'] ?? 0),
             'total_earnings' => $num($gm['totalEarnings'] ?? $gm['total_earnings'] ?? 0),
@@ -1475,6 +1599,64 @@ class PayrollController extends Controller
             'unpaidLeaveDays' => max(0, $daysInMonth - $payDays),
             'effectiveRunDay' => $effectiveRunDay,
             'exclude' => false,
+        ];
+    }
+
+    /**
+     * @param  \Illuminate\Support\Collection<string, HrmsDivision>  $divisionsById
+     * @param  \Illuminate\Support\Collection<string, HrmsDepartment>  $departmentsById
+     * @param  \Illuminate\Support\Collection<string, HrmsDivision>  $divisionsByNameLower
+     * @param  \Illuminate\Support\Collection<string, HrmsDepartment>  $departmentsByNameLower
+     * @return array{divisionId: ?string, departmentId: ?string, division: ?string, department: ?string}
+     */
+    private function resolveEmployeeOrgFromSettings(
+        ?HrmsUser $empUser,
+        ?HrmsEmployee $empRecord,
+        HrmsPayrollMaster $m,
+        $divisionsById,
+        $departmentsById,
+        $divisionsByNameLower,
+        $departmentsByNameLower,
+    ): array {
+        $divisionId = $empRecord?->division_id ?? $empUser?->division_id;
+        $departmentId = $empRecord?->department_id ?? $empUser?->department_id;
+
+        $divisionName = $empRecord?->relationLoaded('division') && $empRecord->division
+            ? $empRecord->division->name
+            : ($divisionId ? $divisionsById->get((string) $divisionId)?->name : null);
+        $departmentName = $empRecord?->relationLoaded('department') && $empRecord->department
+            ? $empRecord->department->name
+            : ($departmentId ? $departmentsById->get((string) $departmentId)?->name : null);
+
+        if (! $divisionId && $m->division) {
+            $matched = $divisionsByNameLower->get(strtolower(trim((string) $m->division)));
+            if ($matched) {
+                $divisionId = (string) $matched->id;
+                $divisionName = $matched->name;
+            } elseif (! $divisionName) {
+                $divisionName = trim((string) $m->division);
+            }
+        }
+
+        if (! $departmentId && $m->department) {
+            $matched = $departmentsByNameLower->get(strtolower(trim((string) $m->department)));
+            if ($matched) {
+                $departmentId = (string) $matched->id;
+                $departmentName = $matched->name;
+                if (! $divisionId && $matched->division_id) {
+                    $divisionId = (string) $matched->division_id;
+                    $divisionName = $divisionsById->get($divisionId)?->name ?? $divisionName;
+                }
+            } elseif (! $departmentName) {
+                $departmentName = trim((string) $m->department);
+            }
+        }
+
+        return [
+            'divisionId' => $divisionId ? (string) $divisionId : null,
+            'departmentId' => $departmentId ? (string) $departmentId : null,
+            'division' => $divisionName ?: null,
+            'department' => $departmentName ?: null,
         ];
     }
 

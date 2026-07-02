@@ -90,6 +90,8 @@ final class PayrollFieldRegistry
             $row(['field_label' => 'Mess', 'field_key' => 'mess', 'field_group' => 'deductions', 'field_type' => 'number', 'include_in_total_deductions' => true]),
             $row(['field_label' => 'Bank Recovery', 'field_key' => 'loan_recovery', 'field_group' => 'deductions', 'field_type' => 'number', 'include_in_total_deductions' => true]),
             $row(['field_label' => 'Welfare', 'field_key' => 'welfare', 'field_group' => 'deductions', 'field_type' => 'number', 'include_in_total_deductions' => true]),
+            $row(['field_label' => 'HPL', 'field_key' => 'hpl', 'field_group' => 'deductions', 'field_type' => 'number', 'include_in_total_deductions' => true, 'show_in_run_payroll' => true, 'show_in_salary_slip' => true]),
+            $row(['field_label' => 'EOL', 'field_key' => 'eol', 'field_group' => 'deductions', 'field_type' => 'number', 'include_in_total_deductions' => true, 'show_in_run_payroll' => true, 'show_in_salary_slip' => true]),
             $row(['field_label' => 'Quarter Rent', 'field_key' => 'quarter_rent', 'field_group' => 'deductions', 'field_type' => 'number', 'include_in_total_deductions' => true, 'show_in_run_payroll' => true, 'show_in_salary_slip' => true]),
             $row(['field_label' => 'Other Deduction', 'field_key' => 'other_deduction', 'field_group' => 'deductions', 'field_type' => 'number', 'include_in_total_deductions' => true]),
             $row(['field_label' => 'Advance', 'field_key' => 'advance', 'field_group' => 'deductions', 'field_type' => 'number', 'include_in_total_deductions' => true]),
