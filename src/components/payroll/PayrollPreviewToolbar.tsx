@@ -91,7 +91,7 @@ export function PayrollPreviewToolbar({
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-end gap-2">
           <SelectField
             label="Division"
             value={divisionFilter}
@@ -113,14 +113,17 @@ export function PayrollPreviewToolbar({
             className="w-48"
           />
           <div className="relative min-w-[180px] flex-1 max-w-md">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-            <input
-              type="search"
-              value={search}
-              onChange={(e) => onSearchChange(e.target.value)}
-              placeholder="Search employee…"
-              className="input-field w-full py-1.5 pl-8"
-            />
+            <label className="label-field">Employee</label>
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+              <input
+                type="search"
+                value={search}
+                onChange={(e) => onSearchChange(e.target.value)}
+                placeholder="Search employee…"
+                className="input-field w-full pl-8"
+              />
+            </div>
           </div>
           <div className="flex flex-wrap gap-1">
             <span className="metric-chip bg-slate-100 text-slate-700">
