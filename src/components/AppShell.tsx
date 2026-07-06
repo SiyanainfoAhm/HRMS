@@ -7,16 +7,16 @@ import { ToastProvider } from "./ToastProvider";
 import { Suspense, startTransition, useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { Menu } from "lucide-react";
-import { APP_NAME } from "@/lib/appBranding";
+import { APP_NAME, FIXED_ORG_BRANDING } from "@/lib/appBranding";
 import { titleForPathname } from "@/lib/pageTitles";
 
 export type { CompanyBranding };
 
-function brandingFromApiCompany(company: Record<string, unknown> | null | undefined): CompanyBranding | null {
-  if (!company) return null;
-  const name = String(company.name ?? "").trim();
-  if (!name) return null;
-  return { name };
+function fixedBranding(): CompanyBranding {
+  return {
+    name: FIXED_ORG_BRANDING.organization,
+    application: FIXED_ORG_BRANDING.application,
+  };
 }
 
 export function AppShell({
@@ -29,32 +29,15 @@ export function AppShell({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
-  const [companyBranding, setCompanyBranding] = useState<CompanyBranding | null>(initialBranding);
+  const [companyBranding, setCompanyBranding] = useState<CompanyBranding>(
+    initialBranding ?? fixedBranding(),
+  );
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [isDesktop, setIsDesktop] = useState(true);
 
   useEffect(() => {
-    setCompanyBranding(initialBranding);
-  }, [initialBranding]);
-
-  useEffect(() => {
-    if (initialBranding) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch("/api/company/me");
-        if (!res.ok || cancelled) return;
-        const data = await res.json();
-        const next = brandingFromApiCompany(data.company);
-        if (!cancelled && next) setCompanyBranding(next);
-      } catch {
-        // keep server/default branding
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+    setCompanyBranding(initialBranding ?? fixedBranding());
   }, [initialBranding]);
 
   useEffect(() => {
@@ -95,7 +78,7 @@ export function AppShell({
     });
   }
 
-  const brandName = companyBranding?.name?.trim() || APP_NAME;
+  const brandName = FIXED_ORG_BRANDING.organization;
   const effectiveCollapsed = sidebarCollapsed && isDesktop;
   const mobileTitle = titleForPathname(pathname);
 

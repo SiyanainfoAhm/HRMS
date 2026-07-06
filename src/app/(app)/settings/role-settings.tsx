@@ -1,6 +1,6 @@
 "use client";
 
-import { INSTITUTE_LABEL } from "@/lib/appBranding";
+import { APP_NAME, DEFAULT_COMPANY_CODE, INSTITUTE_LABEL, ORGANIZATION_NAME } from "@/lib/appBranding";
 import { dispatchHrmsChange } from "@/lib/hrmsChangeBus";
 import { isAdminRole, normalizeRole, type AppRole } from "@/lib/roles";
 import { useAuth } from "@/contexts/AuthContext";
@@ -469,8 +469,8 @@ export function SettingsContent() {
     const existingIndustry = (company?.industry ?? "") as string;
     const isCommon = commonIndustries.includes(existingIndustry);
     setForm({
-      name: company?.name ?? "",
-      code: company?.code ?? "",
+      name: ORGANIZATION_NAME,
+      code: DEFAULT_COMPANY_CODE,
       industry: isCommon ? existingIndustry : existingIndustry ? "Other" : "",
       industryOther: isCommon ? "" : existingIndustry,
       phone: company?.phone ?? "",
@@ -499,8 +499,9 @@ export function SettingsContent() {
     setSaving(true);
     setFormError(null);
     try {
+      const { name: _name, code: _code, ...editableForm } = form;
       const payload = {
-        ...form,
+        ...editableForm,
         industry: form.industry === "Other" ? form.industryOther.trim() : form.industry,
         professionalTaxAnnual: form.professionalTaxAnnual ? parseFloat(form.professionalTaxAnnual) : 200,
         professionalTaxMonthly: form.professionalTaxMonthly ? parseFloat(form.professionalTaxMonthly) : 200,
@@ -638,8 +639,16 @@ export function SettingsContent() {
               ) : (
                 <dl className="mt-4 grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
                   <div>
-                    <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Name</dt>
-                    <dd className="mt-0.5 font-medium text-slate-900">{company?.name || "—"}</dd>
+                    <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Organization</dt>
+                    <dd className="mt-0.5 font-medium text-slate-900">{ORGANIZATION_NAME}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Application</dt>
+                    <dd className="mt-0.5 font-medium text-slate-900">{APP_NAME}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Code</dt>
+                    <dd className="mt-0.5 font-medium text-slate-900">{DEFAULT_COMPANY_CODE}</dd>
                   </div>
                   <div>
                     <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Industry</dt>
@@ -1192,23 +1201,23 @@ export function SettingsContent() {
             <form onSubmit={handleCompanyFormSubmit} className="max-h-[75vh] overflow-y-auto p-5">
               <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                 <div className="md:col-span-2">
-                  <label className="mb-1 block text-sm font-medium text-slate-700">Institute name</label>
-                  <input
-                    type="text"
-                    required
-                    value={form.name}
-                    onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                  />
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Organization</label>
+                  <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-900">
+                    {ORGANIZATION_NAME}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500">Fixed for this CIRT Payroll deployment.</p>
+                </div>
+                <div className="md:col-span-1">
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Application</label>
+                  <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-900">
+                    {APP_NAME}
+                  </p>
                 </div>
                 <div className="md:col-span-1">
                   <label className="mb-1 block text-sm font-medium text-slate-700">Code</label>
-                  <input
-                    type="text"
-                    value={form.code}
-                    onChange={(e) => setForm((p) => ({ ...p, code: e.target.value }))}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                  />
+                  <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-900">
+                    {DEFAULT_COMPANY_CODE}
+                  </p>
                 </div>
                 <div className="md:col-span-1">
                   <label className="mb-1 block text-sm font-medium text-slate-700">Industry</label>

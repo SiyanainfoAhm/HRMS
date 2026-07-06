@@ -4,12 +4,31 @@ namespace App\Support;
 
 use App\Models\HrmsEmployee;
 use App\Models\HrmsUser;
+use App\Services\DefaultCompanyService;
 use Illuminate\Http\JsonResponse;
 
 final class CompanyAccess
 {
+    public static function defaultCompanyId(): string
+    {
+        return app(DefaultCompanyService::class)->getDefaultCompanyId();
+    }
+
+    public static function belongsToDefaultCompany(?string $companyId): bool
+    {
+        if ($companyId === null) {
+            return false;
+        }
+
+        return $companyId === self::defaultCompanyId();
+    }
+
     public static function sameCompany(?string $viewerCompanyId, ?string $targetCompanyId): bool
     {
+        if (! self::belongsToDefaultCompany($targetCompanyId)) {
+            return false;
+        }
+
         if ($viewerCompanyId === null || $targetCompanyId === null) {
             return false;
         }

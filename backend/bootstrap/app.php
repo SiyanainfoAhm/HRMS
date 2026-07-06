@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Middleware\EnsureCirtCompanyContext;
 use App\Http\Middleware\EnsureManagerial;
 use App\Http\Middleware\EnsureRole;
 use App\Http\Middleware\ValidateHrmsSession;
@@ -26,6 +27,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'role' => EnsureRole::class,
             'managerial' => EnsureManagerial::class,
             'hrms.session' => ValidateHrmsSession::class,
+            'cirt.company' => EnsureCirtCompanyContext::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {

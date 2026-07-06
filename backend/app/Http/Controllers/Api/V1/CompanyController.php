@@ -4,8 +4,10 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Models\HrmsCompany;
+use App\Services\DefaultCompanyService;
 use App\Services\PayrollArrearService;
 use App\Services\PayrollMasterService;
+use App\Support\CompanyContext;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -16,24 +18,30 @@ class CompanyController extends Controller
     public function __construct(
         private readonly PayrollMasterService $payrollMasterService,
         private readonly PayrollArrearService $payrollArrearService,
+        private readonly DefaultCompanyService $defaultCompanyService,
     ) {}
 
     public function me(Request $request): JsonResponse
     {
-        $user = $request->user();
-        if (! $user->company_id) {
-            return response()->json(['company' => null]);
-        }
+        $this->defaultCompanyService->ensureUserOnDefaultCompany($request->user());
+        $company = $this->defaultCompanyService->getDefaultCompany();
 
-        return response()->json(['company' => HrmsCompany::find($user->company_id)]);
+        return response()->json(['company' => $this->fixedOrganizationProfile($company)]);
     }
 
+    /**
+     * Legacy setup route — attaches admin to fixed CIRT company and optionally updates institute details.
+     * Does not create a new organization record.
+     */
     public function setup(Request $request): JsonResponse
     {
         $user = $request->user();
+        $company = $this->defaultCompanyService->getDefaultCompany();
+        $this->defaultCompanyService->ensureUserOnDefaultCompany($user);
+
         $data = $request->validate([
-            'name' => ['required', 'string', 'max:255'],
-            'code' => ['nullable', 'string', 'max:50'],
+            'name' => ['sometimes', 'string', 'max:255'],
+            'code' => ['sometimes', 'nullable', 'string', 'max:50'],
             'industry' => ['nullable', 'string', 'max:255'],
             'address_line1' => ['nullable', 'string'],
             'address_line2' => ['nullable', 'string'],
@@ -48,26 +56,30 @@ class CompanyController extends Controller
             'default_hra_percent' => ['nullable', 'numeric', 'min:0', 'max:200'],
         ]);
 
-        $company = HrmsCompany::create($data);
-        $user->update(['company_id' => $company->id]);
+        unset($data['name'], $data['code']);
+        if ($data !== []) {
+            $company->update($data);
+        }
 
-        return response()->json(['company' => $company], 201);
+        return response()->json(['company' => $this->fixedOrganizationProfile($company->refresh())]);
     }
 
     public function updateMe(Request $request): JsonResponse
     {
         $user = $request->user();
-        if (! $user->company_id || ! $user->role?->isManagerial()) {
+        if (! $user->role?->isManagerial()) {
             return response()->json(['error' => 'Forbidden'], 403);
         }
 
-        $company = HrmsCompany::findOrFail($user->company_id);
+        $companyId = CompanyContext::id($request);
+        $company = HrmsCompany::findOrFail($companyId);
 
-        $payload = $request->only([
+        $payload = CompanyContext::withoutUntrustedCompanyId($request->only([
             'name', 'code', 'industry',
             'address_line1', 'address_line2', 'city', 'state', 'country', 'postal_code',
             'phone', 'professional_tax_annual', 'professional_tax_monthly', 'default_da_percent', 'default_hra_percent',
-        ]);
+        ]));
+        unset($payload['name'], $payload['code']);
 
         $request->validate([
             'default_da_percent' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:200'],
@@ -76,7 +88,7 @@ class CompanyController extends Controller
             'apply_da_hra_revision' => ['nullable', 'boolean'],
         ]);
 
-        $baselineDa = $this->payrollArrearService->getCurrentTargetDaPercent((string) $user->company_id);
+        $baselineDa = $this->payrollArrearService->getCurrentTargetDaPercent($companyId);
         $oldDa = (float) ($company->default_da_percent ?? $baselineDa ?? 53);
         $oldHra = (float) ($company->default_hra_percent ?? 30);
         $newDa = array_key_exists('default_da_percent', $payload)
@@ -91,13 +103,15 @@ class CompanyController extends Controller
         $payrollRevision = null;
         $daRevisionEvent = null;
 
-        $company->update($payload);
+        if ($payload !== []) {
+            $company->update($payload);
+        }
 
         if (($daChanged || $hraChanged) && $request->boolean('apply_da_hra_revision', true)) {
             $effectiveFrom = $request->input('payroll_revision_effective_from') ?? now()->toDateString();
             if (config('app.debug')) {
                 Log::debug('company.settings_da_hra_revision', [
-                    'company_id' => $user->company_id,
+                    'company_id' => $companyId,
                     'old_da' => $oldDa,
                     'new_da' => $newDa,
                     'old_hra' => $oldHra,
@@ -113,7 +127,7 @@ class CompanyController extends Controller
                 $newHra,
             );
             $payrollRevision = $this->payrollMasterService->applyInstituteDaHraRevisionToPayrollMasters(
-                (string) $user->company_id,
+                $companyId,
                 $newDa,
                 $newHra,
                 $effectiveFrom,
@@ -123,7 +137,7 @@ class CompanyController extends Controller
 
             if ($daChanged && $newDa > $oldDa + 0.001) {
                 $daRevisionEvent = $this->payrollArrearService->createRevisionEvent(
-                    (string) $user->company_id,
+                    $companyId,
                     $oldDa,
                     $newDa,
                     $effectiveFrom,
@@ -161,7 +175,7 @@ class CompanyController extends Controller
         }
 
         return response()->json([
-            'company' => $company->refresh(),
+            'company' => $this->fixedOrganizationProfile($company->refresh()),
             'payroll_revision' => $payrollRevision,
             'da_revision_event' => $daRevisionEvent,
             'arrear_preview' => $arrearPreview,
@@ -171,8 +185,8 @@ class CompanyController extends Controller
     public function uploadLogo(Request $request): JsonResponse
     {
         $user = $request->user();
-        if (! $user->company_id) {
-            return response()->json(['error' => 'No company'], 400);
+        if (! $user->role?->isManagerial()) {
+            return response()->json(['error' => 'Forbidden'], 403);
         }
 
         $request->validate(['logo' => ['required', 'image', 'max:2048']]);
@@ -180,9 +194,24 @@ class CompanyController extends Controller
         $path = $request->file('logo')->store('company-logos', 'public');
         $url = Storage::disk('public')->url($path);
 
-        $company = HrmsCompany::findOrFail($user->company_id);
+        $company = HrmsCompany::findOrFail(CompanyContext::id($request));
         $company->update(['logo_url' => $url]);
 
         return response()->json(['logo_url' => $url]);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function fixedOrganizationProfile(HrmsCompany $company): array
+    {
+        $profile = $company->toArray();
+        $profile['name'] = (string) config('app.organization_name', 'CIRT');
+        $profile['code'] = (string) config('app.default_company_code', 'CIRT');
+        $profile['app_name'] = (string) config('app.name', 'CIRT Payroll');
+        $profile['organization_name'] = $profile['name'];
+        $profile['organization_name_editable'] = false;
+
+        return $profile;
     }
 }

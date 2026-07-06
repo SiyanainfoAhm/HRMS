@@ -9,6 +9,10 @@ use Illuminate\Validation\ValidationException;
 
 class AuthService
 {
+    public function __construct(
+        private readonly DefaultCompanyService $defaultCompanyService,
+    ) {}
+
     public function login(string $email, string $password): array
     {
         $user = HrmsUser::query()
@@ -34,13 +38,15 @@ class AuthService
             ]);
         }
 
+        $this->defaultCompanyService->ensureUserOnDefaultCompany($user);
+
         $token = $user->createToken(
             'hrms-web',
             ['sv:'.$user->auth_session_version]
         );
 
         return [
-            'user' => $user,
+            'user' => $user->refresh(),
             'token' => $token->plainTextToken,
             'token_type' => 'Bearer',
         ];
@@ -97,10 +103,12 @@ class AuthService
             ]);
         }
 
+        $this->defaultCompanyService->ensureUserOnDefaultCompany($user);
+
         $token = $user->createToken('hrms-web', ['sv:'.$user->auth_session_version]);
 
         return [
-            'user' => $user,
+            'user' => $user->refresh(),
             'token' => $token->plainTextToken,
             'token_type' => 'Bearer',
         ];

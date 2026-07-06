@@ -26,7 +26,7 @@ Route::prefix('v1')->group(function () {
     });
 
     // ── Authenticated routes ────────────────────────────────────
-    Route::middleware(['auth:sanctum', 'hrms.session'])->group(function () {
+    Route::middleware(['auth:sanctum', 'hrms.session', 'cirt.company'])->group(function () {
 
         // Auth
         Route::post('auth/logout', [AuthController::class, 'logout']);

@@ -22,6 +22,13 @@ return [
         'store' => env('APP_MAINTENANCE_STORE', 'database'),
     ],
 
-    'allow_public_signup' => (bool) env('ALLOW_PUBLIC_SIGNUP', false),
+    // Public signup is disabled by default for the fixed CIRT deployment.
+    'allow_public_signup' => env('DISABLE_PUBLIC_SIGNUP', true)
+        ? false
+        : (bool) env('ALLOW_PUBLIC_SIGNUP', false),
+
+    'organization_name' => env('APP_ORGANIZATION_NAME', 'CIRT'),
+
+    'default_company_code' => env('DEFAULT_COMPANY_CODE', 'CIRT'),
 
 ];

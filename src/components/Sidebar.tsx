@@ -19,12 +19,12 @@ import { useAuth } from "@/contexts/AuthContext";
 import type { SessionUser } from "@/lib/auth";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { AuthLoadingOverlay } from "@/components/ui/AuthLoadingOverlay";
-import { APP_NAME } from "@/lib/appBranding";
+import { APP_NAME, FIXED_ORG_BRANDING } from "@/lib/appBranding";
 import { performLogout } from "@/lib/authNavigation";
 import { cn } from "@/lib/cn";
 import { isAdminRole } from "@/lib/roles";
 
-export type CompanyBranding = { name: string };
+export type CompanyBranding = { name: string; application?: string };
 
 type NavItem = { href: string; label: string; icon: React.ReactNode };
 
@@ -89,7 +89,8 @@ export function Sidebar({
       : [{ href: "/profile?tab=pay", label: "My Salary Slips", icon: <UserCircle className={iconCls} /> }];
 
   const initials = getInitials(user.name, user.email);
-  const brandName = companyBranding?.name?.trim() || APP_NAME;
+  const brandName = FIXED_ORG_BRANDING.organization;
+  const brandApp = companyBranding?.application?.trim() || FIXED_ORG_BRANDING.application;
   const [logoutOpen, setLogoutOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
 
@@ -161,8 +162,8 @@ export function Sidebar({
           >
             <Link
               href={isPayrollAdmin ? "/payroll/master" : "/employee/dashboard"}
-              title={collapsed ? `${brandName} — ${APP_NAME}` : APP_NAME}
-              aria-label={`${brandName} — ${APP_NAME}`}
+              title={collapsed ? `${brandName} — ${brandApp}` : brandApp}
+              aria-label={`${brandName} — ${brandApp}`}
               onClick={closeMobile}
               className={cn(
                 "flex items-center rounded-xl transition-colors hover:bg-slate-50",
@@ -182,7 +183,7 @@ export function Sidebar({
               {!collapsed && (
                 <span className="min-w-0 text-left">
                   <span className="block truncate text-[13px] font-bold text-slate-900">{brandName}</span>
-                  <span className="block text-[11px] font-medium text-brand-muted">{APP_NAME}</span>
+                  <span className="block text-[11px] font-medium text-brand-muted">{brandApp}</span>
                 </span>
               )}
             </Link>

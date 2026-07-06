@@ -11,7 +11,7 @@ FROM (
   VALUES
     ('cirt_users'),
     ('cirt_roles'),
-    ('cirt_companies'),
+    ('cirt_institute'),
     ('cirt_employees'),
     ('cirt_departments'),
     ('cirt_designations'),
@@ -57,7 +57,7 @@ DECLARE
   tbl text;
   cnt bigint;
   tables text[] := ARRAY[
-    'cirt_companies', 'cirt_users', 'cirt_roles', 'cirt_divisions', 'cirt_departments',
+    'cirt_institute', 'cirt_users', 'cirt_roles', 'cirt_divisions', 'cirt_departments',
     'cirt_designations', 'cirt_employees', 'cirt_employee_bank_accounts',
     'cirt_payroll_periods', 'cirt_payroll_master', 'cirt_monthly_payroll', 'cirt_payslips',
     'cirt_payroll_rule_settings', 'cirt_payroll_import_batches'
@@ -81,7 +81,7 @@ DECLARE
   tbl text;
   cnt bigint;
   tables text[] := ARRAY[
-    'cirt_users', 'cirt_roles', 'cirt_companies', 'cirt_employees',
+    'cirt_users', 'cirt_roles', 'cirt_institute', 'cirt_employees',
     'cirt_departments', 'cirt_designations', 'cirt_divisions',
     'cirt_employee_bank_accounts', 'cirt_payroll_master', 'cirt_payroll_periods',
     'cirt_monthly_payroll', 'cirt_payslips'

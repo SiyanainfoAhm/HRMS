@@ -10,7 +10,8 @@ class HrmsCompany extends Model
 {
     use HasUuids;
 
-    protected $table = 'cirt_companies';
+    /** Single CIRT institute row (table renamed from legacy cirt_companies). */
+    protected $table = 'cirt_institute';
     protected $keyType = 'string';
     public $incrementing = false;
 

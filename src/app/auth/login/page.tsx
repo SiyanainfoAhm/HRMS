@@ -10,7 +10,6 @@ import { Loader2 } from "lucide-react";
 import { APP_NAME } from "@/lib/appBranding";
 import { validateLoginEmail, validateLoginPassword } from "@/lib/loginValidators";
 import { resolvePostLoginPath } from "@/lib/postLoginRedirect";
-import { isAdminRole } from "@/lib/roles";
 import { fadeInUp, staggerContainer, staggerItem } from "@/lib/motion";
 
 function LoginForm() {
@@ -65,15 +64,7 @@ function LoginForm() {
 
       const role = data.user?.role;
       const nextParam = params.get("next");
-      let destination = resolvePostLoginPath(role, nextParam);
-
-      if (isAdminRole(role)) {
-        const companyRes = await fetch("/api/company/me", { credentials: "include" });
-        const companyData = await companyRes.json().catch(() => ({}));
-        if (!companyData?.company) {
-          destination = "/setup/company";
-        }
-      }
+      const destination = resolvePostLoginPath(role, nextParam);
 
       // Full navigation so httpOnly cookies are applied before the app layout loads.
       window.location.assign(destination);

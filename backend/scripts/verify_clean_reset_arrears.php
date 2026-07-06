@@ -8,7 +8,9 @@ use App\Services\PayrollArrearService;
 use App\Services\PayrollCalculationService;
 use App\Services\PayrollMasterService;
 
-$companyId = DB::table('cirt_companies')->orderBy('created_at')->value('id');
+$companyId = DB::table(
+    Schema::hasTable('cirt_institute') ? 'cirt_institute' : 'cirt_companies'
+)->orderBy('created_at')->value('id');
 if (! $companyId) {
     echo "No company found\n";
     exit(1);

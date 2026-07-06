@@ -45,7 +45,7 @@ class AuthController extends Controller
     public function signup(SignupRequest $request): JsonResponse
     {
         if (! config('app.allow_public_signup')) {
-            return response()->json(['error' => 'Registration is disabled. Contact your administrator.'], 403);
+            return response()->json(['error' => 'Signup is disabled. Please contact administrator.'], 403);
         }
 
         $email = mb_strtolower(trim($request->validated('email')));
@@ -66,6 +66,7 @@ class AuthController extends Controller
             'auth_session_version' => 0,
             'employee_code' => $employeeCode,
             'employment_status' => 'current',
+            'company_id' => app(\App\Services\DefaultCompanyService::class)->getDefaultCompanyId(),
         ]);
 
         $token = $user->createToken('hrms-web', ['sv:0']);
