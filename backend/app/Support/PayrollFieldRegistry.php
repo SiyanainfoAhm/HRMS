@@ -19,6 +19,17 @@ final class PayrollFieldRegistry
         'transport',
     ];
 
+    /** Employee-level CPF override (DB/API may store 0 instead of boolean false). */
+    public static function isCpfEmployeeCustomMode(mixed $value): bool
+    {
+        return $value === false || $value === 0 || $value === '0' || $value === 'false';
+    }
+
+    public static function isCpfCompanyDefaultMode(mixed $value): bool
+    {
+        return ! self::isCpfEmployeeCustomMode($value);
+    }
+
     public const FIELD_GROUPS = [
         'basic',
         'earnings',
@@ -146,8 +157,17 @@ final class PayrollFieldRegistry
         return round($sum);
     }
 
-    public static function cpfFormulaPreview(array $basisLabels, float $percentage): string
-    {
+    public static function cpfFormulaPreview(
+        array $basisLabels,
+        float $percentage,
+        string $mode = 'percentage',
+        float $fixedAmount = 0,
+    ): string {
+        if ($mode === 'fixed_amount') {
+            $amt = (int) round($fixedAmount);
+
+            return "CPF = Fixed Amount (₹{$amt})";
+        }
         $labels = $basisLabels !== [] ? implode(' + ', $basisLabels) : '—';
         $pct = rtrim(rtrim(number_format($percentage, 2, '.', ''), '0'), '.');
 

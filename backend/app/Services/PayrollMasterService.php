@@ -13,6 +13,7 @@ use App\Models\HrmsPayrollMaster;
 use App\Models\HrmsPayrollMasterHistory;
 use App\Models\HrmsUser;
 use App\Support\IncrementMonth;
+use App\Support\PayrollFieldRegistry;
 use App\Support\SpreadsheetImportSecurity;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
@@ -37,6 +38,7 @@ final class PayrollMasterService
         private readonly PayrollCalculationService $calculator,
         private readonly PayrollFieldService $fieldService,
         private readonly QuarterService $quarterService,
+        private readonly NightAllowanceRateService $nightAllowanceService,
     ) {}
 
     /** @return list<array<string, mixed>> */
@@ -866,6 +868,7 @@ final class PayrollMasterService
             ['key' => 'quarter_name', 'header' => 'Quarter Number/Name', 'required_in_template' => false],
             ['key' => 'quarter_type', 'header' => 'Quarter Type', 'required_in_template' => false],
             ['key' => 'quarter_rent', 'header' => 'Quarter Rent', 'required_in_template' => false],
+            ['key' => 'night_allowance_slab_no', 'header' => 'Night Allowance Slab No', 'required_in_template' => false],
             ['key' => 'professional_tax', 'header' => 'Professional Tax', 'required_in_template' => false],
             ['key' => 'cpf_default', 'header' => 'PF / CPF %', 'required_in_template' => false],
         ];
@@ -1104,7 +1107,7 @@ final class PayrollMasterService
             'phone', 'gender', 'date_of_birth', 'date_of_joining',
             'designation', 'department', 'division', 'pay_level', 'increment_month', 'gross_basic_pay', 'da_percent', 'hra_percent', 'medical',
             'uan', 'cpf_no', 'pan', 'aadhaar', 'bank_name', 'bank_account_number', 'bank_ifsc',
-            'quarter_assigned', 'quarter_name', 'quarter_type', 'quarter_rent', 'hra_eligible',
+            'quarter_assigned', 'quarter_name', 'quarter_type', 'quarter_rent', 'night_allowance_slab_no', 'hra_eligible',
             'status', 'remarks', 'effective_from',
         ];
     }
@@ -1495,11 +1498,13 @@ final class PayrollMasterService
             'totalEarnings' => (float) ($m->total_earnings ?? $m->ctc ?? 0),
             'cpfDefault' => (float) ($m->cpf_default ?? 0),
             'cpfEffective' => (float) ($m->cpf_effective ?? 0),
-            'cpfUseCompanySettings' => (bool) ($m->cpf_use_company_settings ?? true),
+            'cpfUseCompanySettings' => PayrollFieldRegistry::isCpfCompanyDefaultMode($m->cpf_use_company_settings ?? true),
             'cpfPercentageOverride' => $m->cpf_percentage_override !== null
                 ? (float) $m->cpf_percentage_override
                 : null,
             'cpfBasisFieldKeysOverride' => $m->cpf_basis_field_keys_override ?? [],
+            'cpfCalculationMode' => $m->cpf_calculation_mode ?? null,
+            'cpfFixedAmount' => $m->cpf_fixed_amount !== null ? (float) $m->cpf_fixed_amount : null,
             'cpfSettings' => $m->company_id
                 ? $this->fieldService->formatMasterCpfSettings((string) $m->company_id, $m)
                 : null,
@@ -1542,6 +1547,7 @@ final class PayrollMasterService
             'payrollMode' => $m->payroll_mode ?? 'government',
             ...$this->quarterService->quarterMetaForMaster($m, (string) $m->company_id),
             'quarterAssigned' => (bool) ($m->has_quarter ?? false),
+            'nightAllowanceSlabNo' => $m->night_allowance_slab_no ? (int) $m->night_allowance_slab_no : null,
         ];
     }
 
@@ -2227,7 +2233,19 @@ final class PayrollMasterService
         $effectiveFrom = $validated['effective_from'] ?? $validated['effectiveFrom'] ?? now()->toDateString();
         $effectiveTo = $forceCurrentRow ? null : ($validated['effective_to'] ?? $validated['effectiveTo'] ?? null);
 
-        $useCompanyCpf = (bool) ($validated['cpf_use_company_settings'] ?? $validated['cpfUseCompanySettings'] ?? true);
+        $useCompanyCpf = PayrollFieldRegistry::isCpfCompanyDefaultMode(
+            $validated['cpf_use_company_settings'] ?? $validated['cpfUseCompanySettings'] ?? true,
+        );
+        $cpfMode = $useCompanyCpf
+            ? null
+            : (((string) ($validated['cpf_calculation_mode'] ?? $validated['cpfCalculationMode'] ?? 'percentage')) === 'fixed_amount'
+                ? 'fixed_amount'
+                : 'percentage');
+        $cpfFixed = $useCompanyCpf
+            ? null
+            : ($cpfMode === 'fixed_amount'
+                ? max(0, (float) ($this->nullableFloat($validated['cpf_fixed_amount'] ?? $validated['cpfFixedAmount'] ?? null) ?? 0))
+                : null);
 
         $attrs = [
             'company_id' => $companyId,
@@ -2274,6 +2292,8 @@ final class PayrollMasterService
                 : $this->normalizeCpfBasisOverride(
                     $validated['cpf_basis_field_keys_override'] ?? ($validated['cpfBasisFieldKeysOverride'] ?? null),
                 ),
+            'cpf_calculation_mode' => $cpfMode,
+            'cpf_fixed_amount' => $cpfFixed,
             'da_cpf' => $calc['da_cpf'],
             'da_cpf_default' => $calc['da_cpf'],
             'professional_tax' => $calc['professional_tax'],
@@ -2330,6 +2350,9 @@ final class PayrollMasterService
             'has_quarter' => (bool) ($calc['has_quarter'] ?? $validated['has_quarter'] ?? $validated['hasQuarter'] ?? false),
             'quarter_id' => $validated['quarter_id'] ?? $validated['quarterId'] ?? null,
             'quarter_rent' => (float) ($calc['quarter_rent'] ?? $validated['quarter_rent'] ?? $validated['quarterRent'] ?? 0),
+            'night_allowance_slab_no' => isset($validated['night_allowance_slab_no']) || isset($validated['nightAllowanceSlabNo'])
+                ? (int) ($validated['night_allowance_slab_no'] ?? $validated['nightAllowanceSlabNo'] ?? 0) ?: null
+                : null,
             'payroll_mode' => 'government',
             'pf_eligible' => false,
             'esic_eligible' => false,
@@ -2645,6 +2668,8 @@ final class PayrollMasterService
         return $m->only([
             'pay_level', 'gross_basic_pay', 'gross_basic', 'gross_salary', 'da_percent', 'hra_percent',
             'medical', 'medical_fixed', 'transport_da_percent', 'cpf_default', 'da_cpf', 'da_cpf_default',
+            'cpf_use_company_settings', 'cpf_percentage_override', 'cpf_basis_field_keys_override',
+            'cpf_calculation_mode', 'cpf_fixed_amount',
             'income_tax', 'income_tax_default', 'tds', 'professional_tax', 'pt', 'pt_default',
             'lic', 'lic_default', 'mess', 'mess_default', 'welfare', 'welfare_default',
             'vpf', 'vpf_default', 'pf_loan', 'pf_loan_default', 'post_office', 'post_office_default',
@@ -3430,6 +3455,49 @@ final class PayrollMasterService
             foreach ($this->validateQuarterImportRow($row, $companyId, $existing) as $qe) {
                 $errors[] = $this->importIssue($qe['field'], $qe['message']);
             }
+            foreach ($this->validateNightAllowanceSlabImportRow($row, $companyId) as $ne) {
+                $errors[] = $this->importIssue($ne['field'], $ne['message']);
+            }
+        }
+
+        return $errors;
+    }
+
+    /**
+     * @param  array<string, mixed>  $row
+     * @return list<array{field: string, message: string}>
+     */
+    private function validateNightAllowanceSlabImportRow(array $row, string $companyId): array
+    {
+        $errors = [];
+        $raw = $row['night_allowance_slab_no'] ?? $row['nightAllowanceSlabNo'] ?? null;
+        if ($raw === null || trim((string) $raw) === '') {
+            return $errors;
+        }
+
+        $slabNo = (int) $raw;
+        if ($slabNo < 1) {
+            $errors[] = ['field' => 'night_allowance_slab_no', 'message' => 'Night allowance slab number must be at least 1.'];
+
+            return $errors;
+        }
+
+        $slab = $this->nightAllowanceService->findBySlabNo($companyId, $slabNo, false);
+        if (! $slab) {
+            $errors[] = ['field' => 'night_allowance_slab_no', 'message' => 'Night allowance slab does not exist in Settings.'];
+
+            return $errors;
+        }
+        if (! ($slab['isActive'] ?? true)) {
+            $errors[] = ['field' => 'night_allowance_slab_no', 'message' => 'Cannot assign an inactive night allowance slab.'];
+        }
+
+        $payLevel = (int) ($row['pay_level'] ?? $row['payLevel'] ?? 0);
+        if ($payLevel > 0 && (int) ($slab['payLevel'] ?? 0) !== $payLevel) {
+            $errors[] = [
+                'field' => 'night_allowance_slab_no',
+                'message' => 'Night allowance slab pay level does not match employee pay level.',
+            ];
         }
 
         return $errors;
@@ -3560,6 +3628,8 @@ final class PayrollMasterService
         $cpfConfigPayload = [
             'cpf_percentage' => $cpfConfig['cpf_percentage'],
             'cpf_basis_field_keys' => $cpfConfig['cpf_basis_field_keys'],
+            'cpf_calculation_mode' => $cpfConfig['cpf_calculation_mode'] ?? 'percentage',
+            'cpf_fixed_amount' => $cpfConfig['cpf_fixed_amount'] ?? 0,
         ];
         $customValues = $input['custom_field_values'] ?? $input['customFieldValues'] ?? [];
         if ($masterId && $customValues === []) {
@@ -3631,18 +3701,25 @@ final class PayrollMasterService
             abort(403, 'Forbidden');
         }
 
-        $useCompany = (bool) ($data['cpf_use_company_settings'] ?? $data['cpfUseCompanySettings'] ?? true);
+        $useCompany = PayrollFieldRegistry::isCpfCompanyDefaultMode(
+            $data['cpf_use_company_settings'] ?? $data['cpfUseCompanySettings'] ?? true,
+        );
         $pct = $this->nullableFloat($data['cpf_percentage_override'] ?? ($data['cpfPercentageOverride'] ?? null));
         $basis = $this->normalizeCpfBasisOverride(
             $data['cpf_basis_field_keys_override'] ?? ($data['cpfBasisFieldKeysOverride'] ?? null),
         );
+        $mode = (string) ($data['cpf_calculation_mode'] ?? $data['cpfCalculationMode'] ?? 'percentage');
+        $fixed = $this->nullableFloat($data['cpf_fixed_amount'] ?? ($data['cpfFixedAmount'] ?? null));
 
         if (! $useCompany) {
             if ($pct !== null && $pct < 0) {
                 abort(422, 'CPF percentage must be ≥ 0.');
             }
-            if ($basis === null || $basis === []) {
+            if ($mode !== 'fixed_amount' && ($basis === null || $basis === [])) {
                 abort(422, 'Select at least one earning field for PF/CPF calculation.');
+            }
+            if ($mode === 'fixed_amount' && ($fixed === null || $fixed < 0)) {
+                abort(422, 'Fixed CPF amount must be ≥ 0.');
             }
         }
 
@@ -3650,6 +3727,8 @@ final class PayrollMasterService
             'cpf_use_company_settings' => $useCompany,
             'cpf_percentage_override' => $useCompany ? null : $pct,
             'cpf_basis_field_keys_override' => $useCompany ? null : $basis,
+            'cpf_calculation_mode' => $useCompany ? null : ($mode === 'fixed_amount' ? 'fixed_amount' : 'percentage'),
+            'cpf_fixed_amount' => $useCompany ? null : ($mode === 'fixed_amount' ? max(0, (float) ($fixed ?? 0)) : null),
         ]);
 
         $defaults = $this->resolveCompanyPayrollDefaults($companyId);

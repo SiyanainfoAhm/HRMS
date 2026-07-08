@@ -49,6 +49,9 @@ class PayrollFieldService
             'company_id' => $companyId,
             'cpf_percentage' => PayrollFieldRegistry::DEFAULT_CPF_PERCENTAGE,
             'cpf_basis_field_keys' => PayrollFieldRegistry::DEFAULT_CPF_BASIS_KEYS,
+            'cpf_calculation_mode' => 'percentage',
+            'cpf_fixed_amount' => 0,
+            'electricity_unit_rate' => 0,
         ]);
     }
 
@@ -262,20 +265,37 @@ class PayrollFieldService
         $settings = $this->ensureCalculationSettings($companyId);
         $pct = (float) ($data['cpf_percentage'] ?? $data['cpfPercentage'] ?? $settings->cpf_percentage);
         $basis = $data['cpf_basis_field_keys'] ?? $data['cpfBasisFieldKeys'] ?? $settings->cpf_basis_field_keys;
+        $mode = (string) ($data['cpf_calculation_mode'] ?? $data['cpfCalculationMode'] ?? $settings->cpf_calculation_mode ?? 'percentage');
+        $fixed = (float) ($data['cpf_fixed_amount'] ?? $data['cpfFixedAmount'] ?? $settings->cpf_fixed_amount ?? 0);
+        $elecRate = (float) ($data['electricity_unit_rate'] ?? $data['electricityUnitRate'] ?? $settings->electricity_unit_rate ?? 0);
 
         if ($pct < 0) {
             throw ValidationException::withMessages(['cpf_percentage' => ['CPF percentage must be ≥ 0.']]);
         }
-        if (! is_array($basis) || $basis === []) {
+        if ($mode !== 'fixed_amount' && (! is_array($basis) || $basis === [])) {
             throw ValidationException::withMessages([
                 'cpf_basis_field_keys' => ['Select at least one earning field for PF/CPF calculation.'],
             ]);
         }
+        if ($elecRate < 0) {
+            throw ValidationException::withMessages(['electricity_unit_rate' => ['Electricity unit rate must be ≥ 0.']]);
+        }
 
-        $settings->update([
+        $update = [
             'cpf_percentage' => $pct,
-            'cpf_basis_field_keys' => array_values(array_unique(array_map('strval', $basis))),
-        ]);
+            'cpf_basis_field_keys' => is_array($basis) ? array_values(array_unique(array_map('strval', $basis))) : ($settings->cpf_basis_field_keys ?? []),
+        ];
+        if (Schema::hasColumn('cirt_payroll_calculation_settings', 'cpf_calculation_mode')) {
+            $update['cpf_calculation_mode'] = $mode === 'fixed_amount' ? 'fixed_amount' : 'percentage';
+        }
+        if (Schema::hasColumn('cirt_payroll_calculation_settings', 'cpf_fixed_amount')) {
+            $update['cpf_fixed_amount'] = max(0, $fixed);
+        }
+        if (Schema::hasColumn('cirt_payroll_calculation_settings', 'electricity_unit_rate')) {
+            $update['electricity_unit_rate'] = max(0, $elecRate);
+        }
+
+        $settings->update($update);
 
         $fields = HrmsPayrollFieldDefinition::query()->where('company_id', $companyId)->get()
             ->map(fn ($f) => $this->formatField($f))->values()->all();
@@ -287,7 +307,7 @@ class PayrollFieldService
      * Resolve effective CPF config for a payroll master row.
      *
      * @param  array<string, mixed>|null  $input
-     * @return array{cpf_percentage: float, cpf_basis_field_keys: array<int, string>, source: string}
+     * @return array{cpf_percentage: float, cpf_basis_field_keys: array<int, string>, cpf_calculation_mode: string, cpf_fixed_amount: float, source: string}
      */
     public function resolveCpfConfigForMaster(
         string $companyId,
@@ -298,22 +318,25 @@ class PayrollFieldService
         $useCompany = true;
         $pctOverride = null;
         $basisOverride = null;
+        $inputHasBasisOverride = false;
 
         if ($master) {
-            $useCompany = (bool) ($master->cpf_use_company_settings ?? true);
+            $useCompany = PayrollFieldRegistry::isCpfCompanyDefaultMode($master->cpf_use_company_settings ?? true);
             $pctOverride = $master->cpf_percentage_override;
             $basisOverride = $master->cpf_basis_field_keys_override;
         }
 
         if (is_array($input)) {
             if (array_key_exists('cpf_use_company_settings', $input) || array_key_exists('cpfUseCompanySettings', $input)) {
-                $useCompany = (bool) ($input['cpf_use_company_settings'] ?? $input['cpfUseCompanySettings'] ?? true);
+                $raw = $input['cpf_use_company_settings'] ?? $input['cpfUseCompanySettings'] ?? true;
+                $useCompany = PayrollFieldRegistry::isCpfCompanyDefaultMode($raw);
             }
             if (array_key_exists('cpf_percentage_override', $input) || array_key_exists('cpfPercentageOverride', $input)) {
                 $raw = $input['cpf_percentage_override'] ?? ($input['cpfPercentageOverride'] ?? null);
                 $pctOverride = $raw === '' || $raw === null ? null : (float) $raw;
             }
             if (array_key_exists('cpf_basis_field_keys_override', $input) || array_key_exists('cpfBasisFieldKeysOverride', $input)) {
+                $inputHasBasisOverride = true;
                 $raw = $input['cpf_basis_field_keys_override'] ?? ($input['cpfBasisFieldKeysOverride'] ?? null);
                 $basisOverride = is_array($raw) ? $raw : null;
             }
@@ -323,18 +346,50 @@ class PayrollFieldService
             return [
                 'cpf_percentage' => (float) $company->cpf_percentage,
                 'cpf_basis_field_keys' => $company->cpf_basis_field_keys ?? PayrollFieldRegistry::DEFAULT_CPF_BASIS_KEYS,
+                'cpf_calculation_mode' => (string) ($company->cpf_calculation_mode ?? 'percentage'),
+                'cpf_fixed_amount' => (float) ($company->cpf_fixed_amount ?? 0),
                 'source' => 'company',
             ];
         }
 
         $pct = $pctOverride !== null ? (float) $pctOverride : (float) $company->cpf_percentage;
-        $basis = is_array($basisOverride) && $basisOverride !== []
-            ? array_values(array_unique(array_map('strval', $basisOverride)))
-            : ($company->cpf_basis_field_keys ?? PayrollFieldRegistry::DEFAULT_CPF_BASIS_KEYS);
+        if ($inputHasBasisOverride) {
+            $basis = is_array($basisOverride)
+                ? array_values(array_unique(array_map('strval', $basisOverride)))
+                : [];
+        } elseif (is_array($basisOverride) && $basisOverride !== []) {
+            $basis = array_values(array_unique(array_map('strval', $basisOverride)));
+        } else {
+            $basis = $company->cpf_basis_field_keys ?? PayrollFieldRegistry::DEFAULT_CPF_BASIS_KEYS;
+        }
+
+        $mode = $master && $master->cpf_calculation_mode
+            ? (string) $master->cpf_calculation_mode
+            : (string) ($company->cpf_calculation_mode ?? 'percentage');
+        $fixed = $master && $master->cpf_fixed_amount !== null
+            ? (float) $master->cpf_fixed_amount
+            : (float) ($company->cpf_fixed_amount ?? 0);
+
+        if (is_array($input)) {
+            if (array_key_exists('cpf_calculation_mode', $input) || array_key_exists('cpfCalculationMode', $input)) {
+                $raw = $input['cpf_calculation_mode'] ?? $input['cpfCalculationMode'] ?? null;
+                if ($raw !== null && $raw !== '') {
+                    $mode = (string) $raw;
+                }
+            }
+            if (array_key_exists('cpf_fixed_amount', $input) || array_key_exists('cpfFixedAmount', $input)) {
+                $raw = $input['cpf_fixed_amount'] ?? $input['cpfFixedAmount'] ?? null;
+                if ($raw !== null && $raw !== '') {
+                    $fixed = (float) $raw;
+                }
+            }
+        }
 
         return [
             'cpf_percentage' => $pct,
             'cpf_basis_field_keys' => $basis,
+            'cpf_calculation_mode' => $mode === 'fixed_amount' ? 'fixed_amount' : 'percentage',
+            'cpf_fixed_amount' => max(0, $fixed),
             'source' => 'employee',
         ];
     }
@@ -362,7 +417,7 @@ class PayrollFieldService
         $basisLabels = array_map(fn ($k) => $labelByKey[$k] ?? $k, $effective['cpf_basis_field_keys']);
 
         return [
-            'cpfUseCompanySettings' => $master ? (bool) ($master->cpf_use_company_settings ?? true) : true,
+            'cpfUseCompanySettings' => $master ? PayrollFieldRegistry::isCpfCompanyDefaultMode($master->cpf_use_company_settings ?? true) : true,
             'cpfPercentageOverride' => $master?->cpf_percentage_override !== null
                 ? (float) $master->cpf_percentage_override
                 : null,
@@ -691,9 +746,24 @@ class PayrollFieldService
         return [
             'cpfPercentage' => (float) $settings->cpf_percentage,
             'cpfBasisFieldKeys' => $settings->cpf_basis_field_keys ?? [],
+            'cpfCalculationMode' => Schema::hasColumn('cirt_payroll_calculation_settings', 'cpf_calculation_mode')
+                ? (string) ($settings->cpf_calculation_mode ?? 'percentage')
+                : 'percentage',
+            'cpfFixedAmount' => Schema::hasColumn('cirt_payroll_calculation_settings', 'cpf_fixed_amount')
+                ? (float) ($settings->cpf_fixed_amount ?? 0)
+                : 0,
+            'electricityUnitRate' => Schema::hasColumn('cirt_payroll_calculation_settings', 'electricity_unit_rate')
+                ? (float) ($settings->electricity_unit_rate ?? 0)
+                : 0,
             'cpfFormulaPreview' => PayrollFieldRegistry::cpfFormulaPreview(
                 $basisLabels,
                 (float) $settings->cpf_percentage,
+                Schema::hasColumn('cirt_payroll_calculation_settings', 'cpf_calculation_mode')
+                    ? (string) ($settings->cpf_calculation_mode ?? 'percentage')
+                    : 'percentage',
+                Schema::hasColumn('cirt_payroll_calculation_settings', 'cpf_fixed_amount')
+                    ? (float) ($settings->cpf_fixed_amount ?? 0)
+                    : 0,
             ),
         ];
     }

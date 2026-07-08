@@ -4,6 +4,7 @@
 
 import {
   calculateCpfFromBasis,
+  isCpfEmployeeCustomMode,
   resolveEffectiveCpfConfigForMaster,
   resolveMasterCpfBasisAmount,
 } from "./payrollCpfCalculation";
@@ -47,8 +48,12 @@ export type PayrollMasterPreviewInput = {
   cpfUseCompanySettings?: boolean;
   cpfPercentageOverride?: number | string | null;
   cpfBasisFieldKeysOverride?: string[];
+  cpfCalculationModeOverride?: "percentage" | "fixed_amount" | string;
+  cpfFixedAmountOverride?: number | string | null;
   companyCpfPercentage?: number | string;
   companyCpfBasisFieldKeys?: string[];
+  companyCpfCalculationMode?: "percentage" | "fixed_amount" | string;
+  companyCpfFixedAmount?: number | string;
   customEarnings?: Record<string, number>;
   customDeductions?: Record<string, number>;
   hasQuarter?: boolean;
@@ -66,6 +71,7 @@ export type PayrollMasterPreview = {
   totalEarnings: number;
   totalDeductions: number;
   takeHome: number;
+  cpfBasisAmount: number;
   cpfEffective: number;
 };
 
@@ -122,13 +128,20 @@ export function computePayrollMasterPreview(input: PayrollMasterPreviewInput): P
     hraAmount = roundRupees(num(input.hraAmount, hraAmount));
   }
   if (input.transportBase !== undefined && input.transportBase !== "") {
-    transportBase = roundRupees(num(input.transportBase, transportBase));
+    const override = roundRupees(num(input.transportBase, transportBase));
+    if (override > 0) transportBase = override;
   }
   if (input.transportDa !== undefined && input.transportDa !== "") {
-    transportDa = roundRupees(num(input.transportDa, transportDa));
+    const override = roundRupees(num(input.transportDa, transportDa));
+    if (override > 0) transportDa = override;
   }
   if (input.transportTotal !== undefined && input.transportTotal !== "") {
-    transportTotal = roundRupees(num(input.transportTotal, transportTotal));
+    const override = roundRupees(num(input.transportTotal, transportTotal));
+    if (override > 0) {
+      transportTotal = override;
+    } else {
+      transportTotal = roundRupees(transportBase + transportDa);
+    }
   } else {
     transportTotal = roundRupees(transportBase + transportDa);
   }
@@ -149,8 +162,12 @@ export function computePayrollMasterPreview(input: PayrollMasterPreviewInput): P
     cpfUseCompanySettings: input.cpfUseCompanySettings,
     cpfPercentageOverride: input.cpfPercentageOverride,
     cpfBasisFieldKeysOverride: input.cpfBasisFieldKeysOverride,
+    cpfCalculationModeOverride: input.cpfCalculationModeOverride,
+    cpfFixedAmountOverride: input.cpfFixedAmountOverride,
     companyCpfPercentage: input.companyCpfPercentage,
     companyCpfBasisFieldKeys: input.companyCpfBasisFieldKeys,
+    companyCpfCalculationMode: input.companyCpfCalculationMode,
+    companyCpfFixedAmount: input.companyCpfFixedAmount,
   });
   const cpfBasisAmount = resolveMasterCpfBasisAmount(
     {
@@ -168,6 +185,9 @@ export function computePayrollMasterPreview(input: PayrollMasterPreviewInput): P
     cpfBasisAmount,
     cpfConfig.cpfPercentage,
     totalEarnings,
+    cpfConfig.cpfCalculationMode ?? "percentage",
+    cpfConfig.cpfFixedAmount ?? 0,
+    { strictBasis: isCpfEmployeeCustomMode(input.cpfUseCompanySettings) },
   );
 
   const daCpf = roundRupees(num(input.daCpf, 0));
@@ -229,6 +249,7 @@ export function computePayrollMasterPreview(input: PayrollMasterPreviewInput): P
     totalEarnings,
     totalDeductions,
     takeHome,
+    cpfBasisAmount,
     cpfEffective,
   };
 }

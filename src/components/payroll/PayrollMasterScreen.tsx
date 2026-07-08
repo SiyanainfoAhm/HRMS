@@ -52,8 +52,12 @@ import {
   DEFAULT_MEDICAL,
 } from "@/lib/payrollMasterCalc";
 import { GOVERNMENT_DEFAULT_CPF_RATE_ON_TOTAL_EARNINGS } from "@/lib/governmentPayroll";
+import { formatNightAllowanceSlabLabel } from "@/lib/nightAllowanceCalculation";
 import {
   DEFAULT_CPF_BASIS_KEYS,
+  isCpfCompanyDefaultMode,
+  isCpfEmployeeCustomMode,
+  normalizeCpfUseCompanySettings,
   resolveEffectiveCpfConfigForMaster,
 } from "@/lib/payrollCpfCalculation";
 import {
@@ -149,6 +153,7 @@ export type PayrollMasterRecord = {
   quarterType?: string | null;
   quarterRent?: number | null;
   hraEligible?: boolean;
+  nightAllowanceSlabNo?: number | null;
   cpfUseCompanySettings?: boolean;
   cpfPercentageOverride?: number | null;
   cpfBasisFieldKeysOverride?: string[];
@@ -222,9 +227,12 @@ type MasterFormState = {
   cpfUseCompanySettings: boolean;
   cpfPercentageOverride: string;
   cpfBasisFieldKeys: string[];
+  cpfCalculationMode: "percentage" | "fixed_amount";
+  cpfFixedAmount: string;
   hasQuarter: boolean;
   quarterId: string;
   quarterRent: string;
+  nightAllowanceSlabNo: string;
 };
 
 type ImportError = { row: number; field: string; message: string };
@@ -400,9 +408,12 @@ const emptyForm = (defaultDa = DEFAULT_DA_PERCENT, defaultHra = DEFAULT_HRA_PERC
     cpfUseCompanySettings: true,
     cpfPercentageOverride: "",
     cpfBasisFieldKeys: [] as string[],
+    cpfCalculationMode: "percentage" as const,
+    cpfFixedAmount: "0",
     hasQuarter: false,
     quarterId: "",
     quarterRent: "0",
+    nightAllowanceSlabNo: "",
   };
 
   return {
@@ -464,7 +475,10 @@ function formFromRecord(r: PayrollMasterRecord): MasterFormState {
     password: "",
     confirmPassword: "",
     customFieldValues: { ...(r.customFieldValues ?? {}) },
-    cpfUseCompanySettings: r.cpfSettings?.cpfUseCompanySettings ?? (r as { cpfUseCompanySettings?: boolean }).cpfUseCompanySettings ?? true,
+    cpfUseCompanySettings: normalizeCpfUseCompanySettings(
+      r.cpfSettings?.cpfUseCompanySettings ?? (r as { cpfUseCompanySettings?: boolean }).cpfUseCompanySettings,
+      true,
+    ),
     cpfPercentageOverride: String(
       r.cpfSettings?.cpfPercentageOverride ??
         (r as { cpfPercentageOverride?: number | null }).cpfPercentageOverride ??
@@ -472,8 +486,10 @@ function formFromRecord(r: PayrollMasterRecord): MasterFormState {
         "",
     ),
     cpfBasisFieldKeys: (() => {
-      const useCompany =
-        r.cpfSettings?.cpfUseCompanySettings ?? (r as { cpfUseCompanySettings?: boolean }).cpfUseCompanySettings ?? true;
+      const useCompany = normalizeCpfUseCompanySettings(
+        r.cpfSettings?.cpfUseCompanySettings ?? (r as { cpfUseCompanySettings?: boolean }).cpfUseCompanySettings,
+        true,
+      );
       const override =
         r.cpfSettings?.cpfBasisFieldKeysOverride ??
         (r as { cpfBasisFieldKeysOverride?: string[] }).cpfBasisFieldKeysOverride ??
@@ -484,9 +500,29 @@ function formFromRecord(r: PayrollMasterRecord): MasterFormState {
       }
       return override;
     })(),
+    cpfCalculationMode: ((): "percentage" | "fixed_amount" => {
+      const useCompany = normalizeCpfUseCompanySettings(
+        r.cpfSettings?.cpfUseCompanySettings ?? (r as { cpfUseCompanySettings?: boolean }).cpfUseCompanySettings,
+        true,
+      );
+      if (useCompany) {
+        const m = (r.cpfSettings?.companySettings as { cpfCalculationMode?: string } | undefined)?.cpfCalculationMode;
+        return m === "fixed_amount" ? "fixed_amount" : "percentage";
+      }
+      const m =
+        (r as { cpfCalculationMode?: string }).cpfCalculationMode ??
+        (r.cpfSettings?.effectiveSettings as { cpfCalculationMode?: string } | undefined)?.cpfCalculationMode;
+      return m === "fixed_amount" ? "fixed_amount" : "percentage";
+    })(),
+    cpfFixedAmount: String(
+      (r as { cpfFixedAmount?: number | null }).cpfFixedAmount ??
+        (r.cpfSettings?.effectiveSettings as { cpfFixedAmount?: number } | undefined)?.cpfFixedAmount ??
+        0,
+    ),
     hasQuarter: Boolean(r.hasQuarter),
     quarterId: r.quarterId ?? "",
     quarterRent: String(r.quarterRent ?? 0),
+    nightAllowanceSlabNo: r.nightAllowanceSlabNo ? String(r.nightAllowanceSlabNo) : "",
   };
   const defaults = previewEarningDefaults(base);
 
@@ -555,14 +591,21 @@ function formToPayload(form: MasterFormState) {
     reasonForChange: form.reasonForChange.trim() || undefined,
     role: form.userRole,
     customFieldValues: form.customFieldValues,
-    cpfUseCompanySettings: form.cpfUseCompanySettings,
-    cpfPercentageOverride: form.cpfUseCompanySettings
+    cpfUseCompanySettings: isCpfCompanyDefaultMode(form.cpfUseCompanySettings),
+    cpfPercentageOverride: isCpfCompanyDefaultMode(form.cpfUseCompanySettings)
       ? null
       : parseFloat(form.cpfPercentageOverride) || 0,
-    cpfBasisFieldKeysOverride: form.cpfUseCompanySettings ? [] : form.cpfBasisFieldKeys,
+    cpfBasisFieldKeysOverride: isCpfEmployeeCustomMode(form.cpfUseCompanySettings) ? form.cpfBasisFieldKeys : [],
+    cpfCalculationMode: isCpfEmployeeCustomMode(form.cpfUseCompanySettings) ? form.cpfCalculationMode : undefined,
+    cpfFixedAmount: isCpfCompanyDefaultMode(form.cpfUseCompanySettings)
+      ? undefined
+      : form.cpfCalculationMode === "fixed_amount"
+        ? parseFloat(form.cpfFixedAmount) || 0
+        : undefined,
     hasQuarter: form.hasQuarter,
     quarterId: form.hasQuarter ? form.quarterId || null : null,
     quarterRent: form.hasQuarter ? parseFloat(form.quarterRent) || 0 : 0,
+    nightAllowanceSlabNo: form.nightAllowanceSlabNo ? parseInt(form.nightAllowanceSlabNo, 10) : null,
     ...(form.password.trim() ? { password: form.password } : {}),
   };
 }
@@ -685,6 +728,8 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     cpfPercentage?: number;
     cpfBasisFieldKeys?: string[];
     cpfFormulaPreview?: string;
+    cpfCalculationMode?: "percentage" | "fixed_amount";
+    cpfFixedAmount?: number;
   }>({});
 
   const [importOpen, setImportOpen] = useState(false);
@@ -722,6 +767,9 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
   const [companyDefaultHra, setCompanyDefaultHra] = useState(DEFAULT_HRA_PERCENT);
   const [quarterOptions, setQuarterOptions] = useState<
     Array<{ id: string; quarterName: string; quarterType: string; monthlyRent: number }>
+  >([]);
+  const [nightAllowanceSlabOptions, setNightAllowanceSlabOptions] = useState<
+    Array<{ slabNo: number; payLevel: number; ratePerHour: number; label: string }>
   >([]);
   const [divisions, setDivisions] = useState<OrgDivision[]>([]);
   const [departments, setDepartments] = useState<OrgDepartment[]>([]);
@@ -948,6 +996,34 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     };
   }, [formOpen, canManage, form.quarterId]);
 
+  useEffect(() => {
+    if (!formOpen || !canManage) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/settings/night-allowance-rates?activeOnly=true");
+        const data = await res.json();
+        if (!cancelled && res.ok) {
+          setNightAllowanceSlabOptions(
+            ((data.rates ?? []) as Array<{ slabNo: number; payLevel: number; ratePerHour: number; label?: string }>).map(
+              (r) => ({
+                slabNo: r.slabNo,
+                payLevel: r.payLevel,
+                ratePerHour: r.ratePerHour,
+                label: r.label ?? formatNightAllowanceSlabLabel(r.slabNo, r.payLevel, r.ratePerHour),
+              }),
+            ),
+          );
+        }
+      } catch {
+        /* optional */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [formOpen, canManage]);
+
   function patchCustomField(key: string, value: string) {
     setForm((f) => {
       const next = {
@@ -976,6 +1052,8 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
             cpfPercentage: cs.cpfPercentage ?? 12,
             cpfBasisFieldKeys: cs.cpfBasisFieldKeys ?? DEFAULT_CPF_BASIS_KEYS,
             cpfFormulaPreview: cs.cpfFormulaPreview,
+            cpfCalculationMode: cs.cpfCalculationMode === "fixed_amount" ? "fixed_amount" : "percentage",
+            cpfFixedAmount: cs.cpfFixedAmount ?? 0,
           });
         }
       } catch {
@@ -1312,9 +1390,20 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
         advance: form.advance,
         cpfUseCompanySettings: form.cpfUseCompanySettings,
         cpfPercentageOverride: form.cpfPercentageOverride,
-        cpfBasisFieldKeysOverride: form.cpfBasisFieldKeys,
+        cpfBasisFieldKeysOverride: isCpfEmployeeCustomMode(form.cpfUseCompanySettings)
+          ? form.cpfBasisFieldKeys
+          : undefined,
+        cpfCalculationModeOverride: isCpfEmployeeCustomMode(form.cpfUseCompanySettings)
+          ? form.cpfCalculationMode
+          : undefined,
+        cpfFixedAmountOverride:
+          isCpfCompanyDefaultMode(form.cpfUseCompanySettings) || form.cpfCalculationMode !== "fixed_amount"
+            ? undefined
+            : form.cpfFixedAmount,
         companyCpfPercentage: companyCpfSettings.cpfPercentage,
         companyCpfBasisFieldKeys: companyCpfSettings.cpfBasisFieldKeys,
+        companyCpfCalculationMode: companyCpfSettings.cpfCalculationMode,
+        companyCpfFixedAmount: companyCpfSettings.cpfFixedAmount,
         customEarnings: customNumericBagForTotalFromValues(form.customFieldValues, payrollFieldDefs, "earnings"),
         customDeductions: customNumericBagForTotalFromValues(form.customFieldValues, payrollFieldDefs, "deductions"),
         payrollFieldDefs,
@@ -1322,7 +1411,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
         quarterId: form.hasQuarter ? form.quarterId : null,
         quarterRent: form.hasQuarter ? parseFloat(form.quarterRent) || 0 : 0,
       }),
-    [form, companyCpfSettings, payrollFieldDefs],
+    [form, companyCpfSettings, payrollFieldDefs, form.cpfBasisFieldKeys, form.cpfUseCompanySettings, form.cpfPercentageOverride, form.cpfCalculationMode, form.cpfFixedAmount],
   );
 
   const masterGridCustomColumns = useMemo(
@@ -1340,10 +1429,14 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
         cpfUseCompanySettings: form.cpfUseCompanySettings,
         cpfPercentageOverride: form.cpfPercentageOverride,
         cpfBasisFieldKeysOverride: form.cpfBasisFieldKeys,
+        cpfCalculationModeOverride: form.cpfCalculationMode,
+        cpfFixedAmountOverride: form.cpfFixedAmount,
         companyCpfPercentage: companyCpfSettings.cpfPercentage,
         companyCpfBasisFieldKeys: companyCpfSettings.cpfBasisFieldKeys,
+        companyCpfCalculationMode: companyCpfSettings.cpfCalculationMode,
+        companyCpfFixedAmount: companyCpfSettings.cpfFixedAmount,
       }),
-    [form.cpfUseCompanySettings, form.cpfPercentageOverride, form.cpfBasisFieldKeys, companyCpfSettings],
+    [form.cpfUseCompanySettings, form.cpfPercentageOverride, form.cpfBasisFieldKeys, form.cpfCalculationMode, form.cpfFixedAmount, companyCpfSettings],
   );
 
   function openAdd() {
@@ -1414,6 +1507,11 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
           cpfPercentage: companyCs.cpfPercentage ?? 12,
           cpfBasisFieldKeys: companyCs.cpfBasisFieldKeys ?? DEFAULT_CPF_BASIS_KEYS,
           cpfFormulaPreview: companyCs.cpfFormulaPreview,
+          cpfCalculationMode:
+            (companyCs as { cpfCalculationMode?: string }).cpfCalculationMode === "fixed_amount"
+              ? "fixed_amount"
+              : "percentage",
+          cpfFixedAmount: (companyCs as { cpfFixedAmount?: number }).cpfFixedAmount ?? 0,
         });
       }
       if (historyRes.ok) {
@@ -1451,6 +1549,33 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
       transportTotal: String(derived.transportTotal),
       totalEarnings: String(derived.totalEarnings),
     };
+  }
+
+  function toggleCpfBasisKey(key: string) {
+    setForm((f) => {
+      const seedKeys =
+        f.cpfBasisFieldKeys.length > 0
+          ? f.cpfBasisFieldKeys
+          : companyCpfSettings.cpfBasisFieldKeys ?? DEFAULT_CPF_BASIS_KEYS;
+      const nextKeys = seedKeys.includes(key)
+        ? seedKeys.filter((k) => k !== key)
+        : [...seedKeys, key];
+      return {
+        ...f,
+        cpfUseCompanySettings: false,
+        cpfBasisFieldKeys: nextKeys,
+        cpfPercentageOverride:
+          f.cpfPercentageOverride || String(companyCpfSettings.cpfPercentage ?? 12),
+      };
+    });
+  }
+
+  function patchCpfCustom(patch: Partial<MasterFormState>) {
+    setForm((f) => ({
+      ...f,
+      ...patch,
+      cpfUseCompanySettings: false,
+    }));
   }
 
   function patchForm(patch: Partial<MasterFormState>) {
@@ -2163,6 +2288,21 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                           onBlur={() => touchField("payLevel")}
                         />
                       </FormField>
+                      <FormField label="Night Allowance Slab">
+                        <SelectField
+                          value={form.nightAllowanceSlabNo}
+                          onChange={(v) => patchForm({ nightAllowanceSlabNo: v })}
+                          options={[
+                            { value: "", label: "Auto (first matching pay level)" },
+                            ...nightAllowanceSlabOptions
+                              .filter((s) => !form.payLevel || String(s.payLevel) === form.payLevel)
+                              .map((s) => ({ value: String(s.slabNo), label: s.label })),
+                          ]}
+                        />
+                        <p className="mt-1 text-xs text-slate-500">
+                          Select slab for hourly night allowance rate used in Run Payroll.
+                        </p>
+                      </FormField>
                       <FormField label="Gross Basic Pay" required error={showError("grossBasicPay")}>
                         <Input
                           id={fieldDomId("grossBasicPay")}
@@ -2388,7 +2528,13 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                   </div>
                   <h4 className="mb-3 mt-5 text-sm font-semibold text-slate-800">Default deductions</h4>
                   <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                    <FormField label={`PF (CPF) — ${effectiveCpfConfig.cpfPercentage}%`}>
+                    <FormField
+                      label={
+                        effectiveCpfConfig.cpfCalculationMode === "fixed_amount"
+                          ? "PF (CPF) — fixed amount"
+                          : `PF (CPF) — ${effectiveCpfConfig.cpfPercentage}%`
+                      }
+                    >
                       <Input readOnly value={fmt(preview.cpfEffective)} />
                     </FormField>
                     {DEFAULT_DEDUCTION_FIELDS.map(([key, label]) => (
@@ -2417,35 +2563,45 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                         (f) => f.fieldGroup === "earnings" && f.isActive,
                       )}
                       cpfPercentage={
-                        form.cpfUseCompanySettings
+                        isCpfCompanyDefaultMode(form.cpfUseCompanySettings)
                           ? String(companyCpfSettings.cpfPercentage ?? 12)
                           : form.cpfPercentageOverride || String(companyCpfSettings.cpfPercentage ?? 12)
                       }
                       cpfBasisKeys={
-                        form.cpfUseCompanySettings
+                        isCpfCompanyDefaultMode(form.cpfUseCompanySettings)
                           ? companyCpfSettings.cpfBasisFieldKeys ?? DEFAULT_CPF_BASIS_KEYS
                           : form.cpfBasisFieldKeys
                       }
-                      onCpfPercentageChange={(v) => patchForm({ cpfPercentageOverride: v })}
-                      onToggleBasisKey={(key) =>
-                        patchForm({
-                          cpfBasisFieldKeys: form.cpfBasisFieldKeys.includes(key)
-                            ? form.cpfBasisFieldKeys.filter((k) => k !== key)
-                            : [...form.cpfBasisFieldKeys, key],
-                        })
+                      cpfCalculationMode={
+                        isCpfCompanyDefaultMode(form.cpfUseCompanySettings)
+                          ? companyCpfSettings.cpfCalculationMode ?? "percentage"
+                          : form.cpfCalculationMode
                       }
-                      useCompanyDefault={form.cpfUseCompanySettings}
+                      cpfFixedAmount={
+                        isCpfCompanyDefaultMode(form.cpfUseCompanySettings)
+                          ? String(companyCpfSettings.cpfFixedAmount ?? 0)
+                          : form.cpfFixedAmount
+                      }
+                      onCpfPercentageChange={(v) => patchCpfCustom({ cpfPercentageOverride: v })}
+                      onCpfCalculationModeChange={(mode) => patchCpfCustom({ cpfCalculationMode: mode })}
+                      onCpfFixedAmountChange={(v) => patchCpfCustom({ cpfFixedAmount: v })}
+                      onToggleBasisKey={toggleCpfBasisKey}
+                      cpfAmountPreview={preview.cpfEffective}
+                      cpfBasisAmountPreview={preview.cpfBasisAmount}
+                      useCompanyDefault={isCpfCompanyDefaultMode(form.cpfUseCompanySettings)}
                       onUseCompanyDefaultChange={(v) => {
-                        if (!v && form.cpfBasisFieldKeys.length === 0) {
-                          patchForm({
-                            cpfUseCompanySettings: v,
-                            cpfBasisFieldKeys: companyCpfSettings.cpfBasisFieldKeys ?? DEFAULT_CPF_BASIS_KEYS,
-                            cpfPercentageOverride:
-                              form.cpfPercentageOverride || String(companyCpfSettings.cpfPercentage ?? 12),
-                          });
+                        if (v) {
+                          patchForm({ cpfUseCompanySettings: true });
                           return;
                         }
-                        patchForm({ cpfUseCompanySettings: v });
+                        patchCpfCustom({
+                          cpfBasisFieldKeys:
+                            form.cpfBasisFieldKeys.length > 0
+                              ? form.cpfBasisFieldKeys
+                              : companyCpfSettings.cpfBasisFieldKeys ?? DEFAULT_CPF_BASIS_KEYS,
+                          cpfPercentageOverride:
+                            form.cpfPercentageOverride || String(companyCpfSettings.cpfPercentage ?? 12),
+                        });
                       }}
                       companyPreview={
                         companyCpfSettings.cpfFormulaPreview ??

@@ -3,11 +3,18 @@ import {
   DEFAULT_CPF_BASIS_KEYS,
   DEFAULT_CPF_PERCENTAGE,
   type CpfCalculationConfig,
+  type CpfCalculationMode,
   runPayrollBasisAmountsFromComputed,
 } from "./payrollCpfCalculation";
 import type { PayrollConfig } from "./payrollFieldTypes";
 import { sumCustomBagForTotal } from "./payrollFieldTypes";
-import { computeHplEolEarningsReduction, applyHplEolToPaidAmounts } from "./hplEolDeductions";
+import {
+  computeEolHplDeductions,
+  applyProportionalEarningsCut,
+  isSamePayrollReferencePeriod,
+  type EolHplReferenceSalary,
+} from "./hplEolDeductions";
+import { DEFAULT_NIGHT_ALLOWANCE_BASIC_CEILING, resolveNightAllowanceAmount } from "./nightAllowanceCalculation";
 
 export type TransportSlab = { transportSlabGroup: string; transportBase: number };
 
@@ -105,6 +112,8 @@ export function governmentMonthlyExtras(
       ? {
           cpfPercentage: cs.cpfPercentage ?? DEFAULT_CPF_PERCENTAGE,
           cpfBasisFieldKeys: cs.cpfBasisFieldKeys ?? DEFAULT_CPF_BASIS_KEYS,
+          cpfCalculationMode: cs.cpfCalculationMode ?? "percentage",
+          cpfFixedAmount: cs.cpfFixedAmount ?? 0,
         }
       : undefined,
     customEarnings: gr.customEarnings ?? {},
@@ -124,10 +133,34 @@ export type GovernmentMonthlyInput = {
   payLevel: number;
   daysInMonth: number;
   unpaidDays: number;
-  /** Half-pay leave days this month (2 HPL days = 1 day salary effect on Basic + DA). */
+  /** Half-pay leave days — deducted using reference month salary basis. */
   hplDays?: number;
-  /** Extra ordinary leave days this month (1 day effect on Basic, DA, HRA, Transport). */
+  /** Extra ordinary leave days — deducted using reference month salary basis. */
   eolDays?: number;
+  eolReferenceMonth?: number;
+  eolReferenceYear?: number;
+  hplReferenceMonth?: number;
+  hplReferenceYear?: number;
+  eolReferenceSalary?: EolHplReferenceSalary;
+  hplReferenceSalary?: EolHplReferenceSalary;
+  eolReferenceDaysInMonth?: number;
+  hplReferenceDaysInMonth?: number;
+  eolReferenceWarning?: string;
+  hplReferenceWarning?: string;
+  eolDeductionManualOverride?: boolean;
+  hplDeductionManualOverride?: boolean;
+  electricityUnitsConsumed?: number;
+  electricityUnitRate?: number;
+  electricityManualOverride?: boolean;
+  nightHours?: number;
+  nightAllowanceRate?: number;
+  nightAllowanceBasicCeiling?: number;
+  nightAllowanceManualOverride?: boolean;
+  nightAllowanceSlabNo?: number | null;
+  nightAllowanceWarning?: string;
+  quarterRentManualOverride?: boolean;
+  runMonth?: number;
+  runYear?: number;
   deductionDefaults: GovernmentDeductionDefaults;
   /** Manual / variable earning heads (actual = paid) */
   optionalEarnings?: GovernmentOptionalMonthlyEarnings;
@@ -204,6 +237,24 @@ export type GovernmentMonthlyComputed = {
   netSalary: number;
   hplDays?: number;
   eolDays?: number;
+  eolReferenceMonth?: number;
+  eolReferenceYear?: number;
+  hplReferenceMonth?: number;
+  hplReferenceYear?: number;
+  eolBasisAmount?: number;
+  hplBasisAmount?: number;
+  eolReferenceWarning?: string;
+  hplReferenceWarning?: string;
+  electricityUnitsConsumed?: number;
+  electricityUnitRate?: number;
+  nightHours?: number;
+  nightAllowanceRate?: number;
+  nightAllowanceAmount?: number;
+  nightAllowanceBasicCeiling?: number;
+  nightAllowanceEligible?: boolean;
+  nightAllowanceSlabNo?: number | null;
+  nightAllowanceManualOverride?: boolean;
+  nightAllowanceWarning?: string;
 };
 
 export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): GovernmentMonthlyComputed {
@@ -235,7 +286,6 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
   const opt = input.optionalEarnings ?? {};
   const sp = Number(opt.spPay) || 0;
   const ewa = Number(opt.extraWorkAllowance) || 0;
-  const na = Number(opt.nightAllowance) || 0;
   const ua = Number(opt.uniformAllowance) || 0;
   const eda = Number(opt.educationAllowance) || 0;
   const daa = Number(opt.daArrears) || 0;
@@ -250,33 +300,14 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
     return computed;
   };
 
-  const basicPaidF0 = pickPaid(basicPaid, "basicPaid");
-  const daPaidF0 = pickPaid(daPaid, "daPaid");
-  const hraPaidF0 = pickPaid(hraPaid, "hraPaid");
+  const basicPaidF = pickPaid(basicPaid, "basicPaid");
+  const daPaidF = pickPaid(daPaid, "daPaid");
+  const hraPaidF = pickPaid(hraPaid, "hraPaid");
   const medicalPaidF = pickPaid(medicalPaid, "medicalPaid");
-  const transportPaidF0 = pickPaid(transportPaid, "transportPaid");
-
-  const leaveReduce = computeHplEolEarningsReduction({
-    hplDays: input.hplDays,
-    eolDays: input.eolDays,
-    basicActual,
-    daActual,
-    hraActual,
-    transportActual,
-    daysInMonth: dim,
-  });
-  const leavePaid = applyHplEolToPaidAmounts(
-    { basic: basicPaidF0, da: daPaidF0, hra: hraPaidF0, transport: transportPaidF0 },
-    leaveReduce,
-  );
-  const basicPaidF = leavePaid.basic;
-  const daPaidF = leavePaid.da;
-  const hraPaidF = leavePaid.hra;
-  const transportPaidF = leavePaid.transport;
+  const transportPaidF = pickPaid(transportPaid, "transportPaid");
 
   const spF = pickPaid(sp, "spPayPaid");
   const ewaF = pickPaid(ewa, "extraWorkAllowancePaid");
-  const naF = pickPaid(na, "nightAllowancePaid");
   const uaF = pickPaid(ua, "uniformAllowancePaid");
   const edaF = pickPaid(eda, "educationAllowancePaid");
   const daaF = pickPaid(daa, "daArrearsPaid");
@@ -291,12 +322,101 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
 
   const d = input.deductionDefaults;
 
+  const runMonth = input.runMonth ?? new Date().getMonth() + 1;
+  const runYear = input.runYear ?? new Date().getFullYear();
+  const eolRefMonth = input.eolReferenceMonth ?? runMonth;
+  const eolRefYear = input.eolReferenceYear ?? runYear;
+  const hplRefMonth = input.hplReferenceMonth ?? runMonth;
+  const hplRefYear = input.hplReferenceYear ?? runYear;
+  const eolIsCurrent = isSamePayrollReferencePeriod(eolRefMonth, eolRefYear, runMonth, runYear);
+  const hplIsCurrent = isSamePayrollReferencePeriod(hplRefMonth, hplRefYear, runMonth, runYear);
+
+  const fullMonthRef: EolHplReferenceSalary = {
+    basic: basicActual,
+    da: daActual,
+    hra: hraActual,
+    medical: medicalActual,
+  };
+  const eolRefSalary: EolHplReferenceSalary = eolIsCurrent
+    ? fullMonthRef
+    : (input.eolReferenceSalary ?? fullMonthRef);
+  const hplRefSalary: EolHplReferenceSalary = hplIsCurrent
+    ? fullMonthRef
+    : (input.hplReferenceSalary ?? eolRefSalary);
+
+  const eolLeave = computeEolHplDeductions({
+    referenceSalary: eolRefSalary,
+    daysInReferenceMonth: eolIsCurrent ? dim : (input.eolReferenceDaysInMonth ?? dim),
+    eolDays: input.eolDays,
+    hplDays: 0,
+  });
+  const hplLeave = computeEolHplDeductions({
+    referenceSalary: hplRefSalary,
+    daysInReferenceMonth: hplIsCurrent ? dim : (input.hplReferenceDaysInMonth ?? dim),
+    eolDays: 0,
+    hplDays: input.hplDays,
+  });
+
+  let eolDeduction = input.eolDeductionManualOverride
+    ? roundRupees(d.eol)
+    : eolLeave.eolDeduction;
+  let hplDeduction = input.hplDeductionManualOverride
+    ? roundRupees(d.hpl)
+    : hplLeave.hplDeduction;
+
+  let basicOut = basicPaidF;
+  let daOut = daPaidF;
+  let hraOut = hraPaidF;
+  let medicalOut = medicalPaidF;
+
+  // Current-month leave reduces paid earnings (Basic/DA/HRA/Medical). Prior-month leave is a deduction only.
+  if (eolIsCurrent && eolLeave.eolDays > 0 && !input.eolDeductionManualOverride) {
+    const cut = applyProportionalEarningsCut(
+      { basic: basicOut, da: daOut, hra: hraOut, medical: medicalOut },
+      eolDeduction,
+    );
+    basicOut = cut.basic;
+    daOut = cut.da;
+    hraOut = cut.hra;
+    medicalOut = cut.medical;
+    eolDeduction = 0;
+  }
+  if (hplIsCurrent && hplLeave.hplDays > 0 && !input.hplDeductionManualOverride) {
+    const cut = applyProportionalEarningsCut(
+      { basic: basicOut, da: daOut, hra: hraOut, medical: medicalOut },
+      hplDeduction,
+    );
+    basicOut = cut.basic;
+    daOut = cut.da;
+    hraOut = cut.hra;
+    medicalOut = cut.medical;
+    hplDeduction = 0;
+  }
+
+  const nightRate = Math.max(0, Number(input.nightAllowanceRate) || 0);
+  const nightHours = Math.max(0, Number(input.nightHours) || 0);
+  const nightCeiling = Math.max(
+    0,
+    Number(input.nightAllowanceBasicCeiling) || DEFAULT_NIGHT_ALLOWANCE_BASIC_CEILING,
+  );
+  const basicForCeiling = basicPaidF > 0 ? basicPaidF : basicActual;
+  const nightResolved = resolveNightAllowanceAmount({
+    hours: nightHours,
+    ratePerHour: nightRate,
+    basicPay: basicForCeiling,
+    ceiling: nightCeiling,
+    manualOverride: input.nightAllowanceManualOverride,
+    manualAmount: eo.nightAllowancePaid,
+    slabWarning: input.nightAllowanceWarning,
+  });
+  const naF = nightResolved.amount;
+
   // Sum order matches government payslip line sequence (Basic → DA → HRA → Medical → TA → SP Pay → others).
   const totalEarnings =
-    basicPaidF +
-    daPaidF +
-    hraPaidF +
-    medicalPaidF +
+    basicOut +
+    daOut +
+    hraOut +
+    medicalOut +
     transportPaidF +
     spF +
     ewaF +
@@ -310,10 +430,10 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
     customEarningsTotal;
 
   const basisAmounts = runPayrollBasisAmountsFromComputed({
-    basicPaid: basicPaidF,
-    daPaid: daPaidF,
-    hraPaid: hraPaidF,
-    medicalPaid: medicalPaidF,
+    basicPaid: basicOut,
+    daPaid: daOut,
+    hraPaid: hraOut,
+    medicalPaid: medicalOut,
     transportPaid: transportPaidF,
     spPayPaid: spF,
     extraWorkAllowancePaid: ewaF,
@@ -326,36 +446,56 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
 
   const cpfPct = input.cpfConfig?.cpfPercentage ?? DEFAULT_CPF_PERCENTAGE;
   const cpfBasis = input.cpfConfig?.cpfBasisFieldKeys ?? DEFAULT_CPF_BASIS_KEYS;
-  let cpfFromMaster = roundRupees(d.cpf);
-  if (cpfFromMaster <= 0) {
-    const basisSum = cpfBasis.reduce((s, k) => {
-      if (customEarnings[k] != null) return s + (Number(customEarnings[k]) || 0);
-      return s + (basisAmounts[k] ?? 0);
-    }, 0);
-    cpfFromMaster = calculateCpfFromBasis(0, basisSum, cpfPct, totalEarnings);
+  const cpfMode: CpfCalculationMode =
+    input.cpfConfig?.cpfCalculationMode === "fixed_amount" ? "fixed_amount" : "percentage";
+  const cpfFixed = Math.round(Number(input.cpfConfig?.cpfFixedAmount) || 0);
+  let cpfAmount = roundRupees(d.cpf);
+  if (cpfAmount <= 0) {
+    if (cpfMode === "fixed_amount" && cpfFixed > 0) {
+      cpfAmount = cpfFixed;
+    } else {
+      const basisSum = cpfBasis.reduce((s, k) => {
+        if (customEarnings[k] != null) return s + (Number(customEarnings[k]) || 0);
+        return s + (basisAmounts[k] ?? 0);
+      }, 0);
+      cpfAmount = calculateCpfFromBasis(0, basisSum, cpfPct, totalEarnings, cpfMode, cpfFixed);
+    }
   }
+
+  const unitRate = Math.max(0, Number(input.electricityUnitRate) || 0);
+  const units = Math.max(0, Number(input.electricityUnitsConsumed) || 0);
+  const electricityCalc = roundRupees(units * unitRate);
+  const electricityAmount = input.electricityManualOverride
+    ? roundRupees(d.electricity)
+    : units > 0
+      ? electricityCalc
+      : roundRupees(d.electricity);
+
+  const quarterRentAmount = roundRupees(
+    Number(input.quarterRent ?? d.quarterRent ?? 0) || 0,
+  );
 
   const deductions: GovernmentDeductionDefaults = {
     incomeTax: roundRupees(d.incomeTax),
     pt: roundRupees(d.pt),
     lic: roundRupees(d.lic),
-    cpf: cpfFromMaster,
+    cpf: cpfAmount,
     daCpf: roundRupees(d.daCpf),
     vpf: roundRupees(d.vpf),
     pfLoan: roundRupees(d.pfLoan),
     postOffice: roundRupees(d.postOffice),
     creditSociety: roundRupees(d.creditSociety),
     stdLicenceFee: roundRupees(d.stdLicenceFee),
-    electricity: roundRupees(d.electricity),
+    electricity: electricityAmount,
     water: roundRupees(d.water),
     mess: roundRupees(d.mess),
     loanRecovery: roundRupees(d.loanRecovery),
     welfare: roundRupees(d.welfare),
-    hpl: 0,
-    eol: 0,
+    hpl: hplDeduction,
+    eol: eolDeduction,
     vehCharge: roundRupees(d.vehCharge),
     other: roundRupees(d.other),
-    quarterRent: hasQuarter ? roundRupees(Number(input.quarterRent ?? d.quarterRent ?? 0) || 0) : 0,
+    quarterRent: quarterRentAmount,
   };
 
   const totalDeductions =
@@ -388,15 +528,15 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
     transportActual,
     transportPaid: transportPaidF,
     basicActual,
-    basicPaid: basicPaidF,
+    basicPaid: basicOut,
     spPayActual: spF,
     spPayPaid: spF,
     daActual,
-    daPaid: daPaidF,
+    daPaid: daOut,
     hraActual,
-    hraPaid: hraPaidF,
+    hraPaid: hraOut,
     medicalActual,
-    medicalPaid: medicalPaidF,
+    medicalPaid: medicalOut,
     extraWorkAllowanceActual: ewaF,
     extraWorkAllowancePaid: ewaF,
     nightAllowanceActual: naF,
@@ -421,8 +561,26 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
     totalEarnings,
     totalDeductions,
     netSalary,
-    hplDays: leaveReduce.hplDays,
-    eolDays: leaveReduce.eolDays,
+    hplDays: hplLeave.hplDays,
+    eolDays: eolLeave.eolDays,
+    eolReferenceMonth: eolRefMonth,
+    eolReferenceYear: eolRefYear,
+    hplReferenceMonth: hplRefMonth,
+    hplReferenceYear: hplRefYear,
+    eolBasisAmount: eolLeave.eolBasisAmount,
+    hplBasisAmount: hplLeave.hplBasisAmount,
+    eolReferenceWarning: input.eolReferenceWarning,
+    hplReferenceWarning: input.hplReferenceWarning,
+    electricityUnitsConsumed: units,
+    electricityUnitRate: unitRate,
+    nightHours,
+    nightAllowanceRate: nightRate,
+    nightAllowanceAmount: naF,
+    nightAllowanceBasicCeiling: nightResolved.ceiling,
+    nightAllowanceEligible: nightResolved.eligible,
+    nightAllowanceSlabNo: input.nightAllowanceSlabNo ?? null,
+    nightAllowanceManualOverride: Boolean(input.nightAllowanceManualOverride && nightResolved.eligible),
+    nightAllowanceWarning: nightResolved.warning,
   };
 }
 

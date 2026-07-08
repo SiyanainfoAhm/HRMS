@@ -77,6 +77,42 @@ final class PayrollDynamicFieldsTest extends TestCase
         $this->assertSame(8149.0, $calc['cpf_effective']);
     }
 
+    public function test_cpf_custom_basis_excludes_transport_for_rohan_profile(): void
+    {
+        $input = [
+            'pay_level' => 1,
+            'gross_basic_pay' => 25750,
+            'da_percent' => 60,
+            'hra_percent' => 30,
+            'medical' => 3000,
+            'transport_total' => 2160,
+            'cpf_default' => 0,
+        ];
+        $withTransport = $this->calculator->calculateMaster(
+            $input,
+            null,
+            null,
+            [
+                'cpf_percentage' => 12,
+                'cpf_basis_field_keys' => ['gross_basic', 'da', 'hra', 'medical', 'transport'],
+                'cpf_calculation_mode' => 'percentage',
+            ],
+        );
+        $withoutTransport = $this->calculator->calculateMaster(
+            $input,
+            null,
+            null,
+            [
+                'cpf_percentage' => 12,
+                'cpf_basis_field_keys' => ['gross_basic', 'da', 'hra', 'medical'],
+                'cpf_calculation_mode' => 'percentage',
+            ],
+        );
+
+        $this->assertSame(6490.0, $withTransport['cpf_effective']);
+        $this->assertSame(6231.0, $withoutTransport['cpf_effective']);
+    }
+
     public function test_dyn_007_cpf_percentage_change(): void
     {
         $input = [

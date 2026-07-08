@@ -155,8 +155,14 @@ class PayrollFieldController extends Controller
         $data = $request->validate([
             'cpf_percentage' => ['required_without:cpfPercentage', 'numeric', 'min:0'],
             'cpfPercentage' => ['sometimes', 'numeric', 'min:0'],
-            'cpf_basis_field_keys' => ['required_without:cpfBasisFieldKeys', 'array', 'min:1'],
-            'cpfBasisFieldKeys' => ['sometimes', 'array', 'min:1'],
+            'cpf_basis_field_keys' => ['sometimes', 'array'],
+            'cpfBasisFieldKeys' => ['sometimes', 'array'],
+            'cpf_calculation_mode' => ['sometimes', 'in:percentage,fixed_amount'],
+            'cpfCalculationMode' => ['sometimes', 'in:percentage,fixed_amount'],
+            'cpf_fixed_amount' => ['sometimes', 'numeric', 'min:0'],
+            'cpfFixedAmount' => ['sometimes', 'numeric', 'min:0'],
+            'electricity_unit_rate' => ['sometimes', 'numeric', 'min:0'],
+            'electricityUnitRate' => ['sometimes', 'numeric', 'min:0'],
         ]);
 
         $settings = $this->service->saveCalculationSettings($request->user()->company_id, $data);

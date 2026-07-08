@@ -18,12 +18,48 @@ import {
   v,
 } from "./payrollRunPreviewShared";
 
-function leaveDaysFromRow(row: GovernmentRunPreviewRow) {
-  const gr = row.govRecalc as { hplDays?: number; eolDays?: number } | undefined;
-  const gm = row.governmentMonthly as { hplDays?: number; eolDays?: number } | undefined;
+function leaveMetaFromRow(row: GovernmentRunPreviewRow) {
+  const gr = row.govRecalc as {
+    hplDays?: number;
+    eolDays?: number;
+    eolReferenceMonth?: number;
+    eolReferenceYear?: number;
+    hplReferenceMonth?: number;
+    hplReferenceYear?: number;
+    eolReferenceWarning?: string;
+    hplReferenceWarning?: string;
+    electricityUnitsConsumed?: number;
+    nightHours?: number;
+    nightAllowanceRate?: number;
+    nightAllowanceWarning?: string;
+  } | undefined;
+  const gm = row.governmentMonthly as {
+    hplDays?: number;
+    eolDays?: number;
+    eolReferenceMonth?: number;
+    eolReferenceYear?: number;
+    hplReferenceMonth?: number;
+    hplReferenceYear?: number;
+    eolReferenceWarning?: string;
+    hplReferenceWarning?: string;
+    electricityUnitsConsumed?: number;
+    nightHours?: number;
+    nightAllowanceRate?: number;
+    nightAllowanceWarning?: string;
+  } | undefined;
   return {
     hplDays: gr?.hplDays ?? gm?.hplDays ?? 0,
     eolDays: gr?.eolDays ?? gm?.eolDays ?? 0,
+    eolReferenceMonth: gr?.eolReferenceMonth ?? gm?.eolReferenceMonth,
+    eolReferenceYear: gr?.eolReferenceYear ?? gm?.eolReferenceYear,
+    hplReferenceMonth: gr?.hplReferenceMonth ?? gm?.hplReferenceMonth,
+    hplReferenceYear: gr?.hplReferenceYear ?? gm?.hplReferenceYear,
+    eolReferenceWarning: gr?.eolReferenceWarning ?? gm?.eolReferenceWarning,
+    hplReferenceWarning: gr?.hplReferenceWarning ?? gm?.hplReferenceWarning,
+    electricityUnitsConsumed: gr?.electricityUnitsConsumed ?? gm?.electricityUnitsConsumed ?? 0,
+    nightHours: gr?.nightHours ?? gm?.nightHours ?? 0,
+    nightAllowanceRate: gr?.nightAllowanceRate ?? gm?.nightAllowanceRate ?? 0,
+    nightAllowanceWarning: gr?.nightAllowanceWarning ?? gm?.nightAllowanceWarning,
   };
 }
 
@@ -50,6 +86,20 @@ export type GovernmentPreviewMonthly = {
   netSalary: number;
   hplDays?: number;
   eolDays?: number;
+  eolReferenceMonth?: number;
+  eolReferenceYear?: number;
+  hplReferenceMonth?: number;
+  hplReferenceYear?: number;
+  eolBasisAmount?: number;
+  hplBasisAmount?: number;
+  eolReferenceWarning?: string;
+  hplReferenceWarning?: string;
+  electricityUnitsConsumed?: number;
+  electricityUnitRate?: number;
+  nightHours?: number;
+  nightAllowanceRate?: number;
+  nightAllowanceAmount?: number;
+  nightAllowanceWarning?: string;
   deductions: {
     incomeTax: number;
     pt: number;
@@ -119,11 +169,35 @@ export type GovernmentRunPreviewRow = {
     customDeductions?: Record<string, number>;
     hplDays?: number;
     eolDays?: number;
+    eolReferenceMonth?: number;
+    eolReferenceYear?: number;
+    hplReferenceMonth?: number;
+    hplReferenceYear?: number;
+    eolReferenceWarning?: string;
+    hplReferenceWarning?: string;
+    electricityUnitsConsumed?: number;
   };
 };
 
+const MONTH_OPTIONS = [
+  { value: 1, label: "Jan" },
+  { value: 2, label: "Feb" },
+  { value: 3, label: "Mar" },
+  { value: 4, label: "Apr" },
+  { value: 5, label: "May" },
+  { value: 6, label: "Jun" },
+  { value: 7, label: "Jul" },
+  { value: 8, label: "Aug" },
+  { value: 9, label: "Sep" },
+  { value: 10, label: "Oct" },
+  { value: 11, label: "Nov" },
+  { value: 12, label: "Dec" },
+];
+
 type Props = {
   rows: GovernmentRunPreviewRow[];
+  runYear: number;
+  runMonth: number;
   daysInMonth: number;
   effectiveRunDay: number;
   readOnly: boolean;
@@ -255,6 +329,8 @@ function ArrearsUnpaidSection({
 
 function GovernmentEmployeeDetail({
   row,
+  runYear,
+  runMonth,
   daysInMonth,
   effectiveRunDay,
   readOnly,
@@ -263,6 +339,8 @@ function GovernmentEmployeeDetail({
   onUpdate,
 }: {
   row: GovernmentRunPreviewRow;
+  runYear: number;
+  runMonth: number;
   daysInMonth: number;
   effectiveRunDay: number;
   readOnly: boolean;
@@ -272,6 +350,14 @@ function GovernmentEmployeeDetail({
 }) {
   const scrollerRef = useRef<PayrollScrollerHandle>(null);
   const g = row.governmentMonthly;
+  const leave = leaveMetaFromRow(row);
+  const gRecord = g as Record<string, unknown> | null | undefined;
+  const eolRefMonth = leave.eolReferenceMonth ?? runMonth;
+  const eolRefYear = leave.eolReferenceYear ?? runYear;
+  const hplRefMonth = leave.hplReferenceMonth ?? runMonth;
+  const hplRefYear = leave.hplReferenceYear ?? runYear;
+  const eolBasis = Math.round(Number(gRecord?.eolBasisAmount ?? 0) || 0);
+  const hplBasis = Math.round(Number(gRecord?.hplBasisAmount ?? 0) || 0);
   const gb = row.grossMonthly ?? 0;
   const displayName = row.employeeName || row.employeeEmail || "—";
   const totalEarn = v(g, "totalEarnings");
@@ -319,38 +405,168 @@ function GovernmentEmployeeDetail({
               <div>
                 <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">HPL days</p>
                 {readOnly ? (
-                  <p className="text-[13px] tabular-nums text-slate-800">{leaveDaysFromRow(row).hplDays}</p>
+                  <p className="text-[13px] tabular-nums text-slate-800">{leave.hplDays}</p>
                 ) : (
                   <input
                     type="number"
                     min={0}
                     max={daysInMonth}
-                    value={leaveDaysFromRow(row).hplDays}
+                    value={leave.hplDays}
                     onChange={(e) =>
                       onUpdate(row.employeeUserId, "hplDays", parseInt(e.target.value, 10) || 0)
                     }
                     className={payrollDaysInputClass}
-                    title="Half pay leave — 2 days = 1 day effect on Basic + DA"
+                    title="Half pay leave — deduction on Basic + DA + HRA + Medical from reference month"
                   />
                 )}
               </div>
               <div>
                 <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">EOL days</p>
                 {readOnly ? (
-                  <p className="text-[13px] tabular-nums text-slate-800">{leaveDaysFromRow(row).eolDays}</p>
+                  <p className="text-[13px] tabular-nums text-slate-800">{leave.eolDays}</p>
                 ) : (
                   <input
                     type="number"
                     min={0}
                     max={daysInMonth}
-                    value={leaveDaysFromRow(row).eolDays}
+                    value={leave.eolDays}
                     onChange={(e) =>
                       onUpdate(row.employeeUserId, "eolDays", parseInt(e.target.value, 10) || 0)
                     }
                     className={payrollDaysInputClass}
-                    title="EOL — 1 day effect each on Basic, DA, HRA, Transport"
+                    title="EOL — deduction on Basic + DA + HRA + Medical from reference month"
                   />
                 )}
+              </div>
+              <div className="col-span-2 rounded border border-slate-100 bg-slate-50/80 p-2">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-600">EOL reference</p>
+                {readOnly ? (
+                  <p className="mt-1 text-[12px] text-slate-800">
+                    {MONTH_OPTIONS.find((m) => m.value === eolRefMonth)?.label ?? eolRefMonth} {eolRefYear}
+                  </p>
+                ) : (
+                  <div className="mt-1 grid grid-cols-2 gap-2">
+                    <select
+                      className="input-field text-[12px]"
+                      value={eolRefMonth}
+                      onChange={(e) =>
+                        onUpdate(row.employeeUserId, "eolReferenceMonth", parseInt(e.target.value, 10) || 1)
+                      }
+                    >
+                      {MONTH_OPTIONS.map((m) => (
+                        <option key={m.value} value={m.value}>
+                          {m.label}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="number"
+                      min={2000}
+                      max={2100}
+                      className={payrollDaysInputClass}
+                      value={eolRefYear}
+                      onChange={(e) =>
+                        onUpdate(row.employeeUserId, "eolReferenceYear", parseInt(e.target.value, 10) || runYear)
+                      }
+                    />
+                  </div>
+                )}
+                <p className="mt-1 text-[10px] text-slate-500">Basis = Basic + DA + HRA + Medical</p>
+                {eolRefMonth === runMonth && eolRefYear === runYear ? (
+                  <p className="text-[10px] text-sky-700">Current month: reduces Basic/DA/HRA/Medical earnings</p>
+                ) : (
+                  <p className="text-[10px] text-sky-700">Prior month: EOL deduction only</p>
+                )}
+                <p className="text-[11px] tabular-nums text-slate-700">₹{fmtIn(eolBasis)} · Ded. ₹{fmtIn(d(g, "eol"))}</p>
+                {leave.eolReferenceWarning ? (
+                  <p className="mt-1 text-[10px] text-amber-700">{leave.eolReferenceWarning}</p>
+                ) : null}
+              </div>
+              <div className="col-span-2 rounded border border-slate-100 bg-slate-50/80 p-2">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-600">HPL reference</p>
+                {readOnly ? (
+                  <p className="mt-1 text-[12px] text-slate-800">
+                    {MONTH_OPTIONS.find((m) => m.value === hplRefMonth)?.label ?? hplRefMonth} {hplRefYear}
+                  </p>
+                ) : (
+                  <div className="mt-1 grid grid-cols-2 gap-2">
+                    <select
+                      className="input-field text-[12px]"
+                      value={hplRefMonth}
+                      onChange={(e) =>
+                        onUpdate(row.employeeUserId, "hplReferenceMonth", parseInt(e.target.value, 10) || 1)
+                      }
+                    >
+                      {MONTH_OPTIONS.map((m) => (
+                        <option key={m.value} value={m.value}>
+                          {m.label}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="number"
+                      min={2000}
+                      max={2100}
+                      className={payrollDaysInputClass}
+                      value={hplRefYear}
+                      onChange={(e) =>
+                        onUpdate(row.employeeUserId, "hplReferenceYear", parseInt(e.target.value, 10) || runYear)
+                      }
+                    />
+                  </div>
+                )}
+                <p className="mt-1 text-[10px] text-slate-500">Basis = Basic + DA + HRA + Medical × 0.5 per day</p>
+                {hplRefMonth === runMonth && hplRefYear === runYear ? (
+                  <p className="text-[10px] text-sky-700">Current month: reduces Basic/DA/HRA/Medical earnings</p>
+                ) : (
+                  <p className="text-[10px] text-sky-700">Prior month: HPL deduction only</p>
+                )}
+                <p className="text-[11px] tabular-nums text-slate-700">₹{fmtIn(hplBasis)} · Ded. ₹{fmtIn(d(g, "hpl"))}</p>
+                {leave.hplReferenceWarning ? (
+                  <p className="mt-1 text-[10px] text-amber-700">{leave.hplReferenceWarning}</p>
+                ) : null}
+              </div>
+              <div>
+                <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Elec. units</p>
+                {readOnly ? (
+                  <p className="text-[13px] tabular-nums text-slate-800">{leave.electricityUnitsConsumed}</p>
+                ) : (
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={leave.electricityUnitsConsumed}
+                    onChange={(e) =>
+                      onUpdate(row.employeeUserId, "electricityUnitsConsumed", parseFloat(e.target.value) || 0)
+                    }
+                    className={payrollDaysInputClass}
+                    title="Electricity units consumed — deduction = units × institute unit rate"
+                  />
+                )}
+              </div>
+              <div>
+                <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Night hrs</p>
+                {readOnly ? (
+                  <p className="text-[13px] tabular-nums text-slate-800">{leave.nightHours}</p>
+                ) : (
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={leave.nightHours}
+                    onChange={(e) =>
+                      onUpdate(row.employeeUserId, "nightHours", parseFloat(e.target.value) || 0)
+                    }
+                    className={payrollDaysInputClass}
+                    title="Night duty hours — allowance = hours × night allowance rate"
+                  />
+                )}
+                <p className="mt-0.5 text-[10px] tabular-nums text-slate-500">
+                  Rate ₹{(leave.nightAllowanceRate ?? 0).toFixed(2)}/hr
+                </p>
+                {leave.nightAllowanceWarning ? (
+                  <p className="mt-0.5 text-[10px] text-amber-700">{leave.nightAllowanceWarning}</p>
+                ) : null}
               </div>
               <div>
                 <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Advance</p>
@@ -493,6 +709,8 @@ function GovernmentEmployeeDetail({
 
 export function GovernmentRunPreviewTable({
   rows,
+  runYear,
+  runMonth,
   daysInMonth,
   effectiveRunDay,
   readOnly,
@@ -559,6 +777,8 @@ export function GovernmentRunPreviewTable({
             <GovernmentEmployeeDetail
               key={selected.employeeUserId}
               row={selected}
+              runYear={runYear}
+              runMonth={runMonth}
               daysInMonth={daysInMonth}
               effectiveRunDay={effectiveRunDay}
               readOnly={readOnly}

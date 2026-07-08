@@ -83,9 +83,9 @@ final class PayrollCalculationService
         } else {
             $hraAmount = $this->optionalAmountOverride($input, ['hra_amount', 'hraAmount', 'hra'], $hraAmount);
         }
-        $transportBase = $this->optionalAmountOverride($input, ['transport_base', 'transportBase'], $transportBase);
-        $transportDa = $this->optionalAmountOverride($input, ['transport_da', 'transportDa'], $transportDa);
-        $transportTotal = $this->optionalAmountOverride(
+        $transportBase = $this->optionalPositiveAmountOverride($input, ['transport_base', 'transportBase'], $transportBase);
+        $transportDa = $this->optionalPositiveAmountOverride($input, ['transport_da', 'transportDa'], $transportDa);
+        $transportTotal = $this->optionalPositiveAmountOverride(
             $input,
             ['transport_total', 'transportTotal', 'trans'],
             $this->roundRupees($transportBase + $transportDa),
@@ -104,6 +104,8 @@ final class PayrollCalculationService
         $cpfDefault = (float) ($input['cpf_default'] ?? $input['cpfDefault'] ?? $deductions['cpf']);
         $cpfPercentage = (float) ($cpfConfig['cpf_percentage'] ?? $cpfConfig['cpfPercentage'] ?? PayrollFieldRegistry::DEFAULT_CPF_PERCENTAGE);
         $cpfBasisKeys = $cpfConfig['cpf_basis_field_keys'] ?? $cpfConfig['cpfBasisFieldKeys'] ?? PayrollFieldRegistry::DEFAULT_CPF_BASIS_KEYS;
+        $cpfMode = (string) ($cpfConfig['cpf_calculation_mode'] ?? $cpfConfig['cpfCalculationMode'] ?? 'percentage');
+        $cpfFixed = (float) ($cpfConfig['cpf_fixed_amount'] ?? $cpfConfig['cpfFixedAmount'] ?? 0);
         $partialCalc = [
             'gross_basic_pay' => $grossBasic,
             'da_amount' => $daAmount,
@@ -111,12 +113,14 @@ final class PayrollCalculationService
             'medical' => $medical,
             'transport_total' => $transportTotal,
         ];
-        $cpfEffective = $cpfDefault > 0
-            ? $this->roundRupees($cpfDefault)
-            : $this->roundRupees(
-                PayrollFieldRegistry::resolveMasterCpfBasisAmount($partialCalc, $cpfBasisKeys, $customEarnings)
-                * ($cpfPercentage / 100),
-            );
+        $cpfBasisAmount = PayrollFieldRegistry::resolveMasterCpfBasisAmount($partialCalc, $cpfBasisKeys, $customEarnings);
+        if ($cpfDefault > 0) {
+            $cpfEffective = $this->roundRupees($cpfDefault);
+        } elseif ($cpfMode === 'fixed_amount' && $cpfFixed > 0) {
+            $cpfEffective = $this->roundRupees($cpfFixed);
+        } else {
+            $cpfEffective = $this->roundRupees($cpfBasisAmount * ($cpfPercentage / 100));
+        }
 
         $daCpf = $this->roundRupees((float) ($input['da_cpf'] ?? $input['da_cpf_default'] ?? $input['daCpf'] ?? $deductions['da_cpf']));
         $professionalTax = $this->roundRupees($deductions['professional_tax']);
@@ -269,6 +273,20 @@ final class PayrollCalculationService
         $value = $this->pick($input, $keys, null);
 
         return $value === null ? $computed : $this->roundRupees((float) $value);
+    }
+
+    /**
+     * @param  list<string>  $keys
+     */
+    private function optionalPositiveAmountOverride(array $input, array $keys, float $computed): float
+    {
+        $value = $this->pick($input, $keys, null);
+        if ($value === null) {
+            return $computed;
+        }
+        $parsed = $this->roundRupees((float) $value);
+
+        return $parsed > 0 ? $parsed : $computed;
     }
 
     /** @param array<string, mixed> $input */

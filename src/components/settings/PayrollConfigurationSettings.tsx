@@ -24,7 +24,7 @@ import {
   type PayrollFieldGroup,
 } from "@/lib/payrollFieldTypes";
 
-type PanelTab = "fields" | "cpf";
+type PanelTab = "fields" | "calculation";
 
 type FieldFormState = {
   id?: string;
@@ -138,6 +138,9 @@ export function PayrollConfigurationSettings() {
   const [saving, setSaving] = useState(false);
   const [cpfPercentage, setCpfPercentage] = useState("12");
   const [cpfBasisKeys, setCpfBasisKeys] = useState<string[]>([]);
+  const [cpfCalculationMode, setCpfCalculationMode] = useState<"percentage" | "fixed_amount">("percentage");
+  const [cpfFixedAmount, setCpfFixedAmount] = useState("0");
+  const [electricityUnitRate, setElectricityUnitRate] = useState("0");
   const [cpfSaving, setCpfSaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<PayrollFieldDefinition | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -159,6 +162,9 @@ export function PayrollConfigurationSettings() {
       const cs = cpfData.calculationSettings ?? {};
       setCpfPercentage(String(cs.cpfPercentage ?? 12));
       setCpfBasisKeys(Array.isArray(cs.cpfBasisFieldKeys) ? cs.cpfBasisFieldKeys : []);
+      setCpfCalculationMode(cs.cpfCalculationMode === "fixed_amount" ? "fixed_amount" : "percentage");
+      setCpfFixedAmount(String(cs.cpfFixedAmount ?? 0));
+      setElectricityUnitRate(String(cs.electricityUnitRate ?? 0));
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Load failed";
       setLoadError(msg);
@@ -292,12 +298,22 @@ export function PayrollConfigurationSettings() {
 
   async function saveCpfSettings() {
     const pct = parseFloat(cpfPercentage);
+    const fixed = parseFloat(cpfFixedAmount);
+    const elecRate = parseFloat(electricityUnitRate);
     if (!Number.isFinite(pct) || pct < 0) {
       showToast("error", "CPF percentage must be a number ≥ 0.");
       return;
     }
-    if (cpfBasisKeys.length === 0) {
+    if (cpfCalculationMode === "percentage" && cpfBasisKeys.length === 0) {
       showToast("error", "Select at least one earning field for PF/CPF calculation.");
+      return;
+    }
+    if (cpfCalculationMode === "fixed_amount" && (!Number.isFinite(fixed) || fixed < 0)) {
+      showToast("error", "Fixed CPF amount must be ≥ 0.");
+      return;
+    }
+    if (!Number.isFinite(elecRate) || elecRate < 0) {
+      showToast("error", "Electricity unit rate must be ≥ 0.");
       return;
     }
     setCpfSaving(true);
@@ -305,14 +321,23 @@ export function PayrollConfigurationSettings() {
       const res = await fetch("/api/settings/payroll-calculation-settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cpfPercentage: pct, cpfBasisFieldKeys: cpfBasisKeys }),
+        body: JSON.stringify({
+          cpfPercentage: pct,
+          cpfBasisFieldKeys: cpfBasisKeys,
+          cpfCalculationMode,
+          cpfFixedAmount: fixed,
+          electricityUnitRate: elecRate,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(parseApiError(data, "Save failed"));
-      showToast("success", "Institute CPF defaults saved");
+      showToast("success", "Institute payroll calculation defaults saved");
       const cs = data.calculationSettings ?? {};
       setCpfPercentage(String(cs.cpfPercentage ?? pct));
       setCpfBasisKeys(cs.cpfBasisFieldKeys ?? cpfBasisKeys);
+      setCpfCalculationMode(cs.cpfCalculationMode === "fixed_amount" ? "fixed_amount" : "percentage");
+      setCpfFixedAmount(String(cs.cpfFixedAmount ?? fixed));
+      setElectricityUnitRate(String(cs.electricityUnitRate ?? elecRate));
     } catch (e: unknown) {
       showToast("error", e instanceof Error ? e.message : "Save failed");
     } finally {
@@ -356,7 +381,7 @@ export function PayrollConfigurationSettings() {
 
         <div className="mb-4 flex flex-wrap gap-2 border-b border-slate-100 pb-4">
           {tabBtn("fields", "Payroll fields")}
-          {tabBtn("cpf", "Institute CPF defaults")}
+          {tabBtn("calculation", "Payroll calculation")}
         </div>
 
         {loadError ? (
@@ -488,25 +513,50 @@ export function PayrollConfigurationSettings() {
         ) : (
           <div className="space-y-4">
             <p className="text-sm text-slate-600">
-              These defaults apply to all employees unless an admin sets per-employee overrides in Payroll Master.
+              Institute-wide payroll calculation defaults (CPF and electricity). Per-employee overrides are set in Payroll Master.
             </p>
 
             {loading ? (
               <AppPageLoader variant="inline" message="Loading settings..." submessage="" />
             ) : (
-              <CpfCalculationSettingsForm
-                earningFields={earningFields}
-                cpfPercentage={cpfPercentage}
-                cpfBasisKeys={cpfBasisKeys}
-                onCpfPercentageChange={setCpfPercentage}
-                onToggleBasisKey={toggleBasisKey}
-                idPrefix="company-cpf"
-              />
+              <>
+                <div className="rounded-xl border border-slate-200 bg-white p-4">
+                  <h4 className="text-sm font-semibold text-slate-800">Electricity unit rate</h4>
+                  <p className="mt-1 text-xs text-slate-600">
+                    Used in Run Payroll: Electricity deduction = units consumed × this rate. Admins can still override the amount per employee per month.
+                  </p>
+                  <div className="mt-3 max-w-xs">
+                    <FormField label="Electricity unit rate (₹)" htmlFor="institute-electricity-rate">
+                      <Input
+                        id="institute-electricity-rate"
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        value={electricityUnitRate}
+                        onChange={(e) => setElectricityUnitRate(e.target.value)}
+                      />
+                    </FormField>
+                  </div>
+                </div>
+
+                <CpfCalculationSettingsForm
+                  earningFields={earningFields}
+                  cpfPercentage={cpfPercentage}
+                  cpfBasisKeys={cpfBasisKeys}
+                  cpfCalculationMode={cpfCalculationMode}
+                  cpfFixedAmount={cpfFixedAmount}
+                  onCpfPercentageChange={setCpfPercentage}
+                  onToggleBasisKey={toggleBasisKey}
+                  onCpfCalculationModeChange={setCpfCalculationMode}
+                  onCpfFixedAmountChange={setCpfFixedAmount}
+                  idPrefix="company-cpf"
+                />
+              </>
             )}
 
             <div className="flex justify-end border-t border-slate-100 pt-4">
               <Button size="sm" onClick={saveCpfSettings} loading={cpfSaving} disabled={cpfSaving || loading}>
-                Save institute CPF defaults
+                Save payroll calculation settings
               </Button>
             </div>
           </div>

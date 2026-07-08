@@ -30,11 +30,23 @@ export type PayrollCalculationSettings = {
   cpfPercentage: number;
   cpfBasisFieldKeys: string[];
   cpfFormulaPreview?: string;
+  cpfCalculationMode?: "percentage" | "fixed_amount";
+  cpfFixedAmount?: number;
+  electricityUnitRate?: number;
+  nightAllowanceBasicCeiling?: number;
 };
 
 export type PayrollConfig = {
   fields: PayrollFieldDefinition[];
   calculationSettings: PayrollCalculationSettings;
+  nightAllowanceRates?: Array<{
+    id: string;
+    slabNo: number;
+    payLevel: number;
+    ratePerHour: number;
+    label?: string;
+    isActive?: boolean;
+  }>;
 };
 
 export const FIELD_GROUPS: { value: PayrollFieldGroup; label: string }[] = [

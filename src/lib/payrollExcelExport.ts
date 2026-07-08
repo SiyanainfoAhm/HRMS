@@ -14,6 +14,8 @@ export const PAYROLL_EXCEL_HEADER = [
   "SPPay",
   "ExtraWorkAllowance",
   "NightAllowance",
+  "NightHours",
+  "NightAllowanceRate",
   "UniformAllowance",
   "EducationAllowance",
   "DAArrears",
@@ -31,6 +33,8 @@ export const PAYROLL_EXCEL_HEADER = [
   "CreditSociety",
   "StdLicenceFee",
   "Electricity",
+  "ElectricityUnits",
+  "ElectricityUnitRate",
   "Water",
   "Mess",
   "BankRecovery",
@@ -115,6 +119,11 @@ export type GovernmentMonthlyRow = {
   credit_society_amount?: number | null;
   std_licence_fee_amount?: number | null;
   electricity_amount?: number | null;
+  electricity_units_consumed?: number | null;
+  electricity_unit_rate?: number | null;
+  night_hours?: number | null;
+  night_allowance_rate?: number | null;
+  night_allowance_amount?: number | null;
   water_amount?: number | null;
   mess_amount?: number | null;
   loan_recovery_amount?: number | null;
@@ -234,7 +243,7 @@ function quarterExcelColumns(opts: {
     QuarterName: String(opts.quarterName ?? ""),
     QuarterType: String(opts.quarterType ?? ""),
     QuarterRent: rent,
-    QuarterRentDeduction: hasQuarter ? rent : 0,
+    QuarterRentDeduction: rent,
   };
 }
 
@@ -254,6 +263,8 @@ function govFromComputed(
     SPPay: c.spPayPaid,
     ExtraWorkAllowance: c.extraWorkAllowancePaid,
     NightAllowance: c.nightAllowancePaid,
+    NightHours: c.nightHours ?? 0,
+    NightAllowanceRate: c.nightAllowanceRate ?? 0,
     UniformAllowance: c.uniformAllowancePaid,
     EducationAllowance: c.educationAllowancePaid,
     DAArrears: c.daArrearsPaid,
@@ -271,6 +282,8 @@ function govFromComputed(
     CreditSociety: d.creditSociety,
     StdLicenceFee: d.stdLicenceFee,
     Electricity: d.electricity,
+    ElectricityUnits: c.electricityUnitsConsumed ?? 0,
+    ElectricityUnitRate: c.electricityUnitRate ?? 0,
     Water: d.water,
     Mess: d.mess,
     BankRecovery: d.loanRecovery,
@@ -313,6 +326,8 @@ function govFromDbRow(
     SPPay: n(r.sp_pay_paid),
     ExtraWorkAllowance: n(r.extra_work_allowance_paid),
     NightAllowance: n(r.night_allowance_paid),
+    NightHours: n(r.night_hours),
+    NightAllowanceRate: n(r.night_allowance_rate),
     UniformAllowance: n(r.uniform_allowance_paid),
     EducationAllowance: n(r.education_allowance_paid),
     DAArrears: n(r.da_arrears_paid),
@@ -330,6 +345,8 @@ function govFromDbRow(
     CreditSociety: n(r.credit_society_amount),
     StdLicenceFee: n(r.std_licence_fee_amount),
     Electricity: n(r.electricity_amount),
+    ElectricityUnits: n(r.electricity_units_consumed),
+    ElectricityUnitRate: n(r.electricity_unit_rate),
     Water: n(r.water_amount),
     Mess: n(r.mess_amount),
     BankRecovery: n(r.loan_recovery_amount ?? r.horticulture_amount),
@@ -390,6 +407,8 @@ export function buildPayrollExcelRow(
     SPPay: 0,
     ExtraWorkAllowance: 0,
     NightAllowance: 0,
+    NightHours: 0,
+    NightAllowanceRate: 0,
     UniformAllowance: 0,
     EducationAllowance: 0,
     DAArrears: 0,
@@ -407,6 +426,8 @@ export function buildPayrollExcelRow(
     CreditSociety: 0,
     StdLicenceFee: 0,
     Electricity: 0,
+    ElectricityUnits: 0,
+    ElectricityUnitRate: 0,
     Water: 0,
     Mess: 0,
     BankRecovery: 0,

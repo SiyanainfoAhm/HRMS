@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\V1\DepartmentController;
 use App\Http\Controllers\Api\V1\DesignationController;
 use App\Http\Controllers\Api\V1\DivisionController;
 use App\Http\Controllers\Api\V1\EmployeeController;
+use App\Http\Controllers\Api\V1\NightAllowanceRateController;
 use App\Http\Controllers\Api\V1\PayrollController;
 use App\Http\Controllers\Api\V1\PayrollFieldController;
 use App\Http\Controllers\Api\V1\PayrollMasterController;
@@ -110,6 +111,12 @@ Route::prefix('v1')->group(function () {
             Route::delete('settings/payroll-fields/{id}', [PayrollFieldController::class, 'destroy']);
             Route::match(['GET', 'PUT'], 'settings/payroll-calculation-settings', [PayrollFieldController::class, 'calculationSettings']);
 
+            // Settings: Night Allowance rates
+            Route::get('settings/night-allowance-rates', [NightAllowanceRateController::class, 'index']);
+            Route::post('settings/night-allowance-rates', [NightAllowanceRateController::class, 'store']);
+            Route::put('settings/night-allowance-rates/{id}', [NightAllowanceRateController::class, 'update']);
+            Route::post('settings/night-allowance-rates/{id}/deactivate', [NightAllowanceRateController::class, 'deactivate']);
+
             // Settings: Government quarters / accommodation
             Route::get('settings/quarters', [QuarterController::class, 'index']);
             Route::post('settings/quarters', [QuarterController::class, 'store']);
@@ -139,6 +146,7 @@ Route::prefix('v1')->group(function () {
             Route::post('payroll/master', [PayrollMasterController::class, 'store']);
             Route::patch('payroll/master', [PayrollController::class, 'upsertMaster']);
             Route::get('payroll/run', [PayrollController::class, 'runPreview']);
+            Route::get('payroll/reference-salary', [PayrollController::class, 'referenceSalary']);
             Route::get('payroll/arrears/debug-unpaid', [PayrollController::class, 'debugUnpaidArrears']);
             Route::post('payroll/run', [PayrollController::class, 'run']);
             Route::post('payroll/payslips', [PayrollController::class, 'storePayslips']);

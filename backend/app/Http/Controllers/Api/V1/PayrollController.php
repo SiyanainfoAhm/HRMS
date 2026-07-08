@@ -13,6 +13,7 @@ use App\Models\HrmsPayslip;
 use App\Models\HrmsUser;
 use App\Support\BankDetailsService;
 use App\Support\BankDetailsValidator;
+use App\Services\NightAllowanceRateService;
 use App\Services\PayrollArrearService;
 use App\Services\PayrollFieldService;
 use App\Services\QuarterService;
@@ -28,6 +29,7 @@ class PayrollController extends Controller
         private readonly PayrollMasterService $masterService,
         private readonly PayrollFieldService $fieldService,
         private readonly QuarterService $quarterService,
+        private readonly NightAllowanceRateService $nightAllowanceService,
     ) {}
 
     public function periods(Request $request): JsonResponse
@@ -467,6 +469,11 @@ class PayrollController extends Controller
                     'payLevel' => $payLevel,
                     'hplDays' => 0,
                     'eolDays' => 0,
+                    'eolReferenceMonth' => $month,
+                    'eolReferenceYear' => $year,
+                    'hplReferenceMonth' => $month,
+                    'hplReferenceYear' => $year,
+                    'electricityUnitsConsumed' => 0,
                     'hasQuarter' => $quarterMeta['hasQuarter'],
                     'quarterRent' => $quarterMeta['quarterRent'],
                     'quarterId' => $quarterMeta['quarterId'],
@@ -492,7 +499,7 @@ class PayrollController extends Controller
                         'eol' => 0,
                         'vehCharge' => (float) ($m->veh_charge_default ?? 0),
                         'other' => (float) ($m->other_deduction_default ?? 0),
-                        'quarterRent' => $quarterMeta['hasQuarter'] ? (float) $quarterMeta['quarterRent'] : 0,
+                        'quarterRent' => (float) ($quarterMeta['quarterRent'] ?? 0),
                     ],
                 ];
                 $customValues = $this->fieldService->getCustomFieldValuesForMaster((string) $user->company_id, $m->id);
@@ -502,8 +509,21 @@ class PayrollController extends Controller
                 $row['govRecalc']['cpfConfig'] = [
                     'cpfPercentage' => $cpfResolved['cpf_percentage'],
                     'cpfBasisFieldKeys' => $cpfResolved['cpf_basis_field_keys'],
+                    'cpfCalculationMode' => $cpfResolved['cpf_calculation_mode'] ?? 'percentage',
+                    'cpfFixedAmount' => $cpfResolved['cpf_fixed_amount'] ?? 0,
                     'source' => $cpfResolved['source'],
                 ];
+                $masterSlabNo = isset($m->night_allowance_slab_no) ? (int) $m->night_allowance_slab_no : null;
+                $nightResolved = $this->nightAllowanceService->resolveForEmployee(
+                    $companyId,
+                    $payLevel,
+                    $masterSlabNo > 0 ? $masterSlabNo : null,
+                );
+                $row['nightAllowanceSlabNo'] = $masterSlabNo;
+                $row['govRecalc']['nightHours'] = 0;
+                $row['govRecalc']['nightAllowanceRate'] = $nightResolved['rate'];
+                $row['govRecalc']['nightAllowanceSlabNo'] = $nightResolved['slabNo'];
+                $row['govRecalc']['nightAllowanceWarning'] = $nightResolved['warning'];
                 $row['customFieldValues'] = $customValues;
                 $row['grossPay'] = 0;
                 $row['netPay'] = 0;
@@ -576,7 +596,9 @@ class PayrollController extends Controller
                     'arrearWarnings' => $arrearEnriched['warnings'],
                     'arrearPeriods' => $arrearEnriched['arrearPeriods'] ?? [],
                 ]),
-                'payrollConfig' => $payrollConfig,
+                'payrollConfig' => array_merge($payrollConfig, [
+                    'nightAllowanceRates' => $this->nightAllowanceService->listForCompany($companyId, true),
+                ]),
             ]);
         }
 
@@ -642,7 +664,9 @@ class PayrollController extends Controller
                 'arrearWarnings' => $arrearEnriched['warnings'],
                 'arrearPeriods' => $arrearEnriched['arrearPeriods'] ?? [],
             ]),
-            'payrollConfig' => $payrollConfig,
+            'payrollConfig' => array_merge($payrollConfig, [
+                'nightAllowanceRates' => $this->nightAllowanceService->listForCompany((string) $user->company_id, true),
+            ]),
         ]);
     }
 
@@ -1108,7 +1132,12 @@ class PayrollController extends Controller
             'payslips' => $payslips,
             'users' => $users,
             'governmentMonthly' => $governmentMonthly,
-            'payrollConfig' => $this->fieldService->getPayrollConfig((string) $user->company_id),
+            'payrollConfig' => array_merge(
+                $this->fieldService->getPayrollConfig((string) $user->company_id),
+                [
+                    'nightAllowanceRates' => $this->nightAllowanceService->listForCompany((string) $user->company_id, true),
+                ],
+            ),
         ]);
     }
 
@@ -1187,6 +1216,19 @@ class PayrollController extends Controller
             'eolDays' => (int) ($gov->eol_days ?? 0),
             'hpl_days' => (int) ($gov->hpl_days ?? 0),
             'eol_days' => (int) ($gov->eol_days ?? 0),
+            'eolReferenceMonth' => $gov->eol_reference_month ? (int) $gov->eol_reference_month : null,
+            'eolReferenceYear' => $gov->eol_reference_year ? (int) $gov->eol_reference_year : null,
+            'hplReferenceMonth' => $gov->hpl_reference_month ? (int) $gov->hpl_reference_month : null,
+            'hplReferenceYear' => $gov->hpl_reference_year ? (int) $gov->hpl_reference_year : null,
+            'eolBasisAmount' => $num($gov->eol_basis_amount ?? 0),
+            'hplBasisAmount' => $num($gov->hpl_basis_amount ?? 0),
+            'electricityUnitsConsumed' => $num($gov->electricity_units_consumed ?? 0),
+            'electricityUnitRate' => $num($gov->electricity_unit_rate ?? 0),
+            'nightHours' => $num($gov->night_hours ?? 0),
+            'nightAllowanceRate' => $num($gov->night_allowance_rate ?? 0),
+            'nightAllowanceAmount' => $num($gov->night_allowance_amount ?? 0),
+            'nightAllowanceSlabNo' => $gov->night_allowance_slab_no ? (int) $gov->night_allowance_slab_no : null,
+            'nightAllowanceManualOverride' => (bool) ($gov->night_allowance_manual_override ?? false),
             'deductions' => [
                 'incomeTax' => $num($gov->income_tax_amount),
                 'pt' => $num($gov->pt_amount),
@@ -1327,10 +1369,31 @@ class PayrollController extends Controller
             'mess_amount' => $num($ded['mess'] ?? 0),
             'loan_recovery_amount' => $num($ded['loanRecovery'] ?? $ded['loan_recovery'] ?? $ded['horticulture'] ?? 0),
             'welfare_amount' => $num($ded['welfare'] ?? 0),
-            'hpl_amount' => 0,
+            'hpl_amount' => $num($ded['hpl'] ?? 0),
             'hpl_days' => max(0, (int) ($gm['hplDays'] ?? $gm['hpl_days'] ?? 0)),
-            'eol_amount' => 0,
+            'eol_amount' => $num($ded['eol'] ?? 0),
             'eol_days' => max(0, (int) ($gm['eolDays'] ?? $gm['eol_days'] ?? 0)),
+            'eol_reference_month' => isset($gm['eolReferenceMonth']) ? (int) $gm['eolReferenceMonth'] : null,
+            'eol_reference_year' => isset($gm['eolReferenceYear']) ? (int) $gm['eolReferenceYear'] : null,
+            'hpl_reference_month' => isset($gm['hplReferenceMonth']) ? (int) $gm['hplReferenceMonth'] : null,
+            'hpl_reference_year' => isset($gm['hplReferenceYear']) ? (int) $gm['hplReferenceYear'] : null,
+            'eol_basis_amount' => $num($gm['eolBasisAmount'] ?? $gm['eol_basis_amount'] ?? 0),
+            'hpl_basis_amount' => $num($gm['hplBasisAmount'] ?? $gm['hpl_basis_amount'] ?? 0),
+            'electricity_units_consumed' => $num($gm['electricityUnitsConsumed'] ?? $gm['electricity_units_consumed'] ?? 0),
+            'electricity_unit_rate' => $num($gm['electricityUnitRate'] ?? $gm['electricity_unit_rate'] ?? 0),
+            'electricity_manual_override' => (bool) ($gm['electricityManualOverride'] ?? $gm['electricity_manual_override'] ?? false),
+            'night_hours' => $num($gm['nightHours'] ?? $gm['night_hours'] ?? 0),
+            'night_allowance_rate' => $num($gm['nightAllowanceRate'] ?? $gm['night_allowance_rate'] ?? 0),
+            'night_allowance_amount' => $num($gm['nightAllowanceAmount'] ?? $gm['night_allowance_amount'] ?? $gm['nightAllowancePaid'] ?? $gm['night_allowance_paid'] ?? 0),
+            'night_allowance_slab_no' => isset($gm['nightAllowanceSlabNo']) || isset($gm['night_allowance_slab_no'])
+                ? (int) ($gm['nightAllowanceSlabNo'] ?? $gm['night_allowance_slab_no'] ?? 0) ?: null
+                : null,
+            'night_allowance_manual_override' => (bool) ($gm['nightAllowanceManualOverride'] ?? $gm['night_allowance_manual_override'] ?? false),
+            'quarter_rent_manual_override' => (bool) ($gm['quarterRentManualOverride'] ?? $gm['quarter_rent_manual_override'] ?? false),
+            'cpf_calculation_mode' => $gm['cpfCalculationMode'] ?? $gm['cpf_calculation_mode'] ?? null,
+            'cpf_fixed_amount' => isset($gm['cpfFixedAmount']) || isset($gm['cpf_fixed_amount'])
+                ? $num($gm['cpfFixedAmount'] ?? $gm['cpf_fixed_amount'] ?? 0)
+                : null,
             'veh_charge_amount' => $num($ded['vehCharge'] ?? $ded['veh_charge'] ?? 0),
             'other_deduction_amount' => $num($ded['other'] ?? 0),
             'total_earnings' => $num($gm['totalEarnings'] ?? $gm['total_earnings'] ?? 0),
@@ -1676,6 +1739,66 @@ class PayrollController extends Controller
             'runYear' => $runYear,
             'runMonth' => $runMonth,
             'unpaid' => $this->arrearService->getUnpaidArrearsForPayroll($companyId, $runYear, $runMonth),
+        ]);
+    }
+
+    public function referenceSalary(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        $validated = $request->validate([
+            'employee_user_id' => ['required', 'uuid'],
+            'year' => ['required', 'integer', 'min:2000'],
+            'month' => ['required', 'integer', 'min:1', 'max:12'],
+        ]);
+
+        $companyId = (string) $user->company_id;
+        $employeeUserId = $validated['employee_user_id'];
+        $year = (int) $validated['year'];
+        $month = (int) $validated['month'];
+        $daysInMonth = (int) date('t', mktime(0, 0, 0, $month, 1, $year));
+        $monthYear = sprintf('%04d-%02d-01', $year, $month);
+
+        $monthly = HrmsGovernmentMonthlyPayroll::query()
+            ->where('company_id', $companyId)
+            ->where('employee_user_id', $employeeUserId)
+            ->where('month_year', $monthYear)
+            ->first();
+
+        if ($monthly) {
+            return response()->json([
+                'basic' => (float) $monthly->basic_actual,
+                'da' => (float) $monthly->da_actual,
+                'hra' => (float) $monthly->hra_actual,
+                'medical' => (float) $monthly->medical_actual,
+                'daysInMonth' => (int) ($monthly->days_in_month ?? $daysInMonth),
+                'source' => 'monthly_payroll',
+            ]);
+        }
+
+        $asOf = sprintf('%04d-%02d-%02d', $year, $month, min(28, $daysInMonth));
+        $master = $this->resolveMasterForPayrollDate($companyId, $employeeUserId, $asOf)
+            ?? $this->currentMasterForEmployee($companyId, $employeeUserId);
+
+        if (! $master) {
+            return response()->json(['error' => 'No payroll master for employee'], 404);
+        }
+
+        $gb = (float) ($master->gross_basic_pay ?? $master->gross_salary ?? 0);
+        $daPct = (float) ($master->da_percent ?? 0);
+        $hraPct = (float) ($master->hra_percent ?? 0);
+        $med = (float) ($master->medical ?? 0);
+        $hasQuarter = (bool) ($master->has_quarter ?? false);
+        $hra = $hasQuarter ? 0.0 : round($gb * $hraPct / 100);
+        $da = round($gb * $daPct / 100);
+
+        return response()->json([
+            'basic' => $gb,
+            'da' => $da,
+            'hra' => $hra,
+            'medical' => $med,
+            'daysInMonth' => $daysInMonth,
+            'source' => 'payroll_master',
+            'warning' => 'Reference payroll not found. Current payroll master values are being used.',
         ]);
     }
 }

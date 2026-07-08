@@ -6,11 +6,11 @@ use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-class HrmsPayrollCalculationSetting extends Model
+class HrmsNightAllowanceRate extends Model
 {
     use HasUuids;
 
-    protected $table = 'cirt_payroll_calculation_settings';
+    protected $table = 'cirt_night_allowance_rates';
 
     protected $keyType = 'string';
 
@@ -18,20 +18,21 @@ class HrmsPayrollCalculationSetting extends Model
 
     protected $fillable = [
         'company_id',
-        'cpf_percentage',
-        'cpf_basis_field_keys',
-        'cpf_calculation_mode',
-        'cpf_fixed_amount',
-        'electricity_unit_rate',
+        'slab_no',
+        'pay_level',
+        'rate_per_hour',
+        'effective_from',
+        'is_active',
     ];
 
     protected function casts(): array
     {
         return [
-            'cpf_percentage' => 'decimal:2',
-            'cpf_basis_field_keys' => 'array',
-            'cpf_fixed_amount' => 'decimal:2',
-            'electricity_unit_rate' => 'decimal:2',
+            'slab_no' => 'integer',
+            'pay_level' => 'integer',
+            'rate_per_hour' => 'decimal:2',
+            'effective_from' => 'date',
+            'is_active' => 'boolean',
             'created_at' => 'datetime',
             'updated_at' => 'datetime',
         ];
