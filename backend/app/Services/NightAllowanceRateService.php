@@ -171,6 +171,101 @@ final class NightAllowanceRateService
         }
     }
 
+    public const DEFAULT_BASIC_CEILING = 43600.0;
+
+    /**
+     * @return array{amount: float, eligible: bool, warning: string|null, ceiling: float}
+     */
+    public function resolveAmountWithCeiling(
+        float $hours,
+        float $rate,
+        float $basicPay,
+        float $ceiling,
+        bool $manualOverride = false,
+        ?float $manualAmount = null,
+    ): array {
+        $ceiling = max(0, $ceiling > 0 ? $ceiling : self::DEFAULT_BASIC_CEILING);
+        $basic = max(0, $basicPay);
+        $eligible = $basic <= $ceiling;
+
+        if (! $eligible) {
+            return [
+                'amount' => 0.0,
+                'eligible' => false,
+                'warning' => sprintf(
+                    'Not eligible for Night Allowance: Basic Pay exceeds ₹%s ceiling.',
+                    number_format($ceiling, 0, '.', ',')
+                ),
+                'ceiling' => $ceiling,
+            ];
+        }
+
+        $amount = $hours > 0 ? round(max(0, $hours) * max(0, $rate)) : 0.0;
+        if ($manualOverride && $manualAmount !== null) {
+            $amount = round(max(0, $manualAmount));
+        }
+
+        return [
+            'amount' => $amount,
+            'eligible' => true,
+            'warning' => null,
+            'ceiling' => $ceiling,
+        ];
+    }
+
+    /**
+     * Enforce ceiling on government monthly preview payload before persistence.
+     *
+     * @param  array<string, mixed>  $gm
+     */
+    public function enforceCeilingOnGovernmentMonthly(array &$gm, float $ceiling): void
+    {
+        $basicPaid = (float) ($gm['basicPaid'] ?? $gm['basic_paid'] ?? 0);
+        $basicActual = (float) ($gm['basicActual'] ?? $gm['basic_actual'] ?? 0);
+        $basicForCeiling = $basicPaid > 0 ? $basicPaid : $basicActual;
+
+        $hours = (float) ($gm['nightHours'] ?? $gm['night_hours'] ?? 0);
+        $rate = (float) ($gm['nightAllowanceRate'] ?? $gm['night_allowance_rate'] ?? 0);
+        $manualOverride = (bool) ($gm['nightAllowanceManualOverride'] ?? $gm['night_allowance_manual_override'] ?? false);
+        $oldAmount = (float) ($gm['nightAllowancePaid'] ?? $gm['night_allowance_paid'] ?? $gm['nightAllowanceAmount'] ?? 0);
+
+        $resolved = $this->resolveAmountWithCeiling(
+            $hours,
+            $rate,
+            $basicForCeiling,
+            $ceiling,
+            $manualOverride,
+            $manualOverride ? $oldAmount : null,
+        );
+
+        $newAmount = (float) $resolved['amount'];
+        $gm['nightAllowancePaid'] = $newAmount;
+        $gm['nightAllowanceAmount'] = $newAmount;
+        $gm['night_allowance_paid'] = $newAmount;
+        $gm['night_allowance_amount'] = $newAmount;
+        $gm['nightAllowanceActual'] = $newAmount;
+        $gm['night_allowance_actual'] = $newAmount;
+        $gm['nightAllowanceEligible'] = $resolved['eligible'];
+        $gm['night_allowance_eligible'] = $resolved['eligible'];
+        $gm['nightAllowanceBasicCeiling'] = $resolved['ceiling'];
+        $gm['night_allowance_basic_ceiling'] = $resolved['ceiling'];
+        if (! $resolved['eligible']) {
+            $gm['nightAllowanceManualOverride'] = false;
+            $gm['night_allowance_manual_override'] = false;
+            if ($resolved['warning']) {
+                $gm['nightAllowanceWarning'] = $resolved['warning'];
+            }
+        }
+
+        $delta = $newAmount - $oldAmount;
+        if (abs($delta) > 0.0001) {
+            $gm['totalEarnings'] = max(0, (float) ($gm['totalEarnings'] ?? $gm['total_earnings'] ?? 0) + $delta);
+            $gm['total_earnings'] = $gm['totalEarnings'];
+            $gm['netSalary'] = max(0, (float) ($gm['netSalary'] ?? $gm['net_salary'] ?? 0) + $delta);
+            $gm['net_salary'] = $gm['netSalary'];
+        }
+    }
+
     /** @return array<string, mixed> */
     public function formatRow(HrmsNightAllowanceRate $r): array
     {

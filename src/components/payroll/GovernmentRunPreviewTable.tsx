@@ -32,6 +32,8 @@ function leaveMetaFromRow(row: GovernmentRunPreviewRow) {
     nightHours?: number;
     nightAllowanceRate?: number;
     nightAllowanceWarning?: string;
+    nightAllowanceEligible?: boolean;
+    nightAllowanceBasicCeiling?: number;
   } | undefined;
   const gm = row.governmentMonthly as {
     hplDays?: number;
@@ -46,6 +48,8 @@ function leaveMetaFromRow(row: GovernmentRunPreviewRow) {
     nightHours?: number;
     nightAllowanceRate?: number;
     nightAllowanceWarning?: string;
+    nightAllowanceEligible?: boolean;
+    nightAllowanceBasicCeiling?: number;
   } | undefined;
   return {
     hplDays: gr?.hplDays ?? gm?.hplDays ?? 0,
@@ -60,6 +64,8 @@ function leaveMetaFromRow(row: GovernmentRunPreviewRow) {
     nightHours: gr?.nightHours ?? gm?.nightHours ?? 0,
     nightAllowanceRate: gr?.nightAllowanceRate ?? gm?.nightAllowanceRate ?? 0,
     nightAllowanceWarning: gr?.nightAllowanceWarning ?? gm?.nightAllowanceWarning,
+    nightAllowanceEligible: gr?.nightAllowanceEligible ?? gm?.nightAllowanceEligible ?? true,
+    nightAllowanceBasicCeiling: gr?.nightAllowanceBasicCeiling ?? gm?.nightAllowanceBasicCeiling,
   };
 }
 
@@ -564,6 +570,12 @@ function GovernmentEmployeeDetail({
                 <p className="mt-0.5 text-[10px] tabular-nums text-slate-500">
                   Rate ₹{(leave.nightAllowanceRate ?? 0).toFixed(2)}/hr
                 </p>
+                {leave.nightAllowanceEligible === false ? (
+                  <p className="mt-1 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">
+                    Not eligible — Basic Pay exceeds ₹
+                    {Math.round(leave.nightAllowanceBasicCeiling ?? 43600).toLocaleString("en-IN")} ceiling
+                  </p>
+                ) : null}
                 {leave.nightAllowanceWarning ? (
                   <p className="mt-0.5 text-[10px] text-amber-700">{leave.nightAllowanceWarning}</p>
                 ) : null}

@@ -141,6 +141,7 @@ export function PayrollConfigurationSettings() {
   const [cpfCalculationMode, setCpfCalculationMode] = useState<"percentage" | "fixed_amount">("percentage");
   const [cpfFixedAmount, setCpfFixedAmount] = useState("0");
   const [electricityUnitRate, setElectricityUnitRate] = useState("0");
+  const [nightAllowanceBasicCeiling, setNightAllowanceBasicCeiling] = useState("43600");
   const [cpfSaving, setCpfSaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<PayrollFieldDefinition | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -165,6 +166,7 @@ export function PayrollConfigurationSettings() {
       setCpfCalculationMode(cs.cpfCalculationMode === "fixed_amount" ? "fixed_amount" : "percentage");
       setCpfFixedAmount(String(cs.cpfFixedAmount ?? 0));
       setElectricityUnitRate(String(cs.electricityUnitRate ?? 0));
+      setNightAllowanceBasicCeiling(String(cs.nightAllowanceBasicCeiling ?? 43600));
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Load failed";
       setLoadError(msg);
@@ -300,6 +302,7 @@ export function PayrollConfigurationSettings() {
     const pct = parseFloat(cpfPercentage);
     const fixed = parseFloat(cpfFixedAmount);
     const elecRate = parseFloat(electricityUnitRate);
+    const nightCeiling = parseFloat(nightAllowanceBasicCeiling);
     if (!Number.isFinite(pct) || pct < 0) {
       showToast("error", "CPF percentage must be a number ≥ 0.");
       return;
@@ -316,6 +319,10 @@ export function PayrollConfigurationSettings() {
       showToast("error", "Electricity unit rate must be ≥ 0.");
       return;
     }
+    if (!Number.isFinite(nightCeiling) || nightCeiling < 0) {
+      showToast("error", "Night allowance basic pay ceiling must be ≥ 0.");
+      return;
+    }
     setCpfSaving(true);
     try {
       const res = await fetch("/api/settings/payroll-calculation-settings", {
@@ -327,6 +334,7 @@ export function PayrollConfigurationSettings() {
           cpfCalculationMode,
           cpfFixedAmount: fixed,
           electricityUnitRate: elecRate,
+          nightAllowanceBasicCeiling: nightCeiling,
         }),
       });
       const data = await res.json();
@@ -338,6 +346,7 @@ export function PayrollConfigurationSettings() {
       setCpfCalculationMode(cs.cpfCalculationMode === "fixed_amount" ? "fixed_amount" : "percentage");
       setCpfFixedAmount(String(cs.cpfFixedAmount ?? fixed));
       setElectricityUnitRate(String(cs.electricityUnitRate ?? elecRate));
+      setNightAllowanceBasicCeiling(String(cs.nightAllowanceBasicCeiling ?? nightCeiling));
     } catch (e: unknown) {
       showToast("error", e instanceof Error ? e.message : "Save failed");
     } finally {
@@ -534,6 +543,25 @@ export function PayrollConfigurationSettings() {
                         step="0.01"
                         value={electricityUnitRate}
                         onChange={(e) => setElectricityUnitRate(e.target.value)}
+                      />
+                    </FormField>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-slate-200 bg-white p-4">
+                  <h4 className="text-sm font-semibold text-slate-800">Night allowance basic pay ceiling</h4>
+                  <p className="mt-1 text-xs text-slate-600">
+                    Night Duty Allowance is payable only when monthly Basic Pay is at or below this ceiling. Above the ceiling, night allowance is ₹0.
+                  </p>
+                  <div className="mt-3 max-w-xs">
+                    <FormField label="Basic pay ceiling (₹)" htmlFor="institute-night-ceiling">
+                      <Input
+                        id="institute-night-ceiling"
+                        type="number"
+                        min={0}
+                        step="1"
+                        value={nightAllowanceBasicCeiling}
+                        onChange={(e) => setNightAllowanceBasicCeiling(e.target.value)}
                       />
                     </FormField>
                   </div>

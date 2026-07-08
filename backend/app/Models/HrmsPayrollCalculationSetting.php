@@ -23,6 +23,7 @@ class HrmsPayrollCalculationSetting extends Model
         'cpf_calculation_mode',
         'cpf_fixed_amount',
         'electricity_unit_rate',
+        'night_allowance_basic_ceiling',
     ];
 
     protected function casts(): array
@@ -32,6 +33,7 @@ class HrmsPayrollCalculationSetting extends Model
             'cpf_basis_field_keys' => 'array',
             'cpf_fixed_amount' => 'decimal:2',
             'electricity_unit_rate' => 'decimal:2',
+            'night_allowance_basic_ceiling' => 'decimal:2',
             'created_at' => 'datetime',
             'updated_at' => 'datetime',
         ];

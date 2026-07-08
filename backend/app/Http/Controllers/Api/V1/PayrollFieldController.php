@@ -163,6 +163,8 @@ class PayrollFieldController extends Controller
             'cpfFixedAmount' => ['sometimes', 'numeric', 'min:0'],
             'electricity_unit_rate' => ['sometimes', 'numeric', 'min:0'],
             'electricityUnitRate' => ['sometimes', 'numeric', 'min:0'],
+            'night_allowance_basic_ceiling' => ['sometimes', 'numeric', 'min:0'],
+            'nightAllowanceBasicCeiling' => ['sometimes', 'numeric', 'min:0'],
         ]);
 
         $settings = $this->service->saveCalculationSettings($request->user()->company_id, $data);

@@ -1229,6 +1229,8 @@ class PayrollController extends Controller
             'nightAllowanceAmount' => $num($gov->night_allowance_amount ?? 0),
             'nightAllowanceSlabNo' => $gov->night_allowance_slab_no ? (int) $gov->night_allowance_slab_no : null,
             'nightAllowanceManualOverride' => (bool) ($gov->night_allowance_manual_override ?? false),
+            'nightAllowanceBasicCeiling' => $num($gov->night_allowance_basic_ceiling ?? 0),
+            'nightAllowanceEligible' => (bool) ($gov->night_allowance_eligible ?? true),
             'deductions' => [
                 'incomeTax' => $num($gov->income_tax_amount),
                 'pt' => $num($gov->pt_amount),
@@ -1311,6 +1313,13 @@ class PayrollController extends Controller
 
         $num = static fn ($v): float => is_numeric($v) ? (float) $v : 0.0;
 
+        $payrollConfig = $this->fieldService->getPayrollConfig($companyId);
+        $nightCeiling = (float) (
+            $payrollConfig['calculationSettings']['nightAllowanceBasicCeiling']
+            ?? NightAllowanceRateService::DEFAULT_BASIC_CEILING
+        );
+        $this->nightAllowanceService->enforceCeilingOnGovernmentMonthly($gm, $nightCeiling);
+
         $record = HrmsGovernmentMonthlyPayroll::create([
             'company_id' => $companyId,
             'payroll_period_id' => $periodId,
@@ -1389,6 +1398,8 @@ class PayrollController extends Controller
                 ? (int) ($gm['nightAllowanceSlabNo'] ?? $gm['night_allowance_slab_no'] ?? 0) ?: null
                 : null,
             'night_allowance_manual_override' => (bool) ($gm['nightAllowanceManualOverride'] ?? $gm['night_allowance_manual_override'] ?? false),
+            'night_allowance_basic_ceiling' => $num($gm['nightAllowanceBasicCeiling'] ?? $gm['night_allowance_basic_ceiling'] ?? $nightCeiling),
+            'night_allowance_eligible' => (bool) ($gm['nightAllowanceEligible'] ?? $gm['night_allowance_eligible'] ?? true),
             'quarter_rent_manual_override' => (bool) ($gm['quarterRentManualOverride'] ?? $gm['quarter_rent_manual_override'] ?? false),
             'cpf_calculation_mode' => $gm['cpfCalculationMode'] ?? $gm['cpf_calculation_mode'] ?? null,
             'cpf_fixed_amount' => isset($gm['cpfFixedAmount']) || isset($gm['cpf_fixed_amount'])

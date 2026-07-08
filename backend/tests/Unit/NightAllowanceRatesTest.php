@@ -2,17 +2,31 @@
 
 namespace Tests\Unit;
 
+use App\Services\NightAllowanceRateService;
 use PHPUnit\Framework\TestCase;
 
 /**
- * Night allowance hourly calculation (NA-001 through NA-008).
+ * Night allowance hourly calculation (NA-001 through NA-011).
  * Mirrors frontend: src/lib/nightAllowanceCalculation.ts, governmentPayroll.ts
  */
 final class NightAllowanceRatesTest extends TestCase
 {
+    private NightAllowanceRateService $service;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->service = new NightAllowanceRateService();
+    }
+
     private function nightAllowanceAmount(float $hours, float $rate): int
     {
         return (int) round(max(0, $hours) * max(0, $rate));
+    }
+
+    private function resolveWithCeiling(float $basicPay, float $hours = 10, float $rate = 50.40, float $ceiling = 43600): array
+    {
+        return $this->service->resolveAmountWithCeiling($hours, $rate, $basicPay, $ceiling);
     }
 
     /** NA-003 */
@@ -71,5 +85,30 @@ final class NightAllowanceRatesTest extends TestCase
         ];
         $slabNos = array_column($level5, 'slab_no');
         $this->assertSame(count($slabNos), count(array_unique($slabNos)));
+    }
+
+    /** NA-009 */
+    public function test_basic_pay_above_ceiling_yields_zero_night_allowance(): void
+    {
+        $result = $this->resolveWithCeiling(49440, 10, 50.40, 43600);
+        $this->assertFalse($result['eligible']);
+        $this->assertSame(0.0, $result['amount']);
+        $this->assertStringContainsString('43,600', (string) $result['warning']);
+    }
+
+    /** NA-010 */
+    public function test_basic_pay_equal_to_ceiling_allows_night_allowance(): void
+    {
+        $result = $this->resolveWithCeiling(43600, 10, 50.40, 43600);
+        $this->assertTrue($result['eligible']);
+        $this->assertSame(504.0, $result['amount']);
+    }
+
+    /** NA-011 */
+    public function test_basic_pay_below_ceiling_allows_night_allowance(): void
+    {
+        $result = $this->resolveWithCeiling(36400, 10, 50.40, 43600);
+        $this->assertTrue($result['eligible']);
+        $this->assertSame(504.0, $result['amount']);
     }
 }

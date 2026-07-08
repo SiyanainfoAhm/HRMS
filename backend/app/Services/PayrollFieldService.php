@@ -52,6 +52,7 @@ class PayrollFieldService
             'cpf_calculation_mode' => 'percentage',
             'cpf_fixed_amount' => 0,
             'electricity_unit_rate' => 0,
+            'night_allowance_basic_ceiling' => NightAllowanceRateService::DEFAULT_BASIC_CEILING,
         ]);
     }
 
@@ -268,6 +269,12 @@ class PayrollFieldService
         $mode = (string) ($data['cpf_calculation_mode'] ?? $data['cpfCalculationMode'] ?? $settings->cpf_calculation_mode ?? 'percentage');
         $fixed = (float) ($data['cpf_fixed_amount'] ?? $data['cpfFixedAmount'] ?? $settings->cpf_fixed_amount ?? 0);
         $elecRate = (float) ($data['electricity_unit_rate'] ?? $data['electricityUnitRate'] ?? $settings->electricity_unit_rate ?? 0);
+        $nightCeiling = (float) (
+            $data['night_allowance_basic_ceiling']
+            ?? $data['nightAllowanceBasicCeiling']
+            ?? $settings->night_allowance_basic_ceiling
+            ?? NightAllowanceRateService::DEFAULT_BASIC_CEILING
+        );
 
         if ($pct < 0) {
             throw ValidationException::withMessages(['cpf_percentage' => ['CPF percentage must be ≥ 0.']]);
@@ -279,6 +286,9 @@ class PayrollFieldService
         }
         if ($elecRate < 0) {
             throw ValidationException::withMessages(['electricity_unit_rate' => ['Electricity unit rate must be ≥ 0.']]);
+        }
+        if ($nightCeiling < 0) {
+            throw ValidationException::withMessages(['night_allowance_basic_ceiling' => ['Night allowance basic pay ceiling must be ≥ 0.']]);
         }
 
         $update = [
@@ -293,6 +303,9 @@ class PayrollFieldService
         }
         if (Schema::hasColumn('cirt_payroll_calculation_settings', 'electricity_unit_rate')) {
             $update['electricity_unit_rate'] = max(0, $elecRate);
+        }
+        if (Schema::hasColumn('cirt_payroll_calculation_settings', 'night_allowance_basic_ceiling')) {
+            $update['night_allowance_basic_ceiling'] = max(0, $nightCeiling);
         }
 
         $settings->update($update);
@@ -755,6 +768,9 @@ class PayrollFieldService
             'electricityUnitRate' => Schema::hasColumn('cirt_payroll_calculation_settings', 'electricity_unit_rate')
                 ? (float) ($settings->electricity_unit_rate ?? 0)
                 : 0,
+            'nightAllowanceBasicCeiling' => Schema::hasColumn('cirt_payroll_calculation_settings', 'night_allowance_basic_ceiling')
+                ? (float) ($settings->night_allowance_basic_ceiling ?? NightAllowanceRateService::DEFAULT_BASIC_CEILING)
+                : NightAllowanceRateService::DEFAULT_BASIC_CEILING,
             'cpfFormulaPreview' => PayrollFieldRegistry::cpfFormulaPreview(
                 $basisLabels,
                 (float) $settings->cpf_percentage,

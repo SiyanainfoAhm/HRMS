@@ -16,6 +16,8 @@ export const PAYROLL_EXCEL_HEADER = [
   "NightAllowance",
   "NightHours",
   "NightAllowanceRate",
+  "NightAllowanceCeiling",
+  "NightAllowanceEligible",
   "UniformAllowance",
   "EducationAllowance",
   "DAArrears",
@@ -124,6 +126,8 @@ export type GovernmentMonthlyRow = {
   night_hours?: number | null;
   night_allowance_rate?: number | null;
   night_allowance_amount?: number | null;
+  night_allowance_basic_ceiling?: number | null;
+  night_allowance_eligible?: boolean | null;
   water_amount?: number | null;
   mess_amount?: number | null;
   loan_recovery_amount?: number | null;
@@ -265,6 +269,8 @@ function govFromComputed(
     NightAllowance: c.nightAllowancePaid,
     NightHours: c.nightHours ?? 0,
     NightAllowanceRate: c.nightAllowanceRate ?? 0,
+    NightAllowanceCeiling: c.nightAllowanceBasicCeiling ?? 0,
+    NightAllowanceEligible: c.nightAllowanceEligible === false ? "No" : "Yes",
     UniformAllowance: c.uniformAllowancePaid,
     EducationAllowance: c.educationAllowancePaid,
     DAArrears: c.daArrearsPaid,
@@ -328,6 +334,8 @@ function govFromDbRow(
     NightAllowance: n(r.night_allowance_paid),
     NightHours: n(r.night_hours),
     NightAllowanceRate: n(r.night_allowance_rate),
+    NightAllowanceCeiling: n(r.night_allowance_basic_ceiling),
+    NightAllowanceEligible: r.night_allowance_eligible === false ? "No" : "Yes",
     UniformAllowance: n(r.uniform_allowance_paid),
     EducationAllowance: n(r.education_allowance_paid),
     DAArrears: n(r.da_arrears_paid),
@@ -409,6 +417,8 @@ export function buildPayrollExcelRow(
     NightAllowance: 0,
     NightHours: 0,
     NightAllowanceRate: 0,
+    NightAllowanceCeiling: 0,
+    NightAllowanceEligible: "Yes",
     UniformAllowance: 0,
     EducationAllowance: 0,
     DAArrears: 0,

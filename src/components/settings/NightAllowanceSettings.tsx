@@ -8,7 +8,7 @@ import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { FormField } from "@/components/ui/FormField";
 import { Input } from "@/components/ui/Input";
 import { Modal } from "@/components/ui/Modal";
-import { formatNightAllowanceSlabLabel } from "@/lib/nightAllowanceCalculation";
+import { formatNightAllowanceSlabLabel, DEFAULT_NIGHT_ALLOWANCE_BASIC_CEILING } from "@/lib/nightAllowanceCalculation";
 
 export type NightAllowanceRateRecord = {
   id: string;
@@ -43,15 +43,23 @@ export function NightAllowanceSettings() {
   const [form, setForm] = useState<RateForm>(emptyForm);
   const [saving, setSaving] = useState(false);
   const [deactivateTarget, setDeactivateTarget] = useState<NightAllowanceRateRecord | null>(null);
+  const [basicPayCeiling, setBasicPayCeiling] = useState(String(DEFAULT_NIGHT_ALLOWANCE_BASIC_CEILING));
+  const [ceilingSaving, setCeilingSaving] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/settings/night-allowance-rates");
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || data.message || "Failed to load night allowance rates");
+      const [ratesRes, calcRes] = await Promise.all([
+        fetch("/api/settings/night-allowance-rates"),
+        fetch("/api/settings/payroll-calculation-settings"),
+      ]);
+      const data = await ratesRes.json().catch(() => ({}));
+      const calcData = await calcRes.json().catch(() => ({}));
+      if (!ratesRes.ok) throw new Error(data.error || data.message || "Failed to load night allowance rates");
       setRates((data.rates ?? []) as NightAllowanceRateRecord[]);
+      const cs = calcData.calculationSettings ?? {};
+      setBasicPayCeiling(String(cs.nightAllowanceBasicCeiling ?? DEFAULT_NIGHT_ALLOWANCE_BASIC_CEILING));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load night allowance rates");
     } finally {
@@ -123,8 +131,63 @@ export function NightAllowanceSettings() {
     await load();
   }
 
+  async function saveCeiling(e: React.FormEvent) {
+    e.preventDefault();
+    setCeilingSaving(true);
+    setError(null);
+    try {
+      const ceiling = Number(basicPayCeiling);
+      if (!Number.isFinite(ceiling) || ceiling < 0) {
+        throw new Error("Night allowance basic pay ceiling must be ≥ 0.");
+      }
+      const calcRes = await fetch("/api/settings/payroll-calculation-settings");
+      const calcData = await calcRes.json().catch(() => ({}));
+      if (!calcRes.ok) throw new Error(calcData.error || calcData.message || "Failed to load calculation settings");
+      const cs = calcData.calculationSettings ?? {};
+      const res = await fetch("/api/settings/payroll-calculation-settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cpfPercentage: cs.cpfPercentage ?? 12,
+          cpfBasisFieldKeys: cs.cpfBasisFieldKeys ?? [],
+          cpfCalculationMode: cs.cpfCalculationMode ?? "percentage",
+          cpfFixedAmount: cs.cpfFixedAmount ?? 0,
+          electricityUnitRate: cs.electricityUnitRate ?? 0,
+          nightAllowanceBasicCeiling: ceiling,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || data.error || "Save failed");
+      setBasicPayCeiling(String(data.calculationSettings?.nightAllowanceBasicCeiling ?? ceiling));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setCeilingSaving(false);
+    }
+  }
+
   return (
     <div className="card space-y-4">
+      <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-4">
+        <form onSubmit={saveCeiling} className="flex flex-wrap items-end gap-3">
+          <FormField label="Night Allowance Basic Pay Ceiling (₹)" className="min-w-[220px] flex-1">
+            <Input
+              type="number"
+              min={0}
+              step="1"
+              value={basicPayCeiling}
+              onChange={(e) => setBasicPayCeiling(e.target.value)}
+            />
+          </FormField>
+          <Button type="submit" disabled={ceilingSaving}>
+            {ceilingSaving ? "Saving…" : "Save ceiling"}
+          </Button>
+        </form>
+        <p className="mt-2 text-xs text-slate-600">
+          Night Duty Allowance is payable only when monthly Basic Pay is at or below this ceiling (default ₹43,600).
+        </p>
+      </div>
+
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold text-slate-900">Night Allowance</h2>
