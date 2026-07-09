@@ -12,6 +12,7 @@ use App\Models\HrmsEmployee;
 use App\Models\HrmsPayrollMaster;
 use App\Models\HrmsPayrollMasterHistory;
 use App\Models\HrmsUser;
+use App\Support\ApiPagination;
 use App\Support\GovernmentPayLevel;
 use App\Support\IncrementMonth;
 use App\Support\PayrollFieldRegistry;
@@ -44,40 +45,137 @@ final class PayrollMasterService
     /** @return list<array<string, mixed>> */
     public function listForCompany(?string $companyId): array
     {
+        $result = $this->paginatedListForCompany($companyId, ['page' => 1, 'per_page' => ApiPagination::MAX_PER_PAGE]);
+
+        return $result['data'];
+    }
+
+    /**
+     * Paginated payroll master list with server-side search/filters.
+     *
+     * @param  array<string, mixed>  $params
+     * @return array{data: list<array<string, mixed>>, meta: array<string, int>}
+     */
+    public function paginatedListForCompany(?string $companyId, array $params): array
+    {
+        $page = ApiPagination::resolvePage($params['page'] ?? 1);
+        $perPage = ApiPagination::resolvePerPage($params['per_page'] ?? $params['perPage'] ?? null);
+        $search = trim((string) ($params['search'] ?? ''));
+        $sortBy = (string) ($params['sort_by'] ?? $params['sortBy'] ?? 'employee_code');
+        $sortDir = strtolower((string) ($params['sort_dir'] ?? $params['sortDir'] ?? 'asc')) === 'desc' ? 'desc' : 'asc';
+
+        $query = $this->baseMasterListQuery($companyId);
+        $this->applyMasterListFilters($query, $params, $search);
+
+        $allowedSort = ['employee_code', 'name', 'department', 'division', 'designation', 'pay_level', 'status', 'created_at'];
+        $sortCol = in_array($sortBy, $allowedSort, true) ? $sortBy : 'employee_code';
+        $query->orderBy($sortCol, $sortDir);
+
+        $total = (clone $query)->count();
+        $masters = $query->forPage($page, $perPage)->get();
+
+        if (config('app.debug')) {
+            Log::debug('payroll_master.paginated_list', [
+                'company_id' => $companyId,
+                'page' => $page,
+                'per_page' => $perPage,
+                'total' => $total,
+                'returned' => $masters->count(),
+            ]);
+        }
+
+        $rows = $this->formatRowsBatch($masters, $companyId);
+
+        return ApiPagination::response($rows, $total, $page, $perPage);
+    }
+
+    /** @param  \Illuminate\Database\Eloquent\Builder<HrmsPayrollMaster>  $query */
+    private function applyMasterListFilters($query, array $params, string $search): void
+    {
+        if ($search !== '') {
+            $term = '%'.mb_strtolower($search).'%';
+            $query->where(function ($w) use ($term, $search) {
+                $w->whereRaw('LOWER(employee_code) LIKE ?', [$term])
+                    ->orWhereRaw('LOWER(COALESCE(name, \'\')) LIKE ?', [$term])
+                    ->orWhereRaw('LOWER(COALESCE(email, \'\')) LIKE ?', [$term])
+                    ->orWhereRaw('LOWER(COALESCE(designation, \'\')) LIKE ?', [$term])
+                    ->orWhereRaw('LOWER(COALESCE(department, \'\')) LIKE ?', [$term])
+                    ->orWhereRaw('LOWER(COALESCE(division, \'\')) LIKE ?', [$term]);
+                if (ctype_digit($search)) {
+                    $w->orWhere('pay_level', (int) $search);
+                }
+            });
+        }
+
+        foreach (['department', 'division', 'designation', 'status'] as $field) {
+            $val = trim((string) ($params[$field] ?? ''));
+            if ($val !== '') {
+                $query->where($field, $val);
+            }
+        }
+
+        $payLevel = $params['pay_level'] ?? $params['payLevel'] ?? null;
+        if ($payLevel !== null && $payLevel !== '') {
+            $query->where('pay_level', (int) $payLevel);
+        }
+
+        if (array_key_exists('has_quarter', $params) || array_key_exists('hasQuarter', $params)) {
+            $raw = $params['has_quarter'] ?? $params['hasQuarter'];
+            if ($raw !== null && $raw !== '') {
+                $query->where('has_quarter', filter_var($raw, FILTER_VALIDATE_BOOLEAN));
+            }
+        }
+    }
+
+    /** @return \Illuminate\Database\Eloquent\Builder<HrmsPayrollMaster> */
+    private function baseMasterListQuery(?string $companyId)
+    {
         $query = HrmsPayrollMaster::query()
             ->whereNull('effective_to')
             ->where(function ($q) {
-                // Hide incomplete autosave stubs (no login user linked yet).
                 $q->whereNotNull('employee_user_id')->orWhereNotNull('user_id');
-            })
-            ->orderBy('created_at');
+            });
 
         if ($companyId) {
             $query->where('company_id', $companyId);
         }
 
-        if (config('app.debug')) {
-            Log::debug('payroll_master.list', [
-                'company_id' => $companyId,
-                'total_in_table' => HrmsPayrollMaster::query()->when($companyId, fn ($q) => $q->where('company_id', $companyId))->count(),
-            ]);
+        return $query;
+    }
+
+    /**
+     * @param  \Illuminate\Support\Collection<int, HrmsPayrollMaster>  $masters
+     * @return list<array<string, mixed>>
+     */
+    private function formatRowsBatch($masters, ?string $companyId): array
+    {
+        if ($masters->isEmpty()) {
+            return [];
         }
 
-        $masters = $query->get();
+        $userIds = $masters
+            ->map(fn (HrmsPayrollMaster $m) => $m->user_id ?? $m->employee_user_id)
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
 
-        if (config('app.debug')) {
-            Log::debug('payroll_master.list_result', [
-                'company_id' => $companyId,
-                'returned' => $masters->count(),
-                'sample_da' => $masters->take(5)->map(fn (HrmsPayrollMaster $m) => [
-                    'id' => $m->id,
-                    'name' => $m->name,
-                    'da_percent' => $m->da_percent,
-                ])->values()->all(),
-            ]);
-        }
+        $usersById = $userIds !== []
+            ? HrmsUser::whereIn('id', $userIds)->get()->keyBy('id')
+            : collect();
 
-        return $masters->map(fn (HrmsPayrollMaster $m) => $this->formatRow($m))->values()->all();
+        $masterIds = $masters->pluck('id')->all();
+        $customByMaster = $companyId
+            ? $this->fieldService->getCustomFieldValuesForMasters($companyId, $masterIds)
+            : [];
+
+        return $masters
+            ->map(fn (HrmsPayrollMaster $m) => $this->formatRow($m, null, [
+                'usersById' => $usersById,
+                'customFieldValues' => $customByMaster[$m->id] ?? null,
+            ]))
+            ->values()
+            ->all();
     }
 
     /** @return list<array<string, mixed>> */
@@ -599,49 +697,59 @@ final class PayrollMasterService
 
         $generatedPasswordAccounts = [];
 
-        foreach ($plan['rows'] as $item) {
-            try {
-                $data = $item['data'];
-                if ($companyId) {
-                    $custom = $this->extractCustomFieldValuesFromImportRow($companyId, $data);
-                    if ($custom !== []) {
-                        $data['customFieldValues'] = $custom;
+        $saveRows = array_values(array_filter(
+            $plan['rows'],
+            fn (array $item) => ($item['errors'] ?? []) === [],
+        ));
+
+        try {
+            DB::transaction(function () use ($saveRows, $companyId, $createdBy, &$summary, &$generatedPasswordAccounts) {
+                foreach (array_chunk($saveRows, 50) as $chunk) {
+                    foreach ($chunk as $item) {
+                        $data = $item['data'];
+                        if ($companyId) {
+                            $custom = $this->extractCustomFieldValuesFromImportRow($companyId, $data);
+                            if ($custom !== []) {
+                                $data['customFieldValues'] = $custom;
+                            }
+                            $customErrors = $this->fieldService->validateCustomFieldValues($companyId, $custom);
+                            foreach ($customErrors as $ce) {
+                                throw new \InvalidArgumentException($ce['message']);
+                            }
+                        }
+                        if ($item['action'] === 'update' && $item['existing']) {
+                            $this->update($item['existing'], $data, $companyId ?? $item['existing']->company_id);
+                            $summary['updated_rows']++;
+                        } else {
+                            $this->create($data, $companyId ?? '', $createdBy, false, true);
+                            $summary['inserted_rows']++;
+                        }
+                        if (! empty($item['generated_password'])) {
+                            $generatedPasswordAccounts[] = [
+                                'row' => $item['row'],
+                                'employeeCode' => $item['data']['employee_code'] ?? null,
+                                'employeeName' => $item['data']['name'] ?? null,
+                            ];
+                        }
                     }
-                    $customErrors = $this->fieldService->validateCustomFieldValues($companyId, $custom);
-                    foreach ($customErrors as $ce) {
-                        throw new \InvalidArgumentException($ce['message']);
-                    }
                 }
-                if ($item['action'] === 'update' && $item['existing']) {
-                    $this->update($item['existing'], $data, $companyId ?? $item['existing']->company_id);
-                    $summary['updated_rows']++;
-                } else {
-                    $this->create($data, $companyId ?? '', $createdBy, false, true);
-                    $summary['inserted_rows']++;
-                }
-                if (! empty($item['generated_password'])) {
-                    $generatedPasswordAccounts[] = [
-                        'row' => $item['row'],
-                        'employeeCode' => $item['data']['employee_code'] ?? null,
-                        'employeeName' => $item['data']['name'] ?? null,
-                    ];
-                }
-            } catch (\Throwable $e) {
-                $summary['failed_rows'] = ($summary['failed_rows'] ?? 0) + 1;
-                $errors[] = [
-                    'row' => $item['row'],
-                    'employee_code' => $item['data']['employee_code'] ?? null,
-                    'employee_name' => $item['data']['name'] ?? null,
-                    'field' => 'row',
+            });
+        } catch (\Throwable $e) {
+            return [
+                'message' => 'Import failed and was rolled back.',
+                'summary' => $summary,
+                'errors' => [[
+                    'row' => 0,
+                    'field' => 'import',
                     'message' => $this->friendlyImportSaveError($e),
                     'error_type' => 'error',
-                ];
-            }
+                ]],
+                'generated_password_count' => 0,
+                'generated_password_accounts' => [],
+            ];
         }
 
-        $message = $errors === []
-            ? 'Import completed successfully'
-            : 'Import completed with errors';
+        $message = 'Import completed successfully';
 
         return array_merge(compact('message', 'summary', 'errors'), [
             'generated_password_count' => count($generatedPasswordAccounts),
@@ -723,6 +831,8 @@ final class PayrollMasterService
             ];
         }
 
+        $uniquenessIndex = $this->buildImportUniquenessIndex($companyId);
+
         $rowNum = $headerRowIndex;
         while ($rows !== [] && $this->isImportInstructionRow($rows[0])) {
             array_shift($rows);
@@ -745,7 +855,7 @@ final class PayrollMasterService
             }
             $existing = $this->findExistingMaster($companyId, $row);
             $action = $existing ? 'update' : 'insert';
-            $rowErrors = $this->validateImportRow($row, $companyId, $existing);
+            $rowErrors = $this->validateImportRow($row, $companyId, $existing, $uniquenessIndex);
             if ($columnError !== null && ! $repair['fixed']) {
                 array_unshift($rowErrors, $this->importIssue('columns', $columnError['message']));
             }
@@ -1451,18 +1561,24 @@ final class PayrollMasterService
     }
 
     /** @return array<string, mixed> */
-    public function formatRow(HrmsPayrollMaster $m, ?string $rowType = null): array
+    public function formatRow(HrmsPayrollMaster $m, ?string $rowType = null, array $context = []): array
     {
         $userId = $m->user_id ?? $m->employee_user_id;
         $userRole = UserRole::Employee->value;
         if ($userId) {
-            $user = HrmsUser::find($userId);
+            $usersById = $context['usersById'] ?? null;
+            $user = $usersById?->get($userId) ?? HrmsUser::find($userId);
             if ($user) {
                 $role = $user->role;
                 $userRole = $role instanceof UserRole
                     ? $role->value
                     : UserRole::fromStored(is_string($role) ? $role : null)->value;
             }
+        }
+
+        $customFieldValues = $context['customFieldValues'] ?? null;
+        if ($customFieldValues === null && $m->company_id) {
+            $customFieldValues = $this->fieldService->getCustomFieldValuesForMaster((string) $m->company_id, $m->id);
         }
 
         return [
@@ -1482,9 +1598,7 @@ final class PayrollMasterService
             'division' => $m->division,
             'payLevel' => $m->pay_level ?? $m->getAttributes()['pay_level'] ?? null,
             'incrementMonth' => $m->increment_month ?? IncrementMonth::DEFAULT,
-            'customFieldValues' => $m->company_id
-                ? $this->fieldService->getCustomFieldValuesForMaster((string) $m->company_id, $m->id)
-                : [],
+            'customFieldValues' => is_array($customFieldValues) ? $customFieldValues : [],
             'grossBasicPay' => (float) ($m->gross_basic_pay ?? $m->gross_basic ?? $m->gross_salary ?? 0),
             'daPercent' => $this->formatPercentField($m->da_percent, PayrollCalculationService::DEFAULT_DA_PERCENT),
             'daAmount' => (float) ($m->da_amount ?? $this->roundDaAmount($m)),
@@ -2046,6 +2160,7 @@ final class PayrollMasterService
         bool $salaryPending = false,
         bool $isRevision = false,
         bool $autosave = false,
+        ?array $uniquenessIndex = null,
     ): array {
         $errors = [];
 
@@ -2055,7 +2170,15 @@ final class PayrollMasterService
                 $errors[] = ['field' => 'pan', 'message' => 'PAN is required.'];
             } elseif (! preg_match('/^[A-Z]{5}\d{4}[A-Z]$/', $pan)) {
                 $errors[] = ['field' => 'pan', 'message' => 'Enter a valid PAN number.'];
-            } elseif ($this->masterNormalizedFieldExists('pan', $pan, $ignoreMasterId, $companyId, fn ($v) => strtoupper(preg_replace('/[^A-Z0-9]/', '', (string) $v)))) {
+            } elseif ($this->fieldValueExists(
+                'pan',
+                $pan,
+                $ignoreMasterId,
+                $companyId,
+                $ignoreUserId,
+                $uniquenessIndex,
+                fn ($v) => strtoupper(preg_replace('/[^A-Z0-9]/', '', (string) $v)),
+            )) {
                 $errors[] = ['field' => 'pan', 'message' => 'PAN number already exists.'];
             }
         } elseif ($isRevision) {
@@ -2072,45 +2195,144 @@ final class PayrollMasterService
 
         $email = mb_strtolower(trim((string) ($payload['email'] ?? '')));
         if ($email !== '') {
-            if ($this->masterNormalizedFieldExists('email', $email, $ignoreMasterId, $companyId, fn ($v) => mb_strtolower(trim((string) $v)))) {
+            if ($this->fieldValueExists('email', $email, $ignoreMasterId, $companyId, $ignoreUserId, $uniquenessIndex, fn ($v) => mb_strtolower(trim((string) $v)), 'master')) {
                 $errors[] = ['field' => 'email', 'message' => 'Email already exists.'];
             }
-            if ($companyId && $this->userFieldExists('email', $email, $ignoreUserId, $companyId, fn ($v) => mb_strtolower(trim((string) $v)))) {
+            if ($companyId && $this->fieldValueExists('email', $email, $ignoreMasterId, $companyId, $ignoreUserId, $uniquenessIndex, fn ($v) => mb_strtolower(trim((string) $v)), 'user')) {
                 $errors[] = ['field' => 'email', 'message' => 'Email already exists.'];
             }
         }
 
         $phone = preg_replace('/\D/', '', (string) ($payload['phone'] ?? ''));
         if ($phone !== '') {
-            if ($this->masterNormalizedFieldExists('phone', $phone, $ignoreMasterId, $companyId, fn ($v) => preg_replace('/\D/', '', (string) $v))) {
+            if ($this->fieldValueExists('phone', $phone, $ignoreMasterId, $companyId, $ignoreUserId, $uniquenessIndex, fn ($v) => preg_replace('/\D/', '', (string) $v), 'master')) {
                 $errors[] = ['field' => 'phone', 'message' => 'Phone number already exists.'];
             }
-            if ($companyId && $this->userFieldExists('phone', $phone, $ignoreUserId, $companyId, fn ($v) => preg_replace('/\D/', '', (string) $v))) {
+            if ($companyId && $this->fieldValueExists('phone', $phone, $ignoreMasterId, $companyId, $ignoreUserId, $uniquenessIndex, fn ($v) => preg_replace('/\D/', '', (string) $v), 'user')) {
                 $errors[] = ['field' => 'phone', 'message' => 'Phone number already exists.'];
             }
         }
 
         $aadhaar = preg_replace('/\D/', '', (string) ($payload['aadhaar'] ?? ''));
         if ($aadhaar !== '') {
-            if ($this->masterNormalizedFieldExists('aadhaar', $aadhaar, $ignoreMasterId, $companyId, fn ($v) => preg_replace('/\D/', '', (string) $v))) {
+            if ($this->fieldValueExists('aadhaar', $aadhaar, $ignoreMasterId, $companyId, $ignoreUserId, $uniquenessIndex, fn ($v) => preg_replace('/\D/', '', (string) $v), 'master')) {
                 $errors[] = ['field' => 'aadhaar', 'message' => 'Aadhaar number already exists.'];
             }
-            if ($companyId && $this->userFieldExists('aadhaar', $aadhaar, $ignoreUserId, $companyId, fn ($v) => preg_replace('/\D/', '', (string) $v))) {
+            if ($companyId && $this->fieldValueExists('aadhaar', $aadhaar, $ignoreMasterId, $companyId, $ignoreUserId, $uniquenessIndex, fn ($v) => preg_replace('/\D/', '', (string) $v), 'user')) {
                 $errors[] = ['field' => 'aadhaar', 'message' => 'Aadhaar number already exists.'];
             }
         }
 
         $account = preg_replace('/\D/', '', (string) ($payload['bank_account_number'] ?? $payload['bankAccountNumber'] ?? ''));
         if ($account !== '') {
-            if ($this->masterNormalizedFieldExists('bank_account_number', $account, $ignoreMasterId, $companyId, fn ($v) => preg_replace('/\D/', '', (string) $v))) {
+            if ($this->fieldValueExists('bank_account_number', $account, $ignoreMasterId, $companyId, $ignoreUserId, $uniquenessIndex, fn ($v) => preg_replace('/\D/', '', (string) $v), 'master')) {
                 $errors[] = ['field' => 'bank_account_number', 'message' => 'Bank account number already exists.'];
             }
-            if ($companyId && $this->userFieldExists('bank_account_number', $account, $ignoreUserId, $companyId, fn ($v) => preg_replace('/\D/', '', (string) $v))) {
+            if ($companyId && $this->fieldValueExists('bank_account_number', $account, $ignoreMasterId, $companyId, $ignoreUserId, $uniquenessIndex, fn ($v) => preg_replace('/\D/', '', (string) $v), 'user')) {
                 $errors[] = ['field' => 'bank_account_number', 'message' => 'Bank account number already exists.'];
             }
         }
 
         return $errors;
+    }
+
+    /**
+     * Preload normalized uniqueness values for import validation (one query per field).
+     *
+     * @return array{master: array<string, array<string, string>>, user: array<string, array<string, string>>}
+     */
+    private function buildImportUniquenessIndex(?string $companyId): array
+    {
+        $index = ['master' => [], 'user' => []];
+        if (! $companyId) {
+            return $index;
+        }
+
+        $normalizers = [
+            'employee_code' => fn ($v) => mb_strtolower(trim((string) $v)),
+            'email' => fn ($v) => mb_strtolower(trim((string) $v)),
+            'phone' => fn ($v) => preg_replace('/\D/', '', (string) $v),
+            'aadhaar' => fn ($v) => preg_replace('/\D/', '', (string) $v),
+            'pan' => fn ($v) => strtoupper(preg_replace('/[^A-Z0-9]/', '', (string) $v)),
+            'bank_account_number' => fn ($v) => preg_replace('/\D/', '', (string) $v),
+        ];
+
+        $masterQuery = HrmsPayrollMaster::query()->where('company_id', $companyId);
+        $this->scopeCurrentMaster($masterQuery);
+        foreach ($masterQuery->get(['id', ...array_keys($normalizers)]) as $row) {
+            foreach ($normalizers as $field => $normalize) {
+                $norm = $normalize($row->{$field} ?? '');
+                if ($norm !== '') {
+                    $index['master'][$field][$norm] = (string) $row->id;
+                }
+            }
+        }
+
+        $userFields = ['email', 'phone', 'aadhaar', 'bank_account_number'];
+        foreach (HrmsUser::query()->where('company_id', $companyId)->get(['id', ...$userFields]) as $row) {
+            foreach ($userFields as $field) {
+                $norm = $normalizers[$field]($row->{$field} ?? '');
+                if ($norm !== '') {
+                    $index['user'][$field][$norm] = (string) $row->id;
+                }
+            }
+        }
+
+        return $index;
+    }
+
+    private function importFieldExistsInIndex(
+        array $index,
+        string $scope,
+        string $field,
+        string $normalizedValue,
+        ?string $ignoreMasterId,
+        ?string $ignoreUserId,
+    ): bool {
+        if ($normalizedValue === '') {
+            return false;
+        }
+        $map = $index[$scope][$field] ?? [];
+        $ownerId = $map[$normalizedValue] ?? null;
+        if (! $ownerId) {
+            return false;
+        }
+        if ($scope === 'master' && $ignoreMasterId && $ownerId === $ignoreMasterId) {
+            return false;
+        }
+        if ($scope === 'user' && $ignoreUserId && $ownerId === $ignoreUserId) {
+            return false;
+        }
+
+        return true;
+    }
+
+    private function fieldValueExists(
+        string $field,
+        string $normalizedValue,
+        ?string $ignoreMasterId,
+        ?string $companyId,
+        ?string $ignoreUserId,
+        ?array $uniquenessIndex,
+        callable $normalize,
+        string $scope = 'master',
+    ): bool {
+        if ($uniquenessIndex !== null) {
+            return $this->importFieldExistsInIndex(
+                $uniquenessIndex,
+                $scope,
+                $field,
+                $normalizedValue,
+                $ignoreMasterId,
+                $ignoreUserId,
+            );
+        }
+
+        if ($scope === 'user' && $companyId) {
+            return $this->userFieldExists($field, $normalizedValue, $ignoreUserId, $companyId, $normalize);
+        }
+
+        return $this->masterNormalizedFieldExists($field, $normalizedValue, $ignoreMasterId, $companyId, $normalize);
     }
 
     private function masterNormalizedFieldExists(
@@ -3320,7 +3542,7 @@ final class PayrollMasterService
 
     /** @param  array<string, mixed>  $row */
     /** @return list<array{field: string, message: string, type?: string}> */
-    private function validateImportRow(array $row, ?string $companyId, ?HrmsPayrollMaster $existing): array
+    private function validateImportRow(array $row, ?string $companyId, ?HrmsPayrollMaster $existing, ?array $uniquenessIndex = null): array
     {
         $errors = [];
 
@@ -3453,7 +3675,7 @@ final class PayrollMasterService
         $errors = array_merge($errors, $this->passwordImportIssues($row));
 
         $ignoreUserId = $existing?->user_id ?? $existing?->employee_user_id;
-        foreach ($this->validatePayloadUniquenessErrors($row, $existing?->id, $companyId, $ignoreUserId, false) as $dup) {
+        foreach ($this->validatePayloadUniquenessErrors($row, $existing?->id, $companyId, $ignoreUserId, false, false, false, $uniquenessIndex) as $dup) {
             $errors[] = $this->importIssue($dup['field'], $dup['message']);
         }
 

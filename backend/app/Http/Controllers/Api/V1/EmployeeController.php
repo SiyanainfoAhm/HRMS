@@ -9,7 +9,7 @@ use App\Models\HrmsUser;
 use App\Services\PayrollMasterService;
 use App\Support\BankDetailsService;
 use App\Support\BankDetailsValidator;
-use App\Support\CompanyAccess;
+use App\Support\ApiPagination;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -38,9 +38,38 @@ class EmployeeController extends Controller
             });
         }
 
-        $employees = $query->get();
+        $search = trim((string) $request->query('search', ''));
+        if ($search !== '') {
+            $term = '%'.mb_strtolower($search).'%';
+            $query->where(function ($q) use ($term) {
+                $q->whereRaw('LOWER(first_name) LIKE ?', [$term])
+                    ->orWhereRaw('LOWER(last_name) LIKE ?', [$term])
+                    ->orWhereRaw('LOWER(email) LIKE ?', [$term])
+                    ->orWhereRaw('LOWER(employee_code) LIKE ?', [$term]);
+            });
+        }
 
-        return response()->json(['employees' => $employees, 'total' => $employees->count()]);
+        if ($request->query('all') === '1' || $request->boolean('all')) {
+            $employees = $query->get();
+
+            return response()->json([
+                'employees' => $employees,
+                'total' => $employees->count(),
+            ]);
+        }
+
+        $page = ApiPagination::resolvePage($request->query('page'));
+        $perPage = ApiPagination::resolvePerPage($request->query('per_page', $request->query('perPage')));
+        $paginator = $query->paginate($perPage, ['*'], 'page', $page);
+
+        return response()->json(
+            ApiPagination::response(
+                $paginator->items(),
+                $paginator->total(),
+                $paginator->currentPage(),
+                $paginator->perPage(),
+            ) + ['employees' => $paginator->items()],
+        );
     }
 
     public function show(Request $request, string $id): JsonResponse

@@ -37,6 +37,69 @@ final class NightAllowanceRateService
     }
 
     /**
+     * Resolve from preloaded rate rows (avoids per-employee DB query in Run Payroll).
+     *
+     * @param  list<array<string, mixed>>  $preloadedRates
+     * @return array{rate: float, slabNo: int|null, warning: string|null}
+     */
+    public function resolveFromPreloadedRates(array $preloadedRates, int $payLevel, ?string $periodEndDate = null): array
+    {
+        if ($payLevel < GovernmentPayLevel::MIN || $payLevel > GovernmentPayLevel::MAX) {
+            return [
+                'rate' => 0.0,
+                'slabNo' => null,
+                'warning' => 'Night allowance rate is not configured for this Pay Level.',
+            ];
+        }
+
+        $onOrBefore = $periodEndDate ? Carbon::parse($periodEndDate)->toDateString() : null;
+        $matches = [];
+        foreach ($preloadedRates as $row) {
+            if ((int) ($row['payLevel'] ?? 0) !== $payLevel) {
+                continue;
+            }
+            if (($row['isActive'] ?? true) === false) {
+                continue;
+            }
+            $eff = $row['effectiveFrom'] ?? null;
+            if ($onOrBefore && $eff && Carbon::parse((string) $eff)->toDateString() > $onOrBefore) {
+                continue;
+            }
+            $matches[] = $row;
+        }
+
+        usort($matches, function (array $a, array $b): int {
+            $aHas = empty($a['effectiveFrom']) ? 1 : 0;
+            $bHas = empty($b['effectiveFrom']) ? 1 : 0;
+            if ($aHas !== $bHas) {
+                return $aHas <=> $bHas;
+            }
+            $aEff = ! empty($a['effectiveFrom']) ? strtotime((string) $a['effectiveFrom']) : 0;
+            $bEff = ! empty($b['effectiveFrom']) ? strtotime((string) $b['effectiveFrom']) : 0;
+            if ($aEff !== $bEff) {
+                return $bEff <=> $aEff;
+            }
+
+            return ((int) ($a['slabNo'] ?? 0)) <=> ((int) ($b['slabNo'] ?? 0));
+        });
+
+        $pick = $matches[0] ?? null;
+        if ($pick) {
+            return [
+                'rate' => (float) ($pick['ratePerHour'] ?? 0),
+                'slabNo' => isset($pick['slabNo']) ? (int) $pick['slabNo'] : null,
+                'warning' => null,
+            ];
+        }
+
+        return [
+            'rate' => 0.0,
+            'slabNo' => null,
+            'warning' => 'Night allowance rate is not configured for this Pay Level.',
+        ];
+    }
+
+    /**
      * Resolve active night allowance rate for an employee pay level.
      * Picks first row: effective_from <= period end (if given), then effective_from DESC NULLS LAST, slab_no ASC.
      *

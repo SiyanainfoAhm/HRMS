@@ -54,6 +54,15 @@ import {
   normalizeIfscInput,
   validateBankDetails,
 } from "@/lib/employeeValidators";
+import { PaginationControls } from "@/components/ui/PaginationControls";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import {
+  buildPaginatedQuery,
+  DEFAULT_PAGE_SIZE,
+  emptyPaginationMeta,
+  SEARCH_DEBOUNCE_MS,
+  type PaginationMeta,
+} from "@/lib/pagination";
 
 type MasterGridRow = {
   employeeUserId: string;
@@ -787,17 +796,25 @@ function PayrollPageContent() {
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
   const [previewSearch, setPreviewSearch] = useState("");
-  const [debouncedPreviewSearch, setDebouncedPreviewSearch] = useState("");
+  const debouncedPreviewSearch = useDebouncedValue(previewSearch, SEARCH_DEBOUNCE_MS);
+  const [previewPage, setPreviewPage] = useState(1);
+  const [previewPerPage, setPreviewPerPage] = useState(DEFAULT_PAGE_SIZE);
+  const [previewMeta, setPreviewMeta] = useState<PaginationMeta>(emptyPaginationMeta());
+  const runRowEditsRef = useRef<Map<string, Record<string, unknown>>>(new Map());
   const [previewDivisionFilter, setPreviewDivisionFilter] = useState("");
   const [previewDepartmentFilter, setPreviewDepartmentFilter] = useState("");
   const [runDivisions, setRunDivisions] = useState<Array<{ id: string; name: string }>>([]);
   const [runDepartments, setRunDepartments] = useState<Array<{ id: string; name: string; divisionId: string | null }>>([]);
   const [runOrgFiltersLoading, setRunOrgFiltersLoading] = useState(false);
 
-  useEffect(() => {
-    const t = window.setTimeout(() => setDebouncedPreviewSearch(previewSearch), 200);
-    return () => window.clearTimeout(t);
-  }, [previewSearch]);
+  const previewDivisionName = useMemo(
+    () => runDivisions.find((d) => d.id === previewDivisionFilter)?.name ?? "",
+    [runDivisions, previewDivisionFilter],
+  );
+  const previewDepartmentName = useMemo(
+    () => runDepartments.find((d) => d.id === previewDepartmentFilter)?.name ?? "",
+    [runDepartments, previewDepartmentFilter],
+  );
 
   useEffect(() => {
     if (tab !== "run" || !canManage) return;
@@ -861,6 +878,7 @@ function PayrollPageContent() {
       monthCount?: number;
       periodLabel?: string | null;
     }[];
+    meta?: PaginationMeta;
     rows: {
       employeeUserId: string;
       employeeName: string | null;
@@ -965,17 +983,7 @@ function PayrollPageContent() {
     return rows.every((r: any) => r.payrollMode === "government" && !r.error);
   }, [preview?.rows]);
 
-  const filteredEditableRows = useMemo(() => {
-    const q = debouncedPreviewSearch.trim().toLowerCase();
-    return editableRows.filter((r) => {
-      if (previewDivisionFilter && (r.divisionId ?? "") !== previewDivisionFilter) return false;
-      if (previewDepartmentFilter && (r.departmentId ?? "") !== previewDepartmentFilter) return false;
-      if (!q) return true;
-      const name = (r.employeeName ?? "").toLowerCase();
-      const email = (r.employeeEmail ?? "").toLowerCase();
-      return name.includes(q) || email.includes(q);
-    });
-  }, [editableRows, debouncedPreviewSearch, previewDivisionFilter, previewDepartmentFilter]);
+  const filteredEditableRows = useMemo(() => editableRows, [editableRows]);
 
   const runDivisionFilterOptions = useMemo(
     () => [
@@ -1233,6 +1241,12 @@ function PayrollPageContent() {
       setEditableRows([]);
     }
   }, [preview?.rows, preview?.daysInMonth, preview?.workingDaysInFullMonth, payrollConfig, runYear, runMonth]);
+
+  useEffect(() => {
+    for (const row of editableRows) {
+      runRowEditsRef.current.set(row.employeeUserId, row);
+    }
+  }, [editableRows]);
 
   useEffect(() => {
     if (tab !== "slips" || !canManage) return;
@@ -1637,7 +1651,7 @@ function PayrollPageContent() {
     setMastersLoading(true);
     (async () => {
       try {
-        const res = await fetch("/api/payroll/master");
+        const res = await fetch("/api/payroll/master?all=1");
         const data = await res.json();
         if (!res.ok) throw new Error(data?.error || "Failed to load masters");
         if (!cancelled) setMasters(data.masters || []);
@@ -1681,7 +1695,7 @@ function PayrollPageContent() {
           setMastersLoading(true);
           (async () => {
             try {
-              const res = await fetch("/api/payroll/master");
+              const res = await fetch("/api/payroll/master?all=1");
               const data = await res.json();
               if (!res.ok) throw new Error(data?.error || "Failed to load masters");
               setMasters(data.masters || []);
@@ -1743,16 +1757,27 @@ function PayrollPageContent() {
     setPreviewLoading(true);
     (async () => {
       try {
+        const qs = buildPaginatedQuery({
+          page: previewPage,
+          perPage: previewPerPage,
+          search: debouncedPreviewSearch,
+          filters: {
+            division: previewDivisionName || undefined,
+            department: previewDepartmentName || undefined,
+          },
+        });
         const res = await fetch(
-          `/api/payroll/run?year=${runYear}&month=${runMonth}&runDay=${runDay}`
+          `/api/payroll/run?year=${runYear}&month=${runMonth}&runDay=${runDay}&${qs}`,
         );
         const data = await res.json();
         if (!cancelled && res.ok) {
           setPreview(data.preview ?? null);
+          setPreviewMeta((data.preview?.meta as PaginationMeta) ?? emptyPaginationMeta(previewPerPage));
           setPayrollConfig(data.payrollConfig ?? data.preview?.payrollConfig ?? null);
         }
         else if (!cancelled) {
           setPreview(null);
+          setPreviewMeta(emptyPaginationMeta(previewPerPage));
           setPayrollConfig(null);
         }
       } catch {
@@ -1762,7 +1787,19 @@ function PayrollPageContent() {
       }
     })();
     return () => { cancelled = true; };
-  }, [canManage, tab, runYear, runMonth, runDay, daysInSelectedMonth]);
+  }, [
+    canManage,
+    tab,
+    runYear,
+    runMonth,
+    runDay,
+    daysInSelectedMonth,
+    previewPage,
+    previewPerPage,
+    debouncedPreviewSearch,
+    previewDivisionName,
+    previewDepartmentName,
+  ]);
 
   useEffect(() => {
     if (!canManage || tab !== "run") return;
@@ -2057,7 +2094,7 @@ function PayrollPageContent() {
         if (!res.ok) throw new Error(data?.error || "Failed to update");
         showToast("success", "Payroll master updated");
         dispatchHrmsChange("payroll_master");
-        const refresh = await fetch("/api/payroll/master");
+        const refresh = await fetch("/api/payroll/master?all=1");
         const refreshData = await refresh.json();
         if (refresh.ok) setMasters(refreshData.masters || []);
         setMasterRowSaving(null);
@@ -2088,7 +2125,7 @@ function PayrollPageContent() {
       if (!res.ok) throw new Error(data?.error || "Failed to update");
       showToast("success", "Payroll master updated");
       dispatchHrmsChange("payroll_master");
-      const refresh = await fetch("/api/payroll/master");
+      const refresh = await fetch("/api/payroll/master?all=1");
       const refreshData = await refresh.json();
       if (refresh.ok) setMasters(refreshData.masters || []);
     } catch (e: any) {
@@ -2133,7 +2170,7 @@ function PayrollPageContent() {
       dispatchHrmsChange("payroll_master");
       setEditMasterOpen(null);
       setEditMasterTab("structure");
-      const refresh = await fetch("/api/payroll/master");
+      const refresh = await fetch("/api/payroll/master?all=1");
       const refreshData = await refresh.json();
       if (refresh.ok) setMasters(refreshData.masters || []);
     } catch (e: any) {
@@ -2194,7 +2231,7 @@ function PayrollPageContent() {
         showToast("success", "Payroll master updated");
       dispatchHrmsChange("payroll_master");
         setEditMasterOpen(null);
-        const refresh = await fetch("/api/payroll/master");
+        const refresh = await fetch("/api/payroll/master?all=1");
         const refreshData = await refresh.json();
         if (refresh.ok) setMasters(refreshData.masters || []);
         setEditSaving(false);
@@ -2234,7 +2271,7 @@ function PayrollPageContent() {
       showToast("success", "Payroll master updated");
       dispatchHrmsChange("payroll_master");
       setEditMasterOpen(null);
-      const refresh = await fetch("/api/payroll/master");
+      const refresh = await fetch("/api/payroll/master?all=1");
       const refreshData = await refresh.json();
       if (refresh.ok) setMasters(refreshData.masters || []);
     } catch (e: any) {
@@ -2250,11 +2287,36 @@ function PayrollPageContent() {
     setRunning(true);
     try {
       const useCompleteMissing = Boolean(preview?.alreadyRun && preview?.payrollComplete === false);
-      const sourceRows = useCompleteMissing
-        ? filteredEditableRows.filter((r) => r.payslipPending)
-        : filteredEditableRows;
+      const params = new URLSearchParams({
+        year: runYear,
+        month: runMonth,
+        runDay,
+        all: "1",
+      });
+      if (debouncedPreviewSearch.trim()) params.set("search", debouncedPreviewSearch.trim());
+      if (previewDivisionName) params.set("division", previewDivisionName);
+      if (previewDepartmentName) params.set("department", previewDepartmentName);
+
+      const previewRes = await fetch(`/api/payroll/run?${params.toString()}`);
+      const previewData = await previewRes.json();
+      if (!previewRes.ok) {
+        throw new Error(previewData?.error || "Failed to load payroll rows for generation");
+      }
+
+      const allRows = (previewData.preview?.rows ?? []) as typeof editableRows;
+      const sourceRows = (useCompleteMissing
+        ? allRows.filter((r) => r.payslipPending)
+        : allRows
+      ).map((r) => {
+        const cached = runRowEditsRef.current.get(r.employeeUserId);
+        return (cached ?? r) as (typeof editableRows)[number];
+      });
+
       if (useCompleteMissing && sourceRows.length === 0) {
         throw new Error("No pending employees to add payslips for.");
+      }
+      if (!useCompleteMissing && sourceRows.length === 0) {
+        throw new Error("No employees to generate payroll for.");
       }
       const rowsPayload = sourceRows.map((r) => ({
         employeeUserId: r.employeeUserId,
@@ -2382,20 +2444,27 @@ function PayrollPageContent() {
                   : "Generate"
             }
             search={previewSearch}
-            onSearchChange={setPreviewSearch}
+            onSearchChange={(v) => {
+              setPreviewSearch(v);
+              setPreviewPage(1);
+            }}
             divisionFilter={previewDivisionFilter}
             onDivisionFilterChange={(v) => {
               setPreviewDivisionFilter(v);
               setPreviewDepartmentFilter("");
+              setPreviewPage(1);
             }}
             divisionOptions={runDivisionFilterOptions}
             departmentFilter={previewDepartmentFilter}
-            onDepartmentFilterChange={setPreviewDepartmentFilter}
+            onDepartmentFilterChange={(v) => {
+              setPreviewDepartmentFilter(v);
+              setPreviewPage(1);
+            }}
             departmentOptions={runDepartmentFilterOptions}
             orgFiltersLoading={runOrgFiltersLoading}
             totals={previewTotals}
             filteredCount={filteredEditableRows.length}
-            totalCount={editableRows.length}
+            totalCount={previewMeta.total || editableRows.length}
           >
               {runError && <p className="text-sm text-red-600">{runError}</p>}
               {preview?.alreadyRun && (
@@ -2461,6 +2530,19 @@ function PayrollPageContent() {
                 title="No payroll data"
                 description="Generate payroll for the selected month, or add employees in Payroll Master."
               />
+            ) : null}
+            {editableRows.length > 0 ? (
+              <div className="mt-2 border-t border-slate-100 pt-2">
+                <PaginationControls
+                  meta={previewMeta}
+                  loading={previewLoading}
+                  onPageChange={setPreviewPage}
+                  onPerPageChange={(n) => {
+                    setPreviewPerPage(n);
+                    setPreviewPage(1);
+                  }}
+                />
+              </div>
             ) : null}
           </div>
         </form>

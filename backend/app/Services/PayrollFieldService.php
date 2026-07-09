@@ -462,6 +462,31 @@ class PayrollFieldService
             ->all();
     }
 
+    /**
+     * Batch-load custom field values for many payroll master rows (avoids N+1).
+     *
+     * @param  list<string>  $masterIds
+     * @return array<string, array<string, string>>
+     */
+    public function getCustomFieldValuesForMasters(string $companyId, array $masterIds): array
+    {
+        if (! Schema::hasTable('cirt_payroll_field_values') || $masterIds === []) {
+            return [];
+        }
+
+        $out = [];
+        foreach (HrmsPayrollFieldValue::query()
+            ->where('company_id', $companyId)
+            ->whereIn('payroll_master_id', $masterIds)
+            ->get(['payroll_master_id', 'field_key', 'field_value']) as $row) {
+            $mid = (string) $row->payroll_master_id;
+            $out[$mid] ??= [];
+            $out[$mid][(string) $row->field_key] = (string) ($row->field_value ?? '');
+        }
+
+        return $out;
+    }
+
     /** @param array<string, mixed> $values */
     public function saveCustomFieldValuesForMaster(
         string $companyId,

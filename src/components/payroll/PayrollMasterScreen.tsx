@@ -72,6 +72,14 @@ import {
 } from "@/lib/employeeValidators";
 import { DynamicPayrollFields } from "@/components/payroll/DynamicPayrollFields";
 import { CpfCalculationSettingsForm } from "@/components/payroll/CpfCalculationSettingsForm";
+import { PaginationControls } from "@/components/ui/PaginationControls";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import {
+  buildPaginatedQuery,
+  DEFAULT_PAGE_SIZE,
+  emptyPaginationMeta,
+  type PaginationMeta,
+} from "@/lib/pagination";
 import type { PayrollFieldDefinition } from "@/lib/payrollFieldTypes";
 import {
   customNumericBagForTotalFromValues,
@@ -685,6 +693,12 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
   const canWrite = canManage && isAdminRole(role);
 
   const [rows, setRows] = useState<PayrollMasterRecord[]>([]);
+  const [listPage, setListPage] = useState(1);
+  const [listPerPage, setListPerPage] = useState(DEFAULT_PAGE_SIZE);
+  const [listSearch, setListSearch] = useState("");
+  const [listMeta, setListMeta] = useState<PaginationMeta>(emptyPaginationMeta());
+  const debouncedListSearch = useDebouncedValue(listSearch);
+  const [uniquenessRows, setUniquenessRows] = useState<PayrollMasterUniqueRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -1083,21 +1097,53 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     };
   }, [canManage]);
 
+  const loadUniquenessRows = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/payroll/master?all=1&_=${Date.now()}`, { cache: "no-store" });
+      const data = await res.json();
+      if (!res.ok) return;
+      const list = (data.masters ?? data.employees ?? data.data ?? []) as PayrollMasterRecord[];
+      setUniquenessRows(
+        list.map((r) => ({
+          id: r.id,
+          employeeCode: r.employeeCode,
+          email: r.email,
+          phone: r.phone,
+          aadhaar: r.aadhaar,
+          pan: r.pan,
+          bankAccountNumber: r.bankAccountNumber,
+        })),
+      );
+    } catch {
+      /* optional */
+    }
+  }, []);
+
   const loadRows = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
     try {
-      const res = await fetch(`/api/payroll/master?_=${Date.now()}`, { cache: "no-store" });
+      const qs = buildPaginatedQuery({
+        page: listPage,
+        perPage: listPerPage,
+        search: debouncedListSearch,
+      });
+      const res = await fetch(`/api/payroll/master?${qs}&_=${Date.now()}`, { cache: "no-store" });
       const data = await res.json();
       if (!res.ok) {
         throw new Error(data?.error || data?.message || `Failed to load payroll master (${res.status})`);
       }
-      const list = (data.masters ?? data.employees ?? []) as PayrollMasterRecord[];
+      const list = (data.data ?? data.masters ?? data.employees ?? []) as PayrollMasterRecord[];
+      if (data.meta) {
+        setListMeta(data.meta as PaginationMeta);
+      } else {
+        setListMeta(emptyPaginationMeta(listPerPage));
+      }
       if (process.env.NODE_ENV === "development") {
         console.info("[PayrollMaster] loaded", {
           count: list.length,
+          page: listPage,
           companyId: data.companyId ?? null,
-          daValues: list.slice(0, 8).map((r) => ({ name: r.name, daPercent: r.daPercent ?? r.da_percent })),
         });
       }
       setRows(list);
@@ -1109,11 +1155,16 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [showToast]);
+  }, [showToast, listPage, listPerPage, debouncedListSearch]);
 
   useEffect(() => {
     if (canManage) loadRows();
   }, [canManage, loadRows]);
+
+  useEffect(() => {
+    if (!canManage) return;
+    void loadUniquenessRows();
+  }, [canManage, loadUniquenessRows]);
 
   useEffect(() => {
     formOpenRef.current = formOpen;
@@ -1156,8 +1207,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
   }, [canManage]);
 
   const existingForUniqueness = useMemo<PayrollMasterUniqueRow[]>(
-    () =>
-      rows.map((r) => ({
+    () => (uniquenessRows.length ? uniquenessRows : rows.map((r) => ({
         id: r.id,
         employeeCode: r.employeeCode,
         email: r.email,
@@ -1165,8 +1215,8 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
         aadhaar: r.aadhaar,
         pan: r.pan,
         bankAccountNumber: r.bankAccountNumber,
-      })),
-    [rows],
+      }))),
+    [uniquenessRows, rows],
   );
 
   const formValidation = useMemo(
@@ -1952,7 +2002,20 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
       />
 
       <AppCard padding={false} className="overflow-hidden">
-        {rows.length === 0 ? (
+        <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 px-4 py-3">
+          <Input
+            className="max-w-xs"
+            placeholder="Search code, name, email…"
+            value={listSearch}
+            onChange={(e) => {
+              setListSearch(e.target.value);
+              setListPage(1);
+            }}
+            aria-label="Search payroll master"
+          />
+          {loading ? <span className="text-xs text-slate-400">Loading…</span> : null}
+        </div>
+        {rows.length === 0 && !loading ? (
           <div className="p-6">
             <EmptyState
               title="No employees yet"
@@ -1977,6 +2040,17 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
             onDeactivate={setDeactivateTarget}
           />
         )}
+        <div className="border-t border-slate-100 px-4 py-3">
+          <PaginationControls
+            meta={listMeta}
+            loading={loading}
+            onPageChange={setListPage}
+            onPerPageChange={(n) => {
+              setListPerPage(n);
+              setListPage(1);
+            }}
+          />
+        </div>
       </AppCard>
 
       <Modal

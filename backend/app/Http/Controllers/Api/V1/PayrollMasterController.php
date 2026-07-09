@@ -47,17 +47,37 @@ class PayrollMasterController extends Controller
             Log::warning('payroll_master.index missing company_id', ['user_id' => $user->id]);
         }
 
-        $rows = $this->service->listForCompany($companyId);
+        $useAll = $request->boolean('all');
+        if ($useAll) {
+            $rows = $this->service->listForCompany($companyId);
+            $total = count($rows);
+            $meta = \App\Support\ApiPagination::meta($total, 1, max(1, $total));
+
+            return response()->json([
+                'data' => $rows,
+                'meta' => $meta,
+                'masters' => $rows,
+                'employees' => $rows,
+            ]);
+        }
+
+        $paginated = $this->service->paginatedListForCompany($companyId, $request->query());
 
         if (config('app.debug')) {
             Log::debug('payroll_master.index', [
                 'user_id' => $user->id,
                 'company_id' => $companyId,
-                'response_count' => count($rows),
+                'response_count' => count($paginated['data']),
+                'meta' => $paginated['meta'],
             ]);
         }
 
-        return response()->json(['masters' => $rows, 'employees' => $rows]);
+        return response()->json([
+            'data' => $paginated['data'],
+            'meta' => $paginated['meta'],
+            'masters' => $paginated['data'],
+            'employees' => $paginated['data'],
+        ]);
     }
 
     public function store(Request $request): JsonResponse

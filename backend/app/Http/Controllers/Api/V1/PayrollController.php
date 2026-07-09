@@ -8,6 +8,7 @@ use App\Models\HrmsDivision;
 use App\Models\HrmsEmployee;
 use App\Models\HrmsGovernmentMonthlyPayroll;
 use App\Models\HrmsPayrollMaster;
+use App\Support\ApiPagination;
 use App\Models\HrmsPayrollPeriod;
 use App\Models\HrmsPayslip;
 use App\Models\HrmsUser;
@@ -354,6 +355,13 @@ class PayrollController extends Controller
         $effectiveRunDay = $runDay < 1 || $runDay > $daysInMonth ? $daysInMonth : $runDay;
         $periodEndThroughRun = sprintf('%04d-%02d-%02d', $year, $month, $effectiveRunDay);
 
+        $returnAll = $request->query('all') === '1' || $request->boolean('all');
+        $page = ApiPagination::resolvePage($request->query('page'));
+        $perPage = ApiPagination::resolvePerPage($request->query('per_page', $request->query('perPage')));
+        $search = trim((string) $request->query('search', ''));
+        $filterDepartment = trim((string) $request->query('department', ''));
+        $filterDivision = trim((string) $request->query('division', ''));
+
         $existingPeriod = HrmsPayrollPeriod::where('company_id', $user->company_id)
             ->whereDate('period_start', $periodStart)
             ->first();
@@ -380,6 +388,17 @@ class PayrollController extends Controller
         );
         $departmentsByNameLower = $companyDepartments->keyBy(
             fn (HrmsDepartment $d) => strtolower(trim((string) $d->name)),
+        );
+
+        $ndaRatesPreloaded = $this->nightAllowanceService->listForCompany($companyId, true);
+        $payrollConfig = $this->fieldService->getPayrollConfig($companyId);
+        $customFieldsByMasterId = $this->fieldService->getCustomFieldValuesForMasters(
+            $companyId,
+            HrmsPayrollMaster::query()
+                ->where('company_id', $companyId)
+                ->whereNull('effective_to')
+                ->pluck('id')
+                ->all(),
         );
 
         $employees = [];
@@ -411,6 +430,26 @@ class PayrollController extends Controller
                 $daysInMonth,
             );
             if ($payCalc['exclude']) {
+                continue;
+            }
+
+            if ($search !== '') {
+                $term = mb_strtolower($search);
+                $hay = mb_strtolower(implode(' ', array_filter([
+                    (string) ($m->employee_code ?? ''),
+                    (string) ($m->name ?? ''),
+                    (string) ($m->email ?? ''),
+                    (string) ($empUser->name ?? ''),
+                ])));
+                if (! str_contains($hay, $term)) {
+                    continue;
+                }
+            }
+
+            if ($filterDepartment !== '' && strcasecmp((string) ($m->department ?? ''), $filterDepartment) !== 0) {
+                continue;
+            }
+            if ($filterDivision !== '' && strcasecmp((string) ($m->division ?? ''), $filterDivision) !== 0) {
                 continue;
             }
 
@@ -503,7 +542,7 @@ class PayrollController extends Controller
                         'quarterRent' => (float) ($quarterMeta['quarterRent'] ?? 0),
                     ],
                 ];
-                $customValues = $this->fieldService->getCustomFieldValuesForMaster((string) $user->company_id, $m->id);
+                $customValues = $customFieldsByMasterId[$m->id] ?? [];
                 $row['govRecalc']['customEarnings'] = $this->fieldService->customEarningsFromValues((string) $user->company_id, $customValues);
                 $row['govRecalc']['customDeductions'] = $this->fieldService->customDeductionsFromValues((string) $user->company_id, $customValues);
                 $cpfResolved = $this->fieldService->resolveCpfConfigForMaster((string) $user->company_id, $m);
@@ -514,8 +553,8 @@ class PayrollController extends Controller
                     'cpfFixedAmount' => $cpfResolved['cpf_fixed_amount'] ?? 0,
                     'source' => $cpfResolved['source'],
                 ];
-                $nightResolved = $this->nightAllowanceService->resolveForPayLevel(
-                    $companyId,
+                $nightResolved = $this->nightAllowanceService->resolveFromPreloadedRates(
+                    $ndaRatesPreloaded,
                     $payLevel,
                     $periodEndThroughRun,
                 );
@@ -557,6 +596,15 @@ class PayrollController extends Controller
             $employees[] = $row;
         }
 
+        $totalEmployees = count($employees);
+        if ($returnAll) {
+            $employeesPage = $employees;
+            $paginationMeta = ApiPagination::meta($totalEmployees, 1, max(1, $totalEmployees));
+        } else {
+            $employeesPage = array_slice($employees, ($page - 1) * $perPage, $perPage);
+            $paginationMeta = ApiPagination::meta($totalEmployees, $page, $perPage);
+        }
+
         $periodNameDefault = date('F Y', strtotime($periodStart)).' (through day '.$effectiveRunDay.')';
 
         $previewBase = [
@@ -572,11 +620,9 @@ class PayrollController extends Controller
             'effectiveRunDay' => $effectiveRunDay,
         ];
 
-        $payrollConfig = $this->fieldService->getPayrollConfig((string) $user->company_id);
-
         if (! $existingPeriod || ! HrmsPayslip::where('payroll_period_id', $existingPeriod->id)->exists()) {
             $arrearEnriched = $this->enrichPreviewWithArrears(
-                $employees,
+                $employeesPage,
                 (string) $user->company_id,
                 $year,
                 $month,
@@ -591,11 +637,12 @@ class PayrollController extends Controller
                     'payrollComplete' => true,
                     'missingPayslipCount' => 0,
                     'rows' => $arrearEnriched['rows'],
+                    'meta' => $paginationMeta,
                     'arrearWarnings' => $arrearEnriched['warnings'],
                     'arrearPeriods' => $arrearEnriched['arrearPeriods'] ?? [],
                 ]),
                 'payrollConfig' => array_merge($payrollConfig, [
-                    'nightAllowanceRates' => $this->nightAllowanceService->listForCompany($companyId, true),
+                    'nightAllowanceRates' => $ndaRatesPreloaded,
                 ]),
             ]);
         }
@@ -642,8 +689,17 @@ class PayrollController extends Controller
 
         $missingPayslipCount = collect($merged)->where('payslipPending', true)->count();
 
+        $mergedTotal = count($merged);
+        if ($returnAll) {
+            $mergedPage = $merged;
+            $mergedMeta = ApiPagination::meta($mergedTotal, 1, max(1, $mergedTotal));
+        } else {
+            $mergedPage = array_slice($merged, ($page - 1) * $perPage, $perPage);
+            $mergedMeta = ApiPagination::meta($mergedTotal, $page, $perPage);
+        }
+
         $arrearEnriched = $this->enrichPreviewWithArrears(
-            $merged,
+            $mergedPage,
             (string) $user->company_id,
             $year,
             $month,
@@ -659,11 +715,12 @@ class PayrollController extends Controller
                 'payrollComplete' => $missingPayslipCount === 0,
                 'missingPayslipCount' => $missingPayslipCount,
                 'rows' => $arrearEnriched['rows'],
+                'meta' => $mergedMeta,
                 'arrearWarnings' => $arrearEnriched['warnings'],
                 'arrearPeriods' => $arrearEnriched['arrearPeriods'] ?? [],
             ]),
             'payrollConfig' => array_merge($payrollConfig, [
-                'nightAllowanceRates' => $this->nightAllowanceService->listForCompany((string) $user->company_id, true),
+                'nightAllowanceRates' => $ndaRatesPreloaded,
             ]),
         ]);
     }
@@ -791,158 +848,211 @@ class PayrollController extends Controller
         $masterEmployeeIds = array_flip($this->collectPayrollEmployeeUserIds((string) $user->company_id));
         $monthlyPayrollIdsByEmployee = [];
         $arrearLineIdsByEmployee = [];
+        $payrollConfig = $this->fieldService->getPayrollConfig((string) $user->company_id);
+        $companyId = (string) $user->company_id;
 
-        DB::transaction(function () use ($user, $period, $rows, $year, $month, $daysInMonth, $periodEnd, $createdByEmployeeId, $masterEmployeeIds, &$generated, &$monthlyPayrollIdsByEmployee, &$arrearLineIdsByEmployee) {
-            foreach ($rows as $row) {
-                if (! is_array($row)) {
-                    continue;
-                }
+        $normalizedRows = array_values(array_filter($rows, static fn ($row) => is_array($row)));
+        usort($normalizedRows, static function (array $a, array $b): int {
+            $aId = (string) ($a['employee_user_id'] ?? $a['employeeUserId'] ?? '');
+            $bId = (string) ($b['employee_user_id'] ?? $b['employeeUserId'] ?? '');
 
-                $employeeUserId = $row['employee_user_id'] ?? $row['employeeUserId'] ?? null;
-                if (! is_string($employeeUserId) || $employeeUserId === '') {
-                    continue;
-                }
+            return strcmp($aId, $bId);
+        });
 
-                $lineIds = $row['arrear_line_ids'] ?? $row['arrearLineIds'] ?? null;
-                if (! is_array($lineIds) && is_array($row['arrear_lines'] ?? $row['arrearLines'] ?? null)) {
-                    $lineIds = array_values(array_filter(array_map(
-                        static fn ($line) => is_array($line) ? ($line['id'] ?? null) : null,
-                        $row['arrear_lines'] ?? $row['arrearLines'],
-                    )));
-                }
-                if (is_array($lineIds) && $lineIds !== []) {
-                    $arrearLineIdsByEmployee[$employeeUserId] = array_values(array_unique(array_filter(
-                        array_map(static fn ($id) => is_string($id) ? $id : null, $lineIds),
-                    )));
-                }
+        $employeeUserIds = array_values(array_unique(array_filter(array_map(
+            static fn (array $row) => is_string($row['employee_user_id'] ?? $row['employeeUserId'] ?? null)
+                ? ($row['employee_user_id'] ?? $row['employeeUserId'])
+                : null,
+            $normalizedRows,
+        ))));
 
-                if (! isset($masterEmployeeIds[$employeeUserId])) {
-                    continue;
-                }
+        $existingPayslipUserIds = HrmsPayslip::query()
+            ->where('payroll_period_id', $period->id)
+            ->whereIn('employee_user_id', $employeeUserIds)
+            ->pluck('employee_user_id')
+            ->flip()
+            ->all();
 
-                $empUser = HrmsUser::where('id', $employeeUserId)
-                    ->where('company_id', $user->company_id)
-                    ->first();
-                if (! $empUser) {
-                    continue;
-                }
+        $usersById = HrmsUser::query()
+            ->where('company_id', $user->company_id)
+            ->whereIn('id', $employeeUserIds)
+            ->get()
+            ->keyBy('id');
 
-                if (HrmsPayslip::where('payroll_period_id', $period->id)
-                    ->where('employee_user_id', $employeeUserId)
-                    ->exists()) {
-                    continue;
-                }
+        $mastersByUserId = HrmsPayrollMaster::query()
+            ->where('company_id', $user->company_id)
+            ->whereIn('employee_user_id', $employeeUserIds)
+            ->whereNull('effective_to')
+            ->orderByDesc('effective_start_date')
+            ->get()
+            ->unique('employee_user_id')
+            ->keyBy('employee_user_id');
 
-                $payDays = (float) ($row['pay_days'] ?? $row['payDays'] ?? 0);
-                $payrollMode = $row['payroll_mode'] ?? $row['payrollMode'] ?? 'private';
-                $gm = $row['government_monthly'] ?? $row['governmentMonthly'] ?? null;
-                $subjectEmployeeId = $this->employeeRecordIdForUser($employeeUserId, $user->company_id);
-
-                if ($payrollMode === 'government' && is_array($gm)) {
-                    $ded = is_array($gm['deductions'] ?? null) ? $gm['deductions'] : [];
-                    $pfEmpGov = (float) ($row['pf_employee'] ?? $row['pfEmployee'] ?? 0);
-                    if ($pfEmpGov <= 0) {
-                        $pfEmpGov = (float) (($ded['cpf'] ?? 0) + ($ded['daCpf'] ?? $ded['da_cpf'] ?? 0)
-                            + ($ded['vpf'] ?? 0) + ($ded['pfLoan'] ?? $ded['pf_loan'] ?? 0));
-                    }
-
-                    $master = $this->currentMasterForEmployee((string) $user->company_id, $employeeUserId);
-                    $bank = $this->bankDetailsForPayslip($master, $empUser);
-
-                    $payslip = HrmsPayslip::create([
-                        'company_id' => $user->company_id,
-                        'employee_id' => $subjectEmployeeId,
-                        'employee_user_id' => $employeeUserId,
-                        'payroll_period_id' => $period->id,
-                        'payroll_mode' => 'government',
-                        'basic' => (float) ($gm['basicPaid'] ?? $gm['basic_paid'] ?? 0),
-                        'hra' => (float) ($gm['hraPaid'] ?? $gm['hra_paid'] ?? 0),
-                        'medical' => (float) ($gm['medicalPaid'] ?? $gm['medical_paid'] ?? 0),
-                        'trans' => (float) ($gm['transportPaid'] ?? $gm['transport_paid'] ?? 0),
-                        'lta' => 0,
-                        'personal' => 0,
-                        'allowances' => 0,
-                        'deductions' => (float) ($gm['totalDeductions'] ?? $gm['total_deductions'] ?? $row['deductions'] ?? 0),
-                        'gross_pay' => (float) ($gm['totalEarnings'] ?? $gm['total_earnings'] ?? $row['grossPay'] ?? $row['gross_pay'] ?? 0),
-                        'net_pay' => (float) ($row['takeHome'] ?? $row['take_home'] ?? $gm['netSalary'] ?? $gm['net_salary'] ?? $row['netPay'] ?? 0),
-                        'pay_days' => $payDays,
-                        'ctc' => (float) ($row['ctc'] ?? 0),
-                        'pf_employee' => $pfEmpGov,
-                        'pf_employer' => 0,
-                        'esic_employee' => 0,
-                        'esic_employer' => 0,
-                        'professional_tax' => (float) ($ded['pt'] ?? $row['profTax'] ?? $row['prof_tax'] ?? 0),
-                        'incentive' => (float) ($row['incentive'] ?? 0),
-                        'pr_bonus' => (float) ($row['pr_bonus'] ?? $row['prBonus'] ?? 0),
-                        'reimbursement' => (float) ($row['reimbursement'] ?? 0),
-                        'tds' => (float) ($ded['incomeTax'] ?? $ded['income_tax'] ?? $row['tds'] ?? 0),
-                        'bank_name' => $bank['bank_name'],
-                        'bank_account_number' => $bank['bank_account_number'],
-                        'bank_ifsc' => $bank['bank_ifsc'],
-                        'generated_at' => now(),
-                        'created_by' => $createdByEmployeeId,
-                    ]);
-
-                    $govMonthlyId = $this->insertGovernmentMonthlyFromPreview(
-                        $user->company_id,
-                        $period->id,
-                        $employeeUserId,
-                        $payslip->id,
-                        $master?->id,
-                        $year,
-                        $month,
-                        $daysInMonth,
-                        (int) round($payDays),
-                        $gm,
-                        (int) ($master?->pay_level ?? $empUser->government_pay_level ?? 0),
-                        (float) ($master?->da_percent ?? 53),
-                        $periodEnd,
-                    );
-                    if ($govMonthlyId) {
-                        $monthlyPayrollIdsByEmployee[$employeeUserId] = $govMonthlyId;
-                    }
-                } else {
-                    $master = $this->currentMasterForEmployee((string) $user->company_id, $employeeUserId);
-                    $bank = $this->bankDetailsForPayslip($master, $empUser);
-
-                    HrmsPayslip::create([
-                        'company_id' => $user->company_id,
-                        'employee_id' => $subjectEmployeeId,
-                        'employee_user_id' => $employeeUserId,
-                        'payroll_period_id' => $period->id,
-                        'payroll_mode' => $payrollMode,
-                        'basic' => (float) ($row['basic'] ?? 0),
-                        'hra' => (float) ($row['hra'] ?? 0),
-                        'medical' => (float) ($row['medical'] ?? 0),
-                        'trans' => (float) ($row['trans'] ?? 0),
-                        'lta' => (float) ($row['lta'] ?? 0),
-                        'personal' => (float) ($row['personal'] ?? 0),
-                        'allowances' => (float) ($row['allowances'] ?? 0),
-                        'deductions' => (float) ($row['deductions'] ?? 0),
-                        'gross_pay' => (float) ($row['gross_pay'] ?? $row['grossPay'] ?? 0),
-                        'net_pay' => (float) ($row['take_home'] ?? $row['takeHome'] ?? $row['net_pay'] ?? $row['netPay'] ?? 0),
-                        'pay_days' => $payDays,
-                        'ctc' => (float) ($row['ctc'] ?? 0),
-                        'pf_employee' => (float) ($row['pf_employee'] ?? $row['pfEmployee'] ?? 0),
-                        'pf_employer' => (float) ($row['pf_employer'] ?? $row['pfEmployer'] ?? 0),
-                        'esic_employee' => (float) ($row['esic_employee'] ?? $row['esicEmployee'] ?? 0),
-                        'esic_employer' => (float) ($row['esic_employer'] ?? $row['esicEmployer'] ?? 0),
-                        'professional_tax' => (float) ($row['prof_tax'] ?? $row['profTax'] ?? 0),
-                        'incentive' => (float) ($row['incentive'] ?? 0),
-                        'pr_bonus' => (float) ($row['pr_bonus'] ?? $row['prBonus'] ?? 0),
-                        'reimbursement' => (float) ($row['reimbursement'] ?? 0),
-                        'tds' => (float) ($row['tds'] ?? 0),
-                        'bank_name' => $bank['bank_name'],
-                        'bank_account_number' => $bank['bank_account_number'],
-                        'bank_ifsc' => $bank['bank_ifsc'],
-                        'generated_at' => now(),
-                        'created_by' => $createdByEmployeeId,
-                    ]);
-                }
-
-                $generated++;
+        $processRow = function (array $row) use (
+            $user,
+            $period,
+            $year,
+            $month,
+            $daysInMonth,
+            $periodEnd,
+            $createdByEmployeeId,
+            $masterEmployeeIds,
+            $payrollConfig,
+            $companyId,
+            $existingPayslipUserIds,
+            $usersById,
+            $mastersByUserId,
+            &$generated,
+            &$monthlyPayrollIdsByEmployee,
+            &$arrearLineIdsByEmployee,
+        ): void {
+            $employeeUserId = $row['employee_user_id'] ?? $row['employeeUserId'] ?? null;
+            if (! is_string($employeeUserId) || $employeeUserId === '') {
+                return;
             }
 
+            $lineIds = $row['arrear_line_ids'] ?? $row['arrearLineIds'] ?? null;
+            if (! is_array($lineIds) && is_array($row['arrear_lines'] ?? $row['arrearLines'] ?? null)) {
+                $lineIds = array_values(array_filter(array_map(
+                    static fn ($line) => is_array($line) ? ($line['id'] ?? null) : null,
+                    $row['arrear_lines'] ?? $row['arrearLines'],
+                )));
+            }
+            if (is_array($lineIds) && $lineIds !== []) {
+                $arrearLineIdsByEmployee[$employeeUserId] = array_values(array_unique(array_filter(
+                    array_map(static fn ($id) => is_string($id) ? $id : null, $lineIds),
+                )));
+            }
+
+            if (! isset($masterEmployeeIds[$employeeUserId])) {
+                return;
+            }
+
+            $empUser = $usersById->get($employeeUserId);
+            if (! $empUser) {
+                return;
+            }
+
+            if (isset($existingPayslipUserIds[$employeeUserId])) {
+                return;
+            }
+
+            $payDays = (float) ($row['pay_days'] ?? $row['payDays'] ?? 0);
+            $payrollMode = $row['payroll_mode'] ?? $row['payrollMode'] ?? 'private';
+            $gm = $row['government_monthly'] ?? $row['governmentMonthly'] ?? null;
+            $subjectEmployeeId = $this->employeeRecordIdForUser($employeeUserId, $user->company_id);
+            $master = $mastersByUserId->get($employeeUserId);
+            $bank = $this->bankDetailsForPayslip($master, $empUser);
+
+            if ($payrollMode === 'government' && is_array($gm)) {
+                $ded = is_array($gm['deductions'] ?? null) ? $gm['deductions'] : [];
+                $pfEmpGov = (float) ($row['pf_employee'] ?? $row['pfEmployee'] ?? 0);
+                if ($pfEmpGov <= 0) {
+                    $pfEmpGov = (float) (($ded['cpf'] ?? 0) + ($ded['daCpf'] ?? $ded['da_cpf'] ?? 0)
+                        + ($ded['vpf'] ?? 0) + ($ded['pfLoan'] ?? $ded['pf_loan'] ?? 0));
+                }
+
+                $payslip = HrmsPayslip::create([
+                    'company_id' => $user->company_id,
+                    'employee_id' => $subjectEmployeeId,
+                    'employee_user_id' => $employeeUserId,
+                    'payroll_period_id' => $period->id,
+                    'payroll_mode' => 'government',
+                    'basic' => (float) ($gm['basicPaid'] ?? $gm['basic_paid'] ?? 0),
+                    'hra' => (float) ($gm['hraPaid'] ?? $gm['hra_paid'] ?? 0),
+                    'medical' => (float) ($gm['medicalPaid'] ?? $gm['medical_paid'] ?? 0),
+                    'trans' => (float) ($gm['transportPaid'] ?? $gm['transport_paid'] ?? 0),
+                    'lta' => 0,
+                    'personal' => 0,
+                    'allowances' => 0,
+                    'deductions' => (float) ($gm['totalDeductions'] ?? $gm['total_deductions'] ?? $row['deductions'] ?? 0),
+                    'gross_pay' => (float) ($gm['totalEarnings'] ?? $gm['total_earnings'] ?? $row['grossPay'] ?? $row['gross_pay'] ?? 0),
+                    'net_pay' => (float) ($row['takeHome'] ?? $row['take_home'] ?? $gm['netSalary'] ?? $gm['net_salary'] ?? $row['netPay'] ?? 0),
+                    'pay_days' => $payDays,
+                    'ctc' => (float) ($row['ctc'] ?? 0),
+                    'pf_employee' => $pfEmpGov,
+                    'pf_employer' => 0,
+                    'esic_employee' => 0,
+                    'esic_employer' => 0,
+                    'professional_tax' => (float) ($ded['pt'] ?? $row['profTax'] ?? $row['prof_tax'] ?? 0),
+                    'incentive' => (float) ($row['incentive'] ?? 0),
+                    'pr_bonus' => (float) ($row['pr_bonus'] ?? $row['prBonus'] ?? 0),
+                    'reimbursement' => (float) ($row['reimbursement'] ?? 0),
+                    'tds' => (float) ($ded['incomeTax'] ?? $ded['income_tax'] ?? $row['tds'] ?? 0),
+                    'bank_name' => $bank['bank_name'],
+                    'bank_account_number' => $bank['bank_account_number'],
+                    'bank_ifsc' => $bank['bank_ifsc'],
+                    'generated_at' => now(),
+                    'created_by' => $createdByEmployeeId,
+                ]);
+
+                $govMonthlyId = $this->insertGovernmentMonthlyFromPreview(
+                    $companyId,
+                    $period->id,
+                    $employeeUserId,
+                    $payslip->id,
+                    $master?->id,
+                    $year,
+                    $month,
+                    $daysInMonth,
+                    (int) round($payDays),
+                    $gm,
+                    (int) ($master?->pay_level ?? $empUser->government_pay_level ?? 0),
+                    (float) ($master?->da_percent ?? 53),
+                    $periodEnd,
+                    $payrollConfig,
+                );
+                if ($govMonthlyId) {
+                    $monthlyPayrollIdsByEmployee[$employeeUserId] = $govMonthlyId;
+                }
+            } else {
+                HrmsPayslip::create([
+                    'company_id' => $user->company_id,
+                    'employee_id' => $subjectEmployeeId,
+                    'employee_user_id' => $employeeUserId,
+                    'payroll_period_id' => $period->id,
+                    'payroll_mode' => $payrollMode,
+                    'basic' => (float) ($row['basic'] ?? 0),
+                    'hra' => (float) ($row['hra'] ?? 0),
+                    'medical' => (float) ($row['medical'] ?? 0),
+                    'trans' => (float) ($row['trans'] ?? 0),
+                    'lta' => (float) ($row['lta'] ?? 0),
+                    'personal' => (float) ($row['personal'] ?? 0),
+                    'allowances' => (float) ($row['allowances'] ?? 0),
+                    'deductions' => (float) ($row['deductions'] ?? 0),
+                    'gross_pay' => (float) ($row['gross_pay'] ?? $row['grossPay'] ?? 0),
+                    'net_pay' => (float) ($row['take_home'] ?? $row['takeHome'] ?? $row['net_pay'] ?? $row['netPay'] ?? 0),
+                    'pay_days' => $payDays,
+                    'ctc' => (float) ($row['ctc'] ?? 0),
+                    'pf_employee' => (float) ($row['pf_employee'] ?? $row['pfEmployee'] ?? 0),
+                    'pf_employer' => (float) ($row['pf_employer'] ?? $row['pfEmployer'] ?? 0),
+                    'esic_employee' => (float) ($row['esic_employee'] ?? $row['esicEmployee'] ?? 0),
+                    'esic_employer' => (float) ($row['esic_employer'] ?? $row['esicEmployer'] ?? 0),
+                    'professional_tax' => (float) ($row['prof_tax'] ?? $row['profTax'] ?? 0),
+                    'incentive' => (float) ($row['incentive'] ?? 0),
+                    'pr_bonus' => (float) ($row['pr_bonus'] ?? $row['prBonus'] ?? 0),
+                    'reimbursement' => (float) ($row['reimbursement'] ?? 0),
+                    'tds' => (float) ($row['tds'] ?? 0),
+                    'bank_name' => $bank['bank_name'],
+                    'bank_account_number' => $bank['bank_account_number'],
+                    'bank_ifsc' => $bank['bank_ifsc'],
+                    'generated_at' => now(),
+                    'created_by' => $createdByEmployeeId,
+                ]);
+            }
+
+            $generated++;
+        };
+
+        foreach (array_chunk($normalizedRows, 25) as $chunk) {
+            DB::transaction(function () use ($chunk, $processRow): void {
+                foreach ($chunk as $row) {
+                    $processRow($row);
+                }
+            });
+        }
+
+        DB::transaction(function () use ($user, $period, $year, $month, &$monthlyPayrollIdsByEmployee, &$arrearLineIdsByEmployee): void {
             $this->arrearService->persistArrearLinesForPayrollConfirm(
                 (string) $user->company_id,
                 $year,
@@ -1298,6 +1408,7 @@ class PayrollController extends Controller
         int $payLevel,
         float $daPercent,
         string $periodEnd,
+        ?array $payrollConfig = null,
     ): ?string {
         if (! $masterId) {
             return null;
@@ -1311,7 +1422,7 @@ class PayrollController extends Controller
 
         $num = static fn ($v): float => is_numeric($v) ? (float) $v : 0.0;
 
-        $payrollConfig = $this->fieldService->getPayrollConfig($companyId);
+        $payrollConfig ??= $this->fieldService->getPayrollConfig($companyId);
         $nightCeiling = (float) (
             $payrollConfig['calculationSettings']['nightAllowanceBasicCeiling']
             ?? NightAllowanceRateService::DEFAULT_BASIC_CEILING
