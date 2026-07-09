@@ -36,35 +36,37 @@ final class NightAllowanceRateService
     }
 
     /**
-     * Resolve rate for employee: selected slab, else first active slab for pay level.
+     * Resolve active night allowance rate for an employee pay level.
+     * Picks first row: effective_from <= period end (if given), then effective_from DESC NULLS LAST, slab_no ASC.
      *
      * @return array{rate: float, slabNo: int|null, warning: string|null}
      */
-    public function resolveForEmployee(string $companyId, int $payLevel, ?int $selectedSlabNo = null): array
+    public function resolveForPayLevel(string $companyId, int $payLevel, ?string $periodEndDate = null): array
     {
-        if ($selectedSlabNo !== null && $selectedSlabNo > 0) {
-            $row = $this->findBySlabNo($companyId, $selectedSlabNo, true);
-            if ($row) {
-                if ((int) $row['payLevel'] !== $payLevel) {
-                    return [
-                        'rate' => (float) $row['ratePerHour'],
-                        'slabNo' => (int) $row['slabNo'],
-                        'warning' => 'Selected night allowance slab pay level does not match employee pay level.',
-                    ];
-                }
-
-                return [
-                    'rate' => (float) $row['ratePerHour'],
-                    'slabNo' => (int) $row['slabNo'],
-                    'warning' => null,
-                ];
-            }
+        if ($payLevel < 1) {
+            return [
+                'rate' => 0.0,
+                'slabNo' => null,
+                'warning' => 'Night allowance rate is not configured for this Pay Level.',
+            ];
         }
 
-        $match = HrmsNightAllowanceRate::query()
+        $q = HrmsNightAllowanceRate::query()
             ->where('company_id', $companyId)
             ->where('pay_level', $payLevel)
-            ->where('is_active', true)
+            ->where('is_active', true);
+
+        if ($periodEndDate) {
+            $onOrBefore = Carbon::parse($periodEndDate)->toDateString();
+            $q->where(function ($w) use ($onOrBefore) {
+                $w->whereNull('effective_from')
+                    ->orWhereDate('effective_from', '<=', $onOrBefore);
+            });
+        }
+
+        $match = $q
+            ->orderByRaw('CASE WHEN effective_from IS NULL THEN 1 ELSE 0 END')
+            ->orderByDesc('effective_from')
             ->orderBy('slab_no')
             ->first();
 
@@ -72,17 +74,25 @@ final class NightAllowanceRateService
             return [
                 'rate' => (float) $match->rate_per_hour,
                 'slabNo' => (int) $match->slab_no,
-                'warning' => $selectedSlabNo === null || $selectedSlabNo <= 0
-                    ? 'Night allowance slab not selected. Default matching rate used.'
-                    : null,
+                'warning' => null,
             ];
         }
 
         return [
             'rate' => 0.0,
             'slabNo' => null,
-            'warning' => 'Night allowance slab not configured for this employee pay level.',
+            'warning' => 'Night allowance rate is not configured for this Pay Level.',
         ];
+    }
+
+    /**
+     * @deprecated Use resolveForPayLevel(); employee master no longer stores slab selection.
+     *
+     * @return array{rate: float, slabNo: int|null, warning: string|null}
+     */
+    public function resolveForEmployee(string $companyId, int $payLevel, ?int $selectedSlabNo = null, ?string $periodEndDate = null): array
+    {
+        return $this->resolveForPayLevel($companyId, $payLevel, $periodEndDate);
     }
 
     /** @param array<string, mixed> $data */

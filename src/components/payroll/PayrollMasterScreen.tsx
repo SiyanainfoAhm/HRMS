@@ -52,7 +52,7 @@ import {
   DEFAULT_MEDICAL,
 } from "@/lib/payrollMasterCalc";
 import { GOVERNMENT_DEFAULT_CPF_RATE_ON_TOTAL_EARNINGS } from "@/lib/governmentPayroll";
-import { formatNightAllowanceSlabLabel } from "@/lib/nightAllowanceCalculation";
+import { resolveNightAllowanceRateByPayLevel } from "@/lib/nightAllowanceCalculation";
 import {
   DEFAULT_CPF_BASIS_KEYS,
   isCpfCompanyDefaultMode,
@@ -153,7 +153,6 @@ export type PayrollMasterRecord = {
   quarterType?: string | null;
   quarterRent?: number | null;
   hraEligible?: boolean;
-  nightAllowanceSlabNo?: number | null;
   cpfUseCompanySettings?: boolean;
   cpfPercentageOverride?: number | null;
   cpfBasisFieldKeysOverride?: string[];
@@ -232,7 +231,6 @@ type MasterFormState = {
   hasQuarter: boolean;
   quarterId: string;
   quarterRent: string;
-  nightAllowanceSlabNo: string;
 };
 
 type ImportError = { row: number; field: string; message: string };
@@ -413,7 +411,6 @@ const emptyForm = (defaultDa = DEFAULT_DA_PERCENT, defaultHra = DEFAULT_HRA_PERC
     hasQuarter: false,
     quarterId: "",
     quarterRent: "0",
-    nightAllowanceSlabNo: "",
   };
 
   return {
@@ -522,7 +519,6 @@ function formFromRecord(r: PayrollMasterRecord): MasterFormState {
     hasQuarter: Boolean(r.hasQuarter),
     quarterId: r.quarterId ?? "",
     quarterRent: String(r.quarterRent ?? 0),
-    nightAllowanceSlabNo: r.nightAllowanceSlabNo ? String(r.nightAllowanceSlabNo) : "",
   };
   const defaults = previewEarningDefaults(base);
 
@@ -605,7 +601,6 @@ function formToPayload(form: MasterFormState) {
     hasQuarter: form.hasQuarter,
     quarterId: form.hasQuarter ? form.quarterId || null : null,
     quarterRent: form.hasQuarter ? parseFloat(form.quarterRent) || 0 : 0,
-    nightAllowanceSlabNo: form.nightAllowanceSlabNo ? parseInt(form.nightAllowanceSlabNo, 10) : null,
     ...(form.password.trim() ? { password: form.password } : {}),
   };
 }
@@ -768,8 +763,8 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
   const [quarterOptions, setQuarterOptions] = useState<
     Array<{ id: string; quarterName: string; quarterType: string; monthlyRent: number }>
   >([]);
-  const [nightAllowanceSlabOptions, setNightAllowanceSlabOptions] = useState<
-    Array<{ slabNo: number; payLevel: number; ratePerHour: number; label: string }>
+  const [nightAllowanceRates, setNightAllowanceRates] = useState<
+    Array<{ slabNo: number; payLevel: number; ratePerHour: number; effectiveFrom?: string | null; isActive?: boolean }>
   >([]);
   const [divisions, setDivisions] = useState<OrgDivision[]>([]);
   const [departments, setDepartments] = useState<OrgDepartment[]>([]);
@@ -1004,15 +999,20 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
         const res = await fetch("/api/settings/night-allowance-rates?activeOnly=true");
         const data = await res.json();
         if (!cancelled && res.ok) {
-          setNightAllowanceSlabOptions(
-            ((data.rates ?? []) as Array<{ slabNo: number; payLevel: number; ratePerHour: number; label?: string }>).map(
-              (r) => ({
-                slabNo: r.slabNo,
-                payLevel: r.payLevel,
-                ratePerHour: r.ratePerHour,
-                label: r.label ?? formatNightAllowanceSlabLabel(r.slabNo, r.payLevel, r.ratePerHour),
-              }),
-            ),
+          setNightAllowanceRates(
+            ((data.rates ?? []) as Array<{
+              slabNo: number;
+              payLevel: number;
+              ratePerHour: number;
+              effectiveFrom?: string | null;
+              isActive?: boolean;
+            }>).map((r) => ({
+              slabNo: r.slabNo,
+              payLevel: r.payLevel,
+              ratePerHour: r.ratePerHour,
+              effectiveFrom: r.effectiveFrom ?? null,
+              isActive: r.isActive !== false,
+            })),
           );
         }
       } catch {
@@ -1023,6 +1023,14 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
       cancelled = true;
     };
   }, [formOpen, canManage]);
+
+  const resolvedNightAllowance = useMemo(() => {
+    const level = parseInt(form.payLevel, 10);
+    if (!Number.isFinite(level) || level < 1) {
+      return { rate: 0, slabNo: null as number | null, warning: null as string | null };
+    }
+    return resolveNightAllowanceRateByPayLevel(nightAllowanceRates, level);
+  }, [form.payLevel, nightAllowanceRates]);
 
   function patchCustomField(key: string, value: string) {
     setForm((f) => {
@@ -2287,21 +2295,18 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                           onChange={(e) => patchForm({ payLevel: e.target.value })}
                           onBlur={() => touchField("payLevel")}
                         />
-                      </FormField>
-                      <FormField label="Night Allowance Slab">
-                        <SelectField
-                          value={form.nightAllowanceSlabNo}
-                          onChange={(v) => patchForm({ nightAllowanceSlabNo: v })}
-                          options={[
-                            { value: "", label: "Auto (first matching pay level)" },
-                            ...nightAllowanceSlabOptions
-                              .filter((s) => !form.payLevel || String(s.payLevel) === form.payLevel)
-                              .map((s) => ({ value: String(s.slabNo), label: s.label })),
-                          ]}
-                        />
                         <p className="mt-1 text-xs text-slate-500">
-                          Select slab for hourly night allowance rate used in Run Payroll.
+                          Night allowance rate will be applied automatically based on Pay Level.
                         </p>
+                        {editing && form.payLevel.trim() !== "" ? (
+                          resolvedNightAllowance.rate > 0 ? (
+                            <p className="mt-1 text-xs font-medium text-slate-700">
+                              Night Allowance Rate: ₹{resolvedNightAllowance.rate.toFixed(2)}/hour
+                            </p>
+                          ) : resolvedNightAllowance.warning ? (
+                            <p className="mt-1 text-xs text-amber-700">{resolvedNightAllowance.warning}</p>
+                          ) : null
+                        ) : null}
                       </FormField>
                       <FormField label="Gross Basic Pay" required error={showError("grossBasicPay")}>
                         <Input

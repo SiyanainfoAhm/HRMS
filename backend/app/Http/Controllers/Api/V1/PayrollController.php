@@ -352,6 +352,7 @@ class PayrollController extends Controller
         $periodEnd = date('Y-m-t', strtotime($periodStart));
         $daysInMonth = (int) date('t', strtotime($periodStart));
         $effectiveRunDay = $runDay < 1 || $runDay > $daysInMonth ? $daysInMonth : $runDay;
+        $periodEndThroughRun = sprintf('%04d-%02d-%02d', $year, $month, $effectiveRunDay);
 
         $existingPeriod = HrmsPayrollPeriod::where('company_id', $user->company_id)
             ->whereDate('period_start', $periodStart)
@@ -513,13 +514,11 @@ class PayrollController extends Controller
                     'cpfFixedAmount' => $cpfResolved['cpf_fixed_amount'] ?? 0,
                     'source' => $cpfResolved['source'],
                 ];
-                $masterSlabNo = isset($m->night_allowance_slab_no) ? (int) $m->night_allowance_slab_no : null;
-                $nightResolved = $this->nightAllowanceService->resolveForEmployee(
+                $nightResolved = $this->nightAllowanceService->resolveForPayLevel(
                     $companyId,
                     $payLevel,
-                    $masterSlabNo > 0 ? $masterSlabNo : null,
+                    $periodEndThroughRun,
                 );
-                $row['nightAllowanceSlabNo'] = $masterSlabNo;
                 $row['govRecalc']['nightHours'] = 0;
                 $row['govRecalc']['nightAllowanceRate'] = $nightResolved['rate'];
                 $row['govRecalc']['nightAllowanceSlabNo'] = $nightResolved['slabNo'];
@@ -558,7 +557,6 @@ class PayrollController extends Controller
             $employees[] = $row;
         }
 
-        $periodEndThroughRun = sprintf('%04d-%02d-%02d', $year, $month, $effectiveRunDay);
         $periodNameDefault = date('F Y', strtotime($periodStart)).' (through day '.$effectiveRunDay.')';
 
         $previewBase = [

@@ -38,7 +38,6 @@ final class PayrollMasterService
         private readonly PayrollCalculationService $calculator,
         private readonly PayrollFieldService $fieldService,
         private readonly QuarterService $quarterService,
-        private readonly NightAllowanceRateService $nightAllowanceService,
     ) {}
 
     /** @return list<array<string, mixed>> */
@@ -868,7 +867,6 @@ final class PayrollMasterService
             ['key' => 'quarter_name', 'header' => 'Quarter Number/Name', 'required_in_template' => false],
             ['key' => 'quarter_type', 'header' => 'Quarter Type', 'required_in_template' => false],
             ['key' => 'quarter_rent', 'header' => 'Quarter Rent', 'required_in_template' => false],
-            ['key' => 'night_allowance_slab_no', 'header' => 'Night Allowance Slab No', 'required_in_template' => false],
             ['key' => 'professional_tax', 'header' => 'Professional Tax', 'required_in_template' => false],
             ['key' => 'cpf_default', 'header' => 'PF / CPF %', 'required_in_template' => false],
         ];
@@ -1107,7 +1105,7 @@ final class PayrollMasterService
             'phone', 'gender', 'date_of_birth', 'date_of_joining',
             'designation', 'department', 'division', 'pay_level', 'increment_month', 'gross_basic_pay', 'da_percent', 'hra_percent', 'medical',
             'uan', 'cpf_no', 'pan', 'aadhaar', 'bank_name', 'bank_account_number', 'bank_ifsc',
-            'quarter_assigned', 'quarter_name', 'quarter_type', 'quarter_rent', 'night_allowance_slab_no', 'hra_eligible',
+            'quarter_assigned', 'quarter_name', 'quarter_type', 'quarter_rent', 'hra_eligible',
             'status', 'remarks', 'effective_from',
         ];
     }
@@ -1547,7 +1545,6 @@ final class PayrollMasterService
             'payrollMode' => $m->payroll_mode ?? 'government',
             ...$this->quarterService->quarterMetaForMaster($m, (string) $m->company_id),
             'quarterAssigned' => (bool) ($m->has_quarter ?? false),
-            'nightAllowanceSlabNo' => $m->night_allowance_slab_no ? (int) $m->night_allowance_slab_no : null,
         ];
     }
 
@@ -2350,9 +2347,6 @@ final class PayrollMasterService
             'has_quarter' => (bool) ($calc['has_quarter'] ?? $validated['has_quarter'] ?? $validated['hasQuarter'] ?? false),
             'quarter_id' => $validated['quarter_id'] ?? $validated['quarterId'] ?? null,
             'quarter_rent' => (float) ($calc['quarter_rent'] ?? $validated['quarter_rent'] ?? $validated['quarterRent'] ?? 0),
-            'night_allowance_slab_no' => isset($validated['night_allowance_slab_no']) || isset($validated['nightAllowanceSlabNo'])
-                ? (int) ($validated['night_allowance_slab_no'] ?? $validated['nightAllowanceSlabNo'] ?? 0) ?: null
-                : null,
             'payroll_mode' => 'government',
             'pf_eligible' => false,
             'esic_eligible' => false,
@@ -3455,49 +3449,6 @@ final class PayrollMasterService
             foreach ($this->validateQuarterImportRow($row, $companyId, $existing) as $qe) {
                 $errors[] = $this->importIssue($qe['field'], $qe['message']);
             }
-            foreach ($this->validateNightAllowanceSlabImportRow($row, $companyId) as $ne) {
-                $errors[] = $this->importIssue($ne['field'], $ne['message']);
-            }
-        }
-
-        return $errors;
-    }
-
-    /**
-     * @param  array<string, mixed>  $row
-     * @return list<array{field: string, message: string}>
-     */
-    private function validateNightAllowanceSlabImportRow(array $row, string $companyId): array
-    {
-        $errors = [];
-        $raw = $row['night_allowance_slab_no'] ?? $row['nightAllowanceSlabNo'] ?? null;
-        if ($raw === null || trim((string) $raw) === '') {
-            return $errors;
-        }
-
-        $slabNo = (int) $raw;
-        if ($slabNo < 1) {
-            $errors[] = ['field' => 'night_allowance_slab_no', 'message' => 'Night allowance slab number must be at least 1.'];
-
-            return $errors;
-        }
-
-        $slab = $this->nightAllowanceService->findBySlabNo($companyId, $slabNo, false);
-        if (! $slab) {
-            $errors[] = ['field' => 'night_allowance_slab_no', 'message' => 'Night allowance slab does not exist in Settings.'];
-
-            return $errors;
-        }
-        if (! ($slab['isActive'] ?? true)) {
-            $errors[] = ['field' => 'night_allowance_slab_no', 'message' => 'Cannot assign an inactive night allowance slab.'];
-        }
-
-        $payLevel = (int) ($row['pay_level'] ?? $row['payLevel'] ?? 0);
-        if ($payLevel > 0 && (int) ($slab['payLevel'] ?? 0) !== $payLevel) {
-            $errors[] = [
-                'field' => 'night_allowance_slab_no',
-                'message' => 'Night allowance slab pay level does not match employee pay level.',
-            ];
         }
 
         return $errors;

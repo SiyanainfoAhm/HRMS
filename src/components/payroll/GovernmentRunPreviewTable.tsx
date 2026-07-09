@@ -477,16 +477,7 @@ function GovernmentEmployeeDetail({
                     />
                   </div>
                 )}
-                <p className="mt-1 text-[10px] text-slate-500">Basis = Basic + DA + HRA + Medical</p>
-                {eolRefMonth === runMonth && eolRefYear === runYear ? (
-                  <p className="text-[10px] text-sky-700">Current month: reduces Basic/DA/HRA/Medical earnings</p>
-                ) : (
-                  <p className="text-[10px] text-sky-700">Prior month: EOL deduction only</p>
-                )}
-                <p className="text-[11px] tabular-nums text-slate-700">₹{fmtIn(eolBasis)} · Ded. ₹{fmtIn(d(g, "eol"))}</p>
-                {leave.eolReferenceWarning ? (
-                  <p className="mt-1 text-[10px] text-amber-700">{leave.eolReferenceWarning}</p>
-                ) : null}
+
               </div>
               <div className="col-span-2 rounded border border-slate-100 bg-slate-50/80 p-2">
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-600">HPL reference</p>
@@ -521,16 +512,7 @@ function GovernmentEmployeeDetail({
                     />
                   </div>
                 )}
-                <p className="mt-1 text-[10px] text-slate-500">Basis = Basic + DA + HRA + Medical × 0.5 per day</p>
-                {hplRefMonth === runMonth && hplRefYear === runYear ? (
-                  <p className="text-[10px] text-sky-700">Current month: reduces Basic/DA/HRA/Medical earnings</p>
-                ) : (
-                  <p className="text-[10px] text-sky-700">Prior month: HPL deduction only</p>
-                )}
-                <p className="text-[11px] tabular-nums text-slate-700">₹{fmtIn(hplBasis)} · Ded. ₹{fmtIn(d(g, "hpl"))}</p>
-                {leave.hplReferenceWarning ? (
-                  <p className="mt-1 text-[10px] text-amber-700">{leave.hplReferenceWarning}</p>
-                ) : null}
+
               </div>
               <div>
                 <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Elec. units</p>
@@ -570,15 +552,7 @@ function GovernmentEmployeeDetail({
                 <p className="mt-0.5 text-[10px] tabular-nums text-slate-500">
                   Rate ₹{(leave.nightAllowanceRate ?? 0).toFixed(2)}/hr
                 </p>
-                {leave.nightAllowanceEligible === false ? (
-                  <p className="mt-1 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">
-                    Not eligible — Basic Pay exceeds ₹
-                    {Math.round(leave.nightAllowanceBasicCeiling ?? 43600).toLocaleString("en-IN")} ceiling
-                  </p>
-                ) : null}
-                {leave.nightAllowanceWarning ? (
-                  <p className="mt-0.5 text-[10px] text-amber-700">{leave.nightAllowanceWarning}</p>
-                ) : null}
+
               </div>
               <div>
                 <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Advance</p>

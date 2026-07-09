@@ -12,6 +12,55 @@ export function formatNightAllowanceSlabLabel(slabNo: number, payLevel: number, 
   return `S.No ${slabNo} - Level ${payLevel} - ₹${ratePerHour.toFixed(2)}/hr`;
 }
 
+export type NightAllowanceRateRow = {
+  slabNo: number;
+  payLevel: number;
+  ratePerHour: number;
+  effectiveFrom?: string | null;
+  isActive?: boolean;
+};
+
+/** Match backend resolveForPayLevel: effective_from DESC NULLS LAST, slab_no ASC. */
+export function resolveNightAllowanceRateByPayLevel(
+  rates: NightAllowanceRateRow[],
+  payLevel: number,
+  asOfDate?: string | null,
+): { rate: number; slabNo: number | null; warning: string | null } {
+  const level = Math.floor(Number(payLevel) || 0);
+  if (level < 1) {
+    return { rate: 0, slabNo: null, warning: null };
+  }
+
+  const asOf = asOfDate ? new Date(asOfDate) : null;
+  const matches = rates
+    .filter((r) => r.isActive !== false && r.payLevel === level)
+    .filter((r) => {
+      if (!asOf || !r.effectiveFrom) return true;
+      const eff = new Date(r.effectiveFrom);
+      return !Number.isNaN(eff.getTime()) && eff <= asOf;
+    })
+    .sort((a, b) => {
+      const aHas = a.effectiveFrom ? 0 : 1;
+      const bHas = b.effectiveFrom ? 0 : 1;
+      if (aHas !== bHas) return aHas - bHas;
+      const aEff = a.effectiveFrom ? new Date(a.effectiveFrom).getTime() : 0;
+      const bEff = b.effectiveFrom ? new Date(b.effectiveFrom).getTime() : 0;
+      if (aEff !== bEff) return bEff - aEff;
+      return a.slabNo - b.slabNo;
+    });
+
+  const pick = matches[0];
+  if (!pick) {
+    return {
+      rate: 0,
+      slabNo: null,
+      warning: "Night allowance rate is not configured for this Pay Level.",
+    };
+  }
+
+  return { rate: pick.ratePerHour, slabNo: pick.slabNo, warning: null };
+}
+
 export function nightAllowanceCeilingMessage(ceiling: number): string {
   const cap = Math.round(Math.max(0, Number(ceiling) || 0));
   return `Not eligible for Night Allowance: Basic Pay exceeds ₹${cap.toLocaleString("en-IN")} ceiling.`;

@@ -1163,7 +1163,6 @@ function PayrollPageContent() {
               electricityUnitsConsumed?: number;
               nightHours?: number;
               nightAllowanceRate?: number;
-              nightAllowanceSlabNo?: number | null;
               nightAllowanceWarning?: string;
             } | null | undefined;
             base.govRecalc = {
@@ -1178,7 +1177,7 @@ function PayrollPageContent() {
               electricityUnitsConsumed: r.govRecalc.electricityUnitsConsumed ?? gm0?.electricityUnitsConsumed ?? 0,
               nightHours: r.govRecalc.nightHours ?? gm0?.nightHours ?? 0,
               nightAllowanceRate: r.govRecalc.nightAllowanceRate ?? gm0?.nightAllowanceRate ?? 0,
-              nightAllowanceSlabNo: r.govRecalc.nightAllowanceSlabNo ?? gm0?.nightAllowanceSlabNo ?? null,
+              nightAllowanceSlabNo: r.govRecalc.nightAllowanceSlabNo ?? null,
               nightAllowanceWarning: r.govRecalc.nightAllowanceWarning ?? gm0?.nightAllowanceWarning,
             };
           }

@@ -316,8 +316,9 @@ export function NightAllowanceSettings() {
       <ConfirmDialog
         open={deactivateTarget != null}
         title="Deactivate rate?"
-        description={`Deactivate slab ${deactivateTarget?.slabNo} (Level ${deactivateTarget?.payLevel})?`}
-        confirmLabel="Deactivate"
+        message={`Deactivate slab ${deactivateTarget?.slabNo} (Level ${deactivateTarget?.payLevel})?`}
+        confirmText="Deactivate"
+        variant="danger"
         onConfirm={() => deactivateTarget && void deactivate(deactivateTarget)}
         onCancel={() => setDeactivateTarget(null)}
       />

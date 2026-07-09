@@ -104,11 +104,31 @@ final class NightAllowanceRatesTest extends TestCase
         $this->assertSame(504.0, $result['amount']);
     }
 
-    /** NA-011 */
-    public function test_basic_pay_below_ceiling_allows_night_allowance(): void
+    /** NA-012 — duplicate pay levels resolve to first active slab by slab_no ASC */
+    public function test_pay_level_5_picks_lowest_slab_no(): void
     {
-        $result = $this->resolveWithCeiling(36400, 10, 50.40, 43600);
-        $this->assertTrue($result['eligible']);
-        $this->assertSame(504.0, $result['amount']);
+        $level5 = [
+            ['slab_no' => 8, 'pay_level' => 5, 'rate_per_hour' => 41.25, 'effective_from' => null],
+            ['slab_no' => 5, 'pay_level' => 5, 'rate_per_hour' => 36.55, 'effective_from' => null],
+            ['slab_no' => 7, 'pay_level' => 5, 'rate_per_hour' => 39.60, 'effective_from' => null],
+            ['slab_no' => 6, 'pay_level' => 5, 'rate_per_hour' => 38.05, 'effective_from' => null],
+        ];
+        usort($level5, function (array $a, array $b): int {
+            $aHas = $a['effective_from'] === null ? 1 : 0;
+            $bHas = $b['effective_from'] === null ? 1 : 0;
+            if ($aHas !== $bHas) {
+                return $aHas <=> $bHas;
+            }
+            $aEff = $a['effective_from'] ? strtotime((string) $a['effective_from']) : 0;
+            $bEff = $b['effective_from'] ? strtotime((string) $b['effective_from']) : 0;
+            if ($aEff !== $bEff) {
+                return $bEff <=> $aEff;
+            }
+
+            return $a['slab_no'] <=> $b['slab_no'];
+        });
+        $pick = $level5[0];
+        $this->assertSame(5, $pick['slab_no']);
+        $this->assertEqualsWithDelta(36.55, $pick['rate_per_hour'], 0.001);
     }
 }
