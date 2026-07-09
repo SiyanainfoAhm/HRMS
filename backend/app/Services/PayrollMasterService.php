@@ -12,6 +12,7 @@ use App\Models\HrmsEmployee;
 use App\Models\HrmsPayrollMaster;
 use App\Models\HrmsPayrollMasterHistory;
 use App\Models\HrmsUser;
+use App\Support\GovernmentPayLevel;
 use App\Support\IncrementMonth;
 use App\Support\PayrollFieldRegistry;
 use App\Support\SpreadsheetImportSecurity;
@@ -1934,8 +1935,14 @@ final class PayrollMasterService
             abort(422, 'Name is required');
         }
         if (empty($payload['pay_level']) && empty($payload['payLevel'])) {
-            abort(422, 'Pay level is required');
+            abort(422, GovernmentPayLevel::requiredMessage());
         }
+        $payLevel = GovernmentPayLevel::normalize($payload['pay_level'] ?? $payload['payLevel'] ?? null);
+        if ($payLevel === null) {
+            abort(422, GovernmentPayLevel::invalidMessage());
+        }
+        $payload['pay_level'] = $payLevel;
+        $payload['payLevel'] = $payLevel;
         $gross = (float) ($payload['gross_basic_pay'] ?? $payload['grossBasicPay'] ?? 0);
         if (! $salaryPending && ! $autosave && $gross <= 0) {
             abort(422, 'Gross basic pay must be greater than 0');
@@ -3232,6 +3239,12 @@ final class PayrollMasterService
             $normalizedMonth = IncrementMonth::normalize((string) ($row['increment_month'] ?? ''));
             $row['increment_month'] = $normalizedMonth;
         }
+        if (array_key_exists('pay_level', $row) && $row['pay_level'] !== null && trim((string) $row['pay_level']) !== '') {
+            $normalizedLevel = GovernmentPayLevel::normalize($row['pay_level']);
+            if ($normalizedLevel !== null) {
+                $row['pay_level'] = $normalizedLevel;
+            }
+        }
 
         return $row;
     }
@@ -3341,12 +3354,15 @@ final class PayrollMasterService
             );
         }
 
-        if (empty($row['pay_level'])) {
-            $errors[] = $this->importIssue('pay_level', 'Pay level is required.');
+        $payLevelRaw = $row['pay_level'] ?? null;
+        if ($payLevelRaw === null || trim((string) $payLevelRaw) === '') {
+            $errors[] = $this->importIssue('pay_level', GovernmentPayLevel::requiredMessage());
         } else {
-            $level = (int) $row['pay_level'];
-            if ($level < 1) {
-                $errors[] = $this->importIssue('pay_level', 'Pay level must be at least 1.');
+            $level = GovernmentPayLevel::normalize($payLevelRaw);
+            if ($level === null) {
+                $errors[] = $this->importIssue('pay_level', GovernmentPayLevel::importInvalidMessage());
+            } else {
+                $row['pay_level'] = $level;
             }
         }
 

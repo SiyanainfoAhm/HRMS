@@ -12,6 +12,7 @@ import {
   dataThNum,
   dataThSticky,
 } from "@/components/ui/DataTable";
+import { formatPayLevelDisplay, isValidGovernmentPayLevel } from "@/lib/payLevel";
 import type { PayrollMasterRecord } from "./PayrollMasterScreen";
 
 function fmt(n: number | null | undefined) {
@@ -133,7 +134,22 @@ export function PayrollMasterDataGrid({ rows, canWrite, cpfRateLabel, customColu
               <td className={dataTdLeft}>{row.designation || "—"}</td>
               <td className={dataTdLeft}>{row.department || "—"}</td>
               <td className={dataTdLeft}>{row.division || "—"}</td>
-              <td className={dataTdNum}>{row.payLevel ?? "—"}</td>
+              <td className={dataTdNum}>
+                <span
+                  className={
+                    row.payLevel != null && !isValidGovernmentPayLevel(row.payLevel)
+                      ? "text-amber-700"
+                      : undefined
+                  }
+                  title={
+                    row.payLevel != null && !isValidGovernmentPayLevel(row.payLevel)
+                      ? "Invalid Pay Level. Please update."
+                      : undefined
+                  }
+                >
+                  {formatPayLevelDisplay(row.payLevel)}
+                </span>
+              </td>
               <td className={dataTdLeft}>{row.incrementMonth ?? "—"}</td>
               <td className={dataTdNum}>{fmt(row.grossBasicPay)}</td>
               <td className={dataTdNum}>{row.daPercent ?? row.da_percent ?? "—"}</td>

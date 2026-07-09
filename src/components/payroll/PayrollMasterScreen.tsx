@@ -54,6 +54,11 @@ import {
 import { GOVERNMENT_DEFAULT_CPF_RATE_ON_TOTAL_EARNINGS } from "@/lib/governmentPayroll";
 import { resolveNightAllowanceRateByPayLevel } from "@/lib/nightAllowanceCalculation";
 import {
+  formatPayLevelDisplay,
+  isValidGovernmentPayLevel,
+  payLevelSelectOptionsForValue,
+} from "@/lib/payLevel";
+import {
   DEFAULT_CPF_BASIS_KEYS,
   isCpfCompanyDefaultMode,
   isCpfEmployeeCustomMode,
@@ -1023,6 +1028,11 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
       cancelled = true;
     };
   }, [formOpen, canManage]);
+
+  const payLevelOptions = useMemo(
+    () => payLevelSelectOptionsForValue(form.payLevel),
+    [form.payLevel],
+  );
 
   const resolvedNightAllowance = useMemo(() => {
     const level = parseInt(form.payLevel, 10);
@@ -2093,14 +2103,17 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                       />
                     </FormField>
                     <FormField label="Pay Level" required error={showError("payLevel")}>
-                      <Input
+                      <SelectField
                         id={fieldDomId("payLevel")}
-                        type="number"
-                        min={1}
-                        invalid={Boolean(showError("payLevel"))}
                         value={form.payLevel}
-                        onChange={(e) => patchForm({ payLevel: e.target.value })}
-                        onBlur={() => touchField("payLevel")}
+                        onChange={(v) => {
+                          patchForm({ payLevel: v });
+                          touchField("payLevel");
+                        }}
+                        error={showError("payLevel")}
+                        options={payLevelOptions}
+                        placeholder="Select pay level"
+                        required
                       />
                     </FormField>
                     <FormField label="Increment Month" required error={showError("incrementMonth")}>
@@ -2286,19 +2299,25 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                     </p>
                     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                       <FormField label="Pay Level" required error={showError("payLevel")}>
-                        <Input
+                        <SelectField
                           id={fieldDomId("payLevel")}
-                          type="number"
-                          min={1}
-                          invalid={Boolean(showError("payLevel"))}
                           value={form.payLevel}
-                          onChange={(e) => patchForm({ payLevel: e.target.value })}
-                          onBlur={() => touchField("payLevel")}
+                          onChange={(v) => {
+                            patchForm({ payLevel: v });
+                            touchField("payLevel");
+                          }}
+                          error={showError("payLevel")}
+                          options={payLevelOptions}
+                          placeholder="Select pay level"
+                          required
                         />
                         <p className="mt-1 text-xs text-slate-500">
                           Night allowance rate will be applied automatically based on Pay Level.
                         </p>
-                        {editing && form.payLevel.trim() !== "" ? (
+                        {!isValidGovernmentPayLevel(form.payLevel) && form.payLevel.trim() !== "" ? (
+                          <p className="mt-1 text-xs text-amber-700">Invalid Pay Level. Please update.</p>
+                        ) : null}
+                        {editing && isValidGovernmentPayLevel(form.payLevel) ? (
                           resolvedNightAllowance.rate > 0 ? (
                             <p className="mt-1 text-xs font-medium text-slate-700">
                               Night Allowance Rate: ₹{resolvedNightAllowance.rate.toFixed(2)}/hour
@@ -2796,7 +2815,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                 <section className="mt-4 rounded-xl border border-brand-border bg-slate-50/80 p-4">
                   <h4 className="mb-3 text-sm font-semibold text-slate-800">Calculated preview</h4>
                   <div className="grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
-                    <div>Pay level: <strong>{form.payLevel}</strong></div>
+                    <div>Pay level: <strong>{formatPayLevelDisplay(parseInt(form.payLevel, 10) || null)}</strong></div>
                     <div>DA amount: <strong>{fmt(preview.daAmount)}</strong></div>
                     <div>HRA amount: <strong>{fmt(preview.hraAmount)}</strong></div>
                     <div>Transport base: <strong>{fmt(preview.transportBase)}</strong></div>

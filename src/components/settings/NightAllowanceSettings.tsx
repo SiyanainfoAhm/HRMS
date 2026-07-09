@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { AppPageLoader } from "@/components/ui/AppPageLoader";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -9,6 +9,8 @@ import { FormField } from "@/components/ui/FormField";
 import { Input } from "@/components/ui/Input";
 import { Modal } from "@/components/ui/Modal";
 import { formatNightAllowanceSlabLabel, DEFAULT_NIGHT_ALLOWANCE_BASIC_CEILING } from "@/lib/nightAllowanceCalculation";
+import { payLevelSelectOptions } from "@/lib/payLevel";
+import { SelectField } from "@/components/ui/SelectField";
 
 export type NightAllowanceRateRecord = {
   id: string;
@@ -34,6 +36,38 @@ const emptyForm = (): RateForm => ({
   effectiveFrom: "",
 });
 
+function validateRateForm(
+  form: RateForm,
+  rates: NightAllowanceRateRecord[],
+  editing: NightAllowanceRateRecord | null,
+): Record<string, string> {
+  const errors: Record<string, string> = {};
+
+  const slabNo = parseInt(form.slabNo, 10);
+  if (!form.slabNo.trim() || !Number.isInteger(slabNo) || slabNo < 1) {
+    errors.slabNo = "Slab No is required.";
+  } else {
+    const duplicate = rates.some(
+      (r) => r.slabNo === slabNo && (!editing || r.id !== editing.id),
+    );
+    if (duplicate) {
+      errors.slabNo = "Slab number already exists.";
+    }
+  }
+
+  const payLevel = parseInt(form.payLevel, 10);
+  if (!form.payLevel.trim() || payLevel < 1 || payLevel > 18) {
+    errors.payLevel = "Please select a valid Pay Level.";
+  }
+
+  const rate = Number(form.ratePerHour);
+  if (!form.ratePerHour.trim() || !Number.isFinite(rate) || rate < 0) {
+    errors.ratePerHour = "Rate per hour is required.";
+  }
+
+  return errors;
+}
+
 export function NightAllowanceSettings() {
   const [rates, setRates] = useState<NightAllowanceRateRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -41,6 +75,7 @@ export function NightAllowanceSettings() {
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<NightAllowanceRateRecord | null>(null);
   const [form, setForm] = useState<RateForm>(emptyForm);
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [deactivateTarget, setDeactivateTarget] = useState<NightAllowanceRateRecord | null>(null);
   const [basicPayCeiling, setBasicPayCeiling] = useState(String(DEFAULT_NIGHT_ALLOWANCE_BASIC_CEILING));
@@ -74,6 +109,7 @@ export function NightAllowanceSettings() {
   function openAdd() {
     setEditing(null);
     setForm(emptyForm());
+    setFormErrors({});
     setFormOpen(true);
   }
 
@@ -85,11 +121,23 @@ export function NightAllowanceSettings() {
       ratePerHour: String(rate.ratePerHour),
       effectiveFrom: rate.effectiveFrom?.slice(0, 10) ?? "",
     });
+    setFormErrors({});
     setFormOpen(true);
   }
 
+  const rateFormValidation = useMemo(
+    () => validateRateForm(form, rates, editing),
+    [form, rates, editing],
+  );
+
+  const rateFormValid = Object.keys(rateFormValidation).length === 0;
+
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
+    const validation = validateRateForm(form, rates, editing);
+    setFormErrors(validation);
+    if (Object.keys(validation).length > 0) return;
+
     setSaving(true);
     setError(null);
     try {
@@ -111,6 +159,7 @@ export function NightAllowanceSettings() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.message || data.error || "Save failed");
       setFormOpen(false);
+      setFormErrors({});
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Save failed");
@@ -257,31 +306,54 @@ export function NightAllowanceSettings() {
 
       <Modal open={formOpen} onClose={() => setFormOpen(false)} title={editing ? "Edit Night Allowance Rate" : "Add Night Allowance Rate"}>
         <form onSubmit={handleSave} className="space-y-4">
-          <FormField label="Slab No" required>
+          <FormField label="Slab No" required error={formErrors.slabNo}>
             <Input
               type="number"
               min={1}
+              step={1}
               value={form.slabNo}
-              onChange={(e) => setForm((f) => ({ ...f, slabNo: e.target.value }))}
+              onChange={(e) => {
+                setForm((f) => ({ ...f, slabNo: e.target.value }));
+                setFormErrors((prev) => {
+                  const next = { ...prev };
+                  delete next.slabNo;
+                  return next;
+                });
+              }}
               required
             />
           </FormField>
-          <FormField label="Pay Level" required>
-            <Input
-              type="number"
-              min={1}
+          <FormField label="Pay Level" required error={formErrors.payLevel}>
+            <SelectField
               value={form.payLevel}
-              onChange={(e) => setForm((f) => ({ ...f, payLevel: e.target.value }))}
+              onChange={(v) => {
+                setForm((f) => ({ ...f, payLevel: v }));
+                setFormErrors((prev) => {
+                  const next = { ...prev };
+                  delete next.payLevel;
+                  return next;
+                });
+              }}
+              options={payLevelSelectOptions()}
+              placeholder="Select pay level"
+              error={formErrors.payLevel}
               required
             />
           </FormField>
-          <FormField label="Rate Per Hour (₹)" required>
+          <FormField label="Rate Per Hour (₹)" required error={formErrors.ratePerHour}>
             <Input
               type="number"
               min={0}
               step="0.01"
               value={form.ratePerHour}
-              onChange={(e) => setForm((f) => ({ ...f, ratePerHour: e.target.value }))}
+              onChange={(e) => {
+                setForm((f) => ({ ...f, ratePerHour: e.target.value }));
+                setFormErrors((prev) => {
+                  const next = { ...prev };
+                  delete next.ratePerHour;
+                  return next;
+                });
+              }}
               required
             />
           </FormField>
@@ -306,7 +378,7 @@ export function NightAllowanceSettings() {
             <Button type="button" variant="outline" onClick={() => setFormOpen(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={saving}>
+            <Button type="submit" disabled={saving || !rateFormValid}>
               {saving ? "Saving…" : "Save"}
             </Button>
           </div>

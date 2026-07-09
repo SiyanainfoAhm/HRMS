@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\HrmsNightAllowanceRate;
+use App\Support\GovernmentPayLevel;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 
@@ -43,7 +44,7 @@ final class NightAllowanceRateService
      */
     public function resolveForPayLevel(string $companyId, int $payLevel, ?string $periodEndDate = null): array
     {
-        if ($payLevel < 1) {
+        if ($payLevel < GovernmentPayLevel::MIN || $payLevel > GovernmentPayLevel::MAX) {
             return [
                 'rate' => 0.0,
                 'slabNo' => null,
@@ -105,7 +106,7 @@ final class NightAllowanceRateService
         $this->validateSlab($companyId, $slabNo, $payLevel, $rate);
 
         if (HrmsNightAllowanceRate::query()->where('company_id', $companyId)->where('slab_no', $slabNo)->exists()) {
-            abort(422, 'Duplicate slab number is not allowed.');
+            abort(422, 'Slab number already exists.');
         }
 
         $effectiveFrom = $data['effective_from'] ?? $data['effectiveFrom'] ?? null;
@@ -141,7 +142,7 @@ final class NightAllowanceRateService
             ->where('id', '!=', $row->id)
             ->exists();
         if ($duplicate) {
-            abort(422, 'Duplicate slab number is not allowed.');
+            abort(422, 'Slab number already exists.');
         }
 
         $effectiveFrom = array_key_exists('effective_from', $data) || array_key_exists('effectiveFrom', $data)
@@ -173,8 +174,8 @@ final class NightAllowanceRateService
         if ($slabNo < 1) {
             abort(422, 'Slab No is required.');
         }
-        if ($payLevel < 1) {
-            abort(422, 'Pay Level is required.');
+        if (! GovernmentPayLevel::isValid($payLevel)) {
+            abort(422, GovernmentPayLevel::requiredMessage());
         }
         if ($rate < 0) {
             abort(422, 'Night allowance rate is required.');

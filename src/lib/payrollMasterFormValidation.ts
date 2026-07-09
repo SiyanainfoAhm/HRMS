@@ -5,6 +5,11 @@ import {
   normalizePanInput,
 } from "@/lib/employeeValidators";
 import {
+  isValidGovernmentPayLevel,
+  PAY_LEVEL_INVALID_ERROR,
+  PAY_LEVEL_REQUIRED_ERROR,
+} from "@/lib/payLevel";
+import {
   type PayrollMasterUniqueRow,
   validatePayrollMasterUniqueness,
 } from "@/lib/payrollMasterUniqueness";
@@ -175,8 +180,10 @@ export function validateBasicDetails(form: MasterFormLike, editing: boolean): Re
   if (!form.designation.trim()) errors.designation = "Designation is required.";
 
   const level = parseInt(form.payLevel, 10);
-  if (!form.payLevel.trim() || !Number.isFinite(level) || level < 1) {
-    errors.payLevel = "Pay level is required.";
+  if (!form.payLevel.trim()) {
+    errors.payLevel = PAY_LEVEL_REQUIRED_ERROR;
+  } else if (!isValidGovernmentPayLevel(level)) {
+    errors.payLevel = PAY_LEVEL_INVALID_ERROR;
   }
 
   if (!form.incrementMonth.trim()) {

@@ -8,6 +8,8 @@ export function calculateNightAllowanceAmount(hours: number, ratePerHour: number
   return Math.round(h * r);
 }
 
+import { isValidGovernmentPayLevel } from "./payLevel";
+
 export function formatNightAllowanceSlabLabel(slabNo: number, payLevel: number, ratePerHour: number): string {
   return `S.No ${slabNo} - Level ${payLevel} - ₹${ratePerHour.toFixed(2)}/hr`;
 }
@@ -27,8 +29,8 @@ export function resolveNightAllowanceRateByPayLevel(
   asOfDate?: string | null,
 ): { rate: number; slabNo: number | null; warning: string | null } {
   const level = Math.floor(Number(payLevel) || 0);
-  if (level < 1) {
-    return { rate: 0, slabNo: null, warning: null };
+  if (!isValidGovernmentPayLevel(level)) {
+    return { rate: 0, slabNo: null, warning: "Night allowance rate is not configured for this Pay Level." };
   }
 
   const asOf = asOfDate ? new Date(asOfDate) : null;
