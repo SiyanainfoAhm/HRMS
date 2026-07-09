@@ -580,7 +580,7 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
     nightAllowanceEligible: nightResolved.eligible,
     nightAllowanceSlabNo: input.nightAllowanceSlabNo ?? null,
     nightAllowanceManualOverride: Boolean(input.nightAllowanceManualOverride && nightResolved.eligible),
-    nightAllowanceWarning: nightResolved.warning,
+    nightAllowanceWarning: nightResolved.warning ?? undefined,
   };
 }
 
