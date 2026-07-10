@@ -11,6 +11,7 @@ import { sumCustomBagForTotal } from "./payrollFieldTypes";
 import {
   computeEolHplDeductions,
   applyProportionalEarningsCut,
+  applyBasicDaEarningsCut,
   isSamePayrollReferencePeriod,
   type EolHplReferenceSalary,
 } from "./hplEolDeductions";
@@ -382,7 +383,7 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
     eolDeduction = 0;
   }
   if (hplIsCurrent && hplLeave.hplDays > 0 && !input.hplDeductionManualOverride) {
-    const cut = applyProportionalEarningsCut(
+    const cut = applyBasicDaEarningsCut(
       { basic: basicOut, da: daOut, hra: hraOut, medical: medicalOut },
       hplDeduction,
     );

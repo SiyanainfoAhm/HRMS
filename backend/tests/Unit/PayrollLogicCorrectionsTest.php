@@ -20,6 +20,11 @@ final class PayrollLogicCorrectionsTest extends TestCase
         );
     }
 
+    private function hplBasisTotal(array $salary): int
+    {
+        return (int) round(max(0, $salary['basic']) + max(0, $salary['da']));
+    }
+
     private function eolDeduction(array $salary, int $daysInMonth, int $eolDays): int
     {
         $basis = $this->eolHplBasisTotal($salary);
@@ -30,7 +35,7 @@ final class PayrollLogicCorrectionsTest extends TestCase
 
     private function hplDeduction(array $salary, int $daysInMonth, int $hplDays): int
     {
-        $basis = $this->eolHplBasisTotal($salary);
+        $basis = $this->hplBasisTotal($salary);
         $daily = $daysInMonth > 0 ? $basis / $daysInMonth : 0;
 
         return (int) round($daily * max(0, $hplDays) * 0.5);
@@ -94,6 +99,19 @@ final class PayrollLogicCorrectionsTest extends TestCase
             $this->hplDeduction($withoutTransport, 30, 4),
             $this->hplDeduction($withTransport, 30, 4),
         );
+    }
+
+    /** PAY-HPL-003 — HPL affects Basic and DA only, not HRA or Medical. */
+    public function test_hpl_basis_excludes_hra_and_medical(): void
+    {
+        $basicDaOnly = ['basic' => 50000, 'da' => 29000, 'hra' => 0, 'medical' => 0];
+        $withHraMedical = ['basic' => 50000, 'da' => 29000, 'hra' => 15000, 'medical' => 3000];
+
+        $this->assertSame(
+            $this->hplDeduction($basicDaOnly, 30, 4),
+            $this->hplDeduction($withHraMedical, 30, 4),
+        );
+        $this->assertSame(5267, $this->hplDeduction($withHraMedical, 30, 4));
     }
 
     /** PAY-HPL-002 */

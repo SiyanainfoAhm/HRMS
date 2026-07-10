@@ -1,7 +1,7 @@
 /**
  * HPL / EOL monthly deductions (Run Payroll only).
- * Basis: Basic + DA + HRA + Medical from a selected reference month salary.
- * Transport and other allowances are excluded.
+ * EOL basis: Basic + DA + HRA + Medical (transport and other allowances excluded).
+ * HPL basis: Basic + DA only (HRA and medical are not reduced).
  */
 
 function roundRupees(n: number): number {
@@ -45,23 +45,30 @@ export function referenceSalaryBasisTotal(salary: EolHplReferenceSalary): number
   );
 }
 
+/** HPL deduction basis: Basic + DA only. */
+export function referenceSalaryHplBasisTotal(salary: EolHplReferenceSalary): number {
+  return roundRupees(Math.max(0, salary.basic) + Math.max(0, salary.da));
+}
+
 export function computeEolHplDeductions(input: EolHplDeductionInput): EolHplDeductionResult {
   const eolDays = Math.max(0, Math.floor(Number(input.eolDays) || 0));
   const hplDays = Math.max(0, Math.floor(Number(input.hplDays) || 0));
   const dim = Math.max(1, Math.floor(input.daysInReferenceMonth));
-  const basisTotal = referenceSalaryBasisTotal(input.referenceSalary);
-  const dailyBasis = dim > 0 ? basisTotal / dim : 0;
+  const eolBasisTotal = referenceSalaryBasisTotal(input.referenceSalary);
+  const hplBasisTotal = referenceSalaryHplBasisTotal(input.referenceSalary);
+  const dailyEolBasis = dim > 0 ? eolBasisTotal / dim : 0;
+  const dailyHplBasis = dim > 0 ? hplBasisTotal / dim : 0;
 
-  const eolDeduction = roundRupees(dailyBasis * eolDays);
-  const hplDeduction = roundRupees(dailyBasis * hplDays * HPL_DAY_SALARY_FACTOR);
+  const eolDeduction = roundRupees(dailyEolBasis * eolDays);
+  const hplDeduction = roundRupees(dailyHplBasis * hplDays * HPL_DAY_SALARY_FACTOR);
 
   return {
     eolDays,
     hplDays,
-    basisTotal,
-    dailyBasis,
-    eolBasisAmount: basisTotal,
-    hplBasisAmount: basisTotal,
+    basisTotal: eolBasisTotal,
+    dailyBasis: dailyEolBasis,
+    eolBasisAmount: eolBasisTotal,
+    hplBasisAmount: hplBasisTotal,
     eolDeduction,
     hplDeduction,
   };
@@ -99,7 +106,7 @@ export function isSamePayrollReferencePeriod(
   return Math.floor(refMonth) === Math.floor(runMonth) && Math.floor(refYear) === Math.floor(runYear);
 }
 
-/** Reduce basic/da/hra/medical paid amounts by a total cut (proportional). */
+/** Reduce basic/da/hra/medical paid amounts by a total cut (proportional). Used for EOL. */
 export function applyProportionalEarningsCut(
   amounts: EolHplReferenceSalary,
   cutTotal: number,
@@ -117,5 +124,22 @@ export function applyProportionalEarningsCut(
     da: roundRupees(amounts.da - (amounts.da / total) * applied),
     hra: roundRupees(amounts.hra - (amounts.hra / total) * applied),
     medical: roundRupees(amounts.medical - (amounts.medical / total) * applied),
+  };
+}
+
+/** Reduce only basic and da paid amounts by HPL cut (proportional between basic and da). */
+export function applyBasicDaEarningsCut(
+  amounts: EolHplReferenceSalary,
+  cutTotal: number,
+): EolHplReferenceSalary {
+  const basicDaTotal = Math.max(0, amounts.basic) + Math.max(0, amounts.da);
+  const cut = Math.max(0, Math.round(Number(cutTotal) || 0));
+  if (cut <= 0 || basicDaTotal <= 0) return amounts;
+  const applied = Math.min(cut, basicDaTotal);
+  return {
+    basic: roundRupees(amounts.basic - (amounts.basic / basicDaTotal) * applied),
+    da: roundRupees(amounts.da - (amounts.da / basicDaTotal) * applied),
+    hra: amounts.hra,
+    medical: amounts.medical,
   };
 }
