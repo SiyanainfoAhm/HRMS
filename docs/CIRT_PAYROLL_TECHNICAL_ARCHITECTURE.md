@@ -3,9 +3,11 @@
 **Application:** CIRT Payroll (CIRT HRMS — Payroll Module)  
 **Organization:** Central Institute of Road Transport (CIRT) — single-institute deployment  
 **Document purpose:** Client-ready technical architecture for review, deployment, and audit  
-**Last updated:** July 2026
+**Last updated:** July 2026 (performance hardening, HPL/EOL basis split, NDA pay-level mapping)
 
-> **Related document:** [CIRT_PAYROLL_DATABASE_ARCHITECTURE.md](./CIRT_PAYROLL_DATABASE_ARCHITECTURE.md) — detailed table definitions and ER reference.
+> **Related documents:**
+> - [CIRT_PAYROLL_DATABASE_ARCHITECTURE.md](./CIRT_PAYROLL_DATABASE_ARCHITECTURE.md) — tables, indexes, ER reference
+> - [PRE_DEPLOYMENT_PERFORMANCE_CHECKLIST.md](./PRE_DEPLOYMENT_PERFORMANCE_CHECKLIST.md) — PERF-001–020 readiness checks
 
 ---
 
@@ -23,7 +25,9 @@ The system provides:
 | **Employee self-service** | Dashboard, own payslips, payroll history, profile |
 | **Settings-driven configuration** | Institute profile, org structure, payroll fields, quarters, NDA rates, CPF rules |
 | **Night Duty Allowance (NDA)** | Hourly rates by pay level, basic-pay ceiling, automatic mapping at run time |
-| **Import / Export** | Dynamic Excel/CSV templates; row-level validation |
+| **EOL / HPL leave deductions** | Run-time only; EOL basis = Basic+DA+HRA+Medical; HPL basis = Basic+DA only |
+| **Import / Export** | Dynamic Excel/CSV templates; batch uniqueness checks; full-file block on errors |
+| **Performance** | Server-side pagination (default 25), debounced search, chunked payroll confirm, DB indexes |
 | **Reports** | Generated on demand — no separate document archive required |
 
 **Roles:** Administrator (full payroll operations) and Employee (self-service, read-only payroll access).
@@ -152,9 +156,9 @@ flowchart TB
 
 | Module | Route (UI) | Backend |
 |--------|------------|---------|
-| Login / Auth | `/login` | `AuthController`, Sanctum |
+| Login / Auth | `/auth/login` | `AuthController`, Sanctum |
 | Payroll Master | `/payroll/master` | `PayrollMasterController`, `PayrollMasterService` |
-| Run Payroll | `/payroll` | `PayrollController` |
+| Run Payroll | `/payroll` (run tab) | `PayrollController` |
 | Salary Slips | `/payroll` (slips tab) | `PayslipController` |
 | Settings | `/settings` | Company, org, fields, quarters, NDA, CPF |
 | Institute Profile | Settings → Institute | `CompanyController` |
@@ -387,27 +391,40 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    S1[Admin selects month/year] --> S2[Filter division / department / employee]
-    S2 --> S3[Load payroll master + settings + quarters + NDA rates]
-    S3 --> S4[Enter run-time inputs]
-    S4 --> S5[Live preview calculations - frontend]
-    S5 --> S6[Backend validation on save]
-    S6 --> S7[Persist cirt_monthly_payroll + cirt_payroll_periods]
+    S1[Admin selects month/year] --> S2[Server-side filter / search / page]
+    S2 --> S3[Load masters + settings + quarters + NDA rates once]
+    S3 --> S4[Paginated preview - default 25 rows]
+    S4 --> S5[Enter run-time inputs on visible rows]
+    S5 --> S6[Generate - fetch all=1 / apply edits]
+    S6 --> S7[Backend validates and writes in 25-row chunks]
+    S7 --> S8[Persist cirt_monthly_payroll + payslips + period]
 ```
 
-### 11.2 Run-time inputs (per employee)
+### 11.2 Performance behaviour
+
+| Concern | Behaviour |
+|---------|-----------|
+| Preview page size | Default **25**; options 25 / 50 / 100 (`ApiPagination`, max 100) |
+| Search / filters | Server-side: search, division, department; 300ms debounce on UI |
+| Page load | Calculates **visible page only**; does not generate all employees until Confirm |
+| Generate All | Uses `?all=1` (or equivalent full payload); merges per-row UI edits from client cache |
+| Confirm writes | Sorted by `employee_user_id`; **25-employee DB transactions** to reduce lock duration |
+| Preloads | NDA rates, payroll config, custom field values loaded **once per request** (no N+1) |
+| Duplicate monthly row | Unique index `(payroll_period_id, employee_user_id)` prevents double run |
+
+### 11.3 Run-time inputs (per employee)
 
 | Input | Purpose |
 |-------|---------|
 | Paid days | Pro-rata earnings |
-| HPL / EOL days | Leave deductions |
-| Reference month/year | EOL/HPL salary basis from prior month |
+| HPL / EOL days | Leave deductions (run-time only — not stored on payroll master) |
+| Reference month/year | EOL/HPL salary basis from prior month snapshot |
 | Night hours | Night Duty Allowance |
 | Electricity units | Electricity deduction |
 | Reimbursements / advances | Variable earnings/deductions |
 | Quarter rent override | Monthly quarter rent adjustment |
 
-### 11.3 Core formulas
+### 11.4 Core formulas
 
 | Component | Formula |
 |-----------|---------|
@@ -422,9 +439,36 @@ flowchart TD
 
 ## 12. EOL/HPL Deduction Architecture
 
-**Basis amount** = Basic + DA + HRA + Medical (**transport excluded**).
+Leave deductions are **run-time inputs on Run Payroll only**. They are **not** stored as defaults on `cirt_payroll_master` (those columns were removed after an interim migration).
 
-### 12.1 Reference month logic
+Implementation: `src/lib/hplEolDeductions.ts` + `src/lib/governmentPayroll.ts` (backend unit tests mirror the same rules).
+
+### 12.1 Separate bases (critical)
+
+| Leave type | Deduction / earnings basis | Components reduced (current-month leave) |
+|------------|----------------------------|------------------------------------------|
+| **EOL** | Basic + DA + **HRA** + **Medical** | Basic, DA, HRA, Medical (proportional) |
+| **HPL** | Basic + DA **only** | Basic and DA only — **HRA and Medical unchanged** |
+
+Transport and other allowances are **excluded** from both bases.
+
+**HPL day factor:** `HPL_DAY_SALARY_FACTOR = 0.5` (two HPL days ≈ one day of Basic+DA salary).
+
+```
+EOL daily basis  = (Basic + DA + HRA + Medical) / days_in_reference_month
+HPL daily basis  = (Basic + DA) / days_in_reference_month
+EOL deduction    = round(EOL daily × eol_days)
+HPL deduction    = round(HPL daily × hpl_days × 0.5)
+```
+
+When leave is for the **current** payroll month (not a prior-month reference), paid earnings are reduced via:
+
+- EOL → `applyProportionalEarningsCut` (basic / da / hra / medical)
+- HPL → `applyBasicDaEarningsCut` (basic / da only; hra & medical preserved)
+
+Prior-month leave appears as a **deduction line** using the reference snapshot and does not rewrite current paid HRA/medical incorrectly for HPL.
+
+### 12.2 Reference month logic
 
 Leave deductions may relate to a **previous month** (e.g. running July payroll but deducting June EOL).
 
@@ -435,14 +479,14 @@ Leave deductions may relate to a **previous month** (e.g. running July payroll b
 | 3 | If found | Uses snapshot salary for basis calculation |
 | 4 | If not found | Falls back to current payroll master with **warning** |
 
-### 12.2 Monthly snapshot columns
+### 12.3 Monthly snapshot columns
 
 | Column | Description |
 |--------|-------------|
 | `hpl_days` / `eol_days` | Days entered at run time |
 | `hpl_reference_month` / `hpl_reference_year` | Reference period |
 | `eol_reference_month` / `eol_reference_year` | Reference period |
-| `hpl_basis_amount` / `eol_basis_amount` | Computed basis |
+| `hpl_basis_amount` / `eol_basis_amount` | Computed basis (HPL = Basic+DA; EOL = Basic+DA+HRA+Medical) |
 | `hpl_amount` / `eol_amount` | Deduction amounts |
 
 ---
@@ -529,6 +573,8 @@ employee.pay_level → active NDA rate(s) for institute
 ```
 
 If no rate is configured: **rate = 0** with warning *"Night allowance rate is not configured for this Pay Level."*
+
+At scale, Run Payroll loads all active NDA rates once and resolves via `NightAllowanceRateService::resolveFromPreloadedRates` (avoids per-employee queries). Frontend mirror: `src/lib/nightAllowanceCalculation.ts`.
 
 ### 15.4 Default seed data (S.No / Pay Level / Rate per hour)
 
@@ -689,20 +735,20 @@ flowchart TD
 |-------|------|
 | Required fields | Employee code, name, email, pay level, PAN, Aadhaar, bank account, gross basic, increment month |
 | Pay Level | 7th CPC Level 1–18 (accepts `7` or `Level 7`) |
-| Uniqueness | Employee code, email, phone, PAN, Aadhaar, bank account |
+| Uniqueness | Employee code, email, phone, PAN, Aadhaar, bank account — via **batch index** (`buildImportUniquenessIndex`), not per-row full-table scans |
 | PAN / Aadhaar | Format and length |
 | Dynamic fields | Type validation per field definition |
 | Quarter fields | Valid quarter reference when assigned |
-| Security | Formula injection neutralization; no `company_id` in template |
+| Security | Formula injection neutralization; no `company_id` in template; max upload size enforced |
 
-Import **blocks the full file** if any row has errors (row-level error messages returned).
+Import **blocks the full file** if any row has errors. Valid rows save in a **transaction** with chunked inserts/updates (~50 rows).
 
 ### 20.2 Export
 
 | Export | Behaviour |
 |--------|-----------|
-| Payroll Master | Includes dynamic fields; no internal `company_id` |
-| Run Payroll | NDA hours/rate/amount, quarter, electricity; no duplicate PT/Net Pay columns; no Payroll Mode column |
+| Payroll Master | Dynamic fields; no `company_id`; `?all=1` for full list; **Exporting…** state while running |
+| Run Payroll | NDA / quarter / electricity; month-year scoped; no duplicate PT/Net Pay columns |
 | Reports | Filtered by month/employee; empty state when no data |
 
 ---
@@ -733,24 +779,48 @@ flowchart TB
 
 | Control | Implementation |
 |---------|----------------|
-| Public signup | Disabled |
+| Public signup | Disabled (`allow_public_signup` → API 403) |
 | Admin routes | Middleware: managerial role required |
 | Employee self-access | `CompanyAccess` — own `employee_user_id` only |
-| Token storage | Secure cookies — not localStorage |
+| Token storage | Sanctum token in **httpOnly cookie** — not localStorage for auth |
+| localStorage | Non-auth UI only (payroll-master draft, sidebar); legacy auth key cleared |
 | Sensitive data | Masking on PAN, Aadhaar, bank in responses |
 | Import files | Type/size validation; formula injection sanitization |
 | Export | Authorization check before stream |
 | Payroll tampering | Backend recalculates before persist |
+| Production | `APP_DEBUG=false`; friendly API errors; no secrets/PAN/Aadhaar/bank in logs |
 
 ---
 
-## 23. Loading and UX Architecture
+## 23. Loading, Pagination, and UX Architecture
 
-- Shared loader component on admin and employee pages
-- No placeholder dashes before data loads complete
-- Import/export show progress and loading states
-- Empty states for reports with no data
-- Field-level validation errors on forms (Pay Level, NDA settings, import rows)
+| Concern | Behaviour |
+|---------|-----------|
+| Loaders | Shared loader on admin and employee pages |
+| Placeholders | No blank dash cards before data loads |
+| Pagination | Default **25**; options **25 / 50 / 100**; `PaginationControls` |
+| Search | Debounced **300ms**; server-side on Payroll Master and Run Payroll |
+| Filters change | Reset to page 1 |
+| Import / export | Loading / disabled states prevent double-submit |
+| List API shape | `{ data, meta: { current_page, per_page, total, last_page } }` |
+| Full lists | Explicit `?all=1` for export / generate only |
+
+---
+
+## 23A. Performance and Scalability Architecture
+
+Target: ~**120 employees**, multi-year history.
+
+| Area | Implementation |
+|------|----------------|
+| Pagination helper | `ApiPagination` — default 25, max 100 |
+| Payroll Master | Server-paginated list + debounced search |
+| Run Payroll | Paginated preview; generate uses full set; confirm in **25-row chunks** |
+| Import uniqueness | Preloaded uniqueness maps (no N+1) |
+| Indexes | `2026_07_25_100000_performance_indexes.php` |
+| Duplicate monthly payroll | Unique `(payroll_period_id, employee_user_id)` |
+| Deadlock mitigation | Sorted `employee_user_id`; short transactions |
+| Checklist | [PRE_DEPLOYMENT_PERFORMANCE_CHECKLIST.md](./PRE_DEPLOYMENT_PERFORMANCE_CHECKLIST.md) |
 
 ---
 
@@ -776,23 +846,26 @@ See **[CIRT_PAYROLL_DATABASE_ARCHITECTURE.md](./CIRT_PAYROLL_DATABASE_ARCHITECTU
 
 | # | Test | Expected |
 |---|------|----------|
-| 1 | Admin login | Access to Payroll Master, Run Payroll, Settings |
+| 1 | Admin login at `/auth/login` | Access to Payroll Master, Run Payroll, Settings |
 | 2 | Employee login | Redirect to employee dashboard only |
 | 3 | Payroll Master add/edit | Pay Level dropdown; no NDA slab selection |
-| 4 | Dynamic field add | Appears in master, run payroll, slip per flags |
-| 5 | CPF percentage mode | CPF computed on selected basis fields |
-| 6 | CPF fixed amount mode | Fixed CPF ignores percentage |
-| 7 | Run Payroll | Live preview; save persists monthly payroll |
-| 8 | EOL/HPL reference month | Prior month salary used when available |
-| 9 | Quarter assigned | HRA = 0; quarter rent deducted |
-| 10 | Electricity units | Units × rate deducted |
-| 11 | NDA — eligible basic | Hours × rate applied |
-| 12 | NDA — basic above ceiling | NDA = 0; warning shown |
-| 13 | Salary slip | Matches monthly snapshot |
-| 14 | Import invalid pay level | Row error; import blocked |
-| 15 | Export run payroll | NDA, quarter, electricity columns present |
-| 16 | Employee dashboard | Own slips only; no admin access |
-| 17 | Security | Direct API without token rejected |
+| 4 | Payroll Master pagination | Default 25 rows; search debounced server-side |
+| 5 | Dynamic field add | Appears in master, run payroll, slip per flags |
+| 6 | CPF percentage / fixed | Mode behaves per settings |
+| 7 | Run Payroll paginated preview | Does not calculate all employees on page load |
+| 8 | Generate / Confirm | Chunked writes; no duplicate monthly rows |
+| 9 | EOL current-month leave | Reduces Basic, DA, HRA, Medical |
+| 10 | HPL current-month leave | Reduces **Basic + DA only**; HRA & Medical unchanged |
+| 11 | EOL/HPL reference month | Prior month salary used when available |
+| 12 | Quarter assigned | HRA = 0; quarter rent deducted |
+| 13 | Electricity units | Units × rate deducted |
+| 14 | NDA — eligible basic | Hours × rate applied |
+| 15 | NDA — basic above ceiling | NDA = 0; warning shown |
+| 16 | Salary slip | Matches monthly snapshot |
+| 17 | Import invalid pay level | Row error; import blocked |
+| 18 | Export run payroll | NDA, quarter, electricity columns present |
+| 19 | Employee dashboard | Own slips only; no admin access |
+| 20 | Security / production | Token required; `APP_DEBUG=false`; migrate indexes |
 
 ---
 
@@ -805,8 +878,10 @@ See **[CIRT_PAYROLL_DATABASE_ARCHITECTURE.md](./CIRT_PAYROLL_DATABASE_ARCHITECTU
 | **Payroll Master** | Employee salary structure template |
 | **Run Payroll** | Monthly calculation and persistence |
 | **NDA** | Night Duty Allowance — hourly night duty compensation |
+| **EOL** | Extraordinary Leave — basis Basic+DA+HRA+Medical |
+| **HPL** | Half Pay Leave — basis Basic+DA only (factor 0.5 per day) |
 | **7th CPC Pay Level** | Government pay matrix level (1–18 in this system) |
 
 ---
 
-*This document describes the production-intended architecture of CIRT Payroll as implemented in July 2026. Database table names reflect the current PostgreSQL schema.*
+*This document describes the production-intended architecture of CIRT Payroll as implemented in July 2026 (performance hardening + HPL/EOL basis correction). Database table names reflect the current PostgreSQL schema.*

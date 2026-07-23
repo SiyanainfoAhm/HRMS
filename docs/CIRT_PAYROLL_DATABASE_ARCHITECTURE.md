@@ -2,9 +2,11 @@
 
 **Companion to:** [CIRT_PAYROLL_TECHNICAL_ARCHITECTURE.md](./CIRT_PAYROLL_TECHNICAL_ARCHITECTURE.md)  
 **Database:** PostgreSQL  
-**Last updated:** July 2026
+**Last updated:** July 2026 (performance indexes, monthly unique constraint, HPL/EOL snapshot columns)
 
-This document describes the **physical database design** for CIRT Payroll: tables, relationships, snapshot rules, and column reference. All business tables are scoped by internal `company_id` referencing `cirt_institute.id`.
+This document describes the **physical database design** for CIRT Payroll: tables, relationships, snapshot rules, indexes, and column reference. All business tables are scoped by internal `company_id` referencing `cirt_institute.id`.
+
+**Authoritative schema path:** Laravel migrations under `backend/database/migrations/` plus SQL mirrors in `database/sql/`. Legacy `supabase/` / `HRMS_*` scripts may exist but are not the current naming source of truth.
 
 ---
 
@@ -164,9 +166,9 @@ erDiagram
 |--------------|-------------|
 | Identity | `employee_code`, `name`, `email`, `phone`, `gender` |
 | Org | `designation`, `department`, `division` |
-| Pay | `pay_level` (1–18), `increment_month`, `gross_basic_pay`, `da_percent`, `hra_percent`, `medical` |
+| Pay | `pay_level` (1–18), `increment_month` (January/July), `gross_basic_pay`, `da_percent`, `da_amount`, `hra_percent`, `medical` |
 | Transport | `transport_base`, `transport_da`, `transport_total`, `transport_slab_group` |
-| Deductions defaults | `cpf_default`, `professional_tax`, `income_tax`, `lic`, `mess`, etc. |
+| Deductions defaults | `cpf_default`, `professional_tax`, `income_tax`, `lic`, `mess`, `loan_recovery`, etc. |
 | CPF override | `cpf_use_company_settings`, `cpf_percentage_override`, `cpf_basis_field_keys_override`, `cpf_calculation_mode`, `cpf_fixed_amount` |
 | Quarter | `has_quarter`, `quarter_id`, `quarter_rent` |
 | Statutory | `uan`, `cpf_no`, `pan`, `aadhaar` |
@@ -174,7 +176,9 @@ erDiagram
 | Effective dating | `effective_from`, `effective_to`, `effective_start_date`, `effective_end_date` |
 | Legacy (unused UI) | `night_allowance_slab_no` — column retained; NDA maps by pay level at run time |
 
-**Snapshot rule:** Current row has open `effective_end_date`. Revisions archive to history.
+**Not on master:** HPL/EOL defaults were briefly added then **removed** (`2026_07_17_110000`). Leave deductions are run-time only on monthly payroll.
+
+**Snapshot rule:** Current row has open `effective_to` / `effective_end_date`. Soft unique: at most one open current master per employee (`ux_cirt_payroll_master_one_current` / `_one_current_user` where applicable). Revisions archive to history.
 
 ---
 
@@ -219,13 +223,16 @@ Mirrors master columns for each closed effective period. Used for historical pay
 | Earnings | `basic_paid`, `da_paid`, `hra_paid`, `medical_paid`, `transport_paid`, `total_earnings` |
 | Deductions | `cpf_paid`, `professional_tax`, `income_tax`, `quarter_rent_amount`, `electricity`, `hpl_amount`, `eol_amount`, `total_deductions` |
 | Net | `net_salary` |
-| HPL/EOL | `hpl_days`, `eol_days`, `hpl_reference_month/year`, `eol_reference_month/year`, `hpl_basis_amount`, `eol_basis_amount` |
+| HPL/EOL | `hpl_days`, `eol_days`, `hpl_reference_month/year`, `eol_reference_month/year`, `hpl_basis_amount` (Basic+DA), `eol_basis_amount` (Basic+DA+HRA+Medical) |
 | Electricity | `electricity_units_consumed`, `electricity_unit_rate`, `electricity_manual_override` |
 | Quarter | `has_quarter`, `quarter_id`, `quarter_name`, `quarter_type`, `quarter_rent_amount`, `quarter_rent_manual_override` |
 | CPF snapshot | `cpf_calculation_mode`, `cpf_fixed_amount`, basis keys |
 | Arrears | `da_arrear`, `transport_arrear`, `gross_arrear`, `cpf_arrear`, `net_arrear` |
 | NDA | `night_hours`, `night_allowance_rate`, `night_allowance_amount`, `night_allowance_slab_no`, `night_allowance_basic_ceiling`, `night_allowance_eligible`, `night_allowance_manual_override` |
 | Custom | `custom_earnings` (JSON), `custom_deductions` (JSON) |
+
+**Unique constraint (critical):**  
+`ux_cirt_gov_monthly_period_user` on `(payroll_period_id, employee_user_id)` WHERE both NOT NULL — prevents duplicate monthly payroll / double run for the same employee and period.
 
 **Snapshot rule:** Values frozen at payroll finalize; not recalculated when master or settings change later.
 
@@ -446,8 +453,48 @@ Laravel schema migration history.
 | NDA default seed | Pre-seeded rates cover Pay Levels **1–9** only; levels 10–18 need manual rate entry if NDA applies |
 | `company_id` | Always CIRT institute UUID; not exposed in UI |
 | `night_allowance_slab_no` on master | Legacy column; not used in employee UI |
+| HPL vs EOL basis | **EOL** = Basic+DA+HRA+Medical; **HPL** = Basic+DA only (HRA/Medical not reduced) |
 | File storage | No payslip PDF archive table; exports are on-demand |
+| Performance migration | Deploy must run `2026_07_25_100000_performance_indexes.php` on PostgreSQL |
 
 ---
 
-*For application flows, security, and module descriptions, see [CIRT_PAYROLL_TECHNICAL_ARCHITECTURE.md](./CIRT_PAYROLL_TECHNICAL_ARCHITECTURE.md).*
+## 16. Unique constraints and integrity
+
+| Table | Constraint / index | Purpose |
+|-------|--------------------|---------|
+| `cirt_monthly_payroll` | `ux_cirt_gov_monthly_period_user` `(payroll_period_id, employee_user_id)` | One monthly snapshot per employee per period |
+| `cirt_payroll_master` | Soft unique open row per employee (`effective_to IS NULL`) | One current salary structure |
+| `cirt_payroll_field_definitions` | `(company_id, field_key)` | Unique field keys |
+| `cirt_night_allowance_rates` | `(company_id, slab_no)` | Unique slab serial |
+| `cirt_quarters` | `(company_id, quarter_name)` | Unique quarter name |
+| `cirt_salary_increments` | `(company_id, employee_user_id, effective_start_date)` | No duplicate increment on same date |
+| `cirt_payroll_arrear_lines` | `ux_cirt_arrear_unique_employee_month_da` (excludes cancelled) | No duplicate arrear lines |
+
+---
+
+## 17. Performance indexes (July 2026)
+
+Migration: `backend/database/migrations/2026_07_25_100000_performance_indexes.php`  
+Uses PostgreSQL `CREATE INDEX IF NOT EXISTS` (skips non-pgsql drivers).
+
+| Table | Indexed columns (representative) |
+|-------|----------------------------------|
+| `cirt_users` | `company_id`, `email`, `employee_code` |
+| `cirt_payroll_master` | `company_id`, `employee_code`, `employee_user_id`, `employee_id`, `department`, `division`, `designation`, `pay_level`, `status`, `increment_month`, `has_quarter`, `effective_start_date`, `effective_end_date` |
+| `cirt_monthly_payroll` | `company_id`, `payroll_period_id`, `employee_user_id`, `payroll_master_id`, `salary_date`, `month_year` |
+| `cirt_payroll_periods` | `company_id`, `period_start`, `period_end`, `status` |
+| `cirt_payslips` | `company_id`, `payroll_period_id`, `employee_user_id` |
+| `cirt_payroll_field_definitions` | `company_id`, `field_group`, `is_active` |
+| `cirt_payroll_field_values` | `(company_id, payroll_master_id)`, `(company_id, payroll_period_id)` |
+| `cirt_quarters` / assignments | `company_id`, `status`, `(company_id, quarter_id)`, `employee_id` |
+| `cirt_salary_increments` | `(company_id, employee_user_id)`, `effective_start_date` |
+| `cirt_night_allowance_rates` | `(company_id, slab_no)` (+ existing pay_level/active usage) |
+| `cirt_payroll_arrear_*` | batch `(company_id, payroll_period_id)`, lines `arrear_batch_id`, `employee_user_id` |
+
+These support list/search/filter paths for Payroll Master, Run Payroll, payslips, and settings lookups without full-table scans.
+
+---
+
+*For application flows, security, performance, and module descriptions, see [CIRT_PAYROLL_TECHNICAL_ARCHITECTURE.md](./CIRT_PAYROLL_TECHNICAL_ARCHITECTURE.md).*
+*For deploy PERF checks, see [PRE_DEPLOYMENT_PERFORMANCE_CHECKLIST.md](./PRE_DEPLOYMENT_PERFORMANCE_CHECKLIST.md).*
