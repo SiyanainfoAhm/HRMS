@@ -46,6 +46,7 @@ import { v as govPreviewV } from "@/components/payroll/payrollRunPreviewShared";
 import { isAdminRole } from "@/lib/roles";
 import { Download, FileText } from "lucide-react";
 import { GovernmentPayslipPrint } from "@/components/payslip/GovernmentPayslipPrint";
+import { AdminPayrollRemarksNote } from "@/components/payroll/AdminPayrollRemarksNote";
 import type { GovernmentMonthlySlip } from "@/lib/governmentPayslipLayout";
 import type { GovernmentLeavePayslipDisplay } from "@/lib/leaveBalancesCompute";
 import { resolvePayslipDepartment, resolvePayslipDesignation } from "@/lib/payslipUserFields";
@@ -1109,6 +1110,7 @@ function PayrollPageContent() {
       bankAccountNumber?: string;
       payrollMode?: string;
       governmentMonthly?: Record<string, number> | null;
+      leaveRemarks?: string | null;
       leavePayslip?: GovernmentLeavePayslipDisplay | null;
     }[];
   } | null>(null);
@@ -2721,42 +2723,48 @@ function PayrollPageContent() {
               const thClass = "border border-black px-3 py-2 text-left font-semibold text-sm";
 
               const gov = slip.governmentMonthly;
+              const adminLeaveRemarks = typeof slip.leaveRemarks === "string" ? slip.leaveRemarks.trim() : "";
               if (gov) {
                 return (
-                  <div className="flex justify-center overflow-x-auto py-2">
-                  <GovernmentPayslipPrint
-                    ref={payslipRef}
-                    company={company}
-                    user={{
-                      name: user?.name,
-                      employeeCode: user?.employeeCode,
-                      designation: user?.designation,
-                      department: user?.department,
-                      departmentName: user?.departmentName,
-                      dateOfJoining: user?.dateOfJoining,
-                      uanNumber: user?.uanNumber,
-                      pfNumber: user?.pfNumber,
-                      cpfNumber: user?.cpfNumber ?? user?.pfNumber,
-                    }}
-                    slip={{
-                      generatedAt: slip.generatedAt,
-                      periodStart: slip.periodStart,
-                      payDays: slip.payDays,
-                      unpaidLeaves: slip.unpaidLeaves,
-                      bankName: slip.bankName,
-                      bankAccountNumber: slip.bankAccountNumber,
-                      netPay: slip.netPay,
-                    }}
-                    gov={gov as GovernmentMonthlySlip}
-                    leavePayslip={slip.leavePayslip ?? null}
-                    payrollFieldDefs={payrollConfig?.fields}
-                  />
+                  <div className="mx-auto w-full max-w-[190mm]">
+                    <AdminPayrollRemarksNote remarks={adminLeaveRemarks} />
+                    <div className="flex justify-center overflow-x-auto py-2">
+                      <GovernmentPayslipPrint
+                        ref={payslipRef}
+                        company={company}
+                        user={{
+                          name: user?.name,
+                          employeeCode: user?.employeeCode,
+                          designation: user?.designation,
+                          department: user?.department,
+                          departmentName: user?.departmentName,
+                          dateOfJoining: user?.dateOfJoining,
+                          uanNumber: user?.uanNumber,
+                          pfNumber: user?.pfNumber,
+                          cpfNumber: user?.cpfNumber ?? user?.pfNumber,
+                        }}
+                        slip={{
+                          generatedAt: slip.generatedAt,
+                          periodStart: slip.periodStart,
+                          payDays: slip.payDays,
+                          unpaidLeaves: slip.unpaidLeaves,
+                          bankName: slip.bankName,
+                          bankAccountNumber: slip.bankAccountNumber,
+                          netPay: slip.netPay,
+                        }}
+                        gov={gov as GovernmentMonthlySlip}
+                        leavePayslip={slip.leavePayslip ?? null}
+                        payrollFieldDefs={payrollConfig?.fields}
+                      />
+                    </div>
                   </div>
                 );
               }
 
               return (
-                <div className="flex justify-center overflow-x-auto py-2">
+                <div className="mx-auto w-full max-w-[190mm]">
+                  <AdminPayrollRemarksNote remarks={adminLeaveRemarks} />
+                  <div className="flex justify-center overflow-x-auto py-2">
                 <div
                   ref={payslipRef}
                   className="payslip-print-area overflow-x-auto rounded-lg border border-black bg-white p-4 print:overflow-visible print:max-w-[190mm] print:p-6"
@@ -2907,6 +2915,7 @@ function PayrollPageContent() {
                     </tbody>
                   </table>
                 </div>
+                  </div>
                 </div>
               );
             })()

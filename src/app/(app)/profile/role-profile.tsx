@@ -20,6 +20,7 @@ import {
 } from "@/lib/employeeValidators";
 import { PASSWORD_COMPLEXITY_HINT, validatePasswordComplexity } from "@/lib/passwordValidators";
 import { GovernmentPayslipPrint } from "@/components/payslip/GovernmentPayslipPrint";
+import { AdminPayrollRemarksNote } from "@/components/payroll/AdminPayrollRemarksNote";
 import { EmployeeProfileReadOnly } from "@/components/employee/EmployeeProfileReadOnly";
 import { EmployeeSalarySlipPanel, type PayslipBundle } from "@/components/employee/EmployeeSalarySlipPanel";
 import { resolvePayslipDepartment, resolvePayslipDesignation } from "@/lib/payslipUserFields";
@@ -157,6 +158,7 @@ export function ProfileContent() {
       bankAccountNumber?: string;
       payrollMode?: string;
       governmentMonthly?: Record<string, number> | null;
+      leaveRemarks?: string | null;
       leavePayslip?: GovernmentLeavePayslipDisplay | null;
     }[];
   } | null>(null);
@@ -1465,34 +1467,38 @@ export function ProfileContent() {
                     salaryAfterDeductions - slip.tds + slip.incentive + slip.prBonus + slip.reimbursement
                   );
                   const gov = slip.governmentMonthly;
+                  const leaveRemarks = typeof slip.leaveRemarks === "string" ? slip.leaveRemarks.trim() : "";
                   if (gov) {
                     return (
-                      <GovernmentPayslipPrint
-                        ref={payslipRef}
-                        company={company}
-                        user={{
-                          name: user?.name,
-                          employeeCode: user?.employeeCode,
-                          designation: user?.designation,
-                          department: user?.department,
-                          departmentName: user?.departmentName,
-                          dateOfJoining: user?.dateOfJoining,
-                          uanNumber: user?.uanNumber,
-                          pfNumber: user?.pfNumber,
-                          cpfNumber: (user as { cpfNumber?: string })?.cpfNumber ?? user?.pfNumber,
-                        }}
-                        slip={{
-                          generatedAt: slip.generatedAt,
-                          periodStart: slip.periodStart,
-                          payDays: slip.payDays,
-                          unpaidLeaves: slip.unpaidLeaves,
-                          bankName: slip.bankName,
-                          bankAccountNumber: slip.bankAccountNumber,
-                          netPay: slip.netPay,
-                        }}
-                        gov={gov as GovernmentMonthlySlip}
-                        leavePayslip={slip.leavePayslip ?? null}
-                      />
+                      <div className="mx-auto w-full max-w-[190mm]">
+                        <AdminPayrollRemarksNote remarks={leaveRemarks} />
+                        <GovernmentPayslipPrint
+                          ref={payslipRef}
+                          company={company}
+                          user={{
+                            name: user?.name,
+                            employeeCode: user?.employeeCode,
+                            designation: user?.designation,
+                            department: user?.department,
+                            departmentName: user?.departmentName,
+                            dateOfJoining: user?.dateOfJoining,
+                            uanNumber: user?.uanNumber,
+                            pfNumber: user?.pfNumber,
+                            cpfNumber: (user as { cpfNumber?: string })?.cpfNumber ?? user?.pfNumber,
+                          }}
+                          slip={{
+                            generatedAt: slip.generatedAt,
+                            periodStart: slip.periodStart,
+                            payDays: slip.payDays,
+                            unpaidLeaves: slip.unpaidLeaves,
+                            bankName: slip.bankName,
+                            bankAccountNumber: slip.bankAccountNumber,
+                            netPay: slip.netPay,
+                          }}
+                          gov={gov as GovernmentMonthlySlip}
+                          leavePayslip={slip.leavePayslip ?? null}
+                        />
+                      </div>
                     );
                   }
 
@@ -1500,6 +1506,8 @@ export function ProfileContent() {
                   const thClass = "border border-black px-3 py-2 text-left font-semibold text-sm";
 
                   return (
+                    <div className="mx-auto w-full max-w-[190mm]">
+                      <AdminPayrollRemarksNote remarks={leaveRemarks} />
                     <div ref={payslipRef} className="payslip-print-area overflow-x-auto rounded-lg border border-black bg-white p-6 print:overflow-visible print:max-w-[190mm]" style={{ minWidth: "min(100%, 190mm)" }}>
                       <table className="payslip-header-table w-full border-collapse" style={{ border: "1px solid #000" }}>
                         <tbody>
@@ -1661,6 +1669,7 @@ export function ProfileContent() {
                           </tr>
                         </tbody>
                       </table>
+                    </div>
                     </div>
                   );
                 })()}

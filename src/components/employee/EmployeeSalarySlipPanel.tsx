@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { GovernmentPayslipPrint } from "@/components/payslip/GovernmentPayslipPrint";
+import { AdminPayrollRemarksNote } from "@/components/payroll/AdminPayrollRemarksNote";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -52,6 +53,7 @@ export type PayslipBundle = {
     bankName: string;
     bankAccountNumber: string;
     governmentMonthly?: Record<string, unknown> | null;
+    leaveRemarks?: string | null;
     leavePayslip?: GovernmentLeavePayslipDisplay | null;
   }>;
 };
@@ -219,35 +221,39 @@ function renderPayslipPreview(
   const company = data.company;
   const user = data.user;
   const gov = slip.governmentMonthly;
+  const leaveRemarks = typeof slip.leaveRemarks === "string" ? slip.leaveRemarks.trim() : "";
 
   if (gov) {
     return (
-      <GovernmentPayslipPrint
-        ref={payslipRef}
-        company={company}
-        user={{
-          name: user?.name,
-          employeeCode: user?.employeeCode,
-          designation: user?.designation,
-          department: user?.department,
-          departmentName: user?.departmentName,
-          dateOfJoining: user?.dateOfJoining,
-          uanNumber: user?.uanNumber,
-          pfNumber: user?.pfNumber,
-          cpfNumber: user?.cpfNumber ?? user?.pfNumber,
-        }}
-        slip={{
-          generatedAt: slip.generatedAt,
-          periodStart: slip.periodStart,
-          payDays: slip.payDays,
-          unpaidLeaves: slip.unpaidLeaves,
-          bankName: slip.bankName,
-          bankAccountNumber: slip.bankAccountNumber,
-          netPay: slip.netPay,
-        }}
-        gov={gov as GovernmentMonthlySlip}
-        leavePayslip={slip.leavePayslip ?? null}
-      />
+      <div className="mx-auto w-full max-w-[190mm]">
+        <AdminPayrollRemarksNote remarks={leaveRemarks} />
+        <GovernmentPayslipPrint
+          ref={payslipRef}
+          company={company}
+          user={{
+            name: user?.name,
+            employeeCode: user?.employeeCode,
+            designation: user?.designation,
+            department: user?.department,
+            departmentName: user?.departmentName,
+            dateOfJoining: user?.dateOfJoining,
+            uanNumber: user?.uanNumber,
+            pfNumber: user?.pfNumber,
+            cpfNumber: user?.cpfNumber ?? user?.pfNumber,
+          }}
+          slip={{
+            generatedAt: slip.generatedAt,
+            periodStart: slip.periodStart,
+            payDays: slip.payDays,
+            unpaidLeaves: slip.unpaidLeaves,
+            bankName: slip.bankName,
+            bankAccountNumber: slip.bankAccountNumber,
+            netPay: slip.netPay,
+          }}
+          gov={gov as GovernmentMonthlySlip}
+          leavePayslip={slip.leavePayslip ?? null}
+        />
+      </div>
     );
   }
 
@@ -255,19 +261,22 @@ function renderPayslipPreview(
   const [y, m] = slip.periodMonth.split("-");
 
   return (
-    <div ref={payslipRef} className="overflow-x-auto rounded-lg border border-slate-200 bg-white p-4 text-sm">
-      <p className="font-semibold text-slate-900">{company?.name || "Company"}</p>
-      <p className="text-slate-600">
-        Salary Slip —{" "}
-        {["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][parseInt(m, 10) - 1]} {y}
-      </p>
-      <div className="mt-3 grid gap-1 text-slate-700">
-        <div>Employee: {user?.name}</div>
-        <div>Department: {resolvePayslipDepartment(user)}</div>
-        <div>Gross: {n(slip.grossPay)}</div>
-        <div>Deductions: {n(slip.deductions)}</div>
-        <div className="font-semibold text-emerald-800">Net Pay: {n(slip.netPay)}</div>
-        <div className="text-xs text-slate-500">Generated: {fmtDmy(slip.generatedAt)}</div>
+    <div className="mx-auto w-full max-w-[190mm]">
+      <AdminPayrollRemarksNote remarks={leaveRemarks} />
+      <div ref={payslipRef} className="overflow-x-auto rounded-lg border border-slate-200 bg-white p-4 text-sm">
+        <p className="font-semibold text-slate-900">{company?.name || "Company"}</p>
+        <p className="text-slate-600">
+          Salary Slip —{" "}
+          {["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][parseInt(m, 10) - 1]} {y}
+        </p>
+        <div className="mt-3 grid gap-1 text-slate-700">
+          <div>Employee: {user?.name}</div>
+          <div>Department: {resolvePayslipDepartment(user)}</div>
+          <div>Gross: {n(slip.grossPay)}</div>
+          <div>Deductions: {n(slip.deductions)}</div>
+          <div className="font-semibold text-emerald-800">Net Pay: {n(slip.netPay)}</div>
+          <div className="text-xs text-slate-500">Generated: {fmtDmy(slip.generatedAt)}</div>
+        </div>
       </div>
     </div>
   );

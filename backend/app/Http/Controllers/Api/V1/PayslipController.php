@@ -142,6 +142,8 @@ class PayslipController extends Controller
                 ? $p->generated_at->toIso8601String()
                 : now()->toIso8601String();
 
+            $leaveRemarks = $this->normalizeLeaveRemarks($gov?->leave_remarks ?? null);
+
             return [
                 'id' => $p->id,
                 'payrollPeriodId' => $p->payroll_period_id,
@@ -176,7 +178,8 @@ class PayslipController extends Controller
                 'periodName' => $period?->period_name ?? '',
                 'periodFormatted' => $periodFormatted,
                 'periodMonth' => $periodMonth,
-                'governmentMonthly' => $gov ? $gov->toArray() : null,
+                'governmentMonthly' => $gov ? $this->formatGovernmentMonthlyForPayslip($gov) : null,
+                'leaveRemarks' => $leaveRemarks,
                 'leavePayslip' => null,
             ];
         })->values()->all();
@@ -186,6 +189,32 @@ class PayslipController extends Controller
             'user' => $this->formatUser($user, $deptName, $currentMaster),
             'payslips' => $formatted,
         ];
+    }
+
+    /**
+     * Salary-slip government snapshot; leave remarks are exposed separately as leaveRemarks.
+     *
+     * @return array<string, mixed>
+     */
+    private function formatGovernmentMonthlyForPayslip(HrmsGovernmentMonthlyPayroll $gov): array
+    {
+        $row = $gov->toArray();
+        unset($row['leave_remarks'], $row['leaveRemarks']);
+
+        return $row;
+    }
+
+    private function normalizeLeaveRemarks(mixed $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+        if (! is_string($value) && ! is_numeric($value)) {
+            return null;
+        }
+        $text = trim((string) $value);
+
+        return $text === '' ? null : $text;
     }
 
     private function formatCompany(?HrmsCompany $company): ?array
