@@ -43,6 +43,7 @@ export const PAYROLL_EXCEL_HEADER = [
   "Welfare",
   "HPL",
   "EOL",
+  "Remarks",
   "VehCharge",
   "OtherDeduction",
   "TotalDeductions",
@@ -135,6 +136,7 @@ export type GovernmentMonthlyRow = {
   welfare_amount?: number | null;
   hpl_amount?: number | null;
   eol_amount?: number | null;
+  leave_remarks?: string | null;
   veh_charge_amount?: number | null;
   other_deduction_amount?: number | null;
   total_earnings?: number | null;
@@ -296,6 +298,7 @@ function govFromComputed(
     Welfare: d.welfare,
     HPL: d.hpl,
     EOL: d.eol,
+    Remarks: "",
     VehCharge: d.vehCharge,
     OtherDeduction: d.other,
     TotalDeductions: c.totalDeductions,
@@ -361,6 +364,7 @@ function govFromDbRow(
     Welfare: n(r.welfare_amount),
     HPL: n(r.hpl_amount),
     EOL: n(r.eol_amount),
+    Remarks: String(r.leave_remarks ?? ""),
     VehCharge: n(r.veh_charge_amount),
     OtherDeduction: n(r.other_deduction_amount),
     TotalDeductions: n(r.total_deductions),
@@ -444,6 +448,7 @@ export function buildPayrollExcelRow(
     Welfare: 0,
     HPL: 0,
     EOL: 0,
+    Remarks: "",
     VehCharge: 0,
     OtherDeduction: 0,
     TotalDeductions: n(p.deductions),

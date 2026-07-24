@@ -22,6 +22,7 @@ function leaveMetaFromRow(row: GovernmentRunPreviewRow) {
   const gr = row.govRecalc as {
     hplDays?: number;
     eolDays?: number;
+    leaveRemarks?: string | null;
     eolReferenceMonth?: number;
     eolReferenceYear?: number;
     hplReferenceMonth?: number;
@@ -38,6 +39,8 @@ function leaveMetaFromRow(row: GovernmentRunPreviewRow) {
   const gm = row.governmentMonthly as {
     hplDays?: number;
     eolDays?: number;
+    leaveRemarks?: string | null;
+    leave_remarks?: string | null;
     eolReferenceMonth?: number;
     eolReferenceYear?: number;
     hplReferenceMonth?: number;
@@ -54,6 +57,7 @@ function leaveMetaFromRow(row: GovernmentRunPreviewRow) {
   return {
     hplDays: gr?.hplDays ?? gm?.hplDays ?? 0,
     eolDays: gr?.eolDays ?? gm?.eolDays ?? 0,
+    leaveRemarks: gr?.leaveRemarks ?? gm?.leaveRemarks ?? gm?.leave_remarks ?? "",
     eolReferenceMonth: gr?.eolReferenceMonth ?? gm?.eolReferenceMonth,
     eolReferenceYear: gr?.eolReferenceYear ?? gm?.eolReferenceYear,
     hplReferenceMonth: gr?.hplReferenceMonth ?? gm?.hplReferenceMonth,
@@ -92,6 +96,8 @@ export type GovernmentPreviewMonthly = {
   netSalary: number;
   hplDays?: number;
   eolDays?: number;
+  leaveRemarks?: string | null;
+  leave_remarks?: string | null;
   eolReferenceMonth?: number;
   eolReferenceYear?: number;
   hplReferenceMonth?: number;
@@ -209,7 +215,7 @@ type Props = {
   readOnly: boolean;
   customEarningFields?: PayrollFieldDefinition[];
   customDeductionFields?: PayrollFieldDefinition[];
-  onUpdate: (employeeUserId: string, field: string, value: number) => void;
+  onUpdate: (employeeUserId: string, field: string, value: number | string) => void;
 };
 
 function SummaryStat({ label, value, emphasis }: { label: string; value: string; emphasis?: boolean }) {
@@ -513,6 +519,26 @@ function GovernmentEmployeeDetail({
                   </div>
                 )}
 
+              </div>
+              <div className="col-span-2">
+                <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Remarks</p>
+                {readOnly ? (
+                  <p className="mt-1 whitespace-pre-wrap text-[12px] text-slate-800">
+                    {leave.leaveRemarks?.trim() ? leave.leaveRemarks : "—"}
+                  </p>
+                ) : (
+                  <textarea
+                    className="input-field mt-1 min-h-[4.5rem] w-full resize-y text-[12px] leading-snug"
+                    rows={3}
+                    maxLength={2000}
+                    value={leave.leaveRemarks ?? ""}
+                    placeholder="Enter leave clarification / previous month leave details..."
+                    onChange={(e) =>
+                      onUpdate(row.employeeUserId, "leaveRemarks", e.target.value.slice(0, 2000))
+                    }
+                    title="Optional leave clarification for this payroll month"
+                  />
+                )}
               </div>
               <div>
                 <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Elec. units</p>

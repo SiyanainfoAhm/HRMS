@@ -248,7 +248,10 @@ function governmentRowFromCompute<T extends {
     govRecalc: gr,
     payDays: capped,
     unpaidLeaveDays: unpaidDays,
-    governmentMonthly: comp,
+    governmentMonthly: {
+      ...comp,
+      leaveRemarks: gr.leaveRemarks ?? (row.governmentMonthly as { leaveRemarks?: string | null } | null | undefined)?.leaveRemarks ?? null,
+    },
     daArrear: arrear?.daArrear ?? comp.daArrearsPaid,
     transportArrear: arrear?.transportArrear ?? comp.transportArrearsPaid,
     grossArrear: arrear?.grossArrear ?? comp.grossArrear,
@@ -1133,6 +1136,10 @@ function PayrollPageContent() {
     if (preview?.rows?.length && denom) {
       setEditableRows(
         preview.rows.map((r: any) => {
+          const cached = runRowEditsRef.current.get(r.employeeUserId) as typeof r | undefined;
+          if (cached && !preview.alreadyRun) {
+            return cached;
+          }
           const base = {
             ...r,
             grossMonthly:
@@ -1164,6 +1171,8 @@ function PayrollPageContent() {
             const gm0 = r.governmentMonthly as {
               hplDays?: number;
               eolDays?: number;
+              leaveRemarks?: string | null;
+              leave_remarks?: string | null;
               eolReferenceMonth?: number;
               eolReferenceYear?: number;
               hplReferenceMonth?: number;
@@ -1178,6 +1187,8 @@ function PayrollPageContent() {
               ...refDefaults,
               hplDays: r.govRecalc.hplDays ?? gm0?.hplDays ?? 0,
               eolDays: r.govRecalc.eolDays ?? gm0?.eolDays ?? 0,
+              leaveRemarks:
+                r.govRecalc.leaveRemarks ?? gm0?.leaveRemarks ?? gm0?.leave_remarks ?? "",
               eolReferenceMonth: r.govRecalc.eolReferenceMonth ?? gm0?.eolReferenceMonth ?? refDefaults.eolReferenceMonth,
               eolReferenceYear: r.govRecalc.eolReferenceYear ?? gm0?.eolReferenceYear ?? refDefaults.eolReferenceYear,
               hplReferenceMonth: r.govRecalc.hplReferenceMonth ?? gm0?.hplReferenceMonth ?? refDefaults.hplReferenceMonth,
@@ -1349,7 +1360,7 @@ function PayrollPageContent() {
   function updateEditableRow(
     employeeUserId: string,
     field: string,
-    value: number
+    value: number | string
   ) {
     const payDenom = preview?.daysInMonth ?? preview?.workingDaysInFullMonth ?? 30;
     const payDaysMax = preview?.effectiveRunDay ?? preview?.workingDaysThroughRunDay ?? preview?.daysInMonth ?? 31;
@@ -1368,6 +1379,21 @@ function PayrollPageContent() {
             runMonth: runM,
             payrollConfig,
           };
+
+          if (field === "leaveRemarks") {
+            const text = String(value ?? "").slice(0, 2000);
+            const gm =
+              row.governmentMonthly && typeof row.governmentMonthly === "object"
+                ? { ...(row.governmentMonthly as Record<string, unknown>), leaveRemarks: text }
+                : row.governmentMonthly;
+            return {
+              ...row,
+              govRecalc: { ...gr0, leaveRemarks: text },
+              governmentMonthly: gm,
+            };
+          }
+
+          const numValue = typeof value === "number" ? value : Number(value) || 0;
 
           const recompute = (
             gr: GovRecalcPayload,
@@ -1559,7 +1585,7 @@ function PayrollPageContent() {
             return recompute(grNext, row.payDays);
           }
 
-          const next = { ...row, [field]: value } as typeof row;
+          const next = { ...row, [field]: numValue } as typeof row;
           const recalcGovTakeHome = () => {
             next.takeHome =
               Math.round(Number(next.netPay) || 0) +
@@ -1568,10 +1594,10 @@ function PayrollPageContent() {
               Math.round(Number(next.reimbursement) || 0);
           };
           if (field === "payDays") {
-            return recompute(gr0, value, arrearSnapshotFromRow(row), next);
+            return recompute(gr0, numValue, arrearSnapshotFromRow(row), next);
           }
           if (field === "unpaidLeaveDays") {
-            const unpaid = Math.max(0, Math.min(dim, Math.round(Number(value) || 0)));
+            const unpaid = Math.max(0, Math.min(dim, Math.round(Number(numValue) || 0)));
             const capped = Math.max(0, dim - unpaid);
             return recompute(gr0, capped, arrearSnapshotFromRow(row), next);
           }
@@ -1580,17 +1606,18 @@ function PayrollPageContent() {
             return next;
           }
           if (field === "takeHome") {
-            next.takeHome = value;
+            next.takeHome = numValue;
             return next;
           }
           if (field === "ctc") {
-            next.ctc = value;
+            next.ctc = numValue;
             return next;
           }
           return next;
         }
 
-        const next = { ...row, [field]: value } as typeof row;
+        const numValue = typeof value === "number" ? value : Number(value) || 0;
+        const next = { ...row, [field]: numValue } as typeof row;
         const recalcTakeHome = () => {
           next.takeHome = next.netPay - (next.tds ?? 0) + (next.incentive ?? 0) + (next.prBonus ?? 0) + (next.reimbursement ?? 0);
         };
@@ -1599,7 +1626,7 @@ function PayrollPageContent() {
           next.ctc = base + (next.incentive ?? 0) + (next.prBonus ?? 0);
         };
         if (field === "payDays") {
-          const newPayDays = Math.max(0, Math.min(payDaysMax, value));
+          const newPayDays = Math.max(0, Math.min(payDaysMax, numValue));
           const grossMonthly =
             row.grossMonthly ?? Math.round((row.grossPay * payDenom) / (row.payDays || row.rawPayDays || 1));
           next.payDays = newPayDays;
@@ -1625,7 +1652,7 @@ function PayrollPageContent() {
           recalcTakeHome();
           recalcCtc();
         } else if (field === "deductions") {
-          next.netPay = next.grossPay - value;
+          next.netPay = next.grossPay - numValue;
           recalcTakeHome();
           recalcCtc();
         } else if (["incentive", "prBonus", "reimbursement", "tds"].includes(field)) {
@@ -1635,10 +1662,10 @@ function PayrollPageContent() {
           recalcTakeHome();
           recalcCtc();
         } else if (field === "takeHome") {
-          next.takeHome = value;
+          next.takeHome = numValue;
           recalcCtc();
         } else if (field === "ctc") {
-          next.ctc = value;
+          next.ctc = numValue;
         }
         return next;
       })
@@ -1748,6 +1775,10 @@ function PayrollPageContent() {
     0
   ).getDate();
   const runDay = String(daysInSelectedMonth);
+
+  useEffect(() => {
+    runRowEditsRef.current.clear();
+  }, [runYear, runMonth]);
 
   useEffect(() => {
     if (!canManage || tab !== "run") return;
@@ -2345,7 +2376,13 @@ function PayrollPageContent() {
         ...(r.payrollMode === "government" && r.govRecalc
           ? {
               payrollMode: r.payrollMode,
-              governmentMonthly: r.governmentMonthly,
+              leaveRemarks: r.govRecalc.leaveRemarks ?? null,
+              governmentMonthly: {
+                ...(typeof r.governmentMonthly === "object" && r.governmentMonthly
+                  ? (r.governmentMonthly as Record<string, unknown>)
+                  : {}),
+                leaveRemarks: r.govRecalc.leaveRemarks ?? null,
+              },
               governmentDeductionDefaults: r.govRecalc.deductionDefaults,
               governmentEarningPaidOverrides: r.govRecalc.earningPaidOverrides,
             }
@@ -2502,7 +2539,7 @@ function PayrollPageContent() {
                     effectiveRunDay={
                       preview.effectiveRunDay ?? preview.workingDaysThroughRunDay ?? preview.daysInMonth
                     }
-                      readOnly={!!preview?.alreadyRun}
+                      readOnly={!!preview?.alreadyRun || running}
                       customEarningFields={runPayrollCustomEarningFields}
                       customDeductionFields={runPayrollCustomDeductionFields}
                       onUpdate={updateEditableRow}
@@ -2514,7 +2551,7 @@ function PayrollPageContent() {
                     effectiveRunDay={
                       preview.effectiveRunDay ?? preview.workingDaysThroughRunDay ?? preview.daysInMonth
                     }
-                    readOnly={!!preview?.alreadyRun}
+                    readOnly={!!preview?.alreadyRun || running}
                     pfLabel={previewHasGovernment ? "CPF" : "PF"}
                     onUpdate={updateEditableRow}
                   />

@@ -509,6 +509,7 @@ class PayrollController extends Controller
                     'payLevel' => $payLevel,
                     'hplDays' => 0,
                     'eolDays' => 0,
+                    'leaveRemarks' => null,
                     'eolReferenceMonth' => $month,
                     'eolReferenceYear' => $year,
                     'hplReferenceMonth' => $month,
@@ -940,6 +941,15 @@ class PayrollController extends Controller
             $payDays = (float) ($row['pay_days'] ?? $row['payDays'] ?? 0);
             $payrollMode = $row['payroll_mode'] ?? $row['payrollMode'] ?? 'private';
             $gm = $row['government_monthly'] ?? $row['governmentMonthly'] ?? null;
+            if (is_array($gm)) {
+                try {
+                    $gm['leaveRemarks'] = $this->normalizeLeaveRemarks(
+                        $row['leaveRemarks'] ?? $row['leave_remarks'] ?? $gm['leaveRemarks'] ?? $gm['leave_remarks'] ?? null,
+                    );
+                } catch (\InvalidArgumentException $e) {
+                    abort(422, $e->getMessage());
+                }
+            }
             $subjectEmployeeId = $this->employeeRecordIdForUser($employeeUserId, $user->company_id);
             $master = $mastersByUserId->get($employeeUserId);
             $bank = $this->bankDetailsForPayslip($master, $empUser);
@@ -1324,6 +1334,8 @@ class PayrollController extends Controller
             'eolDays' => (int) ($gov->eol_days ?? 0),
             'hpl_days' => (int) ($gov->hpl_days ?? 0),
             'eol_days' => (int) ($gov->eol_days ?? 0),
+            'leaveRemarks' => $this->normalizeLeaveRemarksSafe($gov->leave_remarks ?? null),
+            'leave_remarks' => $this->normalizeLeaveRemarksSafe($gov->leave_remarks ?? null),
             'eolReferenceMonth' => $gov->eol_reference_month ? (int) $gov->eol_reference_month : null,
             'eolReferenceYear' => $gov->eol_reference_year ? (int) $gov->eol_reference_year : null,
             'hplReferenceMonth' => $gov->hpl_reference_month ? (int) $gov->hpl_reference_month : null,
@@ -1362,6 +1374,45 @@ class PayrollController extends Controller
                 'quarterRent' => $num($gov->quarter_rent_amount ?? 0),
             ],
         ];
+    }
+
+    /**
+     * Normalize optional leave remarks for monthly payroll (not used in calculations).
+     *
+     * @throws \InvalidArgumentException
+     */
+    private function normalizeLeaveRemarks(mixed $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+        if (! is_string($value) && ! is_numeric($value)) {
+            throw new \InvalidArgumentException('Remarks must be a string.');
+        }
+        $text = trim((string) $value);
+        if ($text === '') {
+            return null;
+        }
+        if (mb_strlen($text) > 2000) {
+            throw new \InvalidArgumentException('Remarks must not exceed 2000 characters.');
+        }
+
+        return $text;
+    }
+
+    /** Read-path normalize: never throw on existing DB values. */
+    private function normalizeLeaveRemarksSafe(mixed $value): ?string
+    {
+        try {
+            return $this->normalizeLeaveRemarks($value);
+        } catch (\InvalidArgumentException) {
+            if (! is_string($value) && ! is_numeric($value)) {
+                return null;
+            }
+            $text = trim((string) $value);
+
+            return $text === '' ? null : mb_substr($text, 0, 2000);
+        }
     }
 
     /** @return array<string, float> */
@@ -1491,6 +1542,9 @@ class PayrollController extends Controller
             'hpl_days' => max(0, (int) ($gm['hplDays'] ?? $gm['hpl_days'] ?? 0)),
             'eol_amount' => $num($ded['eol'] ?? 0),
             'eol_days' => max(0, (int) ($gm['eolDays'] ?? $gm['eol_days'] ?? 0)),
+            'leave_remarks' => $this->normalizeLeaveRemarksSafe(
+                $gm['leaveRemarks'] ?? $gm['leave_remarks'] ?? null,
+            ),
             'eol_reference_month' => isset($gm['eolReferenceMonth']) ? (int) $gm['eolReferenceMonth'] : null,
             'eol_reference_year' => isset($gm['eolReferenceYear']) ? (int) $gm['eolReferenceYear'] : null,
             'hpl_reference_month' => isset($gm['hplReferenceMonth']) ? (int) $gm['hplReferenceMonth'] : null,

@@ -18,6 +18,7 @@ export type GovRecalcPayload = {
   payLevel: number;
   hplDays?: number;
   eolDays?: number;
+  leaveRemarks?: string | null;
   eolReferenceMonth?: number;
   eolReferenceYear?: number;
   hplReferenceMonth?: number;
