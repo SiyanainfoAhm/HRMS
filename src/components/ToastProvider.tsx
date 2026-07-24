@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { CheckCircle2, XCircle, X } from "lucide-react";
+import { createUuid } from "@/lib/createUuid";
 
 type ToastType = "success" | "error";
 
@@ -33,7 +34,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
 
   const showToast = useCallback(
     (type: ToastType, message: string) => {
-      const id = crypto.randomUUID();
+      const id = createUuid();
       const toast: Toast = { id, type, message, createdAt: Date.now(), durationMs: 4500 };
       setToasts((prev) => [...prev, toast]);
       const timeoutId = window.setTimeout(() => removeToast(id), toast.durationMs);
