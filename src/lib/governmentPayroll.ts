@@ -358,6 +358,9 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
     hplDays: input.hplDays,
   });
 
+  // Always reduce paid earnings for EOL/HPL (current or prior-month reference) so Basic/DA/HRA/Medical
+  // show the cut in Earnings. Auto HPL/EOL deduction lines stay 0 to avoid double-counting;
+  // manual HPL/EOL overrides skip the earnings cut and use the typed deduction amounts.
   let eolDeduction = input.eolDeductionManualOverride
     ? roundRupees(d.eol)
     : eolLeave.eolDeduction;
@@ -370,8 +373,7 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
   let hraOut = hraPaidF;
   let medicalOut = medicalPaidF;
 
-  // Current-month leave reduces paid earnings (Basic/DA/HRA/Medical). Prior-month leave is a deduction only.
-  if (eolIsCurrent && eolLeave.eolDays > 0 && !input.eolDeductionManualOverride) {
+  if (eolLeave.eolDays > 0 && !input.eolDeductionManualOverride) {
     const cut = applyProportionalEarningsCut(
       { basic: basicOut, da: daOut, hra: hraOut, medical: medicalOut },
       eolDeduction,
@@ -382,7 +384,7 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
     medicalOut = cut.medical;
     eolDeduction = 0;
   }
-  if (hplIsCurrent && hplLeave.hplDays > 0 && !input.hplDeductionManualOverride) {
+  if (hplLeave.hplDays > 0 && !input.hplDeductionManualOverride) {
     const cut = applyBasicDaEarningsCut(
       { basic: basicOut, da: daOut, hra: hraOut, medical: medicalOut },
       hplDeduction,

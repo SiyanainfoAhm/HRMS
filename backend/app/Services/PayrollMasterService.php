@@ -1806,62 +1806,124 @@ final class PayrollMasterService
             abort(403, 'Forbidden');
         }
 
-        $effectiveFrom = $validated['effective_from'] ?? $validated['effectiveFrom'] ?? now()->toDateString();
-        $oldEffectiveFrom = ($master->effective_from ?? $master->effective_start_date)?->toDateString() ?? $effectiveFrom;
-        $newFrom = Carbon::parse($effectiveFrom);
-        $oldFrom = Carbon::parse($oldEffectiveFrom);
-        $isSuperseded = $newFrom->lte($oldFrom);
-        $effectiveTo = $isSuperseded
-            ? ($master->effective_to?->toDateString() ?? $master->effective_end_date?->toDateString())
-            : $newFrom->copy()->subDay()->toDateString();
+        return DB::transaction(function () use ($master, $validated, $companyId, $createdBy, $reason) {
+            $master = HrmsPayrollMaster::query()
+                ->where('id', $master->id)
+                ->lockForUpdate()
+                ->firstOrFail();
 
-        $revisionReason = $reason
-            ?? $validated['reason_for_change']
-            ?? $validated['reasonForChange']
-            ?? 'Payroll master revision';
+            $effectiveFrom = $validated['effective_from'] ?? $validated['effectiveFrom'] ?? now()->toDateString();
+            $oldEffectiveFrom = ($master->effective_from ?? $master->effective_start_date)?->toDateString() ?? $effectiveFrom;
+            $newFrom = Carbon::parse($effectiveFrom)->startOfDay();
+            $oldFrom = Carbon::parse($oldEffectiveFrom)->startOfDay();
+            // Same-day / backdated revisions still supersede the open row for history labeling.
+            $isSuperseded = $newFrom->lte($oldFrom);
+            // CRITICAL: always set a non-null close date so ux_cirt_payroll_master_one_current allows INSERT.
+            $effectiveTo = $this->resolveSoftCloseEffectiveTo($oldFrom, $newFrom);
 
-        $payload = $this->masterToRevisionPayload($master, $validated);
-        $payload['effective_from'] = $effectiveFrom;
-        $payload['effectiveFrom'] = $effectiveFrom;
-        $payload['reason_for_change'] = $revisionReason;
-        unset($payload['effective_to'], $payload['effectiveTo'], $payload['effective_end_date'], $payload['effectiveEndDate']);
+            $revisionReason = $reason
+                ?? $validated['reason_for_change']
+                ?? $validated['reasonForChange']
+                ?? 'Payroll master revision';
 
-        $historyRow = null;
-        if (Schema::hasTable('cirt_payroll_master_history')) {
-            $historyRow = $this->archiveMasterToHistory(
-                $master,
-                'REVISION',
-                $revisionReason,
-                $isSuperseded,
-                $createdBy,
-                null,
+            $payload = $this->masterToRevisionPayload($master, $validated);
+            $payload['effective_from'] = $effectiveFrom;
+            $payload['effectiveFrom'] = $effectiveFrom;
+            $payload['reason_for_change'] = $revisionReason;
+            unset($payload['effective_to'], $payload['effectiveTo'], $payload['effective_end_date'], $payload['effectiveEndDate']);
+
+            $historyRow = null;
+            if (Schema::hasTable('cirt_payroll_master_history')) {
+                $historyRow = $this->archiveMasterToHistory(
+                    $master,
+                    'REVISION',
+                    $revisionReason,
+                    $isSuperseded,
+                    $createdBy,
+                    null,
+                    $effectiveTo,
+                );
+            }
+
+            // Soft-close ALL open rows for this employee so ux_cirt_payroll_master_one_current
+            // frees the slot before INSERT (covers backdated / same-day supersession).
+            $supersededMasterId = $master->id;
+            $employeeKey = $master->employee_user_id ?? $master->user_id;
+            $this->forceCloseOpenMastersForEmployee(
+                $companyId,
+                is_string($employeeKey) ? $employeeKey : null,
+                $supersededMasterId,
                 $effectiveTo,
             );
+
+            $validatedInner = $this->validatePayload($payload, $supersededMasterId, $companyId, false, true);
+            $validatedInner['user_id'] = $payload['user_id'] ?? $payload['employee_user_id'] ?? null;
+            $validatedInner['employee_user_id'] = $payload['employee_user_id'] ?? $payload['user_id'] ?? null;
+            $defaults = $this->resolveCompanyPayrollDefaults($companyId);
+            [$defaultDa, $defaultHra] = $this->resolveCalcDefaults($companyId, $validatedInner);
+            $calc = $this->calculateMasterForCompany($companyId, $validatedInner, $defaultDa, $defaultHra, $supersededMasterId);
+            $attrs = $this->filterExistingColumns($this->mergeCalculated($validatedInner, $calc, $companyId, $createdBy, true));
+
+            $newMaster = HrmsPayrollMaster::create($attrs);
+
+            if ($historyRow !== null) {
+                $historyRow->update(['replaced_by_master_id' => $newMaster->id]);
+            }
+
+            return $newMaster;
+        });
+    }
+
+    /**
+     * Date used to soft-close the previous open master before inserting a new current row.
+     * Always non-null so the partial unique index (effective_to IS NULL) frees the slot.
+     */
+    private function resolveSoftCloseEffectiveTo(Carbon $oldFrom, Carbon $newFrom): string
+    {
+        if ($newFrom->gt($oldFrom)) {
+            return $newFrom->copy()->subDay()->toDateString();
         }
 
-        // Soft-close the superseded row so cirt_monthly_payroll FK references remain valid.
-        $supersededMasterId = $master->id;
-        $master->update([
+        // Same-day or backdated revision: close the open row on its own start date
+        // (same-day supersession). Never leave effective_to NULL.
+        return $oldFrom->toDateString();
+    }
+
+    /**
+     * Force-close every open master for this employee (including the superseded row).
+     * Uses the query builder so the partial unique index slot is freed before INSERT.
+     */
+    private function forceCloseOpenMastersForEmployee(
+        string $companyId,
+        ?string $employeeUserId,
+        string $supersededMasterId,
+        string $effectiveTo,
+    ): void {
+        $closeAttrs = [
             'effective_to' => $effectiveTo,
             'effective_end_date' => $effectiveTo,
             'updated_at' => now(),
-        ]);
+        ];
 
-        $validatedInner = $this->validatePayload($payload, $supersededMasterId, $companyId, false, true);
-        $validatedInner['user_id'] = $payload['user_id'] ?? $payload['employee_user_id'] ?? null;
-        $validatedInner['employee_user_id'] = $payload['employee_user_id'] ?? $payload['user_id'] ?? null;
-        $defaults = $this->resolveCompanyPayrollDefaults($companyId);
-        [$defaultDa, $defaultHra] = $this->resolveCalcDefaults($companyId, $validatedInner);
-        $calc = $this->calculateMasterForCompany($companyId, $validatedInner, $defaultDa, $defaultHra, $supersededMasterId);
-        $attrs = $this->filterExistingColumns($this->mergeCalculated($validatedInner, $calc, $companyId, $createdBy, true));
+        // Always close the locked/superseded row first.
+        DB::table('cirt_payroll_master')
+            ->where('id', $supersededMasterId)
+            ->whereNull('effective_to')
+            ->update($closeAttrs);
 
-        $newMaster = HrmsPayrollMaster::create($attrs);
-
-        if ($historyRow !== null) {
-            $historyRow->update(['replaced_by_master_id' => $newMaster->id]);
+        if (! is_string($employeeUserId) || $employeeUserId === '') {
+            return;
         }
 
-        return $newMaster;
+        // Close any other open duplicates (anomalies / races).
+        DB::table('cirt_payroll_master')
+            ->where('company_id', $companyId)
+            ->whereNull('effective_to')
+            ->where(function ($q) use ($employeeUserId) {
+                $q->where('employee_user_id', $employeeUserId)
+                    ->orWhere('user_id', $employeeUserId);
+            })
+            ->update($closeAttrs);
     }
 
     public function archiveMasterToHistory(

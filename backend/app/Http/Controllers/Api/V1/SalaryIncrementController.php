@@ -97,7 +97,15 @@ class SalaryIncrementController extends Controller
             $confirm,
         );
 
-        return response()->json($result);
+        $allFailed = ((int) ($result['failed'] ?? 0) > 0) && ((int) ($result['applied'] ?? 0) === 0);
+        if ($allFailed && empty($result['message'])) {
+            $firstFailed = collect($result['results'] ?? [])->firstWhere('status', 'failed');
+            $result['message'] = is_array($firstFailed)
+                ? ($firstFailed['message'] ?? 'Failed to apply salary increment.')
+                : 'Failed to apply salary increment.';
+        }
+
+        return response()->json($result, $allFailed ? 422 : 200);
     }
 
     public function history(Request $request): JsonResponse

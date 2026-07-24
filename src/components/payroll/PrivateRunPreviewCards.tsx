@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { DaysNumberInput } from "@/components/ui/DaysNumberInput";
 import { PayrollComponentScroller, type PayrollScrollerHandle } from "./PayrollComponentScroller";
 import { PayrollEmployeeCardHeader } from "./PayrollEmployeeCardHeader";
 import { FieldChip, PayrollSectionRow, fmtIn, inpWide, payrollDaysInputClass } from "./payrollRunPreviewShared";
@@ -87,12 +88,11 @@ function PrivateEmployeeCard({
             {row.unpaidLeaveDays > 0 ? ` (−${row.unpaidLeaveDays})` : ""}
           </p>
         ) : (
-          <input
-            type="number"
+          <DaysNumberInput
             min={0}
             max={effectiveRunDay ?? daysInMonth}
             value={row.payDays}
-            onChange={(e) => onUpdate(row.employeeUserId, "payDays", parseInt(e.target.value, 10) || 0)}
+            onChange={(n) => onUpdate(row.employeeUserId, "payDays", n)}
             className={payrollDaysInputClass}
           />
         )}

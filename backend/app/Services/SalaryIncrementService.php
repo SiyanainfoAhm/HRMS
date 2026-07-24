@@ -7,10 +7,12 @@ use App\Models\HrmsPayrollPeriod;
 use App\Models\HrmsSalaryIncrement;
 use App\Support\IncrementMonth;
 use Carbon\Carbon;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use Throwable;
 
 class SalaryIncrementService
 {
@@ -137,151 +139,199 @@ class SalaryIncrementService
         $failed = 0;
         $results = [];
 
-        DB::transaction(function () use (
-            $companyId,
-            $appliedBy,
-            $month,
-            $year,
-            $effectiveStartDate,
-            $defaultIncrementPercentage,
-            $selectedEmployees,
-            &$applied,
-            &$skipped,
-            &$failed,
-            &$results,
-        ) {
-            foreach ($selectedEmployees as $entry) {
-                $masterId = $entry['masterId'] ?? null;
-                $employeeUserId = $entry['employeeUserId'] ?? null;
-                $pct = isset($entry['incrementPercentage']) && $entry['incrementPercentage'] !== null
-                    ? (float) $entry['incrementPercentage']
-                    : $defaultIncrementPercentage;
+        foreach ($selectedEmployees as $entry) {
+            $masterId = $entry['masterId'] ?? null;
+            $employeeUserId = $entry['employeeUserId'] ?? null;
+            $pct = isset($entry['incrementPercentage']) && $entry['incrementPercentage'] !== null
+                ? (float) $entry['incrementPercentage']
+                : $defaultIncrementPercentage;
 
-                if ($pct <= 0) {
-                    $failed++;
-                    $results[] = [
-                        'employeeUserId' => $employeeUserId,
-                        'status' => 'failed',
-                        'message' => 'Increment percentage must be greater than 0.',
+            if ($pct <= 0) {
+                $failed++;
+                $results[] = [
+                    'employeeUserId' => $employeeUserId,
+                    'status' => 'failed',
+                    'message' => 'Increment percentage must be greater than 0.',
+                ];
+                continue;
+            }
+
+            try {
+                DB::transaction(function () use (
+                    $companyId,
+                    $appliedBy,
+                    $month,
+                    $year,
+                    $effectiveStartDate,
+                    $masterId,
+                    $employeeUserId,
+                    $pct,
+                    &$applied,
+                    &$skipped,
+                    &$failed,
+                    &$results,
+                ) {
+                    $master = null;
+                    if ($masterId) {
+                        $master = HrmsPayrollMaster::query()
+                            ->where('company_id', $companyId)
+                            ->where('id', $masterId)
+                            ->whereNull('effective_to')
+                            ->lockForUpdate()
+                            ->first();
+                    }
+                    if (! $master && $employeeUserId) {
+                        $master = HrmsPayrollMaster::query()
+                            ->where('company_id', $companyId)
+                            ->whereNull('effective_to')
+                            ->where(function ($q) use ($employeeUserId) {
+                                $q->where('employee_user_id', $employeeUserId)->orWhere('user_id', $employeeUserId);
+                            })
+                            ->lockForUpdate()
+                            ->first();
+                    }
+
+                    if (! $master) {
+                        $failed++;
+                        $results[] = [
+                            'employeeUserId' => $employeeUserId,
+                            'status' => 'failed',
+                            'message' => 'Employee payroll master not found.',
+                        ];
+
+                        return;
+                    }
+
+                    $userId = $master->user_id ?? $master->employee_user_id;
+                    if ($this->hasExistingIncrement($companyId, $userId, $effectiveStartDate)) {
+                        $skipped++;
+                        $results[] = [
+                            'employeeUserId' => $userId,
+                            'employeeCode' => $master->employee_code,
+                            'status' => 'skipped',
+                            'message' => IncrementMonth::duplicateMessage($month, $year),
+                        ];
+
+                        return;
+                    }
+
+                    $oldGross = (float) ($master->gross_basic_pay ?? $master->gross_basic ?? $master->gross_salary ?? 0);
+                    if ($oldGross <= 0) {
+                        $failed++;
+                        $results[] = [
+                            'employeeUserId' => $userId,
+                            'status' => 'failed',
+                            'message' => 'Gross basic pay must be greater than 0.',
+                        ];
+
+                        return;
+                    }
+
+                    $newGross = IncrementMonth::calculateNewGrossBasic($oldGross, $pct);
+                    $incrementAmount = round($newGross - $oldGross);
+
+                    $reason = sprintf('Salary increment %.2f%% effective %s', $pct, $effectiveStartDate);
+                    $revisionPayload = [
+                        'gross_basic_pay' => $newGross,
+                        'grossBasicPay' => $newGross,
+                        'effective_from' => $effectiveStartDate,
+                        'effectiveFrom' => $effectiveStartDate,
+                        'reason_for_change' => $reason,
+                        'reasonForChange' => $reason,
+                        'increment_month' => $master->increment_month ?? IncrementMonth::DEFAULT,
+                        'incrementMonth' => $master->increment_month ?? IncrementMonth::DEFAULT,
                     ];
-                    continue;
-                }
 
-                $master = null;
-                if ($masterId) {
-                    $master = HrmsPayrollMaster::query()
-                        ->where('company_id', $companyId)
-                        ->where('id', $masterId)
-                        ->whereNull('effective_to')
-                        ->first();
-                }
-                if (! $master && $employeeUserId) {
-                    $master = HrmsPayrollMaster::query()
-                        ->where('company_id', $companyId)
-                        ->whereNull('effective_to')
-                        ->where(function ($q) use ($employeeUserId) {
-                            $q->where('employee_user_id', $employeeUserId)->orWhere('user_id', $employeeUserId);
-                        })
-                        ->first();
-                }
+                    $this->payrollMasterService->reviseMasterRecord(
+                        $master,
+                        $revisionPayload,
+                        $companyId,
+                        $appliedBy,
+                        $reason,
+                    );
 
-                if (! $master) {
-                    $failed++;
-                    $results[] = [
-                        'employeeUserId' => $employeeUserId,
-                        'status' => 'failed',
-                        'message' => 'Employee payroll master not found.',
-                    ];
-                    continue;
-                }
+                    if (Schema::hasTable('cirt_salary_increments')) {
+                        HrmsSalaryIncrement::create([
+                            'id' => (string) Str::uuid(),
+                            'company_id' => $companyId,
+                            'employee_id' => $master->employee_id,
+                            'employee_user_id' => $userId,
+                            'employee_code' => $master->employee_code,
+                            'increment_month' => $month,
+                            'effective_start_date' => $effectiveStartDate,
+                            'old_gross_basic' => $oldGross,
+                            'increment_percentage' => $pct,
+                            'increment_amount' => $incrementAmount,
+                            'new_gross_basic' => $newGross,
+                            'applied_by' => $appliedBy,
+                            'applied_at' => now(),
+                            'status' => 'applied',
+                            'notes' => $reason,
+                        ]);
+                    }
 
-                $userId = $master->user_id ?? $master->employee_user_id;
-                if ($this->hasExistingIncrement($companyId, $userId, $effectiveStartDate)) {
-                    $skipped++;
+                    $applied++;
                     $results[] = [
                         'employeeUserId' => $userId,
                         'employeeCode' => $master->employee_code,
-                        'status' => 'skipped',
-                        'message' => IncrementMonth::duplicateMessage($month, $year),
-                    ];
-                    continue;
-                }
-
-                $oldGross = (float) ($master->gross_basic_pay ?? $master->gross_basic ?? $master->gross_salary ?? 0);
-                if ($oldGross <= 0) {
-                    $failed++;
-                    $results[] = [
-                        'employeeUserId' => $userId,
-                        'status' => 'failed',
-                        'message' => 'Gross basic pay must be greater than 0.',
-                    ];
-                    continue;
-                }
-
-                $newGross = IncrementMonth::calculateNewGrossBasic($oldGross, $pct);
-                $incrementAmount = round($newGross - $oldGross);
-
-                $reason = sprintf('Salary increment %.2f%% effective %s', $pct, $effectiveStartDate);
-                $revisionPayload = [
-                    'gross_basic_pay' => $newGross,
-                    'grossBasicPay' => $newGross,
-                    'effective_from' => $effectiveStartDate,
-                    'effectiveFrom' => $effectiveStartDate,
-                    'reason_for_change' => $reason,
-                    'reasonForChange' => $reason,
-                    'increment_month' => $master->increment_month ?? IncrementMonth::DEFAULT,
-                    'incrementMonth' => $master->increment_month ?? IncrementMonth::DEFAULT,
-                ];
-
-                $this->payrollMasterService->reviseMasterRecord(
-                    $master,
-                    $revisionPayload,
-                    $companyId,
-                    $appliedBy,
-                    $reason,
-                );
-
-                if (Schema::hasTable('cirt_salary_increments')) {
-                    HrmsSalaryIncrement::create([
-                        'id' => (string) Str::uuid(),
-                        'company_id' => $companyId,
-                        'employee_id' => $master->employee_id,
-                        'employee_user_id' => $userId,
-                        'employee_code' => $master->employee_code,
-                        'increment_month' => $month,
-                        'effective_start_date' => $effectiveStartDate,
-                        'old_gross_basic' => $oldGross,
-                        'increment_percentage' => $pct,
-                        'increment_amount' => $incrementAmount,
-                        'new_gross_basic' => $newGross,
-                        'applied_by' => $appliedBy,
-                        'applied_at' => now(),
                         'status' => 'applied',
-                        'notes' => $reason,
-                    ]);
-                }
-
-                $applied++;
+                        'oldGrossBasic' => $oldGross,
+                        'newGrossBasic' => $newGross,
+                        'incrementPercentage' => $pct,
+                    ];
+                });
+            } catch (QueryException $e) {
+                $failed++;
                 $results[] = [
-                    'employeeUserId' => $userId,
-                    'employeeCode' => $master->employee_code,
-                    'status' => 'applied',
-                    'oldGrossBasic' => $oldGross,
-                    'newGrossBasic' => $newGross,
-                    'incrementPercentage' => $pct,
+                    'employeeUserId' => $employeeUserId,
+                    'status' => 'failed',
+                    'message' => $this->friendlyIncrementFailureMessage($e),
+                ];
+            } catch (Throwable $e) {
+                $failed++;
+                $results[] = [
+                    'employeeUserId' => $employeeUserId,
+                    'status' => 'failed',
+                    'message' => $this->friendlyIncrementFailureMessage($e),
                 ];
             }
-        });
+        }
 
         return [
             'applied' => $applied,
             'skipped' => $skipped,
             'failed' => $failed,
             'results' => $results,
+            'message' => $failed > 0 && $applied === 0
+                ? ($results[0]['message'] ?? 'Failed to apply salary increment.')
+                : null,
             'payrollPeriodWarning' => $payrollPeriodExists
                 ? 'Payroll for this period already exists. Applying increment may require regeneration.'
                 : null,
         ];
+    }
+
+    private function friendlyIncrementFailureMessage(Throwable $e): string
+    {
+        $raw = $e->getMessage();
+        if (
+            str_contains($raw, 'ux_cirt_payroll_master_one_current')
+            || str_contains($raw, 'SQLSTATE[23505]')
+            || str_contains($raw, 'duplicate key')
+        ) {
+            return 'Could not apply increment for this employee because an active payroll master already exists. Please refresh and try again.';
+        }
+
+        if (str_contains($raw, 'SQLSTATE[')) {
+            return 'Could not apply salary increment for this employee. Please try again or contact support.';
+        }
+
+        $clean = trim($raw);
+        if ($clean === '' || strlen($clean) > 180) {
+            return 'Could not apply salary increment for this employee. Please try again or contact support.';
+        }
+
+        return $clean;
     }
 
     /**

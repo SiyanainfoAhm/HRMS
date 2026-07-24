@@ -53,15 +53,32 @@ function fmt(n: number | null | undefined) {
   return Math.round(n).toLocaleString("en-IN");
 }
 
+function sanitizeUserError(message: string, fallback: string): string {
+  const msg = message.trim();
+  if (!msg) return fallback;
+  if (
+    /SQLSTATE\[/i.test(msg) ||
+    /duplicate key/i.test(msg) ||
+    /ux_cirt_payroll_master_one_current/i.test(msg) ||
+    /Connection:\s*pgsql/i.test(msg)
+  ) {
+    return "Could not apply salary increment because an active payroll master already exists for this employee. Please refresh and try again.";
+  }
+  return msg.length > 220 ? fallback : msg;
+}
+
 function parseApiError(data: unknown, fallback: string): string {
   if (!data || typeof data !== "object") return fallback;
   const d = data as Record<string, unknown>;
-  if (typeof d.error === "string") return d.error;
-  if (typeof d.message === "string") return d.message;
+  if (typeof d.error === "string") return sanitizeUserError(d.error, fallback);
+  if (typeof d.message === "string" && d.message.trim()) return sanitizeUserError(d.message, fallback);
+  const results = d.results as Array<{ status?: string; message?: string }> | undefined;
+  const firstFailed = results?.find((r) => r.status === "failed" && r.message);
+  if (firstFailed?.message) return sanitizeUserError(firstFailed.message, fallback);
   const errors = d.errors as Record<string, string[]> | undefined;
   if (errors) {
     const first = Object.values(errors).flat()[0];
-    if (first) return first;
+    if (first) return sanitizeUserError(first, fallback);
   }
   return fallback;
 }
@@ -232,14 +249,23 @@ export function SalaryIncrementPanel() {
         throw new Error(msg);
       }
       setConfirmOpen(false);
+      const appliedCount = Number(data.applied ?? 0);
+      const failedCount = Number(data.failed ?? 0);
+      if (failedCount > 0 && appliedCount === 0) {
+        const msg = parseApiError(data, "Failed to apply increment");
+        setError(msg);
+        showToast("error", msg);
+        return;
+      }
       showToast(
-        "success",
-        `Applied: ${data.applied ?? 0}, skipped: ${data.skipped ?? 0}, failed: ${data.failed ?? 0}`,
+        failedCount > 0 ? "error" : "success",
+        `Applied: ${appliedCount}, skipped: ${data.skipped ?? 0}, failed: ${failedCount}`,
       );
       await loadEligible();
       await loadHistory();
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "Failed to apply increment";
+      const raw = e instanceof Error ? e.message : "Failed to apply increment";
+      const msg = sanitizeUserError(raw, "Failed to apply increment");
       setError(msg);
       showToast("error", msg);
     } finally {

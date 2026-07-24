@@ -273,9 +273,16 @@
     @apply box-border flex h-[34px] w-[6.875rem] min-w-[6rem] shrink-0 items-center justify-end px-2 text-right text-[13px] leading-normal tabular-nums text-slate-900;
   }
 
-  /** Run Payroll — small numeric fields (pay days, etc.). */
+  /** Run Payroll — small numeric fields (pay days, HPL/EOL days, etc.). */
   .payroll-days-input {
     @apply payroll-amount-input w-[4.5rem] min-w-[4.5rem];
+    -moz-appearance: textfield;
+  }
+
+  .payroll-days-input::-webkit-outer-spin-button,
+  .payroll-days-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
   }
 
   @media (hover: hover) {

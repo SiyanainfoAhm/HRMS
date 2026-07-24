@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { PayrollFieldDefinition } from "@/lib/payrollFieldTypes";
 import { cn } from "@/lib/cn";
+import { DaysNumberInput } from "@/components/ui/DaysNumberInput";
 import { PayrollComponentScroller, type PayrollScrollerHandle } from "./PayrollComponentScroller";
 import { PayrollEmployeeCardHeader } from "./PayrollEmployeeCardHeader";
 import {
@@ -404,12 +405,11 @@ function GovernmentEmployeeDetail({
                 {readOnly ? (
                   <p className="text-[13px] tabular-nums text-slate-800">{row.payDays}</p>
                 ) : (
-                  <input
-                    type="number"
+                  <DaysNumberInput
                     min={0}
                     max={effectiveRunDay ?? daysInMonth}
                     value={row.payDays}
-                    onChange={(e) => onUpdate(row.employeeUserId, "payDays", parseInt(e.target.value, 10) || 0)}
+                    onChange={(n) => onUpdate(row.employeeUserId, "payDays", n)}
                     className={payrollDaysInputClass}
                   />
                 )}
@@ -419,16 +419,13 @@ function GovernmentEmployeeDetail({
                 {readOnly ? (
                   <p className="text-[13px] tabular-nums text-slate-800">{leave.hplDays}</p>
                 ) : (
-                  <input
-                    type="number"
+                  <DaysNumberInput
                     min={0}
                     max={daysInMonth}
                     value={leave.hplDays}
-                    onChange={(e) =>
-                      onUpdate(row.employeeUserId, "hplDays", parseInt(e.target.value, 10) || 0)
-                    }
+                    onChange={(n) => onUpdate(row.employeeUserId, "hplDays", n)}
                     className={payrollDaysInputClass}
-                    title="Half pay leave — deduction on Basic + DA + HRA + Medical from reference month"
+                    title="Half pay leave — reduces Basic + DA in Earnings (current or prior reference month)"
                   />
                 )}
               </div>
@@ -437,16 +434,13 @@ function GovernmentEmployeeDetail({
                 {readOnly ? (
                   <p className="text-[13px] tabular-nums text-slate-800">{leave.eolDays}</p>
                 ) : (
-                  <input
-                    type="number"
+                  <DaysNumberInput
                     min={0}
                     max={daysInMonth}
                     value={leave.eolDays}
-                    onChange={(e) =>
-                      onUpdate(row.employeeUserId, "eolDays", parseInt(e.target.value, 10) || 0)
-                    }
+                    onChange={(n) => onUpdate(row.employeeUserId, "eolDays", n)}
                     className={payrollDaysInputClass}
-                    title="EOL — deduction on Basic + DA + HRA + Medical from reference month"
+                    title="EOL — reduces Basic + DA + HRA + Medical in Earnings (current or prior reference month)"
                   />
                 )}
               </div>
