@@ -8,10 +8,15 @@ use PHPUnit\Framework\TestCase;
 /** INC-006, INC-008 — salary increment calculation and month normalization */
 final class SalaryIncrementTest extends TestCase
 {
-    public function test_calculate_new_gross_basic_rounds_to_nearest_rupee(): void
+    public function test_calculate_new_gross_basic_uses_dynamic_percent_and_rounds_to_nearest_100(): void
     {
-        $this->assertSame(49440.0, IncrementMonth::calculateNewGrossBasic(48000, 3));
-        $this->assertSame(49200.0, IncrementMonth::calculateNewGrossBasic(48000, 2.5));
+        // Acceptance cases (dynamic percentage; round Basic to nearest ₹100).
+        $this->assertSame(49400.0, IncrementMonth::calculateNewGrossBasic(48000, 3));
+        $this->assertSame(50400.0, IncrementMonth::calculateNewGrossBasic(48000, 5));
+        $this->assertSame(50200.0, IncrementMonth::calculateNewGrossBasic(48000, 4.5));
+        $this->assertSame(18500.0, IncrementMonth::calculateNewGrossBasic(18000, 3));
+        $this->assertSame(19100.0, IncrementMonth::calculateNewGrossBasic(18500, 3));
+        $this->assertSame(49200.0, IncrementMonth::calculateNewGrossBasic(48000, 2.5)); // raw 49,200
     }
 
     public function test_normalize_increment_month_case_insensitive(): void
@@ -67,7 +72,8 @@ final class SalaryIncrementTest extends TestCase
         $path = dirname(__DIR__, 2).'/app/Services/PayrollMasterService.php';
         $source = file_get_contents($path);
         $this->assertIsString($source);
-        $this->assertStringContainsString('Soft-close the superseded row so cirt_monthly_payroll FK references remain valid.', $source);
+        $this->assertStringContainsString('forceCloseOpenMastersForEmployee', $source);
+        $this->assertStringContainsString('Soft-close ALL open rows for this employee', $source);
         $this->assertStringNotContainsString('$master->delete();', $source);
     }
 

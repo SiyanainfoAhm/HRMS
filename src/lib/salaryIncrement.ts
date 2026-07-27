@@ -22,9 +22,13 @@ export function effectiveDateMatchesMonth(month: IncrementMonthOption, dateYmd: 
   return m === 7;
 }
 
-/** Round to nearest whole rupee */
+/**
+ * Apply the admin-entered increment percentage, then round Basic to nearest ₹100.
+ * (00–49 → down, 50–99 → up.)
+ */
 export function calculateNewGrossBasic(currentGrossBasic: number, incrementPercentage: number): number {
-  return Math.round(currentGrossBasic + currentGrossBasic * (incrementPercentage / 100));
+  const rawNewBasic = currentGrossBasic + currentGrossBasic * (incrementPercentage / 100);
+  return Math.round(rawNewBasic / 100) * 100;
 }
 
 export function incrementAmount(currentGrossBasic: number, incrementPercentage: number): number {

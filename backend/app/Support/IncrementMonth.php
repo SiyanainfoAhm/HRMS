@@ -74,10 +74,14 @@ final class IncrementMonth
         return "Increment already applied for this employee for {$label} {$year}.";
     }
 
+    /**
+     * Apply a dynamic increment percentage, then round Basic to nearest ₹100.
+     * (00–49 → down, 50–99 → up via PHP_ROUND_HALF_UP on the hundreds place.)
+     */
     public static function calculateNewGrossBasic(float $currentGrossBasic, float $incrementPercentage): float
     {
-        $incrementAmount = $currentGrossBasic * ($incrementPercentage / 100);
+        $rawNewBasic = $currentGrossBasic + ($currentGrossBasic * ($incrementPercentage / 100));
 
-        return round($currentGrossBasic + $incrementAmount);
+        return (float) ((int) (round($rawNewBasic / 100, 0, PHP_ROUND_HALF_UP) * 100));
     }
 }
