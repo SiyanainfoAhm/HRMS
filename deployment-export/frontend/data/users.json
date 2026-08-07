@@ -1,0 +1,11 @@
+[
+  {
+    "id": "39990392-4358-48a1-8381-aa71e3fcd3a4",
+    "email": "gourav.gupta@siyanainfo.com",
+    "passwordHash": "$2b$10$.cy91UB6p1V7AKLm1rWmx.maLoaGaAvY5Gp0WIwt5HztDOLlKrZ/q",
+    "name": "Test",
+    "role": "employee",
+    "createdAt": "2026-03-18T05:18:30.401Z",
+    "updatedAt": "2026-03-18T05:18:30.401Z"
+  }
+]

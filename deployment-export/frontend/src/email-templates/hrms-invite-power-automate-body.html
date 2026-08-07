@@ -1,0 +1,46 @@
+<!--
+  HRMS → Power Automate: paste this into "Send an email" → Body → Code view (</>).
+
+  HTTP trigger JSON from HRMS contains: email, link, name, companyName, subject
+  (no html field — keeps the webhook payload small).
+
+  Map "To" to dynamic content: email
+  Map "Subject" to: subject   OR your own text e.g. "Welcome to HRMS!"
+
+  If your flow uses "Parse JSON" after the trigger, replace triggerBody() with
+  body('Parse_JSON') (use the exact name of your Parse JSON action).
+
+  Optional: if name is often empty, use this for the greeting line instead:
+  @{if(equals(coalesce(triggerBody()?['name'], ''), ''), 'Hello,', concat('Hello ', triggerBody()?['name'], ','))}
+-->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+</head>
+<body style="margin:0;font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;line-height:1.55;color:#0f172a;background:#f1f5f9;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:28px 16px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#ffffff;border-radius:14px;border:1px solid #e2e8f0;box-shadow:0 10px 40px rgba(15,23,42,0.06);">
+          <tr>
+            <td style="padding:32px 28px 28px;">
+              <p style="margin:0 0 14px;font-size:16px;">Hello @{triggerBody()?['name']},</p>
+              <p style="margin:0 0 22px;font-size:15px;color:#334155;">
+                <strong>@{triggerBody()?['companyName']}</strong> has invited you to complete your preboarding in <strong>HRMS</strong>.
+                Use the secure link below to upload documents and confirm your details. This link is valid for <strong>48 hours</strong>.
+              </p>
+              <p style="margin:0 0 26px;text-align:center;">
+                <a href="@{triggerBody()?['link']}" style="display:inline-block;background:#047857;color:#ffffff !important;text-decoration:none;padding:14px 28px;border-radius:10px;font-weight:600;font-size:15px;">Click here to open your invite</a>
+              </p>
+              <p style="margin:24px 0 0;font-size:12px;color:#94a3b8;">This is an automated message from HRMS.</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

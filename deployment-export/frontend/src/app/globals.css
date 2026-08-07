@@ -1,0 +1,401 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --brand-navy: #1e3a8a;
+    --brand-blue: #2563eb;
+    --brand-teal: #0d9488;
+    --brand-bg: #f8fafc;
+    --brand-surface: #ffffff;
+    --brand-text: #0f172a;
+    --brand-muted: #64748b;
+    --brand-border: #e2e8f0;
+    --app-font-size: 13px;
+    --control-height: 36px;
+    --card-padding: 14px;
+    --section-gap: 12px;
+    --sidebar-width: 13.75rem;
+    --sidebar-collapsed: 4rem;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    font-size: var(--app-font-size);
+  }
+
+  body {
+    @apply bg-brand-bg text-slate-900 antialiased;
+    overflow-x: hidden;
+  }
+
+  *:focus-visible {
+    @apply outline-none ring-2 ring-brand-blue/40 ring-offset-2 ring-offset-brand-bg;
+  }
+}
+
+@layer components {
+  .page-title {
+    @apply text-xl font-bold tracking-tight text-slate-900 sm:text-[1.375rem];
+  }
+
+  .section-title {
+    @apply text-sm font-semibold tracking-tight text-slate-900;
+  }
+
+  .card-title {
+    @apply text-sm font-semibold text-slate-900;
+  }
+
+  .card {
+    @apply rounded-xl border border-brand-border bg-white p-3.5 shadow-card transition-shadow duration-200 sm:p-4;
+  }
+
+  @media (hover: hover) {
+    .card-interactive:hover {
+      @apply shadow-card-hover border-slate-300/80;
+    }
+  }
+
+  .grid-3 {
+    @apply grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3;
+  }
+
+  .btn {
+    @apply inline-flex h-9 min-h-[var(--control-height)] items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-semibold transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn-primary {
+    @apply bg-brand-navy text-white shadow-sm hover:bg-brand-blue active:scale-[0.98];
+  }
+
+  .btn-secondary {
+    @apply border border-brand-border bg-white text-slate-800 shadow-sm hover:bg-slate-50 active:scale-[0.98];
+  }
+
+  .btn-outline {
+    @apply border border-slate-300 bg-transparent text-slate-800 hover:bg-white active:scale-[0.98];
+  }
+
+  .btn-danger {
+    @apply bg-danger text-white shadow-sm hover:bg-red-700 active:scale-[0.98];
+  }
+
+  .btn-ghost {
+    @apply text-slate-600 hover:bg-slate-100 hover:text-slate-900;
+  }
+
+  .btn-teal {
+    @apply bg-brand-teal text-white shadow-sm hover:opacity-95 active:scale-[0.98];
+  }
+
+  .filter-tab {
+    @apply inline-flex items-center rounded-lg px-2.5 py-1 text-[13px] font-medium transition-all duration-200;
+  }
+
+  .filter-tab-active {
+    @apply bg-brand-navy text-white shadow-sm;
+  }
+
+  .filter-tab-inactive {
+    @apply bg-slate-100 text-slate-700 hover:bg-slate-200/90;
+  }
+
+  .filter-pill {
+    @apply rounded-full px-2.5 py-0.5 text-[11px] font-medium transition-colors;
+  }
+
+  .filter-pill-active {
+    @apply bg-brand-navy text-white shadow-sm ring-1 ring-brand-navy/20;
+  }
+
+  .filter-pill-inactive {
+    @apply border border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50;
+  }
+
+  .filter-card {
+    @apply rounded-xl border border-brand-border bg-white p-3 shadow-card sm:p-3.5;
+  }
+
+  .filter-card-label {
+    @apply mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500;
+  }
+
+  .filter-scroll {
+    @apply -mx-0.5 overflow-x-auto px-0.5 pb-0.5;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+
+  .records-stack {
+    @apply flex flex-col gap-2.5 sm:grid sm:grid-cols-1 sm:gap-3 md:grid-cols-2 lg:hidden;
+  }
+
+  .record-card {
+    @apply rounded-xl border border-brand-border bg-white p-3 shadow-card sm:p-3.5;
+  }
+
+  .record-card-header {
+    @apply border-b border-slate-100 pb-2;
+  }
+
+  .record-card-title {
+    @apply text-sm font-semibold text-slate-900;
+  }
+
+  .record-card-subtitle {
+    @apply mt-0.5 text-xs text-slate-600;
+  }
+
+  .record-card-body {
+    @apply mt-2 text-[13px] text-slate-800;
+  }
+
+  .record-card-actions {
+    @apply mt-3 flex flex-wrap gap-1.5 border-t border-slate-100 pt-3;
+  }
+
+  .table-panel {
+    @apply hidden overflow-hidden rounded-xl border border-brand-border bg-white shadow-card lg:block;
+  }
+
+  .picker-nav-btn {
+    @apply inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-brand-navy transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent;
+  }
+
+  .picker-grid-btn {
+    @apply rounded-lg border border-slate-200 px-2 py-2.5 text-center text-sm font-medium text-slate-700 transition hover:border-brand-blue/40 hover:bg-blue-50/60;
+  }
+
+  .picker-grid-btn-active {
+    @apply border-brand-blue bg-blue-50 text-brand-navy;
+  }
+
+  .picker-link {
+    @apply text-xs font-medium text-brand-blue hover:text-brand-navy hover:underline;
+  }
+
+  .muted {
+    @apply text-[13px] leading-relaxed text-brand-muted;
+  }
+
+  .input-field {
+    @apply w-full min-h-[var(--control-height)] rounded-lg border border-brand-border bg-white px-3 py-1.5 text-[13px] text-slate-900 shadow-sm transition-colors placeholder:text-slate-400 focus:border-brand-blue focus:ring-2 focus:ring-brand-blue/20;
+  }
+
+  .label-field {
+    @apply mb-1 block text-[11px] font-medium text-slate-700;
+  }
+
+  .table-shell {
+    @apply overflow-hidden rounded-xl border border-brand-border bg-white shadow-card;
+  }
+
+  .table-modern thead {
+    @apply bg-slate-50/90 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-600;
+  }
+
+  .table-modern th {
+    @apply whitespace-nowrap px-3 py-2;
+  }
+
+  .table-modern td {
+    @apply border-t border-brand-border px-3 py-2 text-[13px] text-slate-800;
+  }
+
+  .table-modern tbody tr {
+    @apply transition-colors duration-150;
+  }
+
+  .select-field {
+    @apply input-field appearance-none pr-9;
+  }
+
+  .page-workspace {
+    @apply flex min-h-0 flex-col overflow-hidden rounded-xl border border-brand-border bg-white shadow-card;
+  }
+
+  .data-table-shell {
+    @apply overflow-hidden rounded-lg border border-brand-border bg-white shadow-sm;
+  }
+
+  .skeleton-shimmer {
+    @apply relative overflow-hidden bg-slate-100;
+  }
+
+  .skeleton-shimmer::after {
+    content: "";
+    @apply absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/70 to-transparent;
+    animation: shimmer 1.4s ease-in-out infinite;
+  }
+
+  @keyframes shimmer {
+    100% {
+      transform: translateX(100%);
+    }
+  }
+
+  .segment-tab {
+    @apply rounded-md px-2.5 py-1 text-[13px] font-medium transition-colors;
+  }
+
+  .segment-tab-active {
+    @apply bg-brand-navy text-white shadow-sm;
+  }
+
+  .segment-tab-inactive {
+    @apply text-slate-600 hover:bg-slate-100 hover:text-slate-900;
+  }
+
+  .metric-chip {
+    @apply inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium tabular-nums;
+  }
+
+  .btn-sm {
+    @apply inline-flex h-8 min-h-8 items-center justify-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  /** Run Payroll — salary amount fields (earnings/deductions). */
+  .payroll-amount-input {
+    @apply box-border h-[34px] w-[6.875rem] min-w-[6rem] max-w-none shrink-0 rounded-md border border-sky-300 bg-white px-2 py-0.5 text-right text-[13px] leading-normal tabular-nums text-slate-900 shadow-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-400;
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+
+  .payroll-amount-input::-webkit-outer-spin-button,
+  .payroll-amount-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  .payroll-amount-value {
+    @apply box-border flex h-[34px] w-[6.875rem] min-w-[6rem] shrink-0 items-center justify-end px-2 text-right text-[13px] leading-normal tabular-nums text-slate-900;
+  }
+
+  /** Run Payroll — small numeric fields (pay days, HPL/EOL days, etc.). */
+  .payroll-days-input {
+    @apply payroll-amount-input w-[4.5rem] min-w-[4.5rem];
+    -moz-appearance: textfield;
+  }
+
+  .payroll-days-input::-webkit-outer-spin-button,
+  .payroll-days-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  @media (hover: hover) {
+    .table-modern tbody tr:hover {
+      @apply bg-brand-blue/[0.03];
+    }
+  }
+}
+
+@supports (padding: max(0px)) {
+  .app-main-pad {
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  }
+}
+
+.password-field-input::-ms-reveal,
+.password-field-input::-ms-clear {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.password-field-input::-webkit-credentials-auto-fill-button,
+.password-field-input::-webkit-strong-password-auto-fill-button {
+  display: none !important;
+  visibility: hidden;
+  pointer-events: none;
+  height: 0;
+  width: 0;
+}
+
+/* DayPicker — brand theme */
+.attendance-day-picker .rdp-root,
+.rdp-theme .rdp-root {
+  --rdp-accent-color: #2563eb;
+  --rdp-accent-background-color: #dbeafe;
+  --rdp-today-color: #1e3a8a;
+  --rdp-day_button-border-radius: 0.5rem;
+}
+
+.rdp-theme .rdp-dropdown_root {
+  font-size: 0.8125rem;
+}
+
+.date-picker-panel .picker-view-grid button:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.payslip-print-area .payslip-gross-basic-inner {
+  width: 100%;
+  max-width: 100%;
+  border-collapse: collapse;
+  border-spacing: 0;
+  table-layout: fixed;
+}
+.payslip-print-area .payslip-gross-basic-inner td {
+  border-color: #000;
+}
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .payslip-print-area,
+  .payslip-print-area * {
+    visibility: visible;
+  }
+  .payslip-print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 190mm !important;
+    max-width: 190mm !important;
+    overflow: visible !important;
+    box-sizing: border-box;
+  }
+  .payslip-print-area .payslip-financial-table {
+    table-layout: fixed;
+    width: 100% !important;
+    font-size: 12px !important;
+  }
+  .payslip-print-area .payslip-financial-table th,
+  .payslip-print-area .payslip-financial-table td {
+    padding: 8px 12px !important;
+    border-color: #000 !important;
+  }
+  .payslip-print-area .payslip-header-table { font-size: 14px !important; }
+  .payslip-print-area .payslip-logo-banner img {
+    max-height: 72px;
+    object-fit: contain;
+  }
+  .payslip-print-area .payslip-header-table td {
+    padding: 12px 16px !important;
+    border-color: #000 !important;
+  }
+  .payslip-print-area .payslip-gross-basic-inner {
+    width: 100% !important;
+    max-width: 100% !important;
+    border-collapse: collapse !important;
+    border-spacing: 0 !important;
+  }
+  .payslip-print-area .payslip-gross-basic-inner td {
+    border-color: #000 !important;
+    border-bottom-width: 1px !important;
+    border-bottom-style: solid !important;
+  }
+  .payslip-print-area .payslip-gross-basic-inner td:first-child {
+    border-right-width: 1px !important;
+    border-right-style: solid !important;
+  }
+  @page {
+    size: 210mm 170mm;
+    margin: 10mm;
+  }
+}
