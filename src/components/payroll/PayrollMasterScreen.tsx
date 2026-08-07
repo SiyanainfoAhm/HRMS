@@ -60,10 +60,12 @@ import {
 } from "@/lib/payLevel";
 import {
   DEFAULT_CPF_BASIS_KEYS,
+  calculateCpfFromBasis,
   isCpfCompanyDefaultMode,
   isCpfEmployeeCustomMode,
   normalizeCpfUseCompanySettings,
   resolveEffectiveCpfConfigForMaster,
+  resolveMasterCpfBasisAmount,
 } from "@/lib/payrollCpfCalculation";
 import {
   normalizeDigits,
@@ -603,13 +605,19 @@ function formToPayload(form: MasterFormState) {
     cpfUseCompanySettings: isCpfCompanyDefaultMode(form.cpfUseCompanySettings),
     cpfPercentageOverride: isCpfCompanyDefaultMode(form.cpfUseCompanySettings)
       ? null
-      : parseFloat(form.cpfPercentageOverride) || 0,
+      : (() => {
+          const n = parseFloat(form.cpfPercentageOverride);
+          return Number.isFinite(n) ? n : 0;
+        })(),
     cpfBasisFieldKeysOverride: isCpfEmployeeCustomMode(form.cpfUseCompanySettings) ? form.cpfBasisFieldKeys : [],
     cpfCalculationMode: isCpfEmployeeCustomMode(form.cpfUseCompanySettings) ? form.cpfCalculationMode : undefined,
     cpfFixedAmount: isCpfCompanyDefaultMode(form.cpfUseCompanySettings)
       ? undefined
       : form.cpfCalculationMode === "fixed_amount"
-        ? parseFloat(form.cpfFixedAmount) || 0
+        ? (() => {
+            const n = parseFloat(form.cpfFixedAmount);
+            return Number.isFinite(n) ? n : 0;
+          })()
         : undefined,
     hasQuarter: form.hasQuarter,
     quarterId: form.hasQuarter ? form.quarterId || null : null,
@@ -1506,6 +1514,35 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
       }),
     [form.cpfUseCompanySettings, form.cpfPercentageOverride, form.cpfBasisFieldKeys, form.cpfCalculationMode, form.cpfFixedAmount, companyCpfSettings],
   );
+
+  const instituteDefaultCpf = useMemo(() => {
+    const companyConfig = resolveEffectiveCpfConfigForMaster({
+      cpfUseCompanySettings: true,
+      companyCpfPercentage: companyCpfSettings.cpfPercentage,
+      companyCpfBasisFieldKeys: companyCpfSettings.cpfBasisFieldKeys,
+      companyCpfCalculationMode: companyCpfSettings.cpfCalculationMode,
+      companyCpfFixedAmount: companyCpfSettings.cpfFixedAmount,
+    });
+    const basis = resolveMasterCpfBasisAmount(
+      {
+        gross_basic_pay: parseFloat(form.grossBasicPay) || 0,
+        da_amount: preview.daAmount,
+        hra_amount: preview.hraAmount,
+        medical: parseFloat(form.medical) || 0,
+        transport_total: preview.transportTotal,
+      },
+      companyConfig.cpfBasisFieldKeys,
+      customNumericBagForTotalFromValues(form.customFieldValues, payrollFieldDefs, "earnings"),
+    );
+    return calculateCpfFromBasis(
+      0,
+      basis,
+      companyConfig.cpfPercentage,
+      preview.totalEarnings,
+      companyConfig.cpfCalculationMode ?? "percentage",
+      companyConfig.cpfFixedAmount ?? 0,
+    );
+  }, [companyCpfSettings, preview, form.grossBasicPay, form.medical, form.customFieldValues, payrollFieldDefs]);
 
   function openAdd() {
     setEditing(null);
@@ -2626,15 +2663,42 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                   </div>
                   <h4 className="mb-3 mt-5 text-sm font-semibold text-slate-800">Default deductions</h4>
                   <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                    <FormField
-                      label={
-                        effectiveCpfConfig.cpfCalculationMode === "fixed_amount"
-                          ? "PF (CPF) — fixed amount"
-                          : `PF (CPF) — ${effectiveCpfConfig.cpfPercentage}%`
-                      }
-                    >
+                    <FormField label="CPF effective amount">
                       <Input readOnly value={fmt(preview.cpfEffective)} />
                     </FormField>
+                    {isCpfEmployeeCustomMode(form.cpfUseCompanySettings) ? (
+                      <>
+                        <FormField label="Institute CPF default">
+                          <Input readOnly value={fmt(instituteDefaultCpf)} />
+                        </FormField>
+                        <FormField
+                          label={
+                            effectiveCpfConfig.cpfCalculationMode === "fixed_amount"
+                              ? "Employee CPF override (fixed)"
+                              : `Employee CPF override (${effectiveCpfConfig.cpfPercentage}%)`
+                          }
+                        >
+                          <Input
+                            readOnly
+                            value={
+                              effectiveCpfConfig.cpfCalculationMode === "fixed_amount"
+                                ? fmt(effectiveCpfConfig.cpfFixedAmount ?? 0)
+                                : fmt(preview.cpfEffective)
+                            }
+                          />
+                        </FormField>
+                      </>
+                    ) : (
+                      <FormField
+                        label={
+                          effectiveCpfConfig.cpfCalculationMode === "fixed_amount"
+                            ? "PF (CPF) — institute fixed amount"
+                            : `PF (CPF) — institute ${effectiveCpfConfig.cpfPercentage}%`
+                        }
+                      >
+                        <Input readOnly value={fmt(preview.cpfEffective)} />
+                      </FormField>
+                    )}
                     {DEFAULT_DEDUCTION_FIELDS.map(([key, label]) => (
                       <FormField key={key} label={label} error={showError(key)}>
                         <Input
@@ -2698,7 +2762,9 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                               ? form.cpfBasisFieldKeys
                               : companyCpfSettings.cpfBasisFieldKeys ?? DEFAULT_CPF_BASIS_KEYS,
                           cpfPercentageOverride:
-                            form.cpfPercentageOverride || String(companyCpfSettings.cpfPercentage ?? 12),
+                            form.cpfPercentageOverride !== ""
+                              ? form.cpfPercentageOverride
+                              : String(companyCpfSettings.cpfPercentage ?? 12),
                         });
                       }}
                       companyPreview={

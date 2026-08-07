@@ -114,10 +114,11 @@ final class PayrollCalculationService
             'transport_total' => $transportTotal,
         ];
         $cpfBasisAmount = PayrollFieldRegistry::resolveMasterCpfBasisAmount($partialCalc, $cpfBasisKeys, $customEarnings);
-        if ($cpfDefault > 0) {
-            $cpfEffective = $this->roundRupees($cpfDefault);
-        } elseif ($cpfMode === 'fixed_amount' && $cpfFixed > 0) {
+        // Fixed-amount mode must honour explicit 0 (do not fall through to %).
+        if ($cpfMode === 'fixed_amount') {
             $cpfEffective = $this->roundRupees($cpfFixed);
+        } elseif ($cpfDefault > 0) {
+            $cpfEffective = $this->roundRupees($cpfDefault);
         } else {
             $cpfEffective = $this->roundRupees($cpfBasisAmount * ($cpfPercentage / 100));
         }

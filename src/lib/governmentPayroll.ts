@@ -451,18 +451,22 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
   const cpfBasis = input.cpfConfig?.cpfBasisFieldKeys ?? DEFAULT_CPF_BASIS_KEYS;
   const cpfMode: CpfCalculationMode =
     input.cpfConfig?.cpfCalculationMode === "fixed_amount" ? "fixed_amount" : "percentage";
-  const cpfFixed = Math.round(Number(input.cpfConfig?.cpfFixedAmount) || 0);
-  let cpfAmount = roundRupees(d.cpf);
-  if (cpfAmount <= 0) {
-    if (cpfMode === "fixed_amount" && cpfFixed > 0) {
-      cpfAmount = cpfFixed;
-    } else {
-      const basisSum = cpfBasis.reduce((s, k) => {
-        if (customEarnings[k] != null) return s + (Number(customEarnings[k]) || 0);
-        return s + (basisAmounts[k] ?? 0);
-      }, 0);
-      cpfAmount = calculateCpfFromBasis(0, basisSum, cpfPct, totalEarnings, cpfMode, cpfFixed);
-    }
+  const cpfFixedRaw = input.cpfConfig?.cpfFixedAmount;
+  const cpfFixed =
+    cpfFixedRaw !== undefined && cpfFixedRaw !== null
+      ? Math.round(Number(cpfFixedRaw))
+      : 0;
+  // Prefer explicit CPF config from master resolve over stale deductionDefaults.cpf.
+  let cpfAmount: number;
+  if (cpfMode === "fixed_amount") {
+    // Explicit fixed amount — including intentional ₹0.
+    cpfAmount = Number.isFinite(cpfFixed) ? cpfFixed : 0;
+  } else {
+    const basisSum = cpfBasis.reduce((s, k) => {
+      if (customEarnings[k] != null) return s + (Number(customEarnings[k]) || 0);
+      return s + (basisAmounts[k] ?? 0);
+    }, 0);
+    cpfAmount = calculateCpfFromBasis(0, basisSum, cpfPct, totalEarnings, cpfMode, cpfFixed);
   }
 
   const unitRate = Math.max(0, Number(input.electricityUnitRate) || 0);

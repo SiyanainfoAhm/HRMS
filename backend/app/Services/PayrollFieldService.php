@@ -435,13 +435,19 @@ class PayrollFieldService
                 ? (float) $master->cpf_percentage_override
                 : null,
             'cpfBasisFieldKeysOverride' => $master?->cpf_basis_field_keys_override ?? [],
+            'cpfCalculationMode' => $master?->cpf_calculation_mode,
+            'cpfFixedAmount' => $master?->cpf_fixed_amount !== null ? (float) $master->cpf_fixed_amount : null,
             'companySettings' => $companyFormatted,
             'effectiveSettings' => [
                 'cpfPercentage' => $effective['cpf_percentage'],
                 'cpfBasisFieldKeys' => $effective['cpf_basis_field_keys'],
+                'cpfCalculationMode' => $effective['cpf_calculation_mode'],
+                'cpfFixedAmount' => (float) ($effective['cpf_fixed_amount'] ?? 0),
                 'cpfFormulaPreview' => PayrollFieldRegistry::cpfFormulaPreview(
                     $basisLabels,
-                    $effective['cpf_percentage'],
+                    (float) $effective['cpf_percentage'],
+                    (string) ($effective['cpf_calculation_mode'] ?? 'percentage'),
+                    (float) ($effective['cpf_fixed_amount'] ?? 0),
                 ),
                 'source' => $effective['source'],
             ],
