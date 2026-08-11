@@ -27,6 +27,7 @@ export const GOV_PREVIEW_DEDUCTION_FIELDS: { key: keyof GovernmentPreviewMonthly
   { key: "cpf", label: "CPF" },
   { key: "daCpf", label: "DA CPF" },
   { key: "vpf", label: "VPF" },
+  { key: "pfLoan", label: "PF Loan" },
   { key: "postOffice", label: "Post off." },
   { key: "creditSociety", label: "Cr. society" },
   { key: "electricity", label: "Electricity" },
@@ -36,6 +37,7 @@ export const GOV_PREVIEW_DEDUCTION_FIELDS: { key: keyof GovernmentPreviewMonthly
   { key: "welfare", label: "Welfare" },
   { key: "hpl", label: "HPL" },
   { key: "eol", label: "EOL" },
+  { key: "vehCharge", label: "Veh. chg." },
   { key: "quarterRent", label: "Quarter Rent" },
   { key: "other", label: "Other" },
 ];

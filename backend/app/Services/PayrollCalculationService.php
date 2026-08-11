@@ -83,9 +83,9 @@ final class PayrollCalculationService
         } else {
             $hraAmount = $this->optionalAmountOverride($input, ['hra_amount', 'hraAmount', 'hra'], $hraAmount);
         }
-        $transportBase = $this->optionalPositiveAmountOverride($input, ['transport_base', 'transportBase'], $transportBase);
-        $transportDa = $this->optionalPositiveAmountOverride($input, ['transport_da', 'transportDa'], $transportDa);
-        $transportTotal = $this->optionalPositiveAmountOverride(
+        $transportBase = $this->optionalAmountOverride($input, ['transport_base', 'transportBase'], $transportBase);
+        $transportDa = $this->optionalAmountOverride($input, ['transport_da', 'transportDa'], $transportDa);
+        $transportTotal = $this->optionalAmountOverride(
             $input,
             ['transport_total', 'transportTotal', 'trans'],
             $this->roundRupees($transportBase + $transportDa),

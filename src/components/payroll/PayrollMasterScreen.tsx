@@ -58,6 +58,7 @@ import {
   isCustomQuarterRent,
   parseQuarterRentInput,
 } from "@/lib/quarterRent";
+import { parseAmountOrZero } from "@/lib/effectivePayrollValue";
 import {
   formatPayLevelDisplay,
   isValidGovernmentPayLevel,
@@ -577,10 +578,10 @@ function formToPayload(form: MasterFormState) {
     hraPercent: Number.isFinite(parseFloat(form.hraPercent)) ? parseFloat(form.hraPercent) : DEFAULT_HRA_PERCENT,
     hraAmount: parseFloat(form.hraAmount) || 0,
     medical: parseFloat(form.medical) || DEFAULT_MEDICAL,
-    transportBase: parseFloat(form.transportBase) || 0,
-    transportDa: parseFloat(form.transportDa) || 0,
-    transportTotal: parseFloat(form.transportTotal) || 0,
-    totalEarnings: parseFloat(form.totalEarnings) || 0,
+    transportBase: parseAmountOrZero(form.transportBase),
+    transportDa: parseAmountOrZero(form.transportDa),
+    transportTotal: parseAmountOrZero(form.transportTotal),
+    totalEarnings: parseAmountOrZero(form.totalEarnings),
     uan: form.uan.trim() || undefined,
     cpfNo: form.cpfNo.trim() || undefined,
     pan: form.pan.trim().toUpperCase() || undefined,
@@ -2635,9 +2636,36 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                         <Input
                           type="number"
                           numeric
+                          min={0}
                           value={form.transportTotal}
                           onChange={(e) => patchForm({ transportTotal: e.target.value })}
                         />
+                        {(() => {
+                          const slab = previewEarningDefaults({
+                            payLevel: form.payLevel,
+                            grossBasicPay: form.grossBasicPay,
+                            daPercent: form.daPercent,
+                            hraPercent: form.hraPercent,
+                            medical: form.medical,
+                            hasQuarter: form.hasQuarter,
+                          });
+                          const effective = parseAmountOrZero(form.transportTotal);
+                          const slabTotal = parseAmountOrZero(slab.transportTotal);
+                          if (effective === slabTotal) {
+                            return (
+                              <p className="mt-1 text-xs text-slate-500">
+                                Default slab transport: ₹{slabTotal.toLocaleString("en-IN")}
+                              </p>
+                            );
+                          }
+                          return (
+                            <p className="mt-1 text-xs text-slate-500">
+                              Transport effective: ₹{effective.toLocaleString("en-IN")}
+                              {" · "}
+                              Default slab: ₹{slabTotal.toLocaleString("en-IN")}
+                            </p>
+                          );
+                        })()}
                       </FormField>
                       <FormField label="Total Earnings">
                         <Input

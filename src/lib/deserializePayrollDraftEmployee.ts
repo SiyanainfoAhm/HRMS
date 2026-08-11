@@ -241,6 +241,51 @@ export function deserializePayrollDraftEmployee(
     }
   }
 
+  // Re-attach manual override flags + effective amounts from saved draft so a later
+  // recompute (e.g. editing Mess) cannot wipe CPF/EOL/HPL/transport overrides.
+  const dedDefaults: Record<string, unknown> = {
+    ...(asRecord(calcGovRecalc?.deductionDefaults) ?? {}),
+    ...(asRecord(govRecalc.deductionDefaults) ?? {}),
+  };
+  const earningOverrides: Record<string, unknown> = {
+    ...(asRecord(calcGovRecalc?.earningPaidOverrides) ?? {}),
+    ...(asRecord(govRecalc.earningPaidOverrides) ?? {}),
+  };
+
+  if (savedDed && Object.prototype.hasOwnProperty.call(savedDed, "cpf")) {
+    // Saved draft CPF is the effective run value (0 included).
+    govRecalc.cpfManualOverride = true;
+    dedDefaults.cpf = numOrUndef(savedDed.cpf) ?? 0;
+  }
+  if (savedDed && Object.prototype.hasOwnProperty.call(savedDed, "hpl") && govRecalc.hplDeductionManualOverride === true) {
+    dedDefaults.hpl = numOrUndef(savedDed.hpl) ?? 0;
+  }
+  if (savedDed && Object.prototype.hasOwnProperty.call(savedDed, "eol") && govRecalc.eolDeductionManualOverride === true) {
+    dedDefaults.eol = numOrUndef(savedDed.eol) ?? 0;
+  }
+  if (savedDed && Object.prototype.hasOwnProperty.call(savedDed, "electricity") && govRecalc.electricityManualOverride === true) {
+    dedDefaults.electricity = numOrUndef(savedDed.electricity) ?? 0;
+  }
+  if (savedDed && Object.prototype.hasOwnProperty.call(savedDed, "quarterRent") && govRecalc.quarterRentManualOverride === true) {
+    dedDefaults.quarterRent = numOrUndef(savedDed.quarterRent) ?? 0;
+    govRecalc.quarterRent = dedDefaults.quarterRent;
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(gm, "transportPaid") ||
+    Object.prototype.hasOwnProperty.call(gm, "transport_paid")
+  ) {
+    const tp = numOrUndef(gm.transportPaid ?? gm.transport_paid);
+    if (tp !== undefined && !Object.prototype.hasOwnProperty.call(earningOverrides, "transportPaid")) {
+      earningOverrides.transportPaid = tp;
+    }
+  }
+
+  govRecalc.deductionDefaults = dedDefaults;
+  if (Object.keys(earningOverrides).length > 0) {
+    govRecalc.earningPaidOverrides = earningOverrides;
+  }
+
   const incentive = firstDefined(numOrUndef(payload.incentive), numOrUndef(calc.incentive)) ?? 0;
   const prBonus = firstDefined(numOrUndef(payload.prBonus), numOrUndef(calc.prBonus)) ?? 0;
   const reimbursement =

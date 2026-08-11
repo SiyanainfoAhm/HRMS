@@ -150,6 +150,7 @@ const GOV_RUN_EDITABLE_DEDUCTION_KEYS: (keyof GovernmentDeductionDefaults)[] = [
   "cpf",
   "daCpf",
   "vpf",
+  "pfLoan",
   "postOffice",
   "creditSociety",
   "electricity",
@@ -159,6 +160,7 @@ const GOV_RUN_EDITABLE_DEDUCTION_KEYS: (keyof GovernmentDeductionDefaults)[] = [
   "welfare",
   "hpl",
   "eol",
+  "vehCharge",
   "quarterRent",
   "other",
 ];
@@ -1486,6 +1488,7 @@ function PayrollPageContent() {
               deductionDefaults: ded,
               ...(sub === "hpl" ? { hplDeductionManualOverride: true } : {}),
               ...(sub === "eol" ? { eolDeductionManualOverride: true } : {}),
+              ...(sub === "cpf" ? { cpfManualOverride: true } : {}),
               ...(sub === "electricity" ? { electricityManualOverride: true } : {}),
               ...(sub === "quarterRent"
                 ? { quarterRentManualOverride: true, quarterRent: ded.quarterRent }

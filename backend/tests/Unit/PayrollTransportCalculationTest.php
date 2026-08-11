@@ -68,16 +68,31 @@ final class PayrollTransportCalculationTest extends TestCase
         $this->assertSame(11376.0, $calc['transport_total']);
     }
 
-    public function test_pay_level_2_da_58_transport_total(): void
+    public function test_explicit_zero_transport_total_is_persisted(): void
     {
         $calc = $this->service->calculateMaster([
-            'pay_level' => 2,
-            'gross_basic_pay' => 20200,
-            'da_percent' => 58,
+            'pay_level' => 8,
+            'gross_basic_pay' => 83600,
+            'da_percent' => 60,
+            'hra_percent' => 30,
+            'medical' => 3000,
+            'transport_total' => 0,
         ]);
 
-        $this->assertSame(1350.0, $calc['transport_base']);
-        $this->assertSame(783.0, $calc['transport_da']);
-        $this->assertSame(2133.0, $calc['transport_total']);
+        $this->assertSame(0.0, $calc['transport_total']);
+        // Slab would have been 5760 — must not replace explicit 0.
+        $this->assertNotSame(5760.0, $calc['transport_total']);
+    }
+
+    public function test_explicit_custom_transport_total_is_persisted(): void
+    {
+        $calc = $this->service->calculateMaster([
+            'pay_level' => 8,
+            'gross_basic_pay' => 83600,
+            'da_percent' => 60,
+            'transport_total' => 500,
+        ]);
+
+        $this->assertSame(500.0, $calc['transport_total']);
     }
 }

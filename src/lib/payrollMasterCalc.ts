@@ -128,20 +128,14 @@ export function computePayrollMasterPreview(input: PayrollMasterPreviewInput): P
     hraAmount = roundRupees(num(input.hraAmount, hraAmount));
   }
   if (input.transportBase !== undefined && input.transportBase !== "") {
-    const override = roundRupees(num(input.transportBase, transportBase));
-    if (override > 0) transportBase = override;
+    transportBase = Math.max(0, roundRupees(num(input.transportBase, transportBase)));
   }
   if (input.transportDa !== undefined && input.transportDa !== "") {
-    const override = roundRupees(num(input.transportDa, transportDa));
-    if (override > 0) transportDa = override;
+    transportDa = Math.max(0, roundRupees(num(input.transportDa, transportDa)));
   }
   if (input.transportTotal !== undefined && input.transportTotal !== "") {
-    const override = roundRupees(num(input.transportTotal, transportTotal));
-    if (override > 0) {
-      transportTotal = override;
-    } else {
-      transportTotal = roundRupees(transportBase + transportDa);
-    }
+    // Explicit 0 is a valid employee transport override (do not fall back to slab).
+    transportTotal = Math.max(0, roundRupees(num(input.transportTotal, 0)));
   } else {
     transportTotal = roundRupees(transportBase + transportDa);
   }

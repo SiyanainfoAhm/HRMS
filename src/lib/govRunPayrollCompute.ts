@@ -39,6 +39,7 @@ export type GovRecalcPayload = {
   nightAllowanceManualOverride?: boolean;
   nightAllowanceWarning?: string;
   quarterRentManualOverride?: boolean;
+  cpfManualOverride?: boolean;
   deductionDefaults: GovernmentDeductionDefaults;
   earningPaidOverrides?: GovernmentEarningPaidOverrides;
   customEarnings?: Record<string, number>;
@@ -109,6 +110,7 @@ export function runGovernmentPayrollCompute(
     nightAllowanceSlabNo: gr.nightAllowanceSlabNo ?? null,
     nightAllowanceWarning: gr.nightAllowanceWarning,
     quarterRentManualOverride: gr.quarterRentManualOverride,
+    cpfManualOverride: gr.cpfManualOverride,
     runMonth: opts.runMonth,
     runYear: opts.runYear,
     deductionDefaults: gr.deductionDefaults,

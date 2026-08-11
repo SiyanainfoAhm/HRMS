@@ -165,6 +165,8 @@ export type GovernmentMonthlyInput = {
   nightAllowanceSlabNo?: number | null;
   nightAllowanceWarning?: string;
   quarterRentManualOverride?: boolean;
+  /** When true, use deductionDefaults.cpf (incl. 0) instead of recalculating from CPF config. */
+  cpfManualOverride?: boolean;
   runMonth?: number;
   runYear?: number;
   deductionDefaults: GovernmentDeductionDefaults;
@@ -461,9 +463,14 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
     cpfFixedRaw !== undefined && cpfFixedRaw !== null
       ? Math.round(Number(cpfFixedRaw))
       : 0;
-  // Prefer explicit CPF config from master resolve over stale deductionDefaults.cpf.
+  // Prefer explicit CPF config from master resolve over stale deductionDefaults.cpf —
+  // unless admin set a Run Payroll CPF override (0 is valid).
   let cpfAmount: number;
-  if (cpfMode === "fixed_amount") {
+  if (input.cpfManualOverride) {
+    const raw = d.cpf;
+    const n = Number(raw);
+    cpfAmount = Number.isFinite(n) ? Math.max(0, roundRupees(n)) : 0;
+  } else if (cpfMode === "fixed_amount") {
     // Explicit fixed amount — including intentional ₹0.
     cpfAmount = Number.isFinite(cpfFixed) ? cpfFixed : 0;
   } else {

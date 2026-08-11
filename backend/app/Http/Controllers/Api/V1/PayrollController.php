@@ -553,6 +553,14 @@ class PayrollController extends Controller
                         'quarterRent' => (float) ($quarterMeta['quarterRent'] ?? 0),
                     ],
                 ];
+                // Seed Run Payroll transport paid from master effective transport (incl. explicit 0).
+                // transport_actual remains slab-derived in the frontend calculator.
+                $masterTransport = $m->transport_total ?? $m->trans ?? null;
+                if ($masterTransport !== null && $masterTransport !== '') {
+                    $row['govRecalc']['earningPaidOverrides'] = [
+                        'transportPaid' => max(0, (float) $masterTransport),
+                    ];
+                }
                 $customValues = $customFieldsByMasterId[$m->id] ?? [];
                 $row['govRecalc']['customEarnings'] = $this->fieldService->customEarningsFromValues((string) $user->company_id, $customValues);
                 $row['govRecalc']['customDeductions'] = $this->fieldService->customDeductionsFromValues((string) $user->company_id, $customValues);
