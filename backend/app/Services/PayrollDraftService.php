@@ -217,6 +217,16 @@ class PayrollDraftService
                     ->delete();
             }
 
+            $expectedCount = count($employeeRows);
+            $distinctCount = count(array_values(array_unique($seenUserIds)));
+            if ($saved !== $expectedCount || $distinctCount !== $expectedCount) {
+                throw ValidationException::withMessages([
+                    'employees' => [
+                        "Draft save incomplete: expected {$expectedCount} employees, saved {$saved} (distinct {$distinctCount}).",
+                    ],
+                ]);
+            }
+
             $draft->refresh();
             $employees = $draft->employees()
                 ->orderBy('employee_code')
@@ -225,10 +235,21 @@ class PayrollDraftService
                 ->values()
                 ->all();
 
+            if (count($employees) !== $expectedCount) {
+                throw ValidationException::withMessages([
+                    'employees' => [
+                        'Draft save incomplete: stored employee count does not match the request.',
+                    ],
+                ]);
+            }
+
             return [
                 'draft' => $this->formatDraft($draft),
                 'employees' => $employees,
                 'saved' => $saved,
+                'expectedEmployeeCount' => $expectedCount,
+                'savedEmployeeCount' => $saved,
+                'distinctEmployeeCount' => $distinctCount,
             ];
         });
     }

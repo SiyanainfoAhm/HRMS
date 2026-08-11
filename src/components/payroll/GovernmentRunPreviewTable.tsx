@@ -768,7 +768,16 @@ export function GovernmentRunPreviewTable({
                     <div className="mt-0.5 flex items-center justify-between gap-2 text-[11px] leading-tight text-slate-500">
                       <span className="truncate">{r.employeeEmail}</span>
                       <span className="shrink-0 tabular-nums font-medium text-slate-700">
-                        {fmtIn(v(g, "totalEarnings") || r.netPay)}
+                        {fmtIn(
+                          (() => {
+                            const gross = v(g, "totalEarnings");
+                            if (gross > 0) return gross;
+                            if (g && typeof g === "object" && ("totalEarnings" in g || "total_earnings" in (g as object))) {
+                              return gross;
+                            }
+                            return Number(r.grossPay ?? r.netPay ?? 0);
+                          })(),
+                        )}
                       </span>
                     </div>
                   </button>

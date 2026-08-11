@@ -121,7 +121,12 @@ export function governmentMonthlyExtras(
     customDeductions: gr.customDeductions ?? {},
     payrollFieldDefs: payrollConfig?.fields,
     hasQuarter: Boolean(gr.hasQuarter ?? gr.has_quarter),
-    quarterRent: Number(gr.quarterRent ?? gr.quarter_rent ?? 0) || 0,
+    quarterRent: (() => {
+      const raw = gr.quarterRent ?? gr.quarter_rent;
+      if (raw === null || raw === undefined) return 0;
+      const n = Number(raw);
+      return Number.isFinite(n) ? Math.max(0, n) : 0;
+    })(),
   };
 }
 
@@ -478,9 +483,17 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
       ? electricityCalc
       : roundRupees(d.electricity);
 
-  const quarterRentAmount = roundRupees(
-    Number(input.quarterRent ?? d.quarterRent ?? 0) || 0,
-  );
+  // Priority: run/input rent → deduction default → 0. Explicit 0 stays 0.
+  const quarterRentAmount = hasQuarter
+    ? roundRupees(
+        (() => {
+          const raw = input.quarterRent ?? d.quarterRent;
+          if (raw === null || raw === undefined) return 0;
+          const n = Number(raw);
+          return Number.isFinite(n) ? Math.max(0, n) : 0;
+        })(),
+      )
+    : 0;
 
   const deductions: GovernmentDeductionDefaults = {
     incomeTax: roundRupees(d.incomeTax),
@@ -615,6 +628,11 @@ export function masterRowToDeductionDefaults(m: Record<string, unknown>): Govern
     eol: 0,
     vehCharge: 0,
     other: Number(m.other_deduction_default ?? 0) || 0,
-    quarterRent: Number(m.quarter_rent ?? m.quarterRent ?? 0) || 0,
+    quarterRent: (() => {
+      const raw = m.quarter_rent ?? m.quarterRent;
+      if (raw === null || raw === undefined) return 0;
+      const n = Number(raw);
+      return Number.isFinite(n) ? Math.max(0, n) : 0;
+    })(),
   };
 }

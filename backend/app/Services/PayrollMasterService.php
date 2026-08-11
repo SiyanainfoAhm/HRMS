@@ -2635,9 +2635,10 @@ final class PayrollMasterService
             'effective_start_date' => $effectiveFrom,
             'effective_to' => $effectiveTo,
             'effective_end_date' => $effectiveTo,
-            'has_quarter' => (bool) ($calc['has_quarter'] ?? $validated['has_quarter'] ?? $validated['hasQuarter'] ?? false),
+            'has_quarter' => (bool) ($validated['has_quarter'] ?? $validated['hasQuarter'] ?? $calc['has_quarter'] ?? false),
             'quarter_id' => $validated['quarter_id'] ?? $validated['quarterId'] ?? null,
-            'quarter_rent' => (float) ($calc['quarter_rent'] ?? $validated['quarter_rent'] ?? $validated['quarterRent'] ?? 0),
+            // Prefer payload rent (incl. explicit 0) over calculator echo.
+            'quarter_rent' => (float) ($validated['quarter_rent'] ?? $validated['quarterRent'] ?? $calc['quarter_rent'] ?? 0),
             'payroll_mode' => 'government',
             'pf_eligible' => false,
             'esic_eligible' => false,

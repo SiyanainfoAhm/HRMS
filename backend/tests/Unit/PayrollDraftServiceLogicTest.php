@@ -33,6 +33,17 @@ final class PayrollDraftServiceLogicTest extends TestCase
         $this->assertStringContainsString("'rowPayload' => \$row->row_payload", $source);
     }
 
+    public function test_save_response_includes_employee_count_fields(): void
+    {
+        $source = file_get_contents(dirname(__DIR__, 2).'/app/Services/PayrollDraftService.php');
+        $this->assertIsString($source);
+        $this->assertStringContainsString('expectedEmployeeCount', $source);
+        $this->assertStringContainsString('savedEmployeeCount', $source);
+        $this->assertStringContainsString('distinctEmployeeCount', $source);
+        $this->assertStringContainsString('Draft save incomplete', $source);
+        $this->assertStringContainsString('DB::transaction', $source);
+    }
+
     public function test_format_employee_exposes_row_payload_object_fields(): void
     {
         $source = file_get_contents(dirname(__DIR__, 2).'/app/Services/PayrollDraftService.php');

@@ -33,19 +33,27 @@ final class QuarterService
         return $query->get()->map(fn (HrmsQuarter $q) => $this->formatQuarter($q))->values()->all();
     }
 
-    /** @return list<array<string, mixed>> */
+    /**
+     * Quarters selectable on Payroll Master employee form.
+     *
+     * Returns all non-inactive quarters for the company so assigned quarters
+     * remain visible when editing (available-only lists look empty when stock
+     * is fully assigned). Assignment conflicts are still enforced on save.
+     *
+     * @return list<array<string, mixed>>
+     */
     public function listForEmployeeForm(string $companyId, ?string $currentQuarterId = null): array
     {
         $query = HrmsQuarter::query()
             ->with('quarterType')
             ->where('company_id', $companyId)
             ->where(function ($q) use ($currentQuarterId) {
-                $q->where('status', 'available');
+                $q->where('status', '!=', 'inactive');
                 if ($currentQuarterId) {
+                    // Include currently assigned row even if marked inactive (legacy).
                     $q->orWhere('id', $currentQuarterId);
                 }
             })
-            ->where('status', '!=', 'inactive')
             ->orderBy('quarter_name');
 
         return $query->get()->map(fn (HrmsQuarter $q) => $this->formatQuarter($q))->values()->all();
@@ -234,11 +242,31 @@ final class QuarterService
             $this->assign($quarter, $companyId, $employeeUserId, $actorId);
         }
 
+        $payloadRent = $payload['quarter_rent'] ?? $payload['quarterRent'] ?? null;
         $master->update([
             'quarter_id' => $quarter->id,
             'has_quarter' => true,
-            'quarter_rent' => (float) $quarter->monthly_rent,
+            'quarter_rent' => $this->resolveEffectiveMasterQuarterRent(
+                $payloadRent,
+                (float) $quarter->monthly_rent,
+            ),
         ]);
+    }
+
+    /**
+     * Effective employee/master quarter rent.
+     * Explicit 0 must remain 0 (use nullish, not truthy fallback).
+     */
+    public function resolveEffectiveMasterQuarterRent(mixed $payloadRent, float $catalogMonthlyRent): float
+    {
+        if ($payloadRent === null || $payloadRent === '') {
+            return round(max(0, $catalogMonthlyRent), 2);
+        }
+        if (! is_numeric($payloadRent)) {
+            return round(max(0, $catalogMonthlyRent), 2);
+        }
+
+        return round(max(0, (float) $payloadRent), 2);
     }
 
     public function clearMasterQuarter(HrmsPayrollMaster $master, string $companyId, string $actorId): void

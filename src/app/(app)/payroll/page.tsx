@@ -55,11 +55,14 @@ import {
   type BankLetterEmployeeInput,
 } from "@/lib/payrollBankLetter";
 import {
-  deserializePayrollDraftEmployee,
-  normalizeDraftEmployeeApiRow,
   sumResolvedPayrollTotals,
   type DraftEmployeeApiRow,
 } from "@/lib/deserializePayrollDraftEmployee";
+import {
+  isZeroStubPayrollRow,
+  resolveRunPayrollRow,
+  type RunPayrollRowLike,
+} from "@/lib/resolveRunPayrollRow";
 import { isAdminRole } from "@/lib/roles";
 import { Download, FileText } from "lucide-react";
 import { GovernmentPayslipPrint } from "@/components/payslip/GovernmentPayslipPrint";
@@ -646,7 +649,12 @@ function buildMasterGridRow(apiRow: any, companyPt: number): MasterGridRow | nul
     const vehChargeDefault = Number(m.vehChargeDefault) || 0;
     const otherDeductionDefault = Number(m.otherDeductionDefault) || 0;
     const hasQuarter = Boolean(m.hasQuarter);
-    const quarterRent = hasQuarter ? Number(m.quarterRent) || 0 : 0;
+    const quarterRent = hasQuarter
+      ? (() => {
+          const n = Number(m.quarterRent);
+          return Number.isFinite(n) ? Math.max(0, n) : 0;
+        })()
+      : 0;
     const base: MasterGridRow = {
       employeeUserId: apiRow.employeeUserId,
       employeeName: apiRow.employeeName,
@@ -822,6 +830,8 @@ function PayrollPageContent() {
   const [previewPerPage, setPreviewPerPage] = useState(DEFAULT_PAGE_SIZE);
   const [previewMeta, setPreviewMeta] = useState<PaginationMeta>(emptyPaginationMeta());
   const runRowEditsRef = useRef<Map<string, Record<string, unknown>>>(new Map());
+  /** Canonical full-period payroll rows keyed by employee_user_id (not page/filter). */
+  const resolvedPayrollByUserIdRef = useRef<Map<string, RunPayrollRowLike>>(new Map());
   const draftPayloadByUserRef = useRef<Map<string, Record<string, unknown>>>(new Map());
   const [draftMeta, setDraftMeta] = useState<{
     id: string;
@@ -833,6 +843,8 @@ function PayrollPageContent() {
   const draftDirtyRef = useRef(false);
   /** Bumps when draft payloads load so editable rows re-hydrate after preview. */
   const [draftRevision, setDraftRevision] = useState(0);
+  /** Bumps when the canonical full collection is rebuilt (for header totals). */
+  const [resolvedRevision, setResolvedRevision] = useState(0);
   const [draftSaving, setDraftSaving] = useState(false);
   const [bankLetterLoading, setBankLetterLoading] = useState(false);
   const [previewDivisionFilter, setPreviewDivisionFilter] = useState("");
@@ -1068,14 +1080,21 @@ function PayrollPageContent() {
   ]);
 
   const previewTotals = useMemo(() => {
-    const totals = sumResolvedPayrollTotals(filteredEditableRows as unknown as Array<Record<string, unknown>>);
+    const allResolved = Array.from(resolvedPayrollByUserIdRef.current.values());
+    const source =
+      allResolved.length > 0
+        ? allResolved
+        : (filteredEditableRows as unknown as Array<Record<string, unknown>>);
+    const totals = sumResolvedPayrollTotals(source as Array<Record<string, unknown>>);
     return {
-      employees: totals.employees,
+      employees: previewMeta.total || totals.employees,
       gross: totals.gross,
       deductions: totals.deductions,
       net: totals.net,
     };
-  }, [filteredEditableRows]);
+    // resolvedRevision forces recompute when the canonical map is refreshed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filteredEditableRows, previewMeta.total, resolvedRevision]);
 
   // Salary slips tab (admin/HR view employee payslips)
   const [employees, setEmployees] = useState<{ id: string; name: string | null; email: string }[]>([]);
@@ -1152,135 +1171,35 @@ function PayrollPageContent() {
   useEffect(() => {
     const denom = preview?.daysInMonth ?? preview?.workingDaysInFullMonth;
     if (preview?.rows?.length && denom) {
+      const runY = parseInt(runYear, 10);
+      const runM = parseInt(runMonth, 10);
+      const alreadyRun = Boolean(preview.alreadyRun);
       setEditableRows(
         preview.rows.map((r: any) => {
           const uid = String(r.employeeUserId ?? "");
-          const cached = runRowEditsRef.current.get(uid) as typeof r | undefined;
-          // Prefer unsaved edits only when dirty; otherwise re-apply saved draft after reload.
-          if (cached && !preview.alreadyRun && draftDirtyRef.current) {
-            return cached;
+          const cached =
+            (runRowEditsRef.current.get(uid) as RunPayrollRowLike | undefined) ??
+            resolvedPayrollByUserIdRef.current.get(uid);
+          const resolved = resolveRunPayrollRow(r as RunPayrollRowLike, {
+            denom,
+            runYear: runY,
+            runMonth: runM,
+            payrollConfig,
+            alreadyRun,
+            draftDirty: draftDirtyRef.current,
+            cached: cached ?? null,
+            draftStored: draftPayloadByUserRef.current.get(uid) ?? null,
+          });
+          resolvedPayrollByUserIdRef.current.set(uid, resolved);
+          if (!alreadyRun) {
+            runRowEditsRef.current.set(uid, resolved);
           }
-          const draftedStored = !preview.alreadyRun
-            ? draftPayloadByUserRef.current.get(uid)
-            : undefined;
-          const draftEmp = normalizeDraftEmployeeApiRow(draftedStored, uid);
-          if (draftEmp) {
-            return deserializePayrollDraftEmployee(
-              draftEmp,
-              r as Record<string, unknown>,
-            ) as typeof r;
-          }
-          const base = {
-            ...r,
-            grossMonthly:
-              r.grossMonthly ??
-              Math.round((Number(r.grossPay || 0) * denom) / (r.payDays || r.rawPayDays || 1)),
-            grossPay: Number(r.grossPay ?? 0),
-            netPay: Number(r.netPay ?? 0),
-            pfEmployee: Number(r.pfEmployee ?? 0),
-            pfEmployer: Number(r.pfEmployer ?? 0),
-            esicEmployee: Number(r.esicEmployee ?? 0),
-            esicEmployer: Number(r.esicEmployer ?? 0),
-            profTax: Number(r.profTax ?? 0),
-            deductions: Number(r.deductions ?? 0),
-            takeHome: Number(r.takeHome ?? 0),
-            ctc: Number(r.ctc ?? 0),
-            incentive: r.incentive ?? 0,
-            prBonus: r.prBonus ?? 0,
-            reimbursement: r.reimbursement ?? 0,
-            tds: r.tds ?? 0,
-            ctcBase: r.ctcBase ?? r.ctc,
-            payrollMode: r.payrollMode,
-            governmentMonthly: r.governmentMonthly ?? null,
-            govRecalc: r.govRecalc,
-            bankAccountNumber: r.bankAccountNumber ?? null,
-            bankName: r.bankName ?? null,
-          };
-          if (r.payrollMode === "government" && r.govRecalc) {
-            const runY = parseInt(runYear, 10);
-            const runM = parseInt(runMonth, 10);
-            const refDefaults = defaultGovRecalcReferencePeriod(runY, runM);
-            const gm0 = r.governmentMonthly as {
-              hplDays?: number;
-              eolDays?: number;
-              leaveRemarks?: string | null;
-              leave_remarks?: string | null;
-              eolReferenceMonth?: number;
-              eolReferenceYear?: number;
-              hplReferenceMonth?: number;
-              hplReferenceYear?: number;
-              electricityUnitsConsumed?: number;
-              nightHours?: number;
-              nightAllowanceRate?: number;
-              nightAllowanceWarning?: string;
-            } | null | undefined;
-            base.govRecalc = {
-              ...r.govRecalc,
-              ...refDefaults,
-              hplDays: r.govRecalc.hplDays ?? gm0?.hplDays ?? 0,
-              eolDays: r.govRecalc.eolDays ?? gm0?.eolDays ?? 0,
-              leaveRemarks:
-                r.govRecalc.leaveRemarks ?? gm0?.leaveRemarks ?? gm0?.leave_remarks ?? "",
-              eolReferenceMonth: r.govRecalc.eolReferenceMonth ?? gm0?.eolReferenceMonth ?? refDefaults.eolReferenceMonth,
-              eolReferenceYear: r.govRecalc.eolReferenceYear ?? gm0?.eolReferenceYear ?? refDefaults.eolReferenceYear,
-              hplReferenceMonth: r.govRecalc.hplReferenceMonth ?? gm0?.hplReferenceMonth ?? refDefaults.hplReferenceMonth,
-              hplReferenceYear: r.govRecalc.hplReferenceYear ?? gm0?.hplReferenceYear ?? refDefaults.hplReferenceYear,
-              electricityUnitsConsumed: r.govRecalc.electricityUnitsConsumed ?? gm0?.electricityUnitsConsumed ?? 0,
-              nightHours: r.govRecalc.nightHours ?? gm0?.nightHours ?? 0,
-              nightAllowanceRate: r.govRecalc.nightAllowanceRate ?? gm0?.nightAllowanceRate ?? 0,
-              nightAllowanceSlabNo: r.govRecalc.nightAllowanceSlabNo ?? null,
-              nightAllowanceWarning: r.govRecalc.nightAllowanceWarning ?? gm0?.nightAllowanceWarning,
-            };
-          }
-          if (r.payrollMode === "government" && r.govRecalc && !r.governmentMonthly) {
-            const gr = base.govRecalc as GovRecalcPayload;
-            const dim = Math.max(1, Math.floor(Number(denom) || 30));
-            const payDays = Number(r.payDays ?? dim);
-            const runY = parseInt(runYear, 10);
-            const runM = parseInt(runMonth, 10);
-            const { comp } = applyGovernmentPayrollRowCompute(
-              r,
-              gr,
-              payDays,
-              {
-                daysInMonth: dim,
-                runYear: runY,
-                runMonth: runM,
-                payrollConfig,
-                arrearOverride: {
-                  daArrear: r.daArrear,
-                  transportArrear: r.transportArrear,
-                  cpfArrear: r.cpfArrear,
-                  grossArrear: r.grossArrear,
-                  netArrear: r.netArrear,
-                },
-              },
-            );
-            base.governmentMonthly = comp;
-            base.grossMonthly = gr.grossBasic;
-            base.grossPay = comp.totalEarnings;
-            base.deductions = comp.totalDeductions;
-            base.netPay = comp.netSalary;
-            base.arrearLineIds = Array.isArray(r.arrearLineIds)
-              ? r.arrearLineIds
-              : Array.isArray(r.arrearLines)
-                ? r.arrearLines.map((line: { id?: string }) => line?.id).filter(Boolean)
-                : [];
-            base.arrearLines = Array.isArray(r.arrearLines) ? r.arrearLines : [];
-            base.tds = comp.deductions.incomeTax;
-            base.profTax = comp.deductions.pt;
-            base.pfEmployee = Math.round(
-              comp.deductions.cpf + comp.deductions.daCpf + comp.deductions.vpf
-            );
-            base.takeHome = Math.round(comp.netSalary) +
-              Math.round(Number(r.incentive) || 0) +
-              Math.round(Number(r.prBonus) || 0) +
-              Math.round(Number(r.reimbursement) || 0);
-          }
-          return base;
-        })
+          return resolved as typeof r;
+        }),
       );
-    } else {
+      setResolvedRevision((n) => n + 1);
+    } else if (!preview?.rows?.length) {
+      // Keep canonical map; only clear the visible page when API returns empty.
       setEditableRows([]);
     }
   }, [
@@ -1296,7 +1215,10 @@ function PayrollPageContent() {
 
   useEffect(() => {
     for (const row of editableRows) {
-      runRowEditsRef.current.set(row.employeeUserId, row);
+      const uid = String(row.employeeUserId ?? "");
+      if (!uid) continue;
+      runRowEditsRef.current.set(uid, row);
+      resolvedPayrollByUserIdRef.current.set(uid, row as RunPayrollRowLike);
     }
   }, [editableRows]);
 
@@ -1822,10 +1744,12 @@ function PayrollPageContent() {
 
   useEffect(() => {
     runRowEditsRef.current.clear();
+    resolvedPayrollByUserIdRef.current.clear();
     draftPayloadByUserRef.current.clear();
     setDraftMeta(null);
     setDraftDirty(false);
     setDraftRevision(0);
+    setResolvedRevision((n) => n + 1);
   }, [runYear, runMonth]);
 
   useEffect(() => {
@@ -1861,6 +1785,7 @@ function PayrollPageContent() {
         // Drop calculated cache so draft payloads win on re-hydrate (keep unsaved edits).
         if (!draftDirtyRef.current) {
           runRowEditsRef.current.clear();
+          resolvedPayrollByUserIdRef.current.clear();
         }
         if (data.exists && data.draft) {
           setDraftMeta({
@@ -1900,8 +1825,6 @@ function PayrollPageContent() {
   useEffect(() => {
     if (!canManage || tab !== "run") return;
     let cancelled = false;
-    setPreview(null);
-    setEditableRows([]);
     setPreviewLoading(true);
     (async () => {
       try {
@@ -2431,20 +2354,25 @@ function PayrollPageContent() {
 
   function mergeRunRowWithEditsAndDraft(r: (typeof editableRows)[number]): (typeof editableRows)[number] {
     const uid = String(r.employeeUserId ?? "");
-    const cached = runRowEditsRef.current.get(uid) as (typeof editableRows)[number] | undefined;
-    if (cached && draftDirtyRef.current) return cached;
-    const draftEmp = normalizeDraftEmployeeApiRow(draftPayloadByUserRef.current.get(uid), uid);
-    if (draftEmp) {
-      return deserializePayrollDraftEmployee(
-        draftEmp,
-        r as Record<string, unknown>,
-      ) as (typeof editableRows)[number];
-    }
-    if (cached) return cached;
-    return r;
+    const denom = preview?.daysInMonth ?? preview?.workingDaysInFullMonth ?? 30;
+    const cached =
+      (runRowEditsRef.current.get(uid) as RunPayrollRowLike | undefined) ??
+      resolvedPayrollByUserIdRef.current.get(uid);
+    const resolved = resolveRunPayrollRow(r as RunPayrollRowLike, {
+      denom,
+      runYear: parseInt(runYear, 10),
+      runMonth: parseInt(runMonth, 10),
+      payrollConfig,
+      alreadyRun: Boolean(preview?.alreadyRun),
+      draftDirty: draftDirtyRef.current,
+      cached: cached ?? null,
+      draftStored: draftPayloadByUserRef.current.get(uid) ?? null,
+    });
+    resolvedPayrollByUserIdRef.current.set(uid, resolved);
+    return resolved as (typeof editableRows)[number];
   }
 
-  /** All employees for the period (ignores UI search/filters). Priority: unsaved → draft → calculated. */
+  /** Full canonical payroll set for save/export/totals (never page/filter-limited). */
   async function collectAllRunRowsForExport(): Promise<typeof editableRows> {
     const params = new URLSearchParams({
       year: runYear,
@@ -2458,8 +2386,72 @@ function PayrollPageContent() {
       throw new Error(previewData?.error || "Failed to load payroll rows");
     }
     const allRows = (previewData.preview?.rows ?? []) as typeof editableRows;
-    return allRows.map((r) => mergeRunRowWithEditsAndDraft(r));
+    const denom =
+      previewData.preview?.daysInMonth ??
+      previewData.preview?.workingDaysInFullMonth ??
+      preview?.daysInMonth ??
+      preview?.workingDaysInFullMonth ??
+      30;
+    const runY = parseInt(runYear, 10);
+    const runM = parseInt(runMonth, 10);
+    const alreadyRun = Boolean(previewData.preview?.alreadyRun ?? preview?.alreadyRun);
+    const resolved = allRows.map((r) => {
+      const uid = String(r.employeeUserId ?? "");
+      const cached =
+        (runRowEditsRef.current.get(uid) as RunPayrollRowLike | undefined) ??
+        resolvedPayrollByUserIdRef.current.get(uid);
+      const row = resolveRunPayrollRow(r as RunPayrollRowLike, {
+        denom,
+        runYear: runY,
+        runMonth: runM,
+        payrollConfig: previewData.payrollConfig ?? payrollConfig,
+        alreadyRun,
+        draftDirty: draftDirtyRef.current,
+        cached: cached ?? null,
+        draftStored: draftPayloadByUserRef.current.get(uid) ?? null,
+      });
+      resolvedPayrollByUserIdRef.current.set(uid, row);
+      return row as (typeof editableRows)[number];
+    });
+    setResolvedRevision((n) => n + 1);
+    const stubs = resolved.filter((r) => isZeroStubPayrollRow(r as RunPayrollRowLike));
+    if (stubs.length > 0) {
+      throw new Error(
+        `Cannot continue: ${stubs.length} employee row(s) still lack computed payroll values. Reload and try again.`,
+      );
+    }
+    return resolved;
   }
+
+  // Prefetch full period into the canonical map so totals/save/export never depend on the current page.
+  useEffect(() => {
+    if (!canManage || tab !== "run") return;
+    if (preview?.alreadyRun) return;
+    const expected = Number(previewMeta.total || 0);
+    if (expected <= 0 && draftPayloadByUserRef.current.size === 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        await collectAllRunRowsForExport();
+        if (cancelled) return;
+      } catch {
+        /* prefetch is best-effort; save/export still resolve on demand */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    canManage,
+    tab,
+    runYear,
+    runMonth,
+    runDay,
+    draftRevision,
+    preview?.alreadyRun,
+    previewMeta.total,
+  ]);
 
   function workbookStatus(): PayrollWorkbookStatus {
     if (preview?.alreadyRun) return "Finalized";
@@ -2520,6 +2512,18 @@ function PayrollPageContent() {
       if (!res.ok) {
         throw new Error(data?.error || data?.message || data?.errors?.version?.[0] || "Failed to save draft");
       }
+      const expected = employees.length;
+      const savedCount = Number(
+        data.savedEmployeeCount ?? data.saved_employee_count ?? data.saved ?? expected,
+      );
+      const distinctCount = Number(
+        data.distinctEmployeeCount ?? data.distinct_employee_count ?? savedCount,
+      );
+      if (savedCount !== expected || distinctCount !== expected) {
+        throw new Error(
+          `Draft save incomplete: expected ${expected} employees, saved ${savedCount} (distinct ${distinctCount}).`,
+        );
+      }
       const map = new Map<string, Record<string, unknown>>();
       for (const emp of (data.employees ?? []) as DraftEmployeeApiRow[]) {
         const uid = String(emp.employeeUserId ?? emp.employee_user_id ?? "");
@@ -2539,6 +2543,11 @@ function PayrollPageContent() {
           rowPayload: payload,
         });
       }
+      if (map.size !== expected) {
+        throw new Error(
+          `Draft save incomplete: expected ${expected} employee payloads, received ${map.size}.`,
+        );
+      }
       draftPayloadByUserRef.current = map;
       setDraftMeta({
         id: String(data.draft.id),
@@ -2547,7 +2556,8 @@ function PayrollPageContent() {
         employeeCount: Number(data.draft.employeeCount ?? map.size),
       });
       setDraftDirty(false);
-      showToast("success", `Draft saved (${employees.length} employees).`);
+      setDraftRevision((n) => n + 1);
+      showToast("success", `Draft saved (${expected} employees).`);
       return true;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to save draft";
@@ -2578,6 +2588,7 @@ function PayrollPageContent() {
         if (!res.ok) throw new Error(data?.error || data?.message || "Failed to reset draft");
       }
       runRowEditsRef.current.clear();
+      resolvedPayrollByUserIdRef.current.clear();
       draftPayloadByUserRef.current.clear();
       setDraftMeta(null);
       setDraftDirty(false);
@@ -2852,6 +2863,7 @@ function PayrollPageContent() {
       );
       dispatchHrmsChange("payroll_period");
       runRowEditsRef.current.clear();
+      resolvedPayrollByUserIdRef.current.clear();
       draftPayloadByUserRef.current.clear();
       setDraftMeta(null);
       setDraftDirty(false);

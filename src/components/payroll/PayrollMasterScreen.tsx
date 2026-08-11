@@ -54,6 +54,11 @@ import {
 import { GOVERNMENT_DEFAULT_CPF_RATE_ON_TOTAL_EARNINGS } from "@/lib/governmentPayroll";
 import { resolveNightAllowanceRateByPayLevel } from "@/lib/nightAllowanceCalculation";
 import {
+  formatQuarterOptionLabel,
+  isCustomQuarterRent,
+  parseQuarterRentInput,
+} from "@/lib/quarterRent";
+import {
   formatPayLevelDisplay,
   isValidGovernmentPayLevel,
   payLevelSelectOptionsForValue,
@@ -163,6 +168,7 @@ export type PayrollMasterRecord = {
   userRole?: AppRole | string | null;
   customFieldValues?: Record<string, string>;
   hasQuarter?: boolean;
+  quarterAssigned?: boolean;
   quarterId?: string | null;
   quarterName?: string | null;
   quarterType?: string | null;
@@ -531,9 +537,11 @@ function formFromRecord(r: PayrollMasterRecord): MasterFormState {
         (r.cpfSettings?.effectiveSettings as { cpfFixedAmount?: number } | undefined)?.cpfFixedAmount ??
         0,
     ),
-    hasQuarter: Boolean(r.hasQuarter),
+    hasQuarter: Boolean(r.hasQuarter ?? r.quarterAssigned),
     quarterId: r.quarterId ?? "",
-    quarterRent: String(r.quarterRent ?? 0),
+    quarterRent: String(
+      r.quarterRent !== null && r.quarterRent !== undefined ? r.quarterRent : 0,
+    ),
   };
   const defaults = previewEarningDefaults(base);
 
@@ -621,7 +629,7 @@ function formToPayload(form: MasterFormState) {
         : undefined,
     hasQuarter: form.hasQuarter,
     quarterId: form.hasQuarter ? form.quarterId || null : null,
-    quarterRent: form.hasQuarter ? parseFloat(form.quarterRent) || 0 : 0,
+    quarterRent: form.hasQuarter ? parseQuarterRentInput(form.quarterRent) : 0,
     ...(form.password.trim() ? { password: form.password } : {}),
   };
 }
@@ -788,7 +796,15 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
   const [companyDefaultDa, setCompanyDefaultDa] = useState(DEFAULT_DA_PERCENT);
   const [companyDefaultHra, setCompanyDefaultHra] = useState(DEFAULT_HRA_PERCENT);
   const [quarterOptions, setQuarterOptions] = useState<
-    Array<{ id: string; quarterName: string; quarterType: string; monthlyRent: number }>
+    Array<{
+      id: string;
+      quarterName: string;
+      quarterType: string;
+      monthlyRent: number;
+      status?: string;
+      assignedEmployeeId?: string | null;
+      assignedEmployeeName?: string | null;
+    }>
   >([]);
   const [nightAllowanceRates, setNightAllowanceRates] = useState<
     Array<{ slabNo: number; payLevel: number; ratePerHour: number; effectiveFrom?: string | null; isActive?: boolean }>
@@ -999,14 +1015,39 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
   useEffect(() => {
     if (!formOpen || !canManage) return;
     let cancelled = false;
-    const q = form.quarterId ? `&current_quarter_id=${encodeURIComponent(form.quarterId)}` : "";
+    // Prefer form value; fall back to the row being edited so the first fetch
+    // includes the assigned quarter before master detail finishes loading.
+    const currentId = form.quarterId || editing?.quarterId || "";
+    const q = currentId ? `&current_quarter_id=${encodeURIComponent(currentId)}` : "";
     (async () => {
       try {
         const res = await fetch(`/api/settings/quarters?for_employee_form=1${q}`);
         const data = await res.json();
         if (!cancelled && res.ok) {
+          const rows = (data.quarters ?? []) as Array<{
+            id: string;
+            quarterName?: string;
+            quarter_name?: string;
+            quarterType?: string;
+            quarter_type?: string;
+            monthlyRent?: number;
+            monthly_rent?: number;
+            status?: string;
+            assignedEmployeeId?: string | null;
+            assigned_employee_id?: string | null;
+            assignedEmployeeName?: string | null;
+            assigned_employee_name?: string | null;
+          }>;
           setQuarterOptions(
-            ((data.quarters ?? []) as Array<{ id: string; quarterName: string; quarterType: string; monthlyRent: number }>),
+            rows.map((row) => ({
+              id: row.id,
+              quarterName: row.quarterName ?? row.quarter_name ?? "",
+              quarterType: row.quarterType ?? row.quarter_type ?? "",
+              monthlyRent: Number(row.monthlyRent ?? row.monthly_rent ?? 0),
+              status: row.status,
+              assignedEmployeeId: row.assignedEmployeeId ?? row.assigned_employee_id ?? null,
+              assignedEmployeeName: row.assignedEmployeeName ?? row.assigned_employee_name ?? null,
+            })),
           );
         }
       } catch {
@@ -1016,7 +1057,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [formOpen, canManage, form.quarterId]);
+  }, [formOpen, canManage, form.quarterId, editing?.quarterId]);
 
   useEffect(() => {
     if (!formOpen || !canManage) return;
@@ -1485,7 +1526,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
         payrollFieldDefs,
         hasQuarter: form.hasQuarter,
         quarterId: form.hasQuarter ? form.quarterId : null,
-        quarterRent: form.hasQuarter ? parseFloat(form.quarterRent) || 0 : 0,
+        quarterRent: form.hasQuarter ? parseQuarterRentInput(form.quarterRent) : 0,
       }),
     [form, companyCpfSettings, payrollFieldDefs, form.cpfBasisFieldKeys, form.cpfUseCompanySettings, form.cpfPercentageOverride, form.cpfCalculationMode, form.cpfFixedAmount],
   );
@@ -2474,23 +2515,49 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                                 value={form.quarterId}
                                 onChange={(v) => {
                                   const selected = quarterOptions.find((q) => q.id === v);
+                                  // Changing quarter resets rent to the new catalog default
+                                  // (prior override belonged to the previous quarter).
                                   patchForm({
                                     quarterId: v,
-                                    quarterRent: selected ? String(selected.monthlyRent) : "0",
+                                    quarterRent: selected
+                                      ? String(selected.monthlyRent)
+                                      : "0",
                                   });
                                 }}
                                 options={[
                                   { value: "", label: "Select quarter…" },
                                   ...quarterOptions.map((q) => ({
                                     value: q.id,
-                                    label: `${q.quarterName} - ${q.quarterType} - ₹${Math.round(q.monthlyRent).toLocaleString("en-IN")}/month`,
+                                    label: formatQuarterOptionLabel(q),
                                   })),
                                 ]}
                                 required
                               />
                             </FormField>
                             <FormField label="Quarter Rent">
-                              <Input type="number" numeric readOnly value={form.quarterRent} />
+                              <Input
+                                type="number"
+                                numeric
+                                min={0}
+                                step={1}
+                                value={form.quarterRent}
+                                onChange={(e) =>
+                                  patchForm({ quarterRent: e.target.value })
+                                }
+                              />
+                              {(() => {
+                                const selected = quarterOptions.find((q) => q.id === form.quarterId);
+                                if (!selected) return null;
+                                const current = parseQuarterRentInput(form.quarterRent);
+                                const custom = isCustomQuarterRent(current, selected.monthlyRent);
+                                return (
+                                  <p className="mt-1 text-xs text-slate-500">
+                                    {custom
+                                      ? `Default ₹${Math.round(selected.monthlyRent).toLocaleString("en-IN")} • Custom rent ₹${Math.round(current).toLocaleString("en-IN")}`
+                                      : `Default rent: ₹${Math.round(selected.monthlyRent).toLocaleString("en-IN")}/month`}
+                                  </p>
+                                );
+                              })()}
                             </FormField>
                             <p className="sm:col-span-2 text-xs text-amber-800">
                               HRA is not applicable when official quarter is assigned.
