@@ -103,7 +103,15 @@ export function FieldChip({
           min={0}
           step={1}
           value={value}
-          onChange={(e) => onChange(parseInt(e.target.value, 10) || 0)}
+          onChange={(e) => {
+            const raw = e.target.value;
+            if (raw === "") {
+              onChange(0);
+              return;
+            }
+            const n = Number(raw);
+            onChange(Number.isFinite(n) ? Math.max(0, Math.round(n)) : 0);
+          }}
           className={payrollAmountInputClass}
         />
       )}

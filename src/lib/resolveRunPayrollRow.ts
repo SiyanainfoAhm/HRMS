@@ -13,6 +13,14 @@ import {
   normalizeDraftEmployeeApiRow,
   type DraftEmployeeApiRow,
 } from "@/lib/deserializePayrollDraftEmployee";
+import {
+  recalculateGovernmentSheetTotals,
+  SHEET_DEDUCTION_KEYS,
+  SHEET_EARNING_KEYS,
+  applyDeductionPaidOverridesToGm,
+  mergeDeductionDefaultsWithPaidOverrides,
+} from "@/lib/runPayrollSheetEdit";
+import { hasOwn } from "@/lib/effectivePayrollValue";
 
 export type RunPayrollRowLike = Record<string, unknown> & {
   employeeUserId: string;
@@ -122,11 +130,12 @@ function computeGovernmentRow(
       governmentMonthly: (base.governmentMonthly as Record<string, unknown> | null) ?? null,
     });
     const withArrear = applyAutoArrearsToGovernmentMonthly(comp, arrearSnapshotFromRow(r));
-    base.governmentMonthly = withArrear;
+    const frozen = applyFrozenSheetOverridesToComputed(gr, withArrear as unknown as Record<string, unknown>);
+    base.governmentMonthly = frozen;
     base.grossMonthly = gr.grossBasic;
-    base.grossPay = withArrear.totalEarnings;
-    base.deductions = withArrear.totalDeductions;
-    base.netPay = withArrear.netSalary;
+    base.grossPay = Number(frozen.totalEarnings ?? withArrear.totalEarnings) || 0;
+    base.deductions = Number(frozen.totalDeductions ?? withArrear.totalDeductions) || 0;
+    base.netPay = Number(frozen.netSalary ?? withArrear.netSalary) || 0;
     base.payDays = capped;
     base.unpaidLeaveDays = unpaidDays;
     base.arrearLineIds = Array.isArray(r.arrearLineIds)
@@ -135,19 +144,81 @@ function computeGovernmentRow(
         ? (r.arrearLines as Array<{ id?: string }>).map((line) => line?.id).filter(Boolean)
         : [];
     base.arrearLines = Array.isArray(r.arrearLines) ? r.arrearLines : [];
-    base.tds = withArrear.deductions.incomeTax;
-    base.profTax = withArrear.deductions.pt;
-    base.pfEmployee = Math.round(
-      withArrear.deductions.cpf + withArrear.deductions.daCpf + withArrear.deductions.vpf,
-    );
+    const ded = (frozen.deductions ?? withArrear.deductions) as {
+      incomeTax: number;
+      pt: number;
+      cpf: number;
+      daCpf: number;
+      vpf: number;
+    };
+    base.tds = ded.incomeTax;
+    base.profTax = ded.pt;
+    base.pfEmployee = Math.round(ded.cpf + ded.daCpf + ded.vpf);
     base.takeHome =
-      Math.round(withArrear.netSalary) +
+      Math.round(Number(frozen.netSalary ?? withArrear.netSalary) || 0) +
       Math.round(Number(r.incentive) || 0) +
       Math.round(Number(r.prBonus) || 0) +
       Math.round(Number(r.reimbursement) || 0);
   }
 
   return base;
+}
+
+function applyFrozenSheetOverridesToComputed(
+  gr: GovRecalcPayload,
+  comp: Record<string, unknown>,
+): Record<string, unknown> {
+  const eo = gr.earningPaidOverrides ?? {};
+  const paidDed = gr.deductionPaidOverrides ?? {};
+  const hasEarningFreeze = SHEET_EARNING_KEYS.some((k) => hasOwn(eo, k));
+  const hasDeductionFreeze =
+    Object.keys(paidDed).length > 0 ||
+    Boolean(
+      gr.cpfManualOverride ||
+        gr.hplDeductionManualOverride ||
+        gr.eolDeductionManualOverride ||
+        gr.electricityManualOverride ||
+        gr.quarterRentManualOverride,
+    );
+  if (!hasEarningFreeze && !hasDeductionFreeze) {
+    return comp;
+  }
+
+  let gm: Record<string, unknown> = { ...comp };
+  if (hasEarningFreeze) {
+    for (const key of SHEET_EARNING_KEYS) {
+      if (hasOwn(eo, key)) {
+        const v = Number((eo as Record<string, number>)[key]);
+        if (Number.isFinite(v)) gm[key] = Math.max(0, Math.round(v));
+      }
+    }
+  }
+  if (hasDeductionFreeze) {
+    gm = applyDeductionPaidOverridesToGm(
+      gm,
+      mergeDeductionDefaultsWithPaidOverrides(gr.deductionDefaults, null),
+      {
+        ...paidDed,
+        ...(gr.cpfManualOverride && hasOwn(gr.deductionDefaults, "cpf")
+          ? { cpf: gr.deductionDefaults.cpf }
+          : {}),
+        ...(gr.hplDeductionManualOverride && hasOwn(gr.deductionDefaults, "hpl")
+          ? { hpl: gr.deductionDefaults.hpl }
+          : {}),
+        ...(gr.eolDeductionManualOverride && hasOwn(gr.deductionDefaults, "eol")
+          ? { eol: gr.deductionDefaults.eol }
+          : {}),
+        ...(gr.electricityManualOverride && hasOwn(gr.deductionDefaults, "electricity")
+          ? { electricity: gr.deductionDefaults.electricity }
+          : {}),
+        ...(gr.quarterRentManualOverride && hasOwn(gr.deductionDefaults, "quarterRent")
+          ? { quarterRent: gr.deductionDefaults.quarterRent }
+          : {}),
+      },
+    );
+    return gm;
+  }
+  return recalculateGovernmentSheetTotals(gm);
 }
 
 /** True when governmentMonthly looks like a real computed snapshot (not empty/missing). */

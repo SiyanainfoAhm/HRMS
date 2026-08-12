@@ -91,6 +91,11 @@ function testIntentionalZeroRemains() {
           net_salary: 0,
           deductions: { pt: 0, cpf: 0 },
         },
+        gov_recalc: {
+          cpfManualOverride: true,
+          deductionPaidOverrides: { pt: 0, cpf: 0 },
+          deductionDefaults: { pt: 200, cpf: 100 },
+        },
       },
     },
     {
@@ -104,19 +109,89 @@ function testIntentionalZeroRemains() {
         netSalary: 99899,
         deductions: { pt: 200, cpf: 100 },
       },
+      govRecalc: {
+        grossBasic: 50000,
+        daPercent: 53,
+        hraPercent: 30,
+        medicalFixed: 3000,
+        payLevel: 10,
+        deductionDefaults: { pt: 200, cpf: 100, water: 400 },
+      },
     },
   );
   const gm = row.governmentMonthly as {
     basicPaid: number;
     daPaid: number;
     totalEarnings: number;
-    deductions: { pt: number; cpf: number };
+    deductions: { pt: number; cpf: number; water?: number };
   };
   assertEq(gm.basicPaid, 0, "zero basic kept");
   assertEq(gm.daPaid, 0, "zero da kept");
   assertEq(gm.totalEarnings, 0, "zero gross kept");
-  assertEq(gm.deductions.pt, 0, "zero pt kept");
+  assertEq(gm.deductions.pt, 0, "zero pt kept via deductionPaidOverrides");
+  assertEq(gm.deductions.cpf, 0, "zero cpf kept via deductionPaidOverrides");
+  assertEq(gm.deductions.water, 400, "Master water kept when not overridden");
   assertEq(row.grossPay, 0, "zero grossPay kept");
+}
+
+function testStaleDraftZeroDoesNotWipeMasterWater() {
+  // New-format draft with deductionPaidOverrides: Master baseline + only paid keys.
+  const row = deserializePayrollDraftEmployee(
+    {
+      employeeUserId: "user-1",
+      rowPayload: {
+        government_monthly: {
+          basic_paid: 34590,
+          total_earnings: 70000,
+          total_deductions: 200,
+          net_salary: 69800,
+          deductions: { pt: 200, water: 0, mess: 0, lic: 0 },
+        },
+        gov_recalc: {
+          deductionPaidOverrides: { water: 0 },
+          deductionDefaults: { pt: 200, water: 0, mess: 0, lic: 0 },
+        },
+      },
+    },
+    {
+      employeeUserId: "user-1",
+      govRecalc: {
+        grossBasic: 34590,
+        daPercent: 53,
+        hraPercent: 30,
+        medicalFixed: 3000,
+        payLevel: 10,
+        deductionDefaults: {
+          pt: 200,
+          water: 400,
+          mess: 500,
+          lic: 1000,
+          electricity: 0,
+          incomeTax: 0,
+          cpf: 0,
+          daCpf: 0,
+          vpf: 0,
+          pfLoan: 0,
+          postOffice: 0,
+          creditSociety: 0,
+          stdLicenceFee: 0,
+          loanRecovery: 0,
+          welfare: 0,
+          hpl: 0,
+          eol: 0,
+          vehCharge: 0,
+          other: 0,
+          quarterRent: 500,
+        },
+      },
+    },
+  );
+  const ded = (row.governmentMonthly as { deductions: Record<string, number> }).deductions;
+  assertEq(ded.water, 0, "paid override water 0 wins");
+  assertEq(ded.mess, 500, "Master mess when not overridden");
+  assertEq(ded.lic, 1000, "Master lic when not overridden");
+  assertEq(ded.pt, 200, "pt");
+  assertEq(ded.quarterRent, 500, "quarter rent from master");
 }
 
 function testMissingFallsBackToCalculated() {
@@ -229,6 +304,7 @@ const tests = [
   testBasicPaidFromGovernmentMonthly,
   testDeductionsRestore,
   testIntentionalZeroRemains,
+  testStaleDraftZeroDoesNotWipeMasterWater,
   testMissingFallsBackToCalculated,
   testEmployeeUserIdMatching,
   testHeaderTotalsEqualHydratedRows,

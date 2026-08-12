@@ -16,6 +16,7 @@ import {
   type EolHplReferenceSalary,
 } from "./hplEolDeductions";
 import { DEFAULT_NIGHT_ALLOWANCE_BASIC_CEILING, resolveNightAllowanceAmount } from "./nightAllowanceCalculation";
+import { masterRecordToDeductionDefaults } from "./masterRunPayrollMapping";
 
 export type TransportSlab = { transportSlabGroup: string; transportBase: number };
 
@@ -239,7 +240,10 @@ export type GovernmentMonthlyComputed = {
   customEarnings: Record<string, number>;
   customDeductions: Record<string, number>;
   hasQuarter: boolean;
+  /** Effective quarter rent (mirrors deductions.quarterRent for display / draft aliases). */
   quarterRent: number;
+  /** Snake-case alias used by some draft/API payloads; same value as quarterRent when set. */
+  quarter_rent?: number;
   totalEarnings: number;
   totalDeductions: number;
   netSalary: number;
@@ -585,6 +589,7 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
     customDeductions,
     hasQuarter,
     quarterRent: deductions.quarterRent,
+    quarter_rent: deductions.quarterRent,
     totalEarnings,
     totalDeductions,
     netSalary,
@@ -613,33 +618,5 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
 
 /** Reads monthly rupee defaults from payroll_master. CPF: when `cpf_default` is 0, `computeGovernmentMonthlyPayroll` applies configured basis × percentage. */
 export function masterRowToDeductionDefaults(m: Record<string, unknown>): GovernmentDeductionDefaults {
-  return {
-    incomeTax: Number(m.income_tax_default ?? m.tds ?? 0) || 0,
-    pt: Number(m.pt_default ?? 200) || 0,
-    lic: Number(m.lic_default ?? 0) || 0,
-    cpf: Number(m.cpf_default ?? 0) || 0,
-    daCpf: Number(m.da_cpf_default ?? 0) || 0,
-    vpf: Number(m.vpf_default ?? 0) || 0,
-    pfLoan: 0,
-    postOffice: Number(m.post_office_default ?? 0) || 0,
-    creditSociety: Number(m.credit_society_default ?? 0) || 0,
-    stdLicenceFee: 0,
-    electricity: Number(m.electricity_default ?? 0) || 0,
-    water: Number(m.water_default ?? 0) || 0,
-    mess: Number(m.mess_default ?? 0) || 0,
-    loanRecovery:
-      Number(m.loanRecoveryDefault ?? m.loan_recovery_default ?? (m as { horticultureDefault?: number }).horticultureDefault ?? 0) ||
-      0,
-    welfare: Number(m.welfare_default ?? 0) || 0,
-    hpl: 0,
-    eol: 0,
-    vehCharge: 0,
-    other: Number(m.other_deduction_default ?? 0) || 0,
-    quarterRent: (() => {
-      const raw = m.quarter_rent ?? m.quarterRent;
-      if (raw === null || raw === undefined) return 0;
-      const n = Number(raw);
-      return Number.isFinite(n) ? Math.max(0, n) : 0;
-    })(),
-  };
+  return masterRecordToDeductionDefaults(m);
 }

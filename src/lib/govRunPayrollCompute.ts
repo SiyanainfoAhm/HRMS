@@ -9,6 +9,21 @@ import type { PayrollConfig } from "./payrollFieldTypes";
 import type { CpfCalculationConfig } from "./payrollCpfCalculation";
 import type { EolHplReferenceSalary } from "./hplEolDeductions";
 import { govOptionalFromComputedMonthly } from "./govRunPayrollOptionalEarnings";
+import { hasOwn } from "./effectivePayrollValue";
+
+function mergeDeductionDefaultsForCompute(
+  defaults: GovernmentDeductionDefaults,
+  paidOverrides?: Partial<GovernmentDeductionDefaults> | null,
+): GovernmentDeductionDefaults {
+  if (!paidOverrides) return defaults;
+  const out = { ...defaults };
+  for (const [key, raw] of Object.entries(paidOverrides)) {
+    if (!hasOwn(paidOverrides, key)) continue;
+    const n = Number(raw);
+    if (Number.isFinite(n)) (out as Record<string, number>)[key] = Math.max(0, Math.round(n));
+  }
+  return out;
+}
 
 export type GovRecalcPayload = {
   grossBasic: number;
@@ -40,7 +55,13 @@ export type GovRecalcPayload = {
   nightAllowanceWarning?: string;
   quarterRentManualOverride?: boolean;
   cpfManualOverride?: boolean;
+  /** Master-seeded recurring defaults (never replace wholesale with sheet zeros). */
   deductionDefaults: GovernmentDeductionDefaults;
+  /**
+   * Only deduction keys the admin edited this month.
+   * These outrank Master; keys absent here keep Master/default values.
+   */
+  deductionPaidOverrides?: Partial<GovernmentDeductionDefaults>;
   earningPaidOverrides?: GovernmentEarningPaidOverrides;
   customEarnings?: Record<string, number>;
   customDeductions?: Record<string, number>;
@@ -113,7 +134,10 @@ export function runGovernmentPayrollCompute(
     cpfManualOverride: gr.cpfManualOverride,
     runMonth: opts.runMonth,
     runYear: opts.runYear,
-    deductionDefaults: gr.deductionDefaults,
+    deductionDefaults: mergeDeductionDefaultsForCompute(
+      gr.deductionDefaults,
+      gr.deductionPaidOverrides,
+    ),
     optionalEarnings,
     earningPaidOverrides: gr.earningPaidOverrides,
     hasQuarter: gr.hasQuarter,

@@ -168,23 +168,40 @@ class PayrollController extends Controller
                         'transportDaPercent' => $m->da_percent ?? $m->transport_da_percent,
                         'transportSlabGroup' => $m->transport_slab_group,
                         'transportBase' => $m->transport_base,
-                        'incomeTaxDefault' => $m->income_tax_default ?? $m->tds,
-                        'ptDefault' => $m->pt_default,
-                        'licDefault' => $m->lic_default,
-                        'cpfDefault' => $m->cpf_default,
-                        'daCpfDefault' => $m->da_cpf_default,
-                        'vpfDefault' => $m->vpf_default,
-                        'pfLoanDefault' => $m->pf_loan_default,
-                        'postOfficeDefault' => $m->post_office_default,
-                        'creditSocietyDefault' => $m->credit_society_default,
-                        'stdLicenceFeeDefault' => $m->std_licence_fee_default,
-                        'electricityDefault' => $m->electricity_default,
-                        'waterDefault' => $m->water_default,
-                        'messDefault' => $m->mess_default,
-                        'loanRecoveryDefault' => $m->loan_recovery_default,
-                        'welfareDefault' => $m->welfare_default,
-                        'vehChargeDefault' => $m->veh_charge_default,
-                        'otherDeductionDefault' => $m->other_deduction_default,
+                        'incomeTaxDefault' => $this->masterNumeric($m, 'income_tax', 'income_tax_default', 'tds'),
+                        'ptDefault' => $this->masterNumeric($m, 'professional_tax', 'pt_default', 'pt'),
+                        'licDefault' => $this->masterNumeric($m, 'lic', 'lic_default'),
+                        'cpfDefault' => $this->masterNumeric($m, 'cpf_default'),
+                        'daCpfDefault' => $this->masterNumeric($m, 'da_cpf', 'da_cpf_default'),
+                        'vpfDefault' => $this->masterNumeric($m, 'vpf', 'vpf_default'),
+                        'pfLoanDefault' => $this->masterNumeric($m, 'pf_loan', 'pf_loan_default'),
+                        'postOfficeDefault' => $this->masterNumeric($m, 'post_office', 'post_office_default'),
+                        'creditSocietyDefault' => $this->masterNumeric($m, 'credit_society', 'credit_society_default'),
+                        'stdLicenceFeeDefault' => $this->masterNumeric($m, 'standard_licence_fee', 'std_licence_fee_default'),
+                        'electricityDefault' => $this->masterNumeric($m, 'electricity', 'electricity_default'),
+                        'waterDefault' => $this->masterNumeric($m, 'water', 'water_default'),
+                        'messDefault' => $this->masterNumeric($m, 'mess', 'mess_default'),
+                        'loanRecoveryDefault' => $this->masterNumeric($m, 'loan_recovery', 'loan_recovery_default'),
+                        'welfareDefault' => $this->masterNumeric($m, 'welfare', 'welfare_default'),
+                        'vehChargeDefault' => $this->masterNumeric($m, 'vehicle_charge', 'veh_charge_default'),
+                        'otherDeductionDefault' => $this->masterNumeric($m, 'other_deduction', 'other_deduction_default'),
+                        // Also expose primary camelCase keys for clients that read master.water etc.
+                        'water' => $this->masterNumeric($m, 'water', 'water_default'),
+                        'mess' => $this->masterNumeric($m, 'mess', 'mess_default'),
+                        'electricity' => $this->masterNumeric($m, 'electricity', 'electricity_default'),
+                        'lic' => $this->masterNumeric($m, 'lic', 'lic_default'),
+                        'welfare' => $this->masterNumeric($m, 'welfare', 'welfare_default'),
+                        'creditSociety' => $this->masterNumeric($m, 'credit_society', 'credit_society_default'),
+                        'vpf' => $this->masterNumeric($m, 'vpf', 'vpf_default'),
+                        'postOffice' => $this->masterNumeric($m, 'post_office', 'post_office_default'),
+                        'pfLoan' => $this->masterNumeric($m, 'pf_loan', 'pf_loan_default'),
+                        'loanRecovery' => $this->masterNumeric($m, 'loan_recovery', 'loan_recovery_default'),
+                        'vehicleCharge' => $this->masterNumeric($m, 'vehicle_charge', 'veh_charge_default'),
+                        'otherDeduction' => $this->masterNumeric($m, 'other_deduction', 'other_deduction_default'),
+                        'incomeTax' => $this->masterNumeric($m, 'income_tax', 'income_tax_default', 'tds'),
+                        'professionalTax' => $this->masterNumeric($m, 'professional_tax', 'pt_default', 'pt'),
+                        'daCpf' => $this->masterNumeric($m, 'da_cpf', 'da_cpf_default'),
+                        'standardLicenceFee' => $this->masterNumeric($m, 'standard_licence_fee', 'std_licence_fee_default'),
                     ],
                 ];
             });
@@ -459,10 +476,16 @@ class PayrollController extends Controller
             $grossBasic = (float) ($m->gross_basic_pay ?? $m->gross_basic ?? 0);
             $daPercent = (float) ($m->da_percent ?? 53);
             $hraPercent = (float) ($m->hra_percent ?? 30);
-            $medicalFixed = (float) ($m->medical_fixed ?? $m->medical ?? 3000);
-            $tds = (float) ($m->income_tax ?? $m->tds ?? 0);
-            $ptDefault = (float) ($m->professional_tax ?? $m->pt_default ?? $m->pt ?? 200);
-            $advanceBonus = (float) ($m->advance ?? $m->advance_bonus ?? 0);
+            $medicalFixed = $this->masterNumeric($m, 'medical_fixed', 'medical');
+            if (! $this->masterHasNumeric($m, 'medical_fixed', 'medical')) {
+                $medicalFixed = 3000.0;
+            }
+            $tds = $this->masterNumeric($m, 'income_tax', 'income_tax_default', 'tds');
+            $ptDefault = $this->masterNumeric($m, 'professional_tax', 'pt_default', 'pt');
+            if ($ptDefault <= 0 && ! $this->masterHasNumeric($m, 'professional_tax', 'pt_default', 'pt')) {
+                $ptDefault = 200.0;
+            }
+            $advanceBonus = $this->masterNumeric($m, 'advance', 'advance_bonus');
             $payLevel = (int) ($m->pay_level ?? $empUser->government_pay_level ?? 5);
             $org = $this->resolveEmployeeOrgFromSettings(
                 $empUser,
@@ -533,23 +556,23 @@ class PayrollController extends Controller
                     'deductionDefaults' => [
                         'incomeTax' => $tds,
                         'pt' => $ptDefault,
-                        'lic' => (float) ($m->lic_default ?? 0),
-                        'cpf' => (float) ($m->cpf_default ?? 0),
-                        'daCpf' => (float) ($m->da_cpf_default ?? 0),
-                        'vpf' => (float) ($m->vpf_default ?? 0),
-                        'pfLoan' => (float) ($m->pf_loan_default ?? 0),
-                        'postOffice' => (float) ($m->post_office_default ?? 0),
-                        'creditSociety' => (float) ($m->credit_society_default ?? 0),
-                        'stdLicenceFee' => (float) ($m->std_licence_fee_default ?? 0),
-                        'electricity' => (float) ($m->electricity_default ?? 0),
-                        'water' => (float) ($m->water_default ?? 0),
-                        'mess' => (float) ($m->mess_default ?? 0),
-                        'loanRecovery' => (float) ($m->loan_recovery_default ?? 0),
-                        'welfare' => (float) ($m->welfare_default ?? 0),
+                        'lic' => $this->masterNumeric($m, 'lic', 'lic_default'),
+                        'cpf' => $this->masterNumeric($m, 'cpf_default'),
+                        'daCpf' => $this->masterNumeric($m, 'da_cpf', 'da_cpf_default'),
+                        'vpf' => $this->masterNumeric($m, 'vpf', 'vpf_default'),
+                        'pfLoan' => $this->masterNumeric($m, 'pf_loan', 'pf_loan_default'),
+                        'postOffice' => $this->masterNumeric($m, 'post_office', 'post_office_default'),
+                        'creditSociety' => $this->masterNumeric($m, 'credit_society', 'credit_society_default'),
+                        'stdLicenceFee' => $this->masterNumeric($m, 'standard_licence_fee', 'std_licence_fee_default'),
+                        'electricity' => $this->masterNumeric($m, 'electricity', 'electricity_default'),
+                        'water' => $this->masterNumeric($m, 'water', 'water_default'),
+                        'mess' => $this->masterNumeric($m, 'mess', 'mess_default'),
+                        'loanRecovery' => $this->masterNumeric($m, 'loan_recovery', 'loan_recovery_default'),
+                        'welfare' => $this->masterNumeric($m, 'welfare', 'welfare_default'),
                         'hpl' => 0,
                         'eol' => 0,
-                        'vehCharge' => (float) ($m->veh_charge_default ?? 0),
-                        'other' => (float) ($m->other_deduction_default ?? 0),
+                        'vehCharge' => $this->masterNumeric($m, 'vehicle_charge', 'veh_charge_default'),
+                        'other' => $this->masterNumeric($m, 'other_deduction', 'other_deduction_default'),
                         'quarterRent' => (float) ($quarterMeta['quarterRent'] ?? 0),
                     ],
                 ];
@@ -1814,6 +1837,51 @@ class PayrollController extends Controller
         }
 
         return null;
+    }
+
+    /**
+     * First defined numeric attribute on a payroll master (explicit 0 wins).
+     * Prefer primary columns (water) over legacy aliases (water_default).
+     */
+    private function masterNumeric(object $m, string ...$attrs): float
+    {
+        $rawAttrs = method_exists($m, 'getAttributes') ? $m->getAttributes() : [];
+        foreach ($attrs as $attr) {
+            if (is_array($rawAttrs) && array_key_exists($attr, $rawAttrs)) {
+                $value = $rawAttrs[$attr];
+            } elseif (isset($m->{$attr})) {
+                $value = $m->{$attr};
+            } else {
+                continue;
+            }
+            if ($value === null || $value === '') {
+                continue;
+            }
+            if (is_numeric($value)) {
+                return (float) $value;
+            }
+        }
+
+        return 0.0;
+    }
+
+    private function masterHasNumeric(object $m, string ...$attrs): bool
+    {
+        $rawAttrs = method_exists($m, 'getAttributes') ? $m->getAttributes() : [];
+        foreach ($attrs as $attr) {
+            if (is_array($rawAttrs) && array_key_exists($attr, $rawAttrs)) {
+                $value = $rawAttrs[$attr];
+            } elseif (isset($m->{$attr})) {
+                $value = $m->{$attr};
+            } else {
+                continue;
+            }
+            if ($value !== null && $value !== '' && is_numeric($value)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

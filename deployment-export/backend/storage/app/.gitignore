@@ -1,7 +1,0 @@
-*
-!public/
-!templates/
-!templates/**
-!tmp/
-!tmp/.gitignore
-!.gitignore

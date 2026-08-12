@@ -46,6 +46,7 @@ import { PasswordField } from "@/components/PasswordField";
 import { dispatchHrmsChange, onHrmsChange } from "@/lib/hrmsChangeBus";
 import {
   computePayrollMasterPreview,
+  calculatePayrollMasterSummary,
   deriveEarningFieldValues,
   DEFAULT_DA_PERCENT,
   DEFAULT_HRA_PERCENT,
@@ -347,8 +348,19 @@ const EARNING_DRIVER_KEYS = new Set([
   "grossBasicPay",
   "daPercent",
   "hraPercent",
-  "medical",
   "hasQuarter",
+]);
+
+/** Component edits that must resync derived Total Earnings (not drivers — those rebuild formula fields). */
+const EARNING_COMPONENT_KEYS = new Set([
+  "medical",
+  "daAmount",
+  "hraAmount",
+  "transportBase",
+  "transportDa",
+  "transportTotal",
+  "quarterRent",
+  "quarterId",
 ]);
 
 function previewEarningDefaults(
@@ -557,7 +569,54 @@ function formFromRecord(r: PayrollMasterRecord): MasterFormState {
   };
 }
 
-function formToPayload(form: MasterFormState) {
+function formToPayload(form: MasterFormState, payrollFieldDefs: PayrollFieldDefinition[] = []) {
+  const summary = calculatePayrollMasterSummary({
+    payLevel: form.payLevel,
+    grossBasicPay: form.grossBasicPay,
+    daPercent: form.daPercent,
+    hraPercent: form.hraPercent,
+    medical: form.medical,
+    daAmount: form.daAmount,
+    hraAmount: form.hraAmount,
+    transportBase: form.transportBase,
+    transportDa: form.transportDa,
+    transportTotal: form.transportTotal,
+    cpfDefault: form.cpfDefault,
+    professionalTax: form.professionalTax,
+    incomeTax: form.incomeTax,
+    lic: form.lic,
+    mess: form.mess,
+    welfare: form.welfare,
+    vpf: form.vpf,
+    pfLoan: form.pfLoan,
+    postOffice: form.postOffice,
+    creditSociety: form.creditSociety,
+    standardLicenceFee: form.standardLicenceFee,
+    electricity: form.electricity,
+    water: form.water,
+    loanRecovery: form.loanRecovery,
+    vehicleCharge: form.vehicleCharge,
+    otherDeduction: form.otherDeduction,
+    advance: form.advance,
+    cpfUseCompanySettings: form.cpfUseCompanySettings,
+    cpfPercentageOverride: form.cpfPercentageOverride,
+    cpfBasisFieldKeysOverride: isCpfEmployeeCustomMode(form.cpfUseCompanySettings)
+      ? form.cpfBasisFieldKeys
+      : undefined,
+    cpfCalculationModeOverride: isCpfEmployeeCustomMode(form.cpfUseCompanySettings)
+      ? form.cpfCalculationMode
+      : undefined,
+    cpfFixedAmountOverride:
+      isCpfCompanyDefaultMode(form.cpfUseCompanySettings) || form.cpfCalculationMode !== "fixed_amount"
+        ? undefined
+        : form.cpfFixedAmount,
+    customEarnings: customNumericBagForTotalFromValues(form.customFieldValues, payrollFieldDefs, "earnings"),
+    customDeductions: customNumericBagForTotalFromValues(form.customFieldValues, payrollFieldDefs, "deductions"),
+    payrollFieldDefs,
+    hasQuarter: form.hasQuarter,
+    quarterId: form.hasQuarter ? form.quarterId : null,
+    quarterRent: form.hasQuarter ? parseQuarterRentInput(form.quarterRent) : 0,
+  });
   return {
     employeeCode: form.employeeCode.trim() || undefined,
     name: form.name.trim(),
@@ -572,16 +631,16 @@ function formToPayload(form: MasterFormState) {
     status: form.status,
     payLevel: parseInt(form.payLevel, 10),
     incrementMonth: form.incrementMonth,
-    grossBasicPay: parseFloat(form.grossBasicPay) || 0,
+    grossBasicPay: parseAmountOrZero(form.grossBasicPay),
     daPercent: Number.isFinite(parseFloat(form.daPercent)) ? parseFloat(form.daPercent) : DEFAULT_DA_PERCENT,
-    daAmount: parseFloat(form.daAmount) || 0,
+    daAmount: parseAmountOrZero(form.daAmount),
     hraPercent: Number.isFinite(parseFloat(form.hraPercent)) ? parseFloat(form.hraPercent) : DEFAULT_HRA_PERCENT,
-    hraAmount: parseFloat(form.hraAmount) || 0,
-    medical: parseFloat(form.medical) || DEFAULT_MEDICAL,
+    hraAmount: parseAmountOrZero(form.hraAmount),
+    medical: form.medical.trim() === "" ? DEFAULT_MEDICAL : parseAmountOrZero(form.medical),
     transportBase: parseAmountOrZero(form.transportBase),
     transportDa: parseAmountOrZero(form.transportDa),
     transportTotal: parseAmountOrZero(form.transportTotal),
-    totalEarnings: parseAmountOrZero(form.totalEarnings),
+    totalEarnings: summary.totalEarnings,
     uan: form.uan.trim() || undefined,
     cpfNo: form.cpfNo.trim() || undefined,
     pan: form.pan.trim().toUpperCase() || undefined,
@@ -590,22 +649,22 @@ function formToPayload(form: MasterFormState) {
     bankAccountNumber: normalizeDigits(form.bankAccountNumber) || undefined,
     bankIfsc: normalizeIfscInput(form.bankIfsc) || undefined,
     cpfDefault: 0,
-    professionalTax: parseFloat(form.professionalTax) || 0,
-    incomeTax: parseFloat(form.incomeTax) || 0,
-    lic: parseFloat(form.lic) || 0,
-    mess: parseFloat(form.mess) || 0,
-    welfare: parseFloat(form.welfare) || 0,
-    vpf: parseFloat(form.vpf) || 0,
-    pfLoan: parseFloat(form.pfLoan) || 0,
-    postOffice: parseFloat(form.postOffice) || 0,
-    creditSociety: parseFloat(form.creditSociety) || 0,
-    standardLicenceFee: parseFloat(form.standardLicenceFee) || 0,
-    electricity: parseFloat(form.electricity) || 0,
-    water: parseFloat(form.water) || 0,
-    loanRecovery: parseFloat(form.loanRecovery) || 0,
-    vehicleCharge: parseFloat(form.vehicleCharge) || 0,
-    otherDeduction: parseFloat(form.otherDeduction) || 0,
-    advance: parseFloat(form.advance) || 0,
+    professionalTax: parseAmountOrZero(form.professionalTax),
+    incomeTax: parseAmountOrZero(form.incomeTax),
+    lic: parseAmountOrZero(form.lic),
+    mess: parseAmountOrZero(form.mess),
+    welfare: parseAmountOrZero(form.welfare),
+    vpf: parseAmountOrZero(form.vpf),
+    pfLoan: parseAmountOrZero(form.pfLoan),
+    postOffice: parseAmountOrZero(form.postOffice),
+    creditSociety: parseAmountOrZero(form.creditSociety),
+    standardLicenceFee: parseAmountOrZero(form.standardLicenceFee),
+    electricity: parseAmountOrZero(form.electricity),
+    water: parseAmountOrZero(form.water),
+    loanRecovery: parseAmountOrZero(form.loanRecovery),
+    vehicleCharge: parseAmountOrZero(form.vehicleCharge),
+    otherDeduction: parseAmountOrZero(form.otherDeduction),
+    advance: parseAmountOrZero(form.advance),
     remarks: form.remarks.trim() || undefined,
     effectiveFrom: form.effectiveFrom || undefined,
     reasonForChange: form.reasonForChange.trim() || undefined,
@@ -1114,7 +1173,28 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
       };
       const def = payrollFieldDefs.find((field) => field.fieldKey === key);
       if (def?.fieldGroup === "earnings") {
-        return { ...next, totalEarnings: earningStringsFromForm(next).totalEarnings };
+        const summary = calculatePayrollMasterSummary({
+          payLevel: next.payLevel,
+          grossBasicPay: next.grossBasicPay,
+          daPercent: next.daPercent,
+          hraPercent: next.hraPercent,
+          medical: next.medical,
+          daAmount: next.daAmount,
+          hraAmount: next.hraAmount,
+          transportBase: next.transportBase,
+          transportDa: next.transportDa,
+          transportTotal: next.transportTotal,
+          customEarnings: customNumericBagForTotalFromValues(
+            next.customFieldValues,
+            payrollFieldDefs,
+            "earnings",
+          ),
+          payrollFieldDefs,
+          hasQuarter: next.hasQuarter,
+          quarterId: next.hasQuarter ? next.quarterId : null,
+          quarterRent: next.hasQuarter ? parseQuarterRentInput(next.quarterRent) : 0,
+        });
+        return { ...next, totalEarnings: String(summary.totalEarnings) };
       }
       return next;
     });
@@ -1417,7 +1497,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     setAutosaveStatus("saving");
     setAutosaveHint(null);
     try {
-      const payload = { ...formToPayload(form), autosave: true };
+      const payload = { ...formToPayload(form, payrollFieldDefs), autosave: true };
       const res = await fetch(`/api/payroll/master/${editing.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -1447,6 +1527,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     editBaseline,
     existingForUniqueness,
     persistLocalAddDraft,
+    payrollFieldDefs,
   ]);
 
   useEffect(() => {
@@ -1488,8 +1569,9 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
         transportBase: form.transportBase,
         transportDa: form.transportDa,
         transportTotal: form.transportTotal,
-        totalEarnings: form.totalEarnings,
-        cpfDefault: 0,
+        // Live totals always derive from current components — never stale form.totalEarnings.
+        useStoredTotalEarnings: false,
+        cpfDefault: form.cpfDefault,
         professionalTax: form.professionalTax,
         incomeTax: form.incomeTax,
         lic: form.lic,
@@ -1529,7 +1611,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
         quarterId: form.hasQuarter ? form.quarterId : null,
         quarterRent: form.hasQuarter ? parseQuarterRentInput(form.quarterRent) : 0,
       }),
-    [form, companyCpfSettings, payrollFieldDefs, form.cpfBasisFieldKeys, form.cpfUseCompanySettings, form.cpfPercentageOverride, form.cpfCalculationMode, form.cpfFixedAmount],
+    [form, companyCpfSettings, payrollFieldDefs],
   );
 
   const masterGridCustomColumns = useMemo(
@@ -1676,7 +1758,9 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     }
   }
 
-  function earningStringsFromForm(f: MasterFormState) {
+  function earningStringsFromForm(f: MasterFormState, patch: Partial<MasterFormState> = {}) {
+    // Refresh transport slab only when pay level or DA% changes; otherwise keep explicit overrides (including 0).
+    const refreshTransport = "payLevel" in patch || "daPercent" in patch;
     const derived = deriveEarningFieldValues({
       payLevel: f.payLevel,
       grossBasicPay: f.grossBasicPay,
@@ -1687,14 +1771,45 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
       quarterId: f.hasQuarter ? f.quarterId : null,
       customEarnings: customNumericBagForTotalFromValues(f.customFieldValues, payrollFieldDefs, "earnings"),
       payrollFieldDefs,
+      ...(refreshTransport
+        ? {}
+        : {
+            transportBase: f.transportBase,
+            transportDa: f.transportDa,
+            transportTotal: f.transportTotal,
+          }),
+    });
+    const nextTransport = refreshTransport
+      ? {
+          transportBase: String(derived.transportBase),
+          transportDa: String(derived.transportDa),
+          transportTotal: String(derived.transportTotal),
+        }
+      : {
+          transportBase: f.transportBase,
+          transportDa: f.transportDa,
+          transportTotal: f.transportTotal,
+        };
+    const summary = calculatePayrollMasterSummary({
+      payLevel: f.payLevel,
+      grossBasicPay: f.grossBasicPay,
+      daPercent: f.daPercent,
+      hraPercent: f.hraPercent,
+      medical: f.medical,
+      daAmount: String(derived.daAmount),
+      hraAmount: String(derived.hraAmount),
+      ...nextTransport,
+      customEarnings: customNumericBagForTotalFromValues(f.customFieldValues, payrollFieldDefs, "earnings"),
+      payrollFieldDefs,
+      hasQuarter: f.hasQuarter,
+      quarterId: f.hasQuarter ? f.quarterId : null,
+      quarterRent: f.hasQuarter ? parseQuarterRentInput(f.quarterRent) : 0,
     });
     return {
       daAmount: String(derived.daAmount),
       hraAmount: String(derived.hraAmount),
-      transportBase: String(derived.transportBase),
-      transportDa: String(derived.transportDa),
-      transportTotal: String(derived.transportTotal),
-      totalEarnings: String(derived.totalEarnings),
+      ...nextTransport,
+      totalEarnings: String(summary.totalEarnings),
     };
   }
 
@@ -1727,11 +1842,37 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
 
   function patchForm(patch: Partial<MasterFormState>) {
     setForm((f) => {
-      const next = { ...f, ...patch };
-      if (![...EARNING_DRIVER_KEYS].some((key) => key in patch)) {
+      let next = { ...f, ...patch };
+      if ([...EARNING_DRIVER_KEYS].some((key) => key in patch)) {
+        next = { ...next, ...earningStringsFromForm(next, patch) };
         return next;
       }
-      return { ...next, ...earningStringsFromForm(next) };
+      // Keep Total Earnings in sync with current earning components for save/autosave.
+      if ([...EARNING_COMPONENT_KEYS].some((key) => key in patch) && !("totalEarnings" in patch)) {
+        const summary = calculatePayrollMasterSummary({
+          payLevel: next.payLevel,
+          grossBasicPay: next.grossBasicPay,
+          daPercent: next.daPercent,
+          hraPercent: next.hraPercent,
+          medical: next.medical,
+          daAmount: next.daAmount,
+          hraAmount: next.hraAmount,
+          transportBase: next.transportBase,
+          transportDa: next.transportDa,
+          transportTotal: next.transportTotal,
+          customEarnings: customNumericBagForTotalFromValues(
+            next.customFieldValues,
+            payrollFieldDefs,
+            "earnings",
+          ),
+          payrollFieldDefs,
+          hasQuarter: next.hasQuarter,
+          quarterId: next.hasQuarter ? next.quarterId : null,
+          quarterRent: next.hasQuarter ? parseQuarterRentInput(next.quarterRent) : 0,
+        });
+        next = { ...next, totalEarnings: String(summary.totalEarnings) };
+      }
+      return next;
     });
   }
 
@@ -1763,7 +1904,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
 
     setFormSaving(true);
     try {
-      const payload = formToPayload(form);
+      const payload = formToPayload(form, payrollFieldDefs);
       if (process.env.NODE_ENV === "development") {
         console.info("[PayrollMaster] update payload", { id: editing?.id, daPercent: payload.daPercent });
       }
@@ -2671,9 +2812,11 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                         <Input
                           type="number"
                           numeric
-                          value={form.totalEarnings}
-                          onChange={(e) => patchForm({ totalEarnings: e.target.value })}
+                          min={0}
+                          value={String(preview.totalEarnings)}
+                          readOnly
                           className="font-semibold text-emerald-900"
+                          title="Derived from current earning components"
                         />
                       </FormField>
                     </div>
