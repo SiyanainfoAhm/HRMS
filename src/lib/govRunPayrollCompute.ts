@@ -48,6 +48,9 @@ export type GovRecalcPayload = {
   hplDeductionManualOverride?: boolean;
   electricityUnitsConsumed?: number;
   electricityManualOverride?: boolean;
+  electricityApplicable?: boolean;
+  electricityMode?: "unit_based" | "manual_fixed";
+  electricityTariff?: import("./electricityTariffCalculation").ElectricityTariffConfig | null;
   nightHours?: number;
   nightAllowanceRate?: number;
   nightAllowanceSlabNo?: number | null;
@@ -95,6 +98,10 @@ export function runGovernmentPayrollCompute(
   const unpaidDays = Math.max(0, dim - capped);
   const electricityUnitRate =
     Number(opts.payrollConfig?.calculationSettings?.electricityUnitRate) || 0;
+  const electricityTariff =
+    gr.electricityTariff ??
+    (opts.payrollConfig?.electricityTariff as import("./electricityTariffCalculation").ElectricityTariffConfig | null | undefined) ??
+    null;
   const nightAllowanceBasicCeiling =
     Number(opts.payrollConfig?.calculationSettings?.nightAllowanceBasicCeiling) ||
     DEFAULT_NIGHT_ALLOWANCE_BASIC_CEILING;
@@ -124,6 +131,9 @@ export function runGovernmentPayrollCompute(
     electricityUnitsConsumed: gr.electricityUnitsConsumed ?? 0,
     electricityUnitRate,
     electricityManualOverride: gr.electricityManualOverride,
+    electricityTariff,
+    electricityApplicable: gr.electricityApplicable,
+    electricityMode: gr.electricityMode,
     nightHours: gr.nightHours ?? 0,
     nightAllowanceRate: gr.nightAllowanceRate ?? 0,
     nightAllowanceBasicCeiling,

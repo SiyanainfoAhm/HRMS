@@ -1633,6 +1633,8 @@ final class PayrollMasterService
             'creditSociety' => (float) ($m->credit_society ?? $m->credit_society_default ?? 0),
             'standardLicenceFee' => (float) ($m->standard_licence_fee ?? $m->std_licence_fee_default ?? 0),
             'electricity' => (float) ($m->electricity ?? $m->electricity_default ?? 0),
+            'electricityApplicable' => (bool) ($m->electricity_applicable ?? true),
+            'electricityMode' => (string) ($m->electricity_mode ?? 'manual_fixed'),
             'water' => (float) ($m->water ?? $m->water_default ?? 0),
             'loanRecovery' => (float) ($m->loan_recovery ?? $m->loan_recovery_default ?? 0),
             'vehicleCharge' => (float) ($m->vehicle_charge ?? $m->veh_charge_default ?? 0),
@@ -2608,6 +2610,13 @@ final class PayrollMasterService
             'std_licence_fee_default' => $calc['standard_licence_fee'],
             'electricity' => $calc['electricity'],
             'electricity_default' => $calc['electricity'],
+            'electricity_applicable' => filter_var(
+                $validated['electricity_applicable'] ?? $validated['electricityApplicable'] ?? true,
+                FILTER_VALIDATE_BOOLEAN,
+            ),
+            'electricity_mode' => ((string) ($validated['electricity_mode'] ?? $validated['electricityMode'] ?? 'manual_fixed')) === 'unit_based'
+                ? 'unit_based'
+                : 'manual_fixed',
             'water' => $calc['water'],
             'water_default' => $calc['water'],
             'loan_recovery' => $calc['loan_recovery'],
@@ -2960,7 +2969,8 @@ final class PayrollMasterService
             'lic', 'lic_default', 'mess', 'mess_default', 'welfare', 'welfare_default',
             'vpf', 'vpf_default', 'pf_loan', 'pf_loan_default', 'post_office', 'post_office_default',
             'credit_society', 'credit_society_default', 'standard_licence_fee', 'std_licence_fee_default',
-            'electricity', 'electricity_default', 'water', 'water_default', 'loan_recovery', 'loan_recovery_default',
+            'electricity', 'electricity_default', 'electricity_applicable', 'electricity_mode',
+            'water', 'water_default', 'loan_recovery', 'loan_recovery_default',
             'vehicle_charge', 'veh_charge_default', 'other_deduction', 'other_deduction_default',
             'advance', 'advance_bonus',
             'has_quarter', 'quarter_id', 'quarter_rent',

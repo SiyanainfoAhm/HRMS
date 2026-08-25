@@ -15,6 +15,7 @@ use App\Models\HrmsPayslip;
 use App\Models\HrmsUser;
 use App\Support\BankDetailsService;
 use App\Support\BankDetailsValidator;
+use App\Services\ElectricityTariffService;
 use App\Services\NightAllowanceRateService;
 use App\Services\PayrollArrearService;
 use App\Services\PayrollAmendmentService;
@@ -38,6 +39,7 @@ class PayrollController extends Controller
         private readonly NightAllowanceRateService $nightAllowanceService,
         private readonly PayrollDraftService $draftService,
         private readonly PayrollAmendmentService $amendmentService,
+        private readonly ElectricityTariffService $electricityTariffService,
     ) {}
 
     public function periods(Request $request): JsonResponse
@@ -553,6 +555,8 @@ class PayrollController extends Controller
                     'hplReferenceMonth' => $month,
                     'hplReferenceYear' => $year,
                     'electricityUnitsConsumed' => 0,
+                    'electricityApplicable' => (bool) ($m->electricity_applicable ?? true),
+                    'electricityMode' => (string) ($m->electricity_mode ?? 'manual_fixed'),
                     'hasQuarter' => $quarterMeta['hasQuarter'],
                     'quarterRent' => $quarterMeta['quarterRent'],
                     'quarterId' => $quarterMeta['quarterId'],
@@ -691,6 +695,10 @@ class PayrollController extends Controller
                 ]),
                 'payrollConfig' => array_merge($payrollConfig, [
                     'nightAllowanceRates' => $ndaRatesPreloaded,
+                    'electricityTariff' => $this->electricityTariffForDate(
+                        (string) $user->company_id,
+                        $periodEndThroughRun,
+                    ),
                 ]),
             ]);
         }
@@ -787,6 +795,10 @@ class PayrollController extends Controller
             ]),
             'payrollConfig' => array_merge($payrollConfig, [
                 'nightAllowanceRates' => $ndaRatesPreloaded,
+                'electricityTariff' => $this->electricityTariffForDate(
+                    (string) $user->company_id,
+                    $periodEndThroughRun,
+                ),
             ]),
         ]);
     }
@@ -998,6 +1010,14 @@ class PayrollController extends Controller
         }
 
         return null;
+    }
+
+    /** @return array<string, mixed>|null */
+    private function electricityTariffForDate(string $companyId, string $asOfDate): ?array
+    {
+        $tariff = $this->electricityTariffService->resolveForDate($companyId, $asOfDate);
+
+        return $tariff ? $this->electricityTariffService->formatTariff($tariff) : null;
     }
 
     /**
@@ -1574,6 +1594,15 @@ class PayrollController extends Controller
             'hplBasisAmount' => $num($gov->hpl_basis_amount ?? 0),
             'electricityUnitsConsumed' => $num($gov->electricity_units_consumed ?? 0),
             'electricityUnitRate' => $num($gov->electricity_unit_rate ?? 0),
+            'electricityTariffId' => $gov->electricity_tariff_id ?? null,
+            'electricitySthirAakar' => $num($gov->electricity_sthir_aakar ?? 0),
+            'electricityConsumptionCharge' => $num($gov->electricity_consumption_charge ?? 0),
+            'electricityVahanAakar' => $num($gov->electricity_vahan_aakar ?? 0),
+            'electricityFuelCharge' => $num($gov->electricity_fuel_charge ?? 0),
+            'electricityDuty' => $num($gov->electricity_duty ?? 0),
+            'electricityTotal' => $num($gov->electricity_total ?? $gov->electricity_amount ?? 0),
+            'electricityApplicable' => (bool) ($gov->electricity_applicable ?? true),
+            'electricityMode' => (string) ($gov->electricity_mode ?? 'unit_based'),
             'nightHours' => $num($gov->night_hours ?? 0),
             'nightAllowanceRate' => $num($gov->night_allowance_rate ?? 0),
             'nightAllowanceAmount' => $num($gov->night_allowance_amount ?? 0),
@@ -1784,6 +1813,15 @@ class PayrollController extends Controller
             'electricity_units_consumed' => $num($gm['electricityUnitsConsumed'] ?? $gm['electricity_units_consumed'] ?? 0),
             'electricity_unit_rate' => $num($gm['electricityUnitRate'] ?? $gm['electricity_unit_rate'] ?? 0),
             'electricity_manual_override' => (bool) ($gm['electricityManualOverride'] ?? $gm['electricity_manual_override'] ?? false),
+            'electricity_tariff_id' => $gm['electricityTariffId'] ?? $gm['electricity_tariff_id'] ?? null,
+            'electricity_sthir_aakar' => $num($gm['electricitySthirAakar'] ?? $gm['electricity_sthir_aakar'] ?? 0),
+            'electricity_consumption_charge' => $num($gm['electricityConsumptionCharge'] ?? $gm['electricity_consumption_charge'] ?? 0),
+            'electricity_vahan_aakar' => $num($gm['electricityVahanAakar'] ?? $gm['electricity_vahan_aakar'] ?? 0),
+            'electricity_fuel_charge' => $num($gm['electricityFuelCharge'] ?? $gm['electricity_fuel_charge'] ?? 0),
+            'electricity_duty' => $num($gm['electricityDuty'] ?? $gm['electricity_duty'] ?? 0),
+            'electricity_total' => $num($gm['electricityTotal'] ?? $gm['electricity_total'] ?? $ded['electricity'] ?? 0),
+            'electricity_applicable' => (bool) ($gm['electricityApplicable'] ?? $gm['electricity_applicable'] ?? true),
+            'electricity_mode' => (string) ($gm['electricityMode'] ?? $gm['electricity_mode'] ?? 'unit_based'),
             'night_hours' => $num($gm['nightHours'] ?? $gm['night_hours'] ?? 0),
             'night_allowance_rate' => $num($gm['nightAllowanceRate'] ?? $gm['night_allowance_rate'] ?? 0),
             'night_allowance_amount' => $num($gm['nightAllowanceAmount'] ?? $gm['night_allowance_amount'] ?? $gm['nightAllowancePaid'] ?? $gm['night_allowance_paid'] ?? 0),

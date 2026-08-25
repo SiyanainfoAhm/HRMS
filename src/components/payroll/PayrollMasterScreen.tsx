@@ -144,6 +144,8 @@ export type PayrollMasterRecord = {
   creditSociety?: number | null;
   standardLicenceFee?: number | null;
   electricity?: number | null;
+  electricityApplicable?: boolean;
+  electricityMode?: "unit_based" | "manual_fixed" | string | null;
   water?: number | null;
   loanRecovery?: number | null;
   vehicleCharge?: number | null;
@@ -234,6 +236,8 @@ type MasterFormState = {
   creditSociety: string;
   standardLicenceFee: string;
   electricity: string;
+  electricityApplicable: boolean;
+  electricityMode: "unit_based" | "manual_fixed";
   water: string;
   loanRecovery: string;
   vehicleCharge: string;
@@ -425,6 +429,8 @@ const emptyForm = (defaultDa = DEFAULT_DA_PERCENT, defaultHra = DEFAULT_HRA_PERC
     creditSociety: "0",
     standardLicenceFee: "0",
     electricity: "0",
+    electricityApplicable: true,
+    electricityMode: "manual_fixed" as const,
     water: "0",
     loanRecovery: "0",
     vehicleCharge: "0",
@@ -494,6 +500,10 @@ function formFromRecord(r: PayrollMasterRecord): MasterFormState {
     creditSociety: String(r.creditSociety ?? 0),
     standardLicenceFee: String(r.standardLicenceFee ?? 0),
     electricity: String(r.electricity ?? 0),
+    electricityApplicable: r.electricityApplicable !== false,
+    electricityMode: (r.electricityMode === "unit_based" ? "unit_based" : "manual_fixed") as
+      | "unit_based"
+      | "manual_fixed",
     water: String(r.water ?? 0),
     loanRecovery: String(r.loanRecovery ?? 0),
     vehicleCharge: String(r.vehicleCharge ?? 0),
@@ -660,6 +670,8 @@ function formToPayload(form: MasterFormState, payrollFieldDefs: PayrollFieldDefi
     creditSociety: parseAmountOrZero(form.creditSociety),
     standardLicenceFee: parseAmountOrZero(form.standardLicenceFee),
     electricity: parseAmountOrZero(form.electricity),
+    electricityApplicable: form.electricityApplicable,
+    electricityMode: form.electricityMode,
     water: parseAmountOrZero(form.water),
     loanRecovery: parseAmountOrZero(form.loanRecovery),
     vehicleCharge: parseAmountOrZero(form.vehicleCharge),
@@ -725,6 +737,8 @@ function payrollStructureChanged(form: MasterFormState, baseline: MasterFormStat
     form.creditSociety !== baseline.creditSociety ||
     form.standardLicenceFee !== baseline.standardLicenceFee ||
     form.electricity !== baseline.electricity ||
+    form.electricityApplicable !== baseline.electricityApplicable ||
+    form.electricityMode !== baseline.electricityMode ||
     form.water !== baseline.water ||
     form.loanRecovery !== baseline.loanRecovery ||
     form.vehicleCharge !== baseline.vehicleCharge ||
@@ -3038,9 +3052,52 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                           value={form[key]}
                           onChange={(e) => patchForm({ [key]: e.target.value })}
                           onBlur={() => touchField(key)}
+                          disabled={key === "electricity" && form.electricityMode === "unit_based" && form.electricityApplicable}
                         />
                       </FormField>
                     ))}
+                  </div>
+                  <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50/80 p-3">
+                    <h5 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-700">
+                      Electricity calculation
+                    </h5>
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                      <FormField label="Electricity applicable" helperText="If No, electricity deduction is ₹0 in Run Payroll.">
+                        <select
+                          className="input-field"
+                          value={form.electricityApplicable ? "yes" : "no"}
+                          onChange={(e) =>
+                            patchForm({ electricityApplicable: e.target.value === "yes" })
+                          }
+                        >
+                          <option value="yes">Yes</option>
+                          <option value="no">No</option>
+                        </select>
+                      </FormField>
+                      <FormField
+                        label="Electricity mode"
+                        helperText={
+                          form.electricityMode === "unit_based"
+                            ? "Run Payroll uses monthly units + Admin tariff (slabs)."
+                            : "Uses the fixed Electricity amount above (legacy / non-metered)."
+                        }
+                      >
+                        <select
+                          className="input-field"
+                          value={form.electricityMode}
+                          onChange={(e) =>
+                            patchForm({
+                              electricityMode:
+                                e.target.value === "unit_based" ? "unit_based" : "manual_fixed",
+                            })
+                          }
+                          disabled={!form.electricityApplicable}
+                        >
+                          <option value="manual_fixed">Manual Fixed</option>
+                          <option value="unit_based">Unit Based</option>
+                        </select>
+                      </FormField>
+                    </div>
                   </div>
                   <DynamicPayrollFields
                     fields={payrollFieldDefs}

@@ -77,6 +77,25 @@ final class PayrollAmendmentServiceTest extends TestCase
         $this->assertSame([], $svc->normalizeCustomMap(null));
     }
 
+    public function test_changed_fields_include_electricity_units(): void
+    {
+        $svc = new PayrollAmendmentService;
+        $changed = $svc->changedFields(
+            ['electricityUnitsConsumed' => 350, 'electricity' => 4500, 'netSalary' => 100000],
+            ['electricityUnitsConsumed' => 400, 'electricity' => 5200, 'netSalary' => 99300],
+        );
+        $byField = [];
+        foreach ($changed as $row) {
+            $byField[$row['field']] = $row;
+        }
+        $this->assertArrayHasKey('electricityUnitsConsumed', $byField);
+        $this->assertSame('Electricity Units', $byField['electricityUnitsConsumed']['label']);
+        $this->assertSame(350, $byField['electricityUnitsConsumed']['before']);
+        $this->assertSame(400, $byField['electricityUnitsConsumed']['after']);
+        $this->assertArrayHasKey('electricity', $byField);
+        $this->assertArrayHasKey('netSalary', $byField);
+    }
+
     public function test_generate_rejects_existing_payroll_instead_of_inserting(): void
     {
         $controller = file_get_contents(dirname(__DIR__, 2).'/app/Http/Controllers/Api/V1/PayrollController.php');

@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\V1\DepartmentController;
 use App\Http\Controllers\Api\V1\DesignationController;
 use App\Http\Controllers\Api\V1\DivisionController;
 use App\Http\Controllers\Api\V1\EmployeeController;
+use App\Http\Controllers\Api\V1\ElectricityTariffController;
 use App\Http\Controllers\Api\V1\NightAllowanceRateController;
 use App\Http\Controllers\Api\V1\PayrollController;
 use App\Http\Controllers\Api\V1\PayrollBankLetterController;
@@ -119,6 +120,12 @@ Route::prefix('v1')->group(function () {
             Route::post('settings/night-allowance-rates', [NightAllowanceRateController::class, 'store']);
             Route::put('settings/night-allowance-rates/{id}', [NightAllowanceRateController::class, 'update']);
             Route::post('settings/night-allowance-rates/{id}/deactivate', [NightAllowanceRateController::class, 'deactivate']);
+
+            Route::get('settings/electricity-tariffs', [ElectricityTariffController::class, 'index']);
+            Route::post('settings/electricity-tariffs', [ElectricityTariffController::class, 'store']);
+            Route::put('settings/electricity-tariffs/{id}', [ElectricityTariffController::class, 'update']);
+            Route::post('settings/electricity-tariffs/{id}/deactivate', [ElectricityTariffController::class, 'deactivate']);
+            Route::post('settings/electricity-tariffs/preview', [ElectricityTariffController::class, 'preview']);
 
             // Settings: Government quarters / accommodation
             Route::get('settings/quarters', [QuarterController::class, 'index']);

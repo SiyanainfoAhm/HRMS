@@ -36,6 +36,22 @@ export type PayrollCalculationSettings = {
   nightAllowanceBasicCeiling?: number;
 };
 
+export type ElectricityTariffConfigDto = {
+  id?: string | null;
+  effectiveFrom?: string | null;
+  sthirAakar: number;
+  vahanAakarPerUnit: number;
+  fuelCharge: number;
+  dutyPercentage: number;
+  slabs: Array<{
+    fromUnit: number;
+    toUnit: number | null;
+    ratePerUnit: number;
+    sortOrder?: number;
+  }>;
+  isActive?: boolean;
+};
+
 export type PayrollConfig = {
   fields: PayrollFieldDefinition[];
   calculationSettings: PayrollCalculationSettings;
@@ -47,6 +63,8 @@ export type PayrollConfig = {
     label?: string;
     isActive?: boolean;
   }>;
+  /** Tariff effective for the selected Run Payroll month (when provided by API). */
+  electricityTariff?: ElectricityTariffConfigDto | null;
 };
 
 export const FIELD_GROUPS: { value: PayrollFieldGroup; label: string }[] = [

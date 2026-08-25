@@ -17,6 +17,11 @@ import {
 } from "./hplEolDeductions";
 import { DEFAULT_NIGHT_ALLOWANCE_BASIC_CEILING, resolveNightAllowanceAmount } from "./nightAllowanceCalculation";
 import { masterRecordToDeductionDefaults } from "./masterRunPayrollMapping";
+import {
+  calculateElectricityBill,
+  type ElectricityBillBreakdown,
+  type ElectricityTariffConfig,
+} from "./electricityTariffCalculation";
 
 export type TransportSlab = { transportSlabGroup: string; transportBase: number };
 
@@ -159,6 +164,10 @@ export type GovernmentMonthlyInput = {
   electricityUnitsConsumed?: number;
   electricityUnitRate?: number;
   electricityManualOverride?: boolean;
+  /** Effective-dated progressive tariff (preferred over flat unit rate). */
+  electricityTariff?: ElectricityTariffConfig | null;
+  electricityApplicable?: boolean;
+  electricityMode?: "unit_based" | "manual_fixed";
   nightHours?: number;
   nightAllowanceRate?: number;
   nightAllowanceBasicCeiling?: number;
@@ -259,6 +268,16 @@ export type GovernmentMonthlyComputed = {
   hplReferenceWarning?: string;
   electricityUnitsConsumed?: number;
   electricityUnitRate?: number;
+  electricityBill?: ElectricityBillBreakdown;
+  electricityTariffId?: string | null;
+  electricitySthirAakar?: number;
+  electricityConsumptionCharge?: number;
+  electricityVahanAakar?: number;
+  electricityFuelCharge?: number;
+  electricityDuty?: number;
+  electricityTotal?: number;
+  electricityApplicable?: boolean;
+  electricityMode?: "unit_based" | "manual_fixed";
   nightHours?: number;
   nightAllowanceRate?: number;
   nightAllowanceAmount?: number;
@@ -487,12 +506,19 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
 
   const unitRate = Math.max(0, Number(input.electricityUnitRate) || 0);
   const units = Math.max(0, Number(input.electricityUnitsConsumed) || 0);
-  const electricityCalc = roundRupees(units * unitRate);
-  const electricityAmount = input.electricityManualOverride
-    ? roundRupees(d.electricity)
-    : units > 0
-      ? electricityCalc
-      : roundRupees(d.electricity);
+  const electricityApplicable = input.electricityApplicable !== false;
+  const electricityMode = input.electricityMode === "manual_fixed" ? "manual_fixed" : "unit_based";
+  const electricityBill = calculateElectricityBill({
+    units,
+    tariff: input.electricityTariff ?? null,
+    applicable: electricityApplicable,
+    mode: electricityMode,
+    legacyUnitRate: unitRate,
+    fixedAmount: d.electricity,
+    manualOverride: Boolean(input.electricityManualOverride),
+    manualAmount: input.electricityManualOverride ? d.electricity : null,
+  });
+  const electricityAmount = electricityBill.total;
 
   // Priority: run/input rent → deduction default → 0. Explicit 0 stays 0.
   const quarterRentAmount = hasQuarter
@@ -605,6 +631,16 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
     hplReferenceWarning: input.hplReferenceWarning,
     electricityUnitsConsumed: units,
     electricityUnitRate: unitRate,
+    electricityBill,
+    electricityTariffId: electricityBill.tariffId,
+    electricitySthirAakar: electricityBill.sthirAakar,
+    electricityConsumptionCharge: electricityBill.consumptionCharge,
+    electricityVahanAakar: electricityBill.vahanAakar,
+    electricityFuelCharge: electricityBill.fuelCharge,
+    electricityDuty: electricityBill.dutyAmount,
+    electricityTotal: electricityBill.total,
+    electricityApplicable,
+    electricityMode,
     nightHours,
     nightAllowanceRate: nightRate,
     nightAllowanceAmount: naF,

@@ -1580,8 +1580,9 @@ function PayrollPageContent() {
               ...gr0,
               electricityUnitsConsumed: Math.max(0, Number(value) || 0),
               electricityManualOverride: false,
+              // Units drive Electricity only — keep other monetary sheet overrides.
             };
-            return recompute(grNext, row.payDays, undefined, row, { clearMonetaryOverrides: true });
+            return recompute(grNext, row.payDays, undefined, row, { clearMonetaryOverrides: false });
           }
 
           if (field === "nightHours") {

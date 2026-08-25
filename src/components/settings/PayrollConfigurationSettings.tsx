@@ -530,9 +530,10 @@ export function PayrollConfigurationSettings() {
             ) : (
               <>
                 <div className="rounded-xl border border-slate-200 bg-white p-4">
-                  <h4 className="text-sm font-semibold text-slate-800">Electricity unit rate</h4>
+                  <h4 className="text-sm font-semibold text-slate-800">Electricity unit rate (legacy)</h4>
                   <p className="mt-1 text-xs text-slate-600">
-                    Used in Run Payroll: Electricity deduction = units consumed × this rate. Admins can still override the amount per employee per month.
+                    Fallback when no progressive tariff applies for Unit Based employees. Prefer Settings → Electricity for
+                    Sthir / slabs / Vahan / Fuel / Duty. Admins can still override the monthly amount in Run Payroll.
                   </p>
                   <div className="mt-3 max-w-xs">
                     <FormField label="Electricity unit rate (₹)" htmlFor="institute-electricity-rate">

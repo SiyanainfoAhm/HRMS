@@ -4,6 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import type { PayrollFieldDefinition } from "@/lib/payrollFieldTypes";
 import { cn } from "@/lib/cn";
 import { DaysNumberInput } from "@/components/ui/DaysNumberInput";
+import { Modal } from "@/components/ui/Modal";
+import { Button } from "@/components/ui/Button";
+import type { ElectricityBillBreakdown } from "@/lib/electricityTariffCalculation";
 import { PayrollComponentScroller, type PayrollScrollerHandle } from "./PayrollComponentScroller";
 import { PayrollEmployeeCardHeader } from "./PayrollEmployeeCardHeader";
 import {
@@ -109,6 +112,16 @@ export type GovernmentPreviewMonthly = {
   hplReferenceWarning?: string;
   electricityUnitsConsumed?: number;
   electricityUnitRate?: number;
+  electricityBill?: ElectricityBillBreakdown;
+  electricityTariffId?: string | null;
+  electricitySthirAakar?: number;
+  electricityConsumptionCharge?: number;
+  electricityVahanAakar?: number;
+  electricityFuelCharge?: number;
+  electricityDuty?: number;
+  electricityTotal?: number;
+  electricityApplicable?: boolean;
+  electricityMode?: "unit_based" | "manual_fixed" | string;
   nightHours?: number;
   nightAllowanceRate?: number;
   nightAllowanceAmount?: number;
@@ -227,6 +240,105 @@ function SummaryStat({ label, value, emphasis }: { label: string; value: string;
         {value}
       </p>
     </div>
+  );
+}
+
+function electricityBillFromRow(row: GovernmentRunPreviewRow): ElectricityBillBreakdown | null {
+  const gm = row.governmentMonthly as Record<string, unknown> | null | undefined;
+  const gr = row.govRecalc as Record<string, unknown> | null | undefined;
+  const bill = (gm?.electricityBill ?? gr?.electricityBill) as ElectricityBillBreakdown | undefined;
+  if (bill && typeof bill === "object") return bill;
+  if (gm && typeof gm.electricityTotal === "number") {
+    return {
+      units: Number(gm.electricityUnitsConsumed ?? gr?.electricityUnitsConsumed ?? 0),
+      applicable: gm.electricityApplicable !== false,
+      mode: (gm.electricityMode as "unit_based" | "manual_fixed") || "unit_based",
+      tariffId: (gm.electricityTariffId as string | null) ?? null,
+      sthirAakar: Number(gm.electricitySthirAakar ?? 0),
+      consumptionCharge: Number(gm.electricityConsumptionCharge ?? 0),
+      vahanAakar: Number(gm.electricityVahanAakar ?? 0),
+      fuelCharge: Number(gm.electricityFuelCharge ?? 0),
+      subtotal:
+        Number(gm.electricitySthirAakar ?? 0) +
+        Number(gm.electricityConsumptionCharge ?? 0) +
+        Number(gm.electricityVahanAakar ?? 0) +
+        Number(gm.electricityFuelCharge ?? 0),
+      dutyPercentage: 0,
+      dutyAmount: Number(gm.electricityDuty ?? 0),
+      totalExact: Number(gm.electricityTotal ?? 0),
+      total: Number(gm.electricityTotal ?? 0),
+      slabPortions: [],
+      manualOverride: Boolean(gr?.electricityManualOverride),
+      manualAmount: null,
+    };
+  }
+  return null;
+}
+
+function ElectricityBreakdownButton({ row }: { row: GovernmentRunPreviewRow }) {
+  const [open, setOpen] = useState(false);
+  const bill = electricityBillFromRow(row);
+  if (!bill) return null;
+  return (
+    <>
+      <button
+        type="button"
+        className="rounded border border-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-50"
+        title="Electricity bill breakdown"
+        onClick={() => setOpen(true)}
+      >
+        i
+      </button>
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title="Electricity Bill Breakdown"
+        size="sm"
+        footer={
+          <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+            Close
+          </Button>
+        }
+      >
+        <dl className="space-y-1.5 text-sm">
+          <div className="flex justify-between gap-4">
+            <dt className="text-slate-500">Units</dt>
+            <dd className="tabular-nums font-medium">{bill.units}</dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt className="text-slate-500">Sthir Aakar</dt>
+            <dd className="tabular-nums">{fmtIn(bill.sthirAakar)}</dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt className="text-slate-500">Electricity Charges</dt>
+            <dd className="tabular-nums">{fmtIn(bill.consumptionCharge)}</dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt className="text-slate-500">Vahan Aakar</dt>
+            <dd className="tabular-nums">{fmtIn(bill.vahanAakar)}</dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt className="text-slate-500">Fuel Charges</dt>
+            <dd className="tabular-nums">{fmtIn(bill.fuelCharge)}</dd>
+          </div>
+          <div className="flex justify-between gap-4 border-t border-slate-100 pt-1.5">
+            <dt className="text-slate-500">Subtotal</dt>
+            <dd className="tabular-nums">{fmtIn(bill.subtotal)}</dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt className="text-slate-500">Electricity Duty @{bill.dutyPercentage}%</dt>
+            <dd className="tabular-nums">{fmtIn(bill.dutyAmount)}</dd>
+          </div>
+          <div className="flex justify-between gap-4 border-t border-slate-200 pt-1.5 font-semibold">
+            <dt>Total</dt>
+            <dd className="tabular-nums">{fmtIn(bill.total)}</dd>
+          </div>
+          {bill.manualOverride ? (
+            <p className="pt-1 text-xs text-amber-800">Manual Electricity override is active for this month.</p>
+          ) : null}
+        </dl>
+      </Modal>
+    </>
   );
 }
 
@@ -536,21 +648,24 @@ function GovernmentEmployeeDetail({
               </div>
               <div>
                 <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Elec. units</p>
-                {readOnly ? (
-                  <p className="text-[13px] tabular-nums text-slate-800">{leave.electricityUnitsConsumed}</p>
-                ) : (
-                  <input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={leave.electricityUnitsConsumed}
-                    onChange={(e) =>
-                      onUpdate(row.employeeUserId, "electricityUnitsConsumed", parseFloat(e.target.value) || 0)
-                    }
-                    className={payrollDaysInputClass}
-                    title="Electricity units consumed — deduction = units × institute unit rate"
-                  />
-                )}
+                <div className="flex items-center gap-1">
+                  {readOnly ? (
+                    <p className="text-[13px] tabular-nums text-slate-800">{leave.electricityUnitsConsumed}</p>
+                  ) : (
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={leave.electricityUnitsConsumed}
+                      onChange={(e) =>
+                        onUpdate(row.employeeUserId, "electricityUnitsConsumed", parseFloat(e.target.value) || 0)
+                      }
+                      className={payrollDaysInputClass}
+                      title="Electricity units — progressive tariff bill (Sthir + slabs + Vahan + Fuel + Duty)"
+                    />
+                  )}
+                  <ElectricityBreakdownButton row={row} />
+                </div>
               </div>
               <div>
                 <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Night hrs</p>
