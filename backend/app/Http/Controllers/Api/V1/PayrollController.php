@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Enums\UserRole;
 use App\Http\Controllers\Controller;
 use App\Models\HrmsDepartment;
 use App\Models\HrmsDivision;
@@ -16,6 +17,7 @@ use App\Support\BankDetailsService;
 use App\Support\BankDetailsValidator;
 use App\Services\NightAllowanceRateService;
 use App\Services\PayrollArrearService;
+use App\Services\PayrollAmendmentService;
 use App\Services\PayrollDraftService;
 use App\Services\PayrollFieldService;
 use App\Services\QuarterService;
@@ -23,6 +25,8 @@ use App\Services\PayrollMasterService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use InvalidArgumentException;
+use RuntimeException;
 
 class PayrollController extends Controller
 {
@@ -33,6 +37,7 @@ class PayrollController extends Controller
         private readonly QuarterService $quarterService,
         private readonly NightAllowanceRateService $nightAllowanceService,
         private readonly PayrollDraftService $draftService,
+        private readonly PayrollAmendmentService $amendmentService,
     ) {}
 
     public function periods(Request $request): JsonResponse
@@ -676,6 +681,7 @@ class PayrollController extends Controller
                 'preview' => array_merge($previewBase, [
                     'alreadyRun' => false,
                     'existingPeriodId' => $existingPeriod?->id,
+                    'isLocked' => (bool) ($existingPeriod?->is_locked ?? false),
                     'payrollComplete' => true,
                     'missingPayslipCount' => 0,
                     'rows' => $arrearEnriched['rows'],
@@ -711,19 +717,36 @@ class PayrollController extends Controller
             $uid = $fr['employeeUserId'];
             $slip = $payslips->get($uid);
             if ($slip) {
-                $merged[] = array_merge(
-                    $this->mapSavedPayslipToPreviewRow(
-                        $slip,
-                        $usersById->get($uid),
-                        $govRows->get($uid),
-                    ),
-                    [
-                        'department' => $fr['department'] ?? null,
-                        'division' => $fr['division'] ?? null,
-                        'departmentId' => $fr['departmentId'] ?? null,
-                        'divisionId' => $fr['divisionId'] ?? null,
-                    ],
+                $mapped = $this->mapSavedPayslipToPreviewRow(
+                    $slip,
+                    $usersById->get($uid),
+                    $govRows->get($uid),
                 );
+                $mergedRow = array_merge($fr, $mapped, [
+                    'department' => $fr['department'] ?? null,
+                    'division' => $fr['division'] ?? null,
+                    'departmentId' => $fr['departmentId'] ?? null,
+                    'divisionId' => $fr['divisionId'] ?? null,
+                    'monthlyPayrollId' => $govRows->get($uid)?->id,
+                    'payslipId' => $slip->id,
+                ]);
+                $gov = $govRows->get($uid);
+                if ($gov && is_array($mergedRow['govRecalc'] ?? null)) {
+                    $mergedRow['govRecalc'] = array_merge($mergedRow['govRecalc'], [
+                        'hplDays' => (int) ($gov->hpl_days ?? 0),
+                        'eolDays' => (int) ($gov->eol_days ?? 0),
+                        'leaveRemarks' => $this->normalizeLeaveRemarksSafe($gov->leave_remarks ?? null),
+                        'eolReferenceMonth' => $gov->eol_reference_month ? (int) $gov->eol_reference_month : ($mergedRow['govRecalc']['eolReferenceMonth'] ?? $month),
+                        'eolReferenceYear' => $gov->eol_reference_year ? (int) $gov->eol_reference_year : ($mergedRow['govRecalc']['eolReferenceYear'] ?? $year),
+                        'hplReferenceMonth' => $gov->hpl_reference_month ? (int) $gov->hpl_reference_month : ($mergedRow['govRecalc']['hplReferenceMonth'] ?? $month),
+                        'hplReferenceYear' => $gov->hpl_reference_year ? (int) $gov->hpl_reference_year : ($mergedRow['govRecalc']['hplReferenceYear'] ?? $year),
+                        'electricityUnitsConsumed' => (float) ($gov->electricity_units_consumed ?? 0),
+                        'nightHours' => (float) ($gov->night_hours ?? 0),
+                        'nightAllowanceRate' => (float) ($gov->night_allowance_rate ?? $mergedRow['govRecalc']['nightAllowanceRate'] ?? 0),
+                        'quarterRent' => (float) ($gov->quarter_rent_amount ?? $mergedRow['govRecalc']['quarterRent'] ?? 0),
+                    ]);
+                }
+                $merged[] = $mergedRow;
             } else {
                 $merged[] = array_merge($fr, ['payslipPending' => true]);
             }
@@ -754,6 +777,7 @@ class PayrollController extends Controller
                 'periodName' => $existingPeriod->period_name ?? $periodNameDefault,
                 'alreadyRun' => true,
                 'existingPeriodId' => $existingPeriod->id,
+                'isLocked' => (bool) ($existingPeriod->is_locked ?? false),
                 'payrollComplete' => $missingPayslipCount === 0,
                 'missingPayslipCount' => $missingPayslipCount,
                 'rows' => $arrearEnriched['rows'],
@@ -837,10 +861,15 @@ class PayrollController extends Controller
 
         if ($existingPeriod) {
             $hasSlips = HrmsPayslip::where('payroll_period_id', $existingPeriod->id)->exists();
-            if ($hasSlips) {
+            $hasMonthly = HrmsGovernmentMonthlyPayroll::where('payroll_period_id', $existingPeriod->id)
+                ->where('company_id', $user->company_id)
+                ->exists();
+            if ($hasSlips || $hasMonthly) {
                 return response()->json([
-                    'error' => 'Payroll has already been run for this calendar month.',
-                ], 400);
+                    'error' => 'Payroll has already been generated for this calendar month. Use Audit Generated Payroll to amend existing records.',
+                    'code' => 'PAYROLL_ALREADY_GENERATED',
+                    'existingPeriodId' => $existingPeriod->id,
+                ], 409);
             }
             $period = $existingPeriod;
             $period->update([
@@ -866,6 +895,109 @@ class PayrollController extends Controller
             $runDay,
             false,
         );
+    }
+
+    /**
+     * Admin amendment of already-generated monthly payroll (batch).
+     * Updates existing cirt_monthly_payroll IDs; never inserts duplicates.
+     */
+    public function auditGenerated(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if ($denied = $this->assertPayrollAdmin($user)) {
+            return $denied;
+        }
+
+        $reason = $request->input('reason') ?? $request->input('change_reason') ?? $request->input('changeReason');
+        $rows = $request->input('rows') ?? $request->input('payroll') ?? [];
+        if (! is_array($rows)) {
+            return response()->json(['error' => 'rows must be an array of generated payroll records.'], 422);
+        }
+
+        try {
+            $result = $this->amendmentService->amendGeneratedRows($user, $reason, array_values($rows));
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['error' => $e->getMessage()], 422);
+        } catch (RuntimeException $e) {
+            $locked = str_contains(strtolower($e->getMessage()), 'locked');
+
+            return response()->json(['error' => $e->getMessage(), 'code' => $locked ? 'PAYROLL_PERIOD_LOCKED' : 'AMENDMENT_FAILED'], $locked ? 409 : 400);
+        }
+
+        return response()->json([
+            'ok' => true,
+            'updated' => $result['updated'],
+            'skipped' => $result['skipped'],
+            'audits' => $result['audits'],
+        ]);
+    }
+
+    /**
+     * Admin amendment of a single generated monthly payroll row by ID.
+     */
+    public function auditGeneratedOne(Request $request, string $id): JsonResponse
+    {
+        $user = $request->user();
+        if ($denied = $this->assertPayrollAdmin($user)) {
+            return $denied;
+        }
+
+        $reason = $request->input('reason') ?? $request->input('change_reason') ?? $request->input('changeReason');
+        $payroll = $request->input('payroll');
+        $row = is_array($payroll) ? $payroll : $request->except(['reason', 'change_reason', 'changeReason']);
+        if (! is_array($row)) {
+            return response()->json(['error' => 'payroll payload is required.'], 422);
+        }
+        $row['monthly_payroll_id'] = $id;
+        $row['monthlyPayrollId'] = $id;
+
+        try {
+            $result = $this->amendmentService->amendGeneratedRows($user, $reason, [$row]);
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['error' => $e->getMessage()], 422);
+        } catch (RuntimeException $e) {
+            $locked = str_contains(strtolower($e->getMessage()), 'locked');
+
+            return response()->json(['error' => $e->getMessage(), 'code' => $locked ? 'PAYROLL_PERIOD_LOCKED' : 'AMENDMENT_FAILED'], $locked ? 409 : 400);
+        }
+
+        return response()->json([
+            'ok' => true,
+            'updated' => $result['updated'],
+            'skipped' => $result['skipped'],
+            'audits' => $result['audits'],
+        ]);
+    }
+
+    public function auditHistory(Request $request, string $id): JsonResponse
+    {
+        $user = $request->user();
+        if ($denied = $this->assertPayrollAdmin($user)) {
+            return $denied;
+        }
+
+        $monthly = HrmsGovernmentMonthlyPayroll::query()
+            ->where('id', $id)
+            ->where('company_id', $user->company_id)
+            ->first();
+        if (! $monthly) {
+            return response()->json(['error' => 'Generated payroll row not found.'], 404);
+        }
+
+        return response()->json([
+            'audits' => $this->amendmentService->historyForMonthly((string) $user->company_id, $id),
+        ]);
+    }
+
+    private function assertPayrollAdmin(HrmsUser $user): ?JsonResponse
+    {
+        $role = $user->role;
+        $roleKey = $role instanceof UserRole ? $role->value : (is_string($role) ? $role : '');
+        if ($roleKey !== UserRole::Admin->value) {
+            return response()->json(['error' => 'Forbidden'], 403);
+        }
+
+        return null;
     }
 
     /**
@@ -915,6 +1047,14 @@ class PayrollController extends Controller
             ->flip()
             ->all();
 
+        $existingMonthlyUserIds = HrmsGovernmentMonthlyPayroll::query()
+            ->where('payroll_period_id', $period->id)
+            ->where('company_id', $user->company_id)
+            ->whereIn('employee_user_id', $employeeUserIds)
+            ->pluck('employee_user_id')
+            ->flip()
+            ->all();
+
         $usersById = HrmsUser::query()
             ->where('company_id', $user->company_id)
             ->whereIn('id', $employeeUserIds)
@@ -942,6 +1082,7 @@ class PayrollController extends Controller
             $payrollConfig,
             $companyId,
             $existingPayslipUserIds,
+            $existingMonthlyUserIds,
             $usersById,
             $mastersByUserId,
             &$generated,
@@ -975,7 +1116,7 @@ class PayrollController extends Controller
                 return;
             }
 
-            if (isset($existingPayslipUserIds[$employeeUserId])) {
+            if (isset($existingPayslipUserIds[$employeeUserId]) || isset($existingMonthlyUserIds[$employeeUserId])) {
                 return;
             }
 
@@ -1343,16 +1484,18 @@ class PayrollController extends Controller
                 $bank['bank_account_number'],
             ),
             'bankIfsc' => $this->firstNonEmptyString($payslip->bank_ifsc, $bank['bank_ifsc']),
-            'payDays' => (int) ($payslip->pay_days ?? 0),
+            'payDays' => $gov
+                ? (int) round((float) ($gov->paid_days ?? $payslip->pay_days ?? 0))
+                : (int) ($payslip->pay_days ?? 0),
             'unpaidLeaveDays' => $gov ? (int) ($gov->unpaid_days ?? 0) : 0,
-            'grossPay' => (int) round((float) ($payslip->gross_pay ?? 0)),
+            'grossPay' => (int) round((float) ($gov->total_earnings ?? $payslip->gross_pay ?? 0)),
             'pfEmployee' => (int) round((float) ($payslip->pf_employee ?? 0)),
             'pfEmployer' => (int) round((float) ($payslip->pf_employer ?? 0)),
             'esicEmployee' => (int) round((float) ($payslip->esic_employee ?? 0)),
             'esicEmployer' => (int) round((float) ($payslip->esic_employer ?? 0)),
             'profTax' => (int) round((float) ($payslip->professional_tax ?? 0)),
-            'deductions' => (int) round((float) ($payslip->deductions ?? 0)),
-            'netPay' => (int) round($net),
+            'deductions' => (int) round((float) ($gov->total_deductions ?? $payslip->deductions ?? 0)),
+            'netPay' => (int) round((float) ($gov->net_salary ?? $net)),
             'incentive' => $inc,
             'prBonus' => $bonus,
             'reimbursement' => $reimb,
@@ -1361,6 +1504,8 @@ class PayrollController extends Controller
             'ctc' => (int) round((float) ($payslip->ctc ?? 0)),
             'payrollMode' => $isGov ? 'government' : 'private',
             'governmentMonthly' => $this->governmentMonthlyPreviewFromDb($gov),
+            'monthlyPayrollId' => $gov?->id,
+            'payslipId' => $payslip->id,
             'payslipPending' => false,
         ];
     }
@@ -1375,28 +1520,46 @@ class PayrollController extends Controller
         $num = static fn ($v): float => is_numeric($v) ? (float) $v : 0.0;
 
         return [
+            'id' => $gov->id,
+            'basicActual' => $num($gov->basic_actual),
             'basicPaid' => $num($gov->basic_paid),
+            'spPayActual' => $num($gov->sp_pay_actual),
             'spPayPaid' => $num($gov->sp_pay_paid),
+            'daActual' => $num($gov->da_actual),
             'daPaid' => $num($gov->da_paid),
+            'transportActual' => $num($gov->transport_actual),
             'transportPaid' => $num($gov->transport_paid),
+            'hraActual' => $num($gov->hra_actual),
             'hraPaid' => $num($gov->hra_paid),
+            'medicalActual' => $num($gov->medical_actual),
             'medicalPaid' => $num($gov->medical_paid),
+            'extraWorkAllowanceActual' => $num($gov->extra_work_allowance_actual),
             'extraWorkAllowancePaid' => $num($gov->extra_work_allowance_paid),
+            'nightAllowanceActual' => $num($gov->night_allowance_actual),
             'nightAllowancePaid' => $num($gov->night_allowance_paid),
+            'uniformAllowanceActual' => $num($gov->uniform_allowance_actual),
             'uniformAllowancePaid' => $num($gov->uniform_allowance_paid),
+            'educationAllowanceActual' => $num($gov->education_allowance_actual),
             'educationAllowancePaid' => $num($gov->education_allowance_paid),
+            'daArrearsActual' => $num($gov->da_arrears_paid),
             'daArrearsPaid' => $num($gov->da_arrears_paid),
+            'transportArrearsActual' => $num($gov->transport_arrears_paid),
             'transportArrearsPaid' => $num($gov->transport_arrears_paid),
             'grossArrear' => $num($gov->gross_arrear ?? 0),
             'cpfArrear' => $num($gov->cpf_arrear ?? 0),
             'netArrear' => $num($gov->net_arrear ?? 0),
+            'encashmentActual' => $num($gov->encashment_actual),
             'encashmentPaid' => $num($gov->encashment_paid),
+            'encashmentDaActual' => $num($gov->encashment_da_actual),
             'encashmentDaPaid' => $num($gov->encashment_da_paid),
             'customEarnings' => $this->customFieldMapFromGov($gov, 'custom_earnings'),
             'customDeductions' => $this->customFieldMapFromGov($gov, 'custom_deductions'),
             'totalEarnings' => $num($gov->total_earnings),
             'totalDeductions' => $num($gov->total_deductions),
             'netSalary' => $num($gov->net_salary),
+            'quarterRent' => $num($gov->quarter_rent_amount ?? 0),
+            'quarter_rent' => $num($gov->quarter_rent_amount ?? 0),
+            'hasQuarter' => (bool) ($gov->has_quarter ?? false),
             'hplDays' => (int) ($gov->hpl_days ?? 0),
             'eolDays' => (int) ($gov->eol_days ?? 0),
             'hpl_days' => (int) ($gov->hpl_days ?? 0),

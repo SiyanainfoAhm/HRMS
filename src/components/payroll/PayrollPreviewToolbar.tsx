@@ -15,7 +15,7 @@ type Totals = {
   net: number;
 };
 
-export type PayrollRunStatusKind = "calculated" | "unsaved" | "draft" | "finalized";
+export type PayrollRunStatusKind = "calculated" | "unsaved" | "draft" | "finalized" | "audit";
 
 type Props = {
   runMonth: string;
@@ -26,6 +26,8 @@ type Props = {
   running: boolean;
   generateDisabled: boolean;
   generateLabel: string;
+  showGenerate?: boolean;
+  extraActions?: ReactNode;
   search: string;
   onSearchChange: (v: string) => void;
   divisionFilter: string;
@@ -62,6 +64,8 @@ export function PayrollPreviewToolbar({
   running,
   generateDisabled,
   generateLabel,
+  showGenerate = true,
+  extraActions,
   search,
   onSearchChange,
   divisionFilter,
@@ -94,7 +98,9 @@ export function PayrollPreviewToolbar({
   }));
 
   const statusClass =
-    statusKind === "finalized"
+    statusKind === "audit"
+      ? "bg-violet-50 text-violet-950"
+      : statusKind === "finalized"
       ? "bg-emerald-50 text-emerald-900"
       : statusKind === "unsaved"
         ? "bg-amber-50 text-amber-950"
@@ -120,9 +126,12 @@ export function PayrollPreviewToolbar({
           </div>
           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
             {periodName ? <span className="truncate text-[13px] font-semibold text-slate-800">{periodName}</span> : null}
-            <Button type="submit" size="sm" loading={running} disabled={running || generateDisabled || draftSaving}>
-              {generateLabel}
-            </Button>
+            {showGenerate ? (
+              <Button type="submit" size="sm" loading={running} disabled={running || generateDisabled || draftSaving}>
+                {generateLabel}
+              </Button>
+            ) : null}
+            {extraActions}
             {onSaveDraft ? (
               <Button
                 type="button"

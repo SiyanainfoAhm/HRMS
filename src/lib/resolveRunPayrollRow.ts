@@ -41,6 +41,8 @@ export type ResolveRunPayrollRowContext = {
   payrollConfig: unknown;
   alreadyRun: boolean;
   draftDirty: boolean;
+  /** Keep local sheet edits (audit mode) instead of reloading API values. */
+  preserveEdits?: boolean;
   cached?: RunPayrollRowLike | null;
   draftStored?: DraftEmployeeApiRow | Record<string, unknown> | null;
 };
@@ -245,7 +247,8 @@ export function resolveRunPayrollRow(
   ctx: ResolveRunPayrollRowContext,
 ): RunPayrollRowLike {
   const uid = String(r.employeeUserId ?? "");
-  if (!ctx.alreadyRun && ctx.draftDirty && ctx.cached && String(ctx.cached.employeeUserId) === uid) {
+  const preserveEdits = Boolean(ctx.preserveEdits || (!ctx.alreadyRun && ctx.draftDirty));
+  if (preserveEdits && ctx.cached && String(ctx.cached.employeeUserId) === uid) {
     return ctx.cached;
   }
 

@@ -158,6 +158,10 @@ Route::prefix('v1')->group(function () {
             Route::get('payroll/reference-salary', [PayrollController::class, 'referenceSalary']);
             Route::get('payroll/arrears/debug-unpaid', [PayrollController::class, 'debugUnpaidArrears']);
             Route::post('payroll/run', [PayrollController::class, 'run']);
+            Route::post('payroll/run/audit', [PayrollController::class, 'auditGenerated']);
+            Route::put('payroll/monthly/{id}/audit', [PayrollController::class, 'auditGeneratedOne']);
+            Route::patch('payroll/monthly/{id}/audit', [PayrollController::class, 'auditGeneratedOne']);
+            Route::get('payroll/monthly/{id}/audits', [PayrollController::class, 'auditHistory']);
             Route::post('payroll/payslips', [PayrollController::class, 'storePayslips']);
             Route::get('payroll/export', [PayrollController::class, 'export']);
             Route::get('payroll/drafts', [PayrollDraftController::class, 'show']);

@@ -8,7 +8,12 @@ function camelToSnake(str: string): string {
 }
 
 /** Nested payroll snapshot keys must stay camelCase for Run Payroll hydration. */
-const PRESERVE_NESTED_CASING_KEYS = new Set(["rowPayload", "row_payload"]);
+const PRESERVE_NESTED_CASING_KEYS = new Set([
+  "rowPayload",
+  "row_payload",
+  "governmentMonthly",
+  "government_monthly",
+]);
 
 function transformKeysToSnake(obj: any, preserveNested = false): any {
   if (Array.isArray(obj)) return obj.map((item) => transformKeysToSnake(item, preserveNested));

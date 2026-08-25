@@ -79,6 +79,16 @@ import {
 } from "@/lib/runPayrollSheetEdit";
 import { hasOwn } from "@/lib/effectivePayrollValue";
 import { isAdminRole } from "@/lib/roles";
+import {
+  canShowAuditGeneratedAction,
+  diffPayrollAuditSnapshots,
+  formatAuditChangeLine,
+  isGeneratedPayrollMonth,
+  rowHasGeneratedPayrollId,
+  snapshotGeneratedPayrollRow,
+  type PayrollAuditChangedField,
+  type PayrollAuditSnapshot,
+} from "@/lib/payrollGeneratedAudit";
 import { Download, FileText } from "lucide-react";
 import { GovernmentPayslipPrint } from "@/components/payslip/GovernmentPayslipPrint";
 import { AdminPayrollRemarksNote } from "@/components/payroll/AdminPayrollRemarksNote";
@@ -90,6 +100,7 @@ import {
   normalizeIfscInput,
   validateBankDetails,
 } from "@/lib/employeeValidators";
+import { Modal } from "@/components/ui/Modal";
 import { PaginationControls } from "@/components/ui/PaginationControls";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import {
@@ -928,6 +939,24 @@ function PayrollPageContent() {
   const [resolvedRevision, setResolvedRevision] = useState(0);
   const [draftSaving, setDraftSaving] = useState(false);
   const [bankLetterLoading, setBankLetterLoading] = useState(false);
+  const [auditMode, setAuditMode] = useState(false);
+  const [auditDirty, setAuditDirty] = useState(false);
+  const [auditSaving, setAuditSaving] = useState(false);
+  const [auditReasonOpen, setAuditReasonOpen] = useState(false);
+  const [auditReason, setAuditReason] = useState("");
+  const [auditHistoryOpen, setAuditHistoryOpen] = useState(false);
+  const [auditHistoryLoading, setAuditHistoryLoading] = useState(false);
+  const [auditHistory, setAuditHistory] = useState<
+    Array<{
+      id: string;
+      changedBy?: string;
+      changedByName?: string | null;
+      changeReason?: string;
+      changedFields?: PayrollAuditChangedField[];
+      createdAt?: string | null;
+    }>
+  >([]);
+  const originalAuditByUserRef = useRef<Map<string, PayrollAuditSnapshot>>(new Map());
   const [previewDivisionFilter, setPreviewDivisionFilter] = useState("");
   const [previewDepartmentFilter, setPreviewDepartmentFilter] = useState("");
   const [runDivisions, setRunDivisions] = useState<Array<{ id: string; name: string }>>([]);
@@ -995,6 +1024,7 @@ function PayrollPageContent() {
     effectiveRunDay: number;
     alreadyRun: boolean;
     existingPeriodId: string | null;
+    isLocked?: boolean;
     payrollComplete?: boolean;
     missingPayslipCount?: number;
     arrearWarnings?: string[];
@@ -1034,6 +1064,8 @@ function PayrollPageContent() {
       payrollMode?: string;
       governmentMonthly?: unknown;
       govRecalc?: GovRecalcPayload;
+      monthlyPayrollId?: string;
+      payslipId?: string;
       error?: string;
       payslipPending?: boolean;
     }[];
@@ -1076,6 +1108,8 @@ function PayrollPageContent() {
       payrollMode?: string;
       governmentMonthly?: unknown;
       govRecalc?: GovRecalcPayload;
+      monthlyPayrollId?: string;
+      payslipId?: string;
       payslipPending?: boolean;
       arrearLineIds?: string[];
       arrearLines?: Array<{ id?: string }>;
@@ -1255,6 +1289,7 @@ function PayrollPageContent() {
       const runY = parseInt(runYear, 10);
       const runM = parseInt(runMonth, 10);
       const alreadyRun = Boolean(preview.alreadyRun);
+      const preserveEdits = auditMode && auditDirty;
       setEditableRows(
         preview.rows.map((r: any) => {
           const uid = String(r.employeeUserId ?? "");
@@ -1268,11 +1303,12 @@ function PayrollPageContent() {
             payrollConfig,
             alreadyRun,
             draftDirty: draftDirtyRef.current,
+            preserveEdits,
             cached: cached ?? null,
             draftStored: draftPayloadByUserRef.current.get(uid) ?? null,
           });
           resolvedPayrollByUserIdRef.current.set(uid, resolved);
-          if (!alreadyRun) {
+          if (!alreadyRun || auditMode) {
             runRowEditsRef.current.set(uid, resolved);
           }
           return resolved as typeof r;
@@ -1292,6 +1328,8 @@ function PayrollPageContent() {
     runYear,
     runMonth,
     draftRevision,
+    auditMode,
+    auditDirty,
   ]);
 
   useEffect(() => {
@@ -1408,6 +1446,9 @@ function PayrollPageContent() {
   ) {
     if (!preview?.alreadyRun) {
       setDraftDirty(true);
+    } else if (auditMode) {
+      setAuditDirty(true);
+      setResolvedRevision((n) => n + 1);
     }
     const payDenom = preview?.daysInMonth ?? preview?.workingDaysInFullMonth ?? 30;
     const payDaysMax = preview?.effectiveRunDay ?? preview?.workingDaysThroughRunDay ?? preview?.daysInMonth ?? 31;
@@ -2425,6 +2466,7 @@ function PayrollPageContent() {
         payrollConfig: previewData.payrollConfig ?? payrollConfig,
         alreadyRun,
         draftDirty: draftDirtyRef.current,
+        preserveEdits: auditMode && auditDirty,
         cached: cached ?? null,
         draftStored: draftPayloadByUserRef.current.get(uid) ?? null,
       });
@@ -2444,7 +2486,7 @@ function PayrollPageContent() {
   // Prefetch full period into the canonical map so totals/save/export never depend on the current page.
   useEffect(() => {
     if (!canManage || tab !== "run") return;
-    if (preview?.alreadyRun) return;
+    if (preview?.alreadyRun && !auditMode) return;
     const expected = Number(previewMeta.total || 0);
     if (expected <= 0 && draftPayloadByUserRef.current.size === 0) return;
     let cancelled = false;
@@ -2469,6 +2511,7 @@ function PayrollPageContent() {
     draftRevision,
     preview?.alreadyRun,
     previewMeta.total,
+    auditMode,
   ]);
 
   function workbookStatus(): PayrollWorkbookStatus {
@@ -2637,6 +2680,185 @@ function PayrollPageContent() {
     }
   }
 
+  function exitAuditMode() {
+    setAuditMode(false);
+    setAuditDirty(false);
+    setAuditReasonOpen(false);
+    setAuditReason("");
+    originalAuditByUserRef.current.clear();
+  }
+
+  async function enterAuditMode() {
+    if (!canShowAuditGeneratedAction({ alreadyRun: preview?.alreadyRun, isAdmin: canManage })) {
+      showToast("error", "Only an Admin can audit generated payroll.");
+      return;
+    }
+    if (preview?.isLocked) {
+      showToast(
+        "error",
+        "This payroll period is locked. Unlock the period before amending generated payroll.",
+      );
+      return;
+    }
+    try {
+      const rows = await collectAllRunRowsForExport();
+      const snap = new Map<string, PayrollAuditSnapshot>();
+      for (const row of rows) {
+        const rec = row as Record<string, unknown>;
+        const uid = String(row.employeeUserId ?? "");
+        if (!uid || !rowHasGeneratedPayrollId(rec)) continue;
+        snap.set(uid, snapshotGeneratedPayrollRow(rec));
+      }
+      originalAuditByUserRef.current = snap;
+      setAuditMode(true);
+      setAuditDirty(false);
+      showToast("success", "AUDIT MODE — Generated Payroll. Edits are not saved until you Update Generated Payroll.");
+    } catch (err: unknown) {
+      showToast("error", err instanceof Error ? err.message : "Failed to open generated payroll for audit.");
+    }
+  }
+
+  function collectChangedAuditRows(): Array<{
+    row: Record<string, unknown>;
+    changes: ReturnType<typeof diffPayrollAuditSnapshots>;
+  }> {
+    const out: Array<{
+      row: Record<string, unknown>;
+      changes: ReturnType<typeof diffPayrollAuditSnapshots>;
+    }> = [];
+    const seen = new Set<string>();
+    const source = [
+      ...Array.from(resolvedPayrollByUserIdRef.current.values()),
+      ...editableRows,
+    ];
+    for (const row of source) {
+      const rec = row as Record<string, unknown>;
+      const uid = String(row.employeeUserId ?? "");
+      if (!uid || seen.has(uid) || !rowHasGeneratedPayrollId(rec)) continue;
+      seen.add(uid);
+      const before = originalAuditByUserRef.current.get(uid) ?? snapshotGeneratedPayrollRow(rec);
+      const after = snapshotGeneratedPayrollRow(rec);
+      const changes = diffPayrollAuditSnapshots(before, after);
+      if (changes.length === 0) continue;
+      out.push({ row: rec, changes });
+    }
+    return out;
+  }
+
+  function openUpdateGeneratedModal() {
+    if (preview?.isLocked) {
+      showToast(
+        "error",
+        "This payroll period is locked. Unlock the period before amending generated payroll.",
+      );
+      return;
+    }
+    const changed = collectChangedAuditRows();
+    if (changed.length === 0) {
+      showToast("error", "No payroll values were changed.");
+      return;
+    }
+    setAuditReason("");
+    setAuditReasonOpen(true);
+  }
+
+  async function confirmUpdateGeneratedPayroll() {
+    const reason = auditReason.trim();
+    if (!reason) {
+      showToast("error", "A reason for the payroll amendment is required.");
+      return;
+    }
+    const changed = collectChangedAuditRows();
+    if (changed.length === 0) {
+      showToast("error", "No payroll values were changed.");
+      return;
+    }
+    setAuditSaving(true);
+    try {
+      const rowsPayload = changed.map(({ row: r }) => ({
+        monthlyPayrollId: String(r.monthlyPayrollId ?? ""),
+        employeeUserId: r.employeeUserId,
+        payDays: r.payDays,
+        grossPay: r.grossPay,
+        netPay: r.netPay,
+        deductions: r.deductions,
+        incentive: r.incentive ?? 0,
+        prBonus: r.prBonus ?? 0,
+        reimbursement: r.reimbursement ?? 0,
+        tds: r.tds ?? 0,
+        daArrear: r.daArrear,
+        transportArrear: r.transportArrear,
+        grossArrear: r.grossArrear,
+        cpfArrear: r.cpfArrear,
+        netArrear: r.netArrear,
+        governmentMonthly: r.governmentMonthly,
+      }));
+      const res = await fetch("/api/payroll/run/audit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason, rows: rowsPayload }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.error || data?.message || "Failed to update generated payroll");
+      }
+      showToast(
+        "success",
+        `Updated generated payroll for ${data.updated} employee${data.updated === 1 ? "" : "s"}.`,
+      );
+      setAuditReasonOpen(false);
+      setAuditReason("");
+      setAuditDirty(false);
+      originalAuditByUserRef.current.clear();
+      runRowEditsRef.current.clear();
+      resolvedPayrollByUserIdRef.current.clear();
+      const refreshRes = await fetch(
+        `/api/payroll/run?year=${runYear}&month=${runMonth}&runDay=${runDay}&all=1`,
+      );
+      const refreshData = await refreshRes.json();
+      if (refreshRes.ok && refreshData.preview) {
+        setPreview(refreshData.preview);
+        setPayrollConfig(refreshData.payrollConfig ?? null);
+        const snap = new Map<string, PayrollAuditSnapshot>();
+        for (const row of (refreshData.preview.rows ?? []) as Array<Record<string, unknown>>) {
+          const uid = String(row.employeeUserId ?? "");
+          if (!uid || !rowHasGeneratedPayrollId(row)) continue;
+          snap.set(uid, snapshotGeneratedPayrollRow(row));
+        }
+        originalAuditByUserRef.current = snap;
+      }
+      setResolvedRevision((n) => n + 1);
+    } catch (err: unknown) {
+      showToast("error", err instanceof Error ? err.message : "Failed to update generated payroll");
+    } finally {
+      setAuditSaving(false);
+    }
+  }
+
+  async function openAuditHistory() {
+    const selected =
+      editableRows.find((r) => rowHasGeneratedPayrollId(r as Record<string, unknown>)) ??
+      editableRows[0];
+    const id = String((selected as Record<string, unknown> | undefined)?.monthlyPayrollId ?? "");
+    if (!id) {
+      showToast("error", "Select an employee with generated payroll to view audit history.");
+      return;
+    }
+    setAuditHistoryOpen(true);
+    setAuditHistoryLoading(true);
+    try {
+      const res = await fetch(`/api/payroll/monthly/${id}/audits`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Failed to load audit history");
+      setAuditHistory(Array.isArray(data.audits) ? data.audits : []);
+    } catch (err: unknown) {
+      showToast("error", err instanceof Error ? err.message : "Failed to load audit history");
+      setAuditHistory([]);
+    } finally {
+      setAuditHistoryLoading(false);
+    }
+  }
+
   async function downloadRunExcel(kind: "detail" | "summary") {
     try {
       const rows = await collectAllRunRowsForExport();
@@ -2759,6 +2981,14 @@ function PayrollPageContent() {
 
   async function handleRunPayroll(e: FormEvent) {
     e.preventDefault();
+    if (auditMode) {
+      openUpdateGeneratedModal();
+      return;
+    }
+    if (preview?.alreadyRun && preview?.payrollComplete !== false) {
+      showToast("error", "Payroll has already been generated for this month. Use Audit Generated Payroll.");
+      return;
+    }
     if (draftDirty) {
       const ok = window.confirm(
         "You have unsaved draft changes. Save Draft before Generate so finalized values stay auditable.\n\nClick OK to save draft first, or Cancel to abort.",
@@ -2927,14 +3157,19 @@ function PayrollPageContent() {
             runYear={runYear}
             onMonthChange={(v) => {
               if (draftDirty && !window.confirm("You have unsaved changes. Switch month anyway?")) return;
+              if (auditDirty && !window.confirm("You have unsaved audit edits. Switch month anyway?")) return;
+              exitAuditMode();
               setRunMonth(v);
             }}
             onYearChange={(v) => {
               if (draftDirty && !window.confirm("You have unsaved changes. Switch year anyway?")) return;
+              if (auditDirty && !window.confirm("You have unsaved audit edits. Switch year anyway?")) return;
+              exitAuditMode();
               setRunYear(v);
             }}
             periodName={preview?.periodName}
-            running={running}
+            running={running || auditSaving}
+            showGenerate={!preview?.alreadyRun || preview?.payrollComplete === false}
             generateDisabled={
               (!!preview?.alreadyRun && preview?.payrollComplete !== false) ||
               (editableRows.length > 0 && filteredEditableRows.length === 0)
@@ -2947,6 +3182,68 @@ function PayrollPageContent() {
                 : hasActiveRunFilters && (previewDivisionFilter || previewDepartmentFilter)
                   ? "Generate (filtered)"
                   : "Generate"
+            }
+            extraActions={
+              canShowAuditGeneratedAction({ alreadyRun: preview?.alreadyRun, isAdmin: canManage }) ? (
+                <>
+                  {!auditMode ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={running || auditSaving}
+                      onClick={() => void enterAuditMode()}
+                    >
+                      Audit Generated Payroll
+                    </Button>
+                  ) : (
+                    <>
+                      <Button
+                        type="button"
+                        size="sm"
+                        loading={auditSaving}
+                        disabled={running || auditSaving || !auditDirty || !!preview?.isLocked}
+                        onClick={openUpdateGeneratedModal}
+                      >
+                        Update Generated Payroll
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={running || auditSaving}
+                        onClick={() => void openAuditHistory()}
+                      >
+                        View Audit History
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={running || auditSaving}
+                        onClick={() => {
+                          if (auditDirty && !window.confirm("Discard unsaved audit edits?")) return;
+                          exitAuditMode();
+                          void (async () => {
+                            const refreshRes = await fetch(
+                              `/api/payroll/run?year=${runYear}&month=${runMonth}&runDay=${runDay}`,
+                            );
+                            const refreshData = await refreshRes.json();
+                            if (refreshRes.ok && refreshData.preview) {
+                              runRowEditsRef.current.clear();
+                              resolvedPayrollByUserIdRef.current.clear();
+                              setPreview(refreshData.preview);
+                              setPayrollConfig(refreshData.payrollConfig ?? null);
+                            }
+                          })();
+                        }}
+                      >
+                        Cancel Audit
+                      </Button>
+                    </>
+                  )}
+                </>
+              ) : null
             }
             search={previewSearch}
             onSearchChange={(v) => {
@@ -2971,7 +3268,9 @@ function PayrollPageContent() {
             filteredCount={filteredEditableRows.length}
             totalCount={previewMeta.total || editableRows.length}
             statusKind={
-              preview?.alreadyRun
+              auditMode
+                ? "audit"
+                : preview?.alreadyRun
                 ? "finalized"
                 : draftDirty
                   ? "unsaved"
@@ -2980,8 +3279,10 @@ function PayrollPageContent() {
                     : "calculated"
             }
             statusLabel={
-              preview?.alreadyRun
-                ? `${previewMeta.total || editableRows.length} employees • Finalized`
+              auditMode
+                ? `AUDIT MODE — Generated Payroll${auditDirty ? " • Unsaved amendments" : ""}`
+                : isGeneratedPayrollMonth(preview)
+                ? `${previewMeta.total || editableRows.length} employees • Generated`
                 : draftDirty
                   ? `${previewMeta.total || editableRows.length} employees • Unsaved changes`
                   : draftMeta
@@ -3000,8 +3301,8 @@ function PayrollPageContent() {
             }
             draftSaving={draftSaving}
             saveDraftDisabled={!draftDirty || !!preview?.alreadyRun || editableRows.length === 0}
-            onSaveDraft={() => void savePayrollDraft()}
-            onResetDraft={() => void resetPayrollDraft()}
+            onSaveDraft={preview?.alreadyRun ? undefined : () => void savePayrollDraft()}
+            onResetDraft={preview?.alreadyRun ? undefined : () => void resetPayrollDraft()}
             resetDisabled={!!preview?.alreadyRun || (!draftDirty && !draftMeta)}
             onDownloadPreviewExcel={() => void downloadRunExcel("detail")}
             onExportMonthlySummary={() => void downloadRunExcel("summary")}
@@ -3012,8 +3313,9 @@ function PayrollPageContent() {
               {runError && <p className="text-sm text-red-600">{runError}</p>}
               {preview?.alreadyRun && (
               <div className="flex flex-wrap items-center gap-2 text-sm">
-                <span className="rounded-lg bg-amber-50 px-2.5 py-1 text-amber-900">
-                    Payroll already run for this period.
+                <span className={`rounded-lg px-2.5 py-1 ${auditMode ? "bg-violet-50 text-violet-950" : "bg-amber-50 text-amber-900"}`}>
+                    {auditMode ? "Generated • Editing" : "Generated"}
+                  {preview.isLocked ? " • Period locked" : null}
                   {preview.payrollComplete === false && typeof preview.missingPayslipCount === "number"
                     ? ` ${preview.missingPayslipCount} missing slip(s).`
                     : null}
@@ -3045,7 +3347,7 @@ function PayrollPageContent() {
                     effectiveRunDay={
                       preview.effectiveRunDay ?? preview.workingDaysThroughRunDay ?? preview.daysInMonth
                     }
-                      readOnly={!!preview?.alreadyRun || running}
+                      readOnly={(!auditMode && !!preview?.alreadyRun) || running || auditSaving}
                       customEarningFields={runPayrollCustomEarningFields}
                       customDeductionFields={runPayrollCustomDeductionFields}
                       onUpdate={updateEditableRow}
@@ -3057,7 +3359,7 @@ function PayrollPageContent() {
                     effectiveRunDay={
                       preview.effectiveRunDay ?? preview.workingDaysThroughRunDay ?? preview.daysInMonth
                     }
-                    readOnly={!!preview?.alreadyRun || running}
+                    readOnly={(!auditMode && !!preview?.alreadyRun) || running || auditSaving}
                     pfLabel={previewHasGovernment ? "CPF" : "PF"}
                     onUpdate={updateEditableRow}
                   />
@@ -3426,6 +3728,97 @@ function PayrollPageContent() {
           )}
         </div>
       )}
+
+      <Modal
+        open={auditReasonOpen}
+        onClose={() => {
+          if (!auditSaving) setAuditReasonOpen(false);
+        }}
+        title="Update Generated Payroll"
+        description="This updates the existing generated payroll records. It does not create a second payroll for the month."
+        size="md"
+        footer={
+          <>
+            <Button type="button" variant="outline" disabled={auditSaving} onClick={() => setAuditReasonOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              loading={auditSaving}
+              disabled={auditSaving || auditReason.trim() === ""}
+              onClick={() => void confirmUpdateGeneratedPayroll()}
+            >
+              Confirm Update
+            </Button>
+          </>
+        }
+      >
+        <label className="label-field" htmlFor="audit-reason">
+          Reason for amendment
+        </label>
+        <textarea
+          id="audit-reason"
+          value={auditReason}
+          onChange={(e) => setAuditReason(e.target.value)}
+          rows={3}
+          className="input-field mt-1 w-full"
+          placeholder="Water deduction was omitted during original payroll generation."
+        />
+        <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
+          <p className="mb-1 font-medium text-slate-800">Change summary</p>
+          {collectChangedAuditRows().length === 0 ? (
+            <p className="text-slate-500">No field changes detected.</p>
+          ) : (
+            <ul className="space-y-2">
+              {collectChangedAuditRows().map(({ row, changes }) => (
+                <li key={String(row.employeeUserId)}>
+                  <p className="font-medium text-slate-700">{String(row.employeeName ?? row.employeeUserId)}</p>
+                  <ul className="mt-0.5 list-disc pl-5 text-slate-600">
+                    {changes.slice(0, 12).map((c) => (
+                      <li key={c.field}>{formatAuditChangeLine(c)}</li>
+                    ))}
+                    {changes.length > 12 ? <li>+{changes.length - 12} more</li> : null}
+                  </ul>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </Modal>
+
+      <Modal
+        open={auditHistoryOpen}
+        onClose={() => setAuditHistoryOpen(false)}
+        title="Payroll Audit History"
+        description="Amendments to this generated payroll row."
+        size="lg"
+      >
+        {auditHistoryLoading ? (
+          <p className="text-sm text-slate-500">Loading history…</p>
+        ) : auditHistory.length === 0 ? (
+          <p className="text-sm text-slate-500">No amendments recorded for this employee yet.</p>
+        ) : (
+          <ul className="space-y-3">
+            {auditHistory.map((entry) => (
+              <li key={entry.id} className="rounded-lg border border-slate-200 p-3 text-sm">
+                <p className="font-medium text-slate-800">
+                  {entry.createdAt
+                    ? new Date(entry.createdAt).toLocaleString("en-IN")
+                    : "Unknown date"}
+                  {" · "}
+                  {entry.changedByName || entry.changedBy || "Admin"}
+                </p>
+                <p className="mt-1 text-slate-700">{entry.changeReason}</p>
+                <ul className="mt-2 list-disc pl-5 text-slate-600">
+                  {(entry.changedFields ?? []).map((c) => (
+                    <li key={`${entry.id}-${c.field}`}>{formatAuditChangeLine(c)}</li>
+                  ))}
+                </ul>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Modal>
     </section>
   );
 }
