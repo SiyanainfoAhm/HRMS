@@ -1576,11 +1576,17 @@ function PayrollPageContent() {
           }
 
           if (field === "electricityUnitsConsumed") {
+            // Entering units switches this month to tariff/unit-based calc.
+            // Clear only the Electricity freeze so Water/CPF/etc. sheet edits stay.
+            const paid = { ...(gr0.deductionPaidOverrides ?? {}) };
+            delete (paid as Partial<Record<string, number>>).electricity;
             const grNext: GovRecalcPayload = {
               ...gr0,
               electricityUnitsConsumed: Math.max(0, Number(value) || 0),
+              electricityMode: "unit_based",
+              electricityApplicable: gr0.electricityApplicable !== false,
               electricityManualOverride: false,
-              // Units drive Electricity only — keep other monetary sheet overrides.
+              deductionPaidOverrides: Object.keys(paid).length > 0 ? paid : undefined,
             };
             return recompute(grNext, row.payDays, undefined, row, { clearMonetaryOverrides: false });
           }

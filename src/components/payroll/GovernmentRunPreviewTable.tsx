@@ -661,7 +661,7 @@ function GovernmentEmployeeDetail({
                         onUpdate(row.employeeUserId, "electricityUnitsConsumed", parseFloat(e.target.value) || 0)
                       }
                       className={payrollDaysInputClass}
-                      title="Electricity units — progressive tariff bill (Sthir + slabs + Vahan + Fuel + Duty)"
+                      title="Electricity units — uses progressive tariff (Settings → Electricity). Entering units calculates Electricity for this month."
                     />
                   )}
                   <ElectricityBreakdownButton row={row} />
