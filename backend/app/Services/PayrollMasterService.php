@@ -2146,33 +2146,63 @@ final class PayrollMasterService
         }
 
         $ignoreUserId = null;
+        $existingMasterForIgnore = null;
         if ($ignoreId) {
-            $existing = HrmsPayrollMaster::find($ignoreId);
-            $ignoreUserId = $existing?->user_id ?? $existing?->employee_user_id;
+            $existingMasterForIgnore = HrmsPayrollMaster::find($ignoreId);
+            $ignoreUserId = $existingMasterForIgnore?->user_id ?? $existingMasterForIgnore?->employee_user_id;
+            // Master may lack user_id/employee_user_id while cirt_users already has this code —
+            // resolve the login user by the master's current code/email so self-edit is not rejected.
+            if (! $ignoreUserId && $companyId && $existingMasterForIgnore) {
+                $existingCode = trim((string) ($existingMasterForIgnore->employee_code ?? ''));
+                if ($existingCode !== '') {
+                    $ignoreUserId = HrmsUser::query()
+                        ->where('company_id', $companyId)
+                        ->whereRaw('LOWER(TRIM(employee_code)) = ?', [mb_strtolower($existingCode)])
+                        ->value('id');
+                }
+                if (! $ignoreUserId) {
+                    $existingEmail = mb_strtolower(trim((string) ($existingMasterForIgnore->email ?? '')));
+                    if ($existingEmail !== '') {
+                        $ignoreUserId = HrmsUser::query()
+                            ->where('company_id', $companyId)
+                            ->whereRaw('LOWER(TRIM(email)) = ?', [$existingEmail])
+                            ->value('id');
+                    }
+                }
+            }
         }
 
         $code = $payload['employee_code'] ?? $payload['employeeCode'] ?? null;
         if ($code) {
-            $q = HrmsPayrollMaster::whereRaw('LOWER(TRIM(employee_code)) = ?', [mb_strtolower(trim((string) $code))]);
-            if ($companyId) {
-                $q->where('company_id', $companyId);
-            }
-            if ($ignoreId) {
-                $q->where('id', '!=', $ignoreId);
-            }
-            $this->scopeCurrentMaster($q);
-            if ($q->exists()) {
-                abort(422, 'Employee Code already exists.');
-            }
-            if ($companyId) {
-                $uq = HrmsUser::query()
-                    ->where('company_id', $companyId)
-                    ->whereRaw('LOWER(TRIM(employee_code)) = ?', [mb_strtolower(trim((string) $code))]);
-                if ($ignoreUserId) {
-                    $uq->where('id', '!=', $ignoreUserId);
+            $normalizedCode = mb_strtolower(trim((string) $code));
+            $existingCodeNormalized = $existingMasterForIgnore
+                ? mb_strtolower(trim((string) ($existingMasterForIgnore->employee_code ?? '')))
+                : '';
+            // Keeping the same employee code on edit is always allowed (self).
+            $codeUnchangedOnEdit = $ignoreId && $existingCodeNormalized !== '' && $normalizedCode === $existingCodeNormalized;
+
+            if (! $codeUnchangedOnEdit) {
+                $q = HrmsPayrollMaster::whereRaw('LOWER(TRIM(employee_code)) = ?', [$normalizedCode]);
+                if ($companyId) {
+                    $q->where('company_id', $companyId);
                 }
-                if ($uq->exists()) {
+                if ($ignoreId) {
+                    $q->where('id', '!=', $ignoreId);
+                }
+                $this->scopeCurrentMaster($q);
+                if ($q->exists()) {
                     abort(422, 'Employee Code already exists.');
+                }
+                if ($companyId) {
+                    $uq = HrmsUser::query()
+                        ->where('company_id', $companyId)
+                        ->whereRaw('LOWER(TRIM(employee_code)) = ?', [$normalizedCode]);
+                    if ($ignoreUserId) {
+                        $uq->where('id', '!=', $ignoreUserId);
+                    }
+                    if ($uq->exists()) {
+                        abort(422, 'Employee Code already exists.');
+                    }
                 }
             }
         }
