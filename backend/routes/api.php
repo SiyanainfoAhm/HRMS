@@ -148,8 +148,10 @@ Route::prefix('v1')->group(function () {
             Route::get('payroll/master/import-template', [PayrollMasterController::class, 'importTemplate']);
             Route::post('payroll/master/recalculate-all', [PayrollMasterController::class, 'recalculateAll']);
             Route::post('payroll/master/sync-existing-employees', [PayrollMasterController::class, 'syncExisting']);
+            Route::post('payroll/master/resolve-employee-code-conflict', [PayrollMasterController::class, 'resolveEmployeeCodeConflict']);
             Route::post('payroll/master/import-preview', [PayrollMasterController::class, 'importPreview']);
             Route::post('payroll/master/import', [PayrollMasterController::class, 'import']);
+            Route::get('payroll/master/export-employee-payroll', [PayrollMasterController::class, 'exportEmployeePayroll']);
             Route::get('payroll/master/export', [PayrollMasterController::class, 'export']);
             Route::post('payroll/master/preview', [PayrollMasterController::class, 'preview']);
             Route::post('payroll/master/{id}/recalculate', [PayrollMasterController::class, 'recalculate']);

@@ -9,6 +9,7 @@ use App\Models\HrmsUser;
 use App\Services\PayrollCalculationService;
 use App\Services\PayrollArrearService;
 use App\Services\PayrollMasterService;
+use App\Services\EmployeePayrollExportService;
 use App\Support\SpreadsheetImportSecurity;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -21,6 +22,7 @@ class PayrollMasterController extends Controller
         private readonly PayrollMasterService $service,
         private readonly PayrollCalculationService $calculator,
         private readonly PayrollArrearService $arrearService,
+        private readonly EmployeePayrollExportService $employeePayrollExport,
     ) {}
 
     private function assertPayrollMasterAdmin(HrmsUser $user): ?JsonResponse
@@ -250,6 +252,36 @@ class PayrollMasterController extends Controller
         return response()->json($result, $blocked || ($result['summary']['failed_rows'] ?? 0) > 0 ? 422 : 200);
     }
 
+    public function resolveEmployeeCodeConflict(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if ($denied = $this->assertPayrollMasterAdmin($user)) {
+            return $denied;
+        }
+
+        $data = $request->validate([
+            'current' => ['required', 'array'],
+            'current.employeeCode' => ['required', 'string', 'max:64'],
+            'current.masterId' => ['nullable', 'uuid'],
+            'current.userId' => ['nullable', 'uuid'],
+            'other' => ['required', 'array'],
+            'other.employeeCode' => ['required', 'string', 'max:64'],
+            'other.masterId' => ['nullable', 'uuid'],
+            'other.userId' => ['nullable', 'uuid'],
+        ]);
+
+        $resolved = $this->service->resolveEmployeeCodeConflict(
+            (string) $user->company_id,
+            $data['current'],
+            $data['other'],
+        );
+
+        return response()->json([
+            'message' => 'Employee codes updated.',
+            'resolved' => $resolved,
+        ]);
+    }
+
     public function importPreview(Request $request): JsonResponse
     {
         $user = $request->user();
@@ -274,6 +306,29 @@ class PayrollMasterController extends Controller
         $format = $request->query('format') === 'csv' ? 'csv' : 'xlsx';
 
         return $this->service->templateDownload($format, $request->user()->company_id);
+    }
+
+    public function exportEmployeePayroll(Request $request): StreamedResponse|JsonResponse
+    {
+        $user = $request->user();
+        if ($denied = $this->assertPayrollMasterAdmin($user)) {
+            return $denied;
+        }
+
+        $periodIds = $request->input('period_ids', $request->input('periodIds', []));
+        $quarterIds = $request->input('quarter_ids', $request->input('quarterIds', []));
+        if (! is_array($periodIds)) {
+            $periodIds = array_filter(array_map('trim', explode(',', (string) $periodIds)));
+        }
+        if (! is_array($quarterIds)) {
+            $quarterIds = array_filter(array_map('trim', explode(',', (string) $quarterIds)));
+        }
+
+        return $this->employeePayrollExport->export(
+            (string) $user->company_id,
+            array_values($periodIds),
+            array_values($quarterIds),
+        );
     }
 
     public function export(Request $request): StreamedResponse

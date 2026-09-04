@@ -2190,8 +2190,13 @@ final class PayrollMasterService
                     $q->where('id', '!=', $ignoreId);
                 }
                 $this->scopeCurrentMaster($q);
-                if ($q->exists()) {
-                    abort(422, 'Employee Code already exists.');
+                $conflictMaster = $q->first();
+                if ($conflictMaster) {
+                    $this->abortEmployeeCodeConflict(
+                        (string) $code,
+                        $this->employeeCodePartyFromMaster($existingMasterForIgnore, $payload),
+                        $this->employeeCodePartyFromMaster($conflictMaster),
+                    );
                 }
                 if ($companyId) {
                     $uq = HrmsUser::query()
@@ -2200,8 +2205,23 @@ final class PayrollMasterService
                     if ($ignoreUserId) {
                         $uq->where('id', '!=', $ignoreUserId);
                     }
-                    if ($uq->exists()) {
-                        abort(422, 'Employee Code already exists.');
+                    $conflictUser = $uq->first();
+                    if ($conflictUser) {
+                        $otherMasterQ = HrmsPayrollMaster::query()
+                            ->where('company_id', $companyId)
+                            ->where(function ($qq) use ($conflictUser) {
+                                $qq->where('employee_user_id', $conflictUser->id)
+                                    ->orWhere('user_id', $conflictUser->id);
+                            });
+                        $this->scopeCurrentMaster($otherMasterQ);
+                        $linkedMaster = $otherMasterQ->first();
+                        $this->abortEmployeeCodeConflict(
+                            (string) $code,
+                            $this->employeeCodePartyFromMaster($existingMasterForIgnore, $payload),
+                            $linkedMaster
+                                ? $this->employeeCodePartyFromMaster($linkedMaster)
+                                : $this->employeeCodePartyFromUser($conflictUser),
+                        );
                     }
                 }
             }
@@ -2239,6 +2259,245 @@ final class PayrollMasterService
         }
 
         return $payload;
+    }
+
+    /**
+     * Atomically reassign employee codes for both parties in a conflict dialog.
+     *
+     * @param  array{masterId?: string|null, userId?: string|null, employeeCode: string}  $current
+     * @param  array{masterId?: string|null, userId?: string|null, employeeCode: string}  $other
+     * @return array{current: array<string, mixed>, other: array<string, mixed>}
+     */
+    public function resolveEmployeeCodeConflict(string $companyId, array $current, array $other): array
+    {
+        $currentCode = trim((string) ($current['employeeCode'] ?? $current['employee_code'] ?? ''));
+        $otherCode = trim((string) ($other['employeeCode'] ?? $other['employee_code'] ?? ''));
+        if ($currentCode === '' || $otherCode === '') {
+            abort(422, 'Both employee codes are required.');
+        }
+        if (mb_strtolower($currentCode) === mb_strtolower($otherCode)) {
+            abort(422, 'The two employees must have different employee codes.');
+        }
+
+        return DB::transaction(function () use ($companyId, $current, $other, $currentCode, $otherCode) {
+            $otherMasterId = $other['masterId'] ?? $other['master_id'] ?? null;
+            $otherUserId = $other['userId'] ?? $other['user_id'] ?? null;
+            $currentMasterId = $current['masterId'] ?? $current['master_id'] ?? null;
+            $currentUserId = $current['userId'] ?? $current['user_id'] ?? null;
+
+            // Reassign the other party first so the disputed code becomes free for current.
+            $otherParty = $this->applyEmployeeCodeOnly(
+                $companyId,
+                is_string($otherMasterId) ? $otherMasterId : null,
+                is_string($otherUserId) ? $otherUserId : null,
+                $otherCode,
+                is_string($currentMasterId) ? $currentMasterId : null,
+                is_string($currentUserId) ? $currentUserId : null,
+            );
+
+            $currentParty = null;
+            if ((is_string($currentMasterId) && $currentMasterId !== '') || (is_string($currentUserId) && $currentUserId !== '')) {
+                $currentParty = $this->applyEmployeeCodeOnly(
+                    $companyId,
+                    is_string($currentMasterId) ? $currentMasterId : null,
+                    is_string($currentUserId) ? $currentUserId : null,
+                    $currentCode,
+                    is_string($otherMasterId) ? $otherMasterId : null,
+                    is_string($otherUserId) ? $otherUserId : null,
+                );
+            } else {
+                // Adding a new employee — only free the code; form save will assign it.
+                $this->assertEmployeeCodeAvailable(
+                    $companyId,
+                    $currentCode,
+                    null,
+                    null,
+                );
+                $currentParty = [
+                    'masterId' => null,
+                    'userId' => null,
+                    'employeeCode' => $currentCode,
+                    'name' => null,
+                    'email' => null,
+                    'source' => 'pending',
+                ];
+            }
+
+            return [
+                'current' => $currentParty,
+                'other' => $otherParty,
+            ];
+        });
+    }
+
+    /**
+     * @param  array<string, mixed>|null  $payload
+     * @return array<string, mixed>
+     */
+    private function employeeCodePartyFromMaster(?HrmsPayrollMaster $master, ?array $payload = null): array
+    {
+        if ($master) {
+            return [
+                'masterId' => (string) $master->id,
+                'userId' => $master->employee_user_id ?? $master->user_id,
+                'employeeCode' => (string) ($master->employee_code ?? ''),
+                'name' => $master->name,
+                'email' => $master->email,
+                'source' => 'master',
+            ];
+        }
+
+        return [
+            'masterId' => null,
+            'userId' => $payload['employee_user_id'] ?? $payload['employeeUserId'] ?? $payload['user_id'] ?? $payload['userId'] ?? null,
+            'employeeCode' => (string) ($payload['employee_code'] ?? $payload['employeeCode'] ?? ''),
+            'name' => $payload['name'] ?? null,
+            'email' => $payload['email'] ?? null,
+            'source' => 'pending',
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function employeeCodePartyFromUser(HrmsUser $user): array
+    {
+        return [
+            'masterId' => null,
+            'userId' => (string) $user->id,
+            'employeeCode' => (string) ($user->employee_code ?? ''),
+            'name' => $user->name,
+            'email' => $user->email,
+            'source' => 'user',
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $current
+     * @param  array<string, mixed>  $other
+     */
+    private function abortEmployeeCodeConflict(string $code, array $current, array $other): never
+    {
+        abort(response()->json([
+            'error' => 'Employee Code already exists.',
+            'message' => 'Employee Code already exists.',
+            'code' => 'employee_code_conflict',
+            'field' => 'employeeCode',
+            'conflict' => [
+                'employeeCode' => trim($code),
+                'current' => $current,
+                'other' => $other,
+            ],
+        ], 422));
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function applyEmployeeCodeOnly(
+        string $companyId,
+        ?string $masterId,
+        ?string $userId,
+        string $newCode,
+        ?string $ignoreMasterId = null,
+        ?string $ignoreUserId = null,
+    ): array {
+        $newCode = trim($newCode);
+        if ($newCode === '') {
+            abort(422, 'Employee code is required.');
+        }
+
+        $master = null;
+        if ($masterId) {
+            $master = HrmsPayrollMaster::query()
+                ->where('company_id', $companyId)
+                ->where('id', $masterId)
+                ->first();
+            if (! $master) {
+                abort(404, 'Conflicting payroll master not found.');
+            }
+            $userId = $userId ?: ($master->employee_user_id ?? $master->user_id);
+        }
+
+        $this->assertEmployeeCodeAvailable(
+            $companyId,
+            $newCode,
+            $masterId,
+            is_string($userId) ? $userId : null,
+            $ignoreMasterId,
+            $ignoreUserId,
+        );
+
+        if ($master) {
+            $master->employee_code = $newCode;
+            $master->save();
+            $linkedUserId = $master->employee_user_id ?? $master->user_id;
+            if ($linkedUserId) {
+                HrmsUser::query()
+                    ->where('company_id', $companyId)
+                    ->where('id', $linkedUserId)
+                    ->update(['employee_code' => $newCode, 'updated_at' => now()]);
+            }
+            HrmsEmployee::query()
+                ->where('company_id', $companyId)
+                ->when($linkedUserId, fn ($q) => $q->where('user_id', $linkedUserId))
+                ->when(! $linkedUserId, fn ($q) => $q->whereRaw('1 = 0'))
+                ->update(['employee_code' => $newCode, 'updated_at' => now()]);
+
+            return $this->employeeCodePartyFromMaster($master->refresh());
+        }
+
+        if ($userId) {
+            $user = HrmsUser::query()
+                ->where('company_id', $companyId)
+                ->where('id', $userId)
+                ->first();
+            if (! $user) {
+                abort(404, 'Conflicting user not found.');
+            }
+            $user->employee_code = $newCode;
+            $user->save();
+            HrmsEmployee::query()
+                ->where('company_id', $companyId)
+                ->where('user_id', $userId)
+                ->update(['employee_code' => $newCode, 'updated_at' => now()]);
+
+            return $this->employeeCodePartyFromUser($user->refresh());
+        }
+
+        abort(422, 'Unable to update employee code: no master or user target.');
+    }
+
+    private function assertEmployeeCodeAvailable(
+        string $companyId,
+        string $code,
+        ?string $ignoreMasterId = null,
+        ?string $ignoreUserId = null,
+        ?string $alsoIgnoreMasterId = null,
+        ?string $alsoIgnoreUserId = null,
+    ): void {
+        $normalized = mb_strtolower(trim($code));
+        $ignoreMasters = array_values(array_filter([$ignoreMasterId, $alsoIgnoreMasterId]));
+        $ignoreUsers = array_values(array_filter([$ignoreUserId, $alsoIgnoreUserId]));
+
+        $mq = HrmsPayrollMaster::query()
+            ->where('company_id', $companyId)
+            ->whereRaw('LOWER(TRIM(employee_code)) = ?', [$normalized]);
+        if ($ignoreMasters !== []) {
+            $mq->whereNotIn('id', $ignoreMasters);
+        }
+        $this->scopeCurrentMaster($mq);
+        if ($mq->exists()) {
+            abort(422, 'Employee Code already exists.');
+        }
+
+        $uq = HrmsUser::query()
+            ->where('company_id', $companyId)
+            ->whereRaw('LOWER(TRIM(employee_code)) = ?', [$normalized]);
+        if ($ignoreUsers !== []) {
+            $uq->whereNotIn('id', $ignoreUsers);
+        }
+        if ($uq->exists()) {
+            abort(422, 'Employee Code already exists.');
+        }
     }
 
     /**

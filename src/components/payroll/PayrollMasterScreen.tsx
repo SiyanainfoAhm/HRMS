@@ -264,6 +264,23 @@ type ImportError = { row: number; field: string; message: string };
 
 type ImportIssue = { field: string; message: string; type?: "error" | "warning" | string };
 
+type EmployeeCodeConflictParty = {
+  masterId?: string | null;
+  userId?: string | null;
+  employeeCode?: string | null;
+  name?: string | null;
+  email?: string | null;
+  source?: string | null;
+};
+
+type EmployeeCodeConflictState = {
+  disputedCode: string;
+  current: EmployeeCodeConflictParty;
+  other: EmployeeCodeConflictParty;
+  currentCode: string;
+  otherCode: string;
+};
+
 type ImportPreviewRow = {
   row: number;
   employeeCode?: string | null;
@@ -754,7 +771,16 @@ function fmt(n: number | null | undefined): string {
 
 async function downloadFromApi(path: string, fallbackName: string) {
   const res = await fetch(path);
+  const contentType = res.headers.get("content-type") || "";
   if (!res.ok) {
+    if (contentType.includes("application/json")) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err?.error || err?.message || "Download failed");
+    }
+    const text = await res.text().catch(() => "");
+    throw new Error(text || "Download failed");
+  }
+  if (contentType.includes("application/json")) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err?.error || err?.message || "Download failed");
   }
@@ -867,6 +893,18 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
   const [addDraftRestore, setAddDraftRestore] = useState<MasterFormState | null>(null);
 
   const [deactivateTarget, setDeactivateTarget] = useState<PayrollMasterRecord | null>(null);
+  const [codeConflict, setCodeConflict] = useState<EmployeeCodeConflictState | null>(null);
+  const [codeConflictSaving, setCodeConflictSaving] = useState(false);
+  const [employeeExportOpen, setEmployeeExportOpen] = useState(false);
+  const [employeeExportPeriods, setEmployeeExportPeriods] = useState<
+    Array<{ id: string; label: string; payrollRun?: boolean }>
+  >([]);
+  const [employeeExportQuarters, setEmployeeExportQuarters] = useState<
+    Array<{ id: string; label: string }>
+  >([]);
+  const [selectedExportPeriodIds, setSelectedExportPeriodIds] = useState<string[]>([]);
+  const [selectedExportQuarterIds, setSelectedExportQuarterIds] = useState<string[]>([]);
+  const [employeeExportLoadingOpts, setEmployeeExportLoadingOpts] = useState(false);
   const [companyDefaultDa, setCompanyDefaultDa] = useState(DEFAULT_DA_PERCENT);
   const [companyDefaultHra, setCompanyDefaultHra] = useState(DEFAULT_HRA_PERCENT);
   const [quarterOptions, setQuarterOptions] = useState<
@@ -1931,6 +1969,41 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
       const data = await res.json();
       if (!res.ok) {
         const msg = data?.message || data?.error || "Save failed";
+        if (data?.code === "employee_code_conflict" && data?.conflict) {
+          const conflict = data.conflict as {
+            employeeCode?: string;
+            current?: EmployeeCodeConflictParty;
+            other?: EmployeeCodeConflictParty;
+          };
+          const disputed = String(conflict.employeeCode ?? form.employeeCode ?? "").trim();
+          const otherExisting = String(conflict.other?.employeeCode ?? disputed).trim();
+          const suggestedOther = generateNextEmployeeCode([
+            ...rows.map((r) => r.employeeCode ?? "").filter(Boolean),
+            ...uniquenessRows.map((r) => r.employeeCode ?? "").filter(Boolean),
+            disputed,
+            form.employeeCode,
+          ].filter(Boolean));
+          setCodeConflict({
+            disputedCode: disputed,
+            current: {
+              ...(conflict.current ?? {}),
+              masterId: conflict.current?.masterId ?? editing?.id ?? null,
+              name: conflict.current?.name ?? form.name,
+              email: conflict.current?.email ?? form.email,
+              employeeCode: conflict.current?.employeeCode ?? form.employeeCode,
+            },
+            other: conflict.other ?? {},
+            // Keep disputed code for the employee being saved; move the other person.
+            currentCode: disputed || form.employeeCode,
+            otherCode:
+              otherExisting && otherExisting.toLowerCase() !== disputed.toLowerCase()
+                ? otherExisting
+                : suggestedOther,
+          });
+          setApiFieldErrors({ employeeCode: msg });
+          focusFirstInvalidField("employeeCode", "basic");
+          return;
+        }
         const field = mapApiErrorToField(String(msg));
         if (field) {
           setApiFieldErrors({ [field]: msg });
@@ -1972,6 +2045,89 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     } catch (e: unknown) {
       showToast("error", e instanceof Error ? e.message : "Save failed");
     } finally {
+      setFormSaving(false);
+    }
+  }
+
+  async function resolveCodeConflictAndRetry() {
+    if (!codeConflict) return;
+    const currentCode = codeConflict.currentCode.trim();
+    const otherCode = codeConflict.otherCode.trim();
+    if (!currentCode || !otherCode) {
+      showToast("error", "Enter employee codes for both employees.");
+      return;
+    }
+    if (currentCode.toLowerCase() === otherCode.toLowerCase()) {
+      showToast("error", "The two employees must have different codes.");
+      return;
+    }
+
+    setCodeConflictSaving(true);
+    try {
+      const res = await fetch("/api/payroll/master/resolve-employee-code-conflict", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          current: {
+            masterId: codeConflict.current.masterId ?? editing?.id ?? null,
+            userId: codeConflict.current.userId ?? null,
+            employeeCode: currentCode,
+          },
+          other: {
+            masterId: codeConflict.other.masterId ?? null,
+            userId: codeConflict.other.userId ?? null,
+            employeeCode: otherCode,
+          },
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.message || data?.error || "Could not resolve employee codes");
+      }
+
+      patchForm({ employeeCode: currentCode });
+      setApiFieldErrors((prev) => {
+        const next = { ...prev };
+        delete next.employeeCode;
+        return next;
+      });
+      setCodeConflict(null);
+      showToast("success", "Employee codes updated. Saving…");
+
+      // Retry save with the resolved current code.
+      const nextForm = { ...form, employeeCode: currentCode };
+      setForm(nextForm);
+      setFormSaving(true);
+      const payload = formToPayload(nextForm, payrollFieldDefs);
+      const saveRes = await fetch(editing ? `/api/payroll/master/${editing.id}` : "/api/payroll/master", {
+        method: editing ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        cache: "no-store",
+      });
+      const saveData = await saveRes.json();
+      if (!saveRes.ok) {
+        throw new Error(saveData?.message || saveData?.error || "Save failed after resolving codes");
+      }
+      const saved = (saveData?.master ?? null) as PayrollMasterRecord | null;
+      if (saved?.id) {
+        setRows((prev) => prev.map((r) => (r.id === saved.id ? { ...r, ...saved } : r)));
+      }
+      showToast("success", editing ? "Employee updated" : "Employee added");
+      setManualSaveCompleted(true);
+      setDraftOnlyMaster(false);
+      if (typeof window !== "undefined") {
+        window.localStorage.removeItem(PAYROLL_MASTER_ADD_DRAFT_KEY);
+      }
+      setAutosaveBaseline(formAutosaveSnapshot(nextForm));
+      resetFormValidationState();
+      setFormOpen(false);
+      dispatchHrmsChange("payroll_master");
+      await loadRows();
+    } catch (e: unknown) {
+      showToast("error", e instanceof Error ? e.message : "Could not resolve employee codes");
+    } finally {
+      setCodeConflictSaving(false);
       setFormSaving(false);
     }
   }
@@ -2176,6 +2332,109 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     }
   }
 
+  async function openEmployeePayrollExport() {
+    setEmployeeExportOpen(true);
+    setEmployeeExportLoadingOpts(true);
+    try {
+      const [periodsRes, quartersRes] = await Promise.all([
+        fetch("/api/payroll/periods"),
+        fetch("/api/settings/quarters"),
+      ]);
+      const periodsData = await periodsRes.json();
+      const quartersData = await quartersRes.json();
+      if (!periodsRes.ok) {
+        throw new Error(periodsData?.error || periodsData?.message || "Failed to load payroll periods");
+      }
+      if (!quartersRes.ok) {
+        throw new Error(quartersData?.error || quartersData?.message || "Failed to load quarters");
+      }
+
+      const periods = ((periodsData.periods ?? []) as Array<Record<string, unknown>>)
+        .map((p) => {
+          const id = String(p.id ?? "");
+          const name = String(p.period_name ?? p.periodName ?? "").trim();
+          const start = String(p.period_start ?? p.periodStart ?? "").slice(0, 10);
+          return {
+            id,
+            label: name || start || id,
+            payrollRun: Boolean(p.payroll_run ?? p.payrollRun),
+          };
+        })
+        .filter((p) => p.id);
+      setEmployeeExportPeriods(periods);
+
+      const quarters = ((quartersData.quarters ?? []) as Array<Record<string, unknown>>)
+        .map((q) => {
+          const id = String(q.id ?? "");
+          const name = String(q.quarterName ?? q.quarter_name ?? "").trim();
+          const type = String(q.quarterType ?? q.quarter_type ?? "").trim();
+          return { id, label: type ? `${name} (${type})` : name || id };
+        })
+        .filter((q) => q.id);
+      setEmployeeExportQuarters(quarters);
+
+      const defaultPeriod = periods.find((p) => p.payrollRun)?.id ?? periods[0]?.id ?? null;
+      setSelectedExportPeriodIds(defaultPeriod ? [defaultPeriod] : []);
+      setSelectedExportQuarterIds([]);
+    } catch (e: unknown) {
+      showToast("error", e instanceof Error ? e.message : "Failed to open export");
+      setEmployeeExportOpen(false);
+    } finally {
+      setEmployeeExportLoadingOpts(false);
+    }
+  }
+
+  function toggleExportSelection(
+    id: string,
+    selected: string[],
+    setSelected: (next: string[]) => void,
+    max: number,
+    label: string,
+  ) {
+    if (selected.includes(id)) {
+      setSelected(selected.filter((x) => x !== id));
+      return;
+    }
+    if (selected.length >= max) {
+      showToast("error", `Select at most ${max} ${label}.`);
+      return;
+    }
+    setSelected([...selected, id]);
+  }
+
+  async function handleEmployeePayrollExport() {
+    if (selectedExportPeriodIds.length < 1) {
+      showToast("error", "Select at least 1 payroll run month.");
+      return;
+    }
+    if (selectedExportPeriodIds.length > 3) {
+      showToast("error", "Select at most 3 payroll run months.");
+      return;
+    }
+    if (selectedExportQuarterIds.length > 3) {
+      showToast("error", "Select at most 3 quarters.");
+      return;
+    }
+    setBusy("employee-export");
+    try {
+      const qs = new URLSearchParams();
+      qs.set("periodIds", selectedExportPeriodIds.join(","));
+      if (selectedExportQuarterIds.length > 0) {
+        qs.set("quarterIds", selectedExportQuarterIds.join(","));
+      }
+      await downloadFromApi(
+        `/api/payroll/master/export-employee-payroll?${qs.toString()}`,
+        "cirt_employee_payroll_export.xlsx",
+      );
+      showToast("success", "Employee payroll Excel downloaded");
+      setEmployeeExportOpen(false);
+    } catch (e: unknown) {
+      showToast("error", e instanceof Error ? e.message : "Export failed");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   const inputCls =
     "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-navy focus:outline-none focus:ring-1 focus:ring-brand-navy/30";
   const fieldInputCls = (invalid: boolean) =>
@@ -2226,6 +2485,15 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
               </Button>
               <Button size="sm" variant="outline" onClick={handleExport} loading={busy === "export"} disabled={busy === "export"}>
                 {busy === "export" ? "Exporting..." : "Export Master"}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => void openEmployeePayrollExport()}
+                loading={busy === "employee-export"}
+                disabled={busy === "employee-export"}
+              >
+                Export Employee Payroll
               </Button>
               <Button size="sm" variant="outline" onClick={handleSync} loading={busy === "sync"} disabled={busy === "sync"}>
                 Sync Employees
@@ -3585,6 +3853,200 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                   </div>
                 )}
               </div>
+      </Modal>
+
+      <Modal
+        open={Boolean(codeConflict)}
+        onClose={() => !codeConflictSaving && setCodeConflict(null)}
+        title="Employee code already in use"
+        description={
+          codeConflict
+            ? `Code ${codeConflict.disputedCode} is assigned to another employee. Set a unique code for each person below, then save.`
+            : undefined
+        }
+        size="md"
+        footer={
+          <>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={codeConflictSaving}
+              onClick={() => setCodeConflict(null)}
+            >
+              Cancel
+            </Button>
+            <Button type="button" loading={codeConflictSaving} onClick={() => void resolveCodeConflictAndRetry()}>
+              Update codes & save
+            </Button>
+          </>
+        }
+      >
+        {codeConflict ? (
+          <div className="space-y-4">
+            <div className="rounded-lg border border-slate-200 bg-slate-50/80 p-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                Employee you are saving
+              </p>
+              <p className="mt-1 text-sm font-medium text-slate-900">
+                {codeConflict.current.name || form.name || "—"}
+                {codeConflict.current.email || form.email
+                  ? ` · ${codeConflict.current.email || form.email}`
+                  : ""}
+              </p>
+              <FormField label="Employee code" className="mt-3" required>
+                <Input
+                  value={codeConflict.currentCode}
+                  onChange={(e) =>
+                    setCodeConflict((prev) => (prev ? { ...prev, currentCode: e.target.value } : prev))
+                  }
+                />
+              </FormField>
+            </div>
+            <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-amber-800">
+                Other employee currently using this code
+              </p>
+              <p className="mt-1 text-sm font-medium text-slate-900">
+                {codeConflict.other.name || "—"}
+                {codeConflict.other.email ? ` · ${codeConflict.other.email}` : ""}
+              </p>
+              <FormField
+                label="New employee code for them"
+                className="mt-3"
+                required
+                helperText="Change this so the disputed code can stay with the employee you are saving."
+              >
+                <Input
+                  value={codeConflict.otherCode}
+                  onChange={(e) =>
+                    setCodeConflict((prev) => (prev ? { ...prev, otherCode: e.target.value } : prev))
+                  }
+                />
+              </FormField>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
+
+      <Modal
+        open={employeeExportOpen}
+        onClose={() => busy !== "employee-export" && setEmployeeExportOpen(false)}
+        title="Export Employee Payroll Excel"
+        description="Includes employee code, Aadhaar, PAN, designation, department, and payroll fields. Choose 1–3 run months. Optionally filter by up to 3 quarters."
+        size="md"
+        footer={
+          <>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={busy === "employee-export"}
+              onClick={() => setEmployeeExportOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              loading={busy === "employee-export"}
+              disabled={employeeExportLoadingOpts || selectedExportPeriodIds.length < 1}
+              onClick={() => void handleEmployeePayrollExport()}
+            >
+              Download Excel
+            </Button>
+          </>
+        }
+      >
+        {employeeExportLoadingOpts ? (
+          <AppPageLoader variant="inline" message="Loading periods and quarters..." submessage="" />
+        ) : (
+          <div className="space-y-5">
+            <div>
+              <p className="text-sm font-semibold text-slate-800">
+                Payroll run months{" "}
+                <span className="font-normal text-slate-500">
+                  ({selectedExportPeriodIds.length}/3)
+                </span>
+              </p>
+              <p className="mt-0.5 text-xs text-slate-500">Required. Select 1 to 3 months (e.g. last month).</p>
+              <div className="mt-2 max-h-44 space-y-1 overflow-y-auto rounded-lg border border-slate-200 p-2">
+                {employeeExportPeriods.length === 0 ? (
+                  <p className="px-1 py-2 text-sm text-slate-500">No payroll periods found.</p>
+                ) : (
+                  employeeExportPeriods.map((p) => {
+                    const checked = selectedExportPeriodIds.includes(p.id);
+                    return (
+                      <label
+                        key={p.id}
+                        className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-slate-50"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() =>
+                            toggleExportSelection(
+                              p.id,
+                              selectedExportPeriodIds,
+                              setSelectedExportPeriodIds,
+                              3,
+                              "payroll run months",
+                            )
+                          }
+                        />
+                        <span className="min-w-0 flex-1 truncate">{p.label}</span>
+                        {p.payrollRun ? (
+                          <Badge tone="success" className="shrink-0">
+                            Run
+                          </Badge>
+                        ) : null}
+                      </label>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
+            <div>
+              <p className="text-sm font-semibold text-slate-800">
+                Quarters{" "}
+                <span className="font-normal text-slate-500">
+                  ({selectedExportQuarterIds.length}/3, optional)
+                </span>
+              </p>
+              <p className="mt-0.5 text-xs text-slate-500">
+                Optional filter. Leave empty for all employees; or pick 1–3 quarters.
+              </p>
+              <div className="mt-2 max-h-44 space-y-1 overflow-y-auto rounded-lg border border-slate-200 p-2">
+                {employeeExportQuarters.length === 0 ? (
+                  <p className="px-1 py-2 text-sm text-slate-500">No quarters found.</p>
+                ) : (
+                  employeeExportQuarters.map((q) => {
+                    const checked = selectedExportQuarterIds.includes(q.id);
+                    return (
+                      <label
+                        key={q.id}
+                        className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-slate-50"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() =>
+                            toggleExportSelection(
+                              q.id,
+                              selectedExportQuarterIds,
+                              setSelectedExportQuarterIds,
+                              3,
+                              "quarters",
+                            )
+                          }
+                        />
+                        <span className="min-w-0 flex-1 truncate">{q.label}</span>
+                      </label>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </Modal>
 
       <ConfirmDialog
