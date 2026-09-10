@@ -31,6 +31,7 @@ import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { DatePickerField } from "@/components/ui/DatePickerField";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { FileUpload } from "@/components/ui/FileUpload";
+import { EmployeePayrollExportButton } from "@/components/payroll/EmployeePayrollExportButton";
 import { FormField } from "@/components/ui/FormField";
 import { Input } from "@/components/ui/Input";
 import { Modal } from "@/components/ui/Modal";
@@ -895,16 +896,6 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
   const [deactivateTarget, setDeactivateTarget] = useState<PayrollMasterRecord | null>(null);
   const [codeConflict, setCodeConflict] = useState<EmployeeCodeConflictState | null>(null);
   const [codeConflictSaving, setCodeConflictSaving] = useState(false);
-  const [employeeExportOpen, setEmployeeExportOpen] = useState(false);
-  const [employeeExportPeriods, setEmployeeExportPeriods] = useState<
-    Array<{ id: string; label: string; payrollRun?: boolean }>
-  >([]);
-  const [employeeExportQuarters, setEmployeeExportQuarters] = useState<
-    Array<{ id: string; label: string }>
-  >([]);
-  const [selectedExportPeriodIds, setSelectedExportPeriodIds] = useState<string[]>([]);
-  const [selectedExportQuarterIds, setSelectedExportQuarterIds] = useState<string[]>([]);
-  const [employeeExportLoadingOpts, setEmployeeExportLoadingOpts] = useState(false);
   const [companyDefaultDa, setCompanyDefaultDa] = useState(DEFAULT_DA_PERCENT);
   const [companyDefaultHra, setCompanyDefaultHra] = useState(DEFAULT_HRA_PERCENT);
   const [quarterOptions, setQuarterOptions] = useState<
@@ -1289,11 +1280,13 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
         list.map((r) => ({
           id: r.id,
           employeeCode: r.employeeCode,
+          name: r.name,
           email: r.email,
           phone: r.phone,
           aadhaar: r.aadhaar,
           pan: r.pan,
           bankAccountNumber: r.bankAccountNumber,
+          employeeUserId: (r as { employeeUserId?: string | null }).employeeUserId ?? null,
         })),
       );
     } catch {
@@ -1928,6 +1921,59 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     });
   }
 
+  /** Open dual-code dialog using local master rows when code is already taken. */
+  function openCodeConflictFromLocal(disputedRaw: string): boolean {
+    const disputed = disputedRaw.trim();
+    if (!disputed) return false;
+    const key = disputed.toLowerCase();
+    const otherUnique = uniquenessRows.find(
+      (r) =>
+        (r.employeeCode ?? "").trim().toLowerCase() === key &&
+        (!editing?.id || r.id !== editing.id),
+    );
+    const otherRow =
+      rows.find(
+        (r) =>
+          (r.employeeCode ?? "").trim().toLowerCase() === key &&
+          (!editing?.id || r.id !== editing.id),
+      ) ?? null;
+    const otherId = otherUnique?.id ?? otherRow?.id ?? null;
+    if (!otherId && !otherUnique && !otherRow) return false;
+
+    const suggestedOther = generateNextEmployeeCode([
+      ...rows.map((r) => r.employeeCode ?? "").filter(Boolean),
+      ...uniquenessRows.map((r) => r.employeeCode ?? "").filter(Boolean),
+      disputed,
+      form.employeeCode,
+    ].filter(Boolean));
+
+    setCodeConflict({
+      disputedCode: disputed,
+      current: {
+        masterId: editing?.id ?? null,
+        userId: null,
+        name: form.name,
+        email: form.email,
+        employeeCode: form.employeeCode,
+        source: editing ? "master" : "pending",
+      },
+      other: {
+        masterId: otherId,
+        userId: otherUnique?.employeeUserId ?? null,
+        name: otherUnique?.name ?? otherRow?.name ?? null,
+        email: otherUnique?.email ?? otherRow?.email ?? null,
+        employeeCode: otherUnique?.employeeCode ?? otherRow?.employeeCode ?? disputed,
+        source: "master",
+      },
+      currentCode: disputed,
+      otherCode: suggestedOther,
+    });
+    setApiFieldErrors({ employeeCode: "Employee Code already exists." });
+    focusFirstInvalidField("employeeCode", "basic");
+    showToast("error", "Employee code is already in use. Update both codes in the dialog.");
+    return true;
+  }
+
   async function handleSave(e: FormEvent) {
     e.preventDefault();
     if (formSaving) return;
@@ -1944,6 +1990,12 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     });
 
     if (!validation.isValid) {
+      // Client uniqueness used to block here with only a toast — open the dual-code dialog instead.
+      const codeErr = validation.errors.employeeCode ?? "";
+      if (/already exists/i.test(codeErr)) {
+        const opened = openCodeConflictFromLocal(form.employeeCode.trim());
+        if (opened) return;
+      }
       showToast("error", "Please complete the highlighted fields.");
       focusFirstInvalidField(validation.firstErrorField, validation.firstErrorTab);
       return;
@@ -1993,7 +2045,6 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
               employeeCode: conflict.current?.employeeCode ?? form.employeeCode,
             },
             other: conflict.other ?? {},
-            // Keep disputed code for the employee being saved; move the other person.
             currentCode: disputed || form.employeeCode,
             otherCode:
               otherExisting && otherExisting.toLowerCase() !== disputed.toLowerCase()
@@ -2003,6 +2054,11 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
           setApiFieldErrors({ employeeCode: msg });
           focusFirstInvalidField("employeeCode", "basic");
           return;
+        }
+        // Backend may return plain message without structured conflict (or proxy strips `code`).
+        if (/employee code already exists/i.test(String(msg))) {
+          const opened = openCodeConflictFromLocal(form.employeeCode.trim());
+          if (opened) return;
         }
         const field = mapApiErrorToField(String(msg));
         if (field) {
@@ -2332,109 +2388,6 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     }
   }
 
-  async function openEmployeePayrollExport() {
-    setEmployeeExportOpen(true);
-    setEmployeeExportLoadingOpts(true);
-    try {
-      const [periodsRes, quartersRes] = await Promise.all([
-        fetch("/api/payroll/periods"),
-        fetch("/api/settings/quarters"),
-      ]);
-      const periodsData = await periodsRes.json();
-      const quartersData = await quartersRes.json();
-      if (!periodsRes.ok) {
-        throw new Error(periodsData?.error || periodsData?.message || "Failed to load payroll periods");
-      }
-      if (!quartersRes.ok) {
-        throw new Error(quartersData?.error || quartersData?.message || "Failed to load quarters");
-      }
-
-      const periods = ((periodsData.periods ?? []) as Array<Record<string, unknown>>)
-        .map((p) => {
-          const id = String(p.id ?? "");
-          const name = String(p.period_name ?? p.periodName ?? "").trim();
-          const start = String(p.period_start ?? p.periodStart ?? "").slice(0, 10);
-          return {
-            id,
-            label: name || start || id,
-            payrollRun: Boolean(p.payroll_run ?? p.payrollRun),
-          };
-        })
-        .filter((p) => p.id);
-      setEmployeeExportPeriods(periods);
-
-      const quarters = ((quartersData.quarters ?? []) as Array<Record<string, unknown>>)
-        .map((q) => {
-          const id = String(q.id ?? "");
-          const name = String(q.quarterName ?? q.quarter_name ?? "").trim();
-          const type = String(q.quarterType ?? q.quarter_type ?? "").trim();
-          return { id, label: type ? `${name} (${type})` : name || id };
-        })
-        .filter((q) => q.id);
-      setEmployeeExportQuarters(quarters);
-
-      const defaultPeriod = periods.find((p) => p.payrollRun)?.id ?? periods[0]?.id ?? null;
-      setSelectedExportPeriodIds(defaultPeriod ? [defaultPeriod] : []);
-      setSelectedExportQuarterIds([]);
-    } catch (e: unknown) {
-      showToast("error", e instanceof Error ? e.message : "Failed to open export");
-      setEmployeeExportOpen(false);
-    } finally {
-      setEmployeeExportLoadingOpts(false);
-    }
-  }
-
-  function toggleExportSelection(
-    id: string,
-    selected: string[],
-    setSelected: (next: string[]) => void,
-    max: number,
-    label: string,
-  ) {
-    if (selected.includes(id)) {
-      setSelected(selected.filter((x) => x !== id));
-      return;
-    }
-    if (selected.length >= max) {
-      showToast("error", `Select at most ${max} ${label}.`);
-      return;
-    }
-    setSelected([...selected, id]);
-  }
-
-  async function handleEmployeePayrollExport() {
-    if (selectedExportPeriodIds.length < 1) {
-      showToast("error", "Select at least 1 payroll run month.");
-      return;
-    }
-    if (selectedExportPeriodIds.length > 3) {
-      showToast("error", "Select at most 3 payroll run months.");
-      return;
-    }
-    if (selectedExportQuarterIds.length > 3) {
-      showToast("error", "Select at most 3 quarters.");
-      return;
-    }
-    setBusy("employee-export");
-    try {
-      const qs = new URLSearchParams();
-      qs.set("periodIds", selectedExportPeriodIds.join(","));
-      if (selectedExportQuarterIds.length > 0) {
-        qs.set("quarterIds", selectedExportQuarterIds.join(","));
-      }
-      await downloadFromApi(
-        `/api/payroll/master/export-employee-payroll?${qs.toString()}`,
-        "cirt_employee_payroll_export.xlsx",
-      );
-      showToast("success", "Employee payroll Excel downloaded");
-      setEmployeeExportOpen(false);
-    } catch (e: unknown) {
-      showToast("error", e instanceof Error ? e.message : "Export failed");
-    } finally {
-      setBusy(null);
-    }
-  }
-
   const inputCls =
     "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-navy focus:outline-none focus:ring-1 focus:ring-brand-navy/30";
   const fieldInputCls = (invalid: boolean) =>
@@ -2486,15 +2439,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
               <Button size="sm" variant="outline" onClick={handleExport} loading={busy === "export"} disabled={busy === "export"}>
                 {busy === "export" ? "Exporting..." : "Export Master"}
               </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => void openEmployeePayrollExport()}
-                loading={busy === "employee-export"}
-                disabled={busy === "employee-export"}
-              >
-                Export Employee Payroll
-              </Button>
+              <EmployeePayrollExportButton />
               <Button size="sm" variant="outline" onClick={handleSync} loading={busy === "sync"} disabled={busy === "sync"}>
                 Sync Employees
               </Button>
@@ -3926,127 +3871,6 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
             </div>
           </div>
         ) : null}
-      </Modal>
-
-      <Modal
-        open={employeeExportOpen}
-        onClose={() => busy !== "employee-export" && setEmployeeExportOpen(false)}
-        title="Export Employee Payroll Excel"
-        description="Includes employee code, Aadhaar, PAN, designation, department, and payroll fields. Choose 1–3 run months. Optionally filter by up to 3 quarters."
-        size="md"
-        footer={
-          <>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={busy === "employee-export"}
-              onClick={() => setEmployeeExportOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              loading={busy === "employee-export"}
-              disabled={employeeExportLoadingOpts || selectedExportPeriodIds.length < 1}
-              onClick={() => void handleEmployeePayrollExport()}
-            >
-              Download Excel
-            </Button>
-          </>
-        }
-      >
-        {employeeExportLoadingOpts ? (
-          <AppPageLoader variant="inline" message="Loading periods and quarters..." submessage="" />
-        ) : (
-          <div className="space-y-5">
-            <div>
-              <p className="text-sm font-semibold text-slate-800">
-                Payroll run months{" "}
-                <span className="font-normal text-slate-500">
-                  ({selectedExportPeriodIds.length}/3)
-                </span>
-              </p>
-              <p className="mt-0.5 text-xs text-slate-500">Required. Select 1 to 3 months (e.g. last month).</p>
-              <div className="mt-2 max-h-44 space-y-1 overflow-y-auto rounded-lg border border-slate-200 p-2">
-                {employeeExportPeriods.length === 0 ? (
-                  <p className="px-1 py-2 text-sm text-slate-500">No payroll periods found.</p>
-                ) : (
-                  employeeExportPeriods.map((p) => {
-                    const checked = selectedExportPeriodIds.includes(p.id);
-                    return (
-                      <label
-                        key={p.id}
-                        className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-slate-50"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() =>
-                            toggleExportSelection(
-                              p.id,
-                              selectedExportPeriodIds,
-                              setSelectedExportPeriodIds,
-                              3,
-                              "payroll run months",
-                            )
-                          }
-                        />
-                        <span className="min-w-0 flex-1 truncate">{p.label}</span>
-                        {p.payrollRun ? (
-                          <Badge tone="success" className="shrink-0">
-                            Run
-                          </Badge>
-                        ) : null}
-                      </label>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-
-            <div>
-              <p className="text-sm font-semibold text-slate-800">
-                Quarters{" "}
-                <span className="font-normal text-slate-500">
-                  ({selectedExportQuarterIds.length}/3, optional)
-                </span>
-              </p>
-              <p className="mt-0.5 text-xs text-slate-500">
-                Optional filter. Leave empty for all employees; or pick 1–3 quarters.
-              </p>
-              <div className="mt-2 max-h-44 space-y-1 overflow-y-auto rounded-lg border border-slate-200 p-2">
-                {employeeExportQuarters.length === 0 ? (
-                  <p className="px-1 py-2 text-sm text-slate-500">No quarters found.</p>
-                ) : (
-                  employeeExportQuarters.map((q) => {
-                    const checked = selectedExportQuarterIds.includes(q.id);
-                    return (
-                      <label
-                        key={q.id}
-                        className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-slate-50"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() =>
-                            toggleExportSelection(
-                              q.id,
-                              selectedExportQuarterIds,
-                              setSelectedExportQuarterIds,
-                              3,
-                              "quarters",
-                            )
-                          }
-                        />
-                        <span className="min-w-0 flex-1 truncate">{q.label}</span>
-                      </label>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-          </div>
-        )}
       </Modal>
 
       <ConfirmDialog

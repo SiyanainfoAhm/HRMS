@@ -45,6 +45,7 @@ import {
   type GovernmentRunPreviewRow,
 } from "@/components/payroll/GovernmentRunPreviewTable";
 import { PayrollPreviewToolbar } from "@/components/payroll/PayrollPreviewToolbar";
+import { EmployeePayrollExportButton } from "@/components/payroll/EmployeePayrollExportButton";
 import { PrivateRunPreviewCards } from "@/components/payroll/PrivateRunPreviewCards";
 import { v as govPreviewV } from "@/components/payroll/payrollRunPreviewShared";
 import { downloadPayrollRunWorkbook, type PayrollWorkbookStatus } from "@/lib/payrollRunWorkbook";
@@ -3316,6 +3317,11 @@ function PayrollPageContent() {
             onDownloadBankLetter={() => void downloadBankLetter()}
             bankLetterLoading={bankLetterLoading}
             exportDisabled={editableRows.length === 0 && !draftMeta && !preview?.alreadyRun}
+            employeePayrollExportSlot={
+              canManage ? (
+                <EmployeePayrollExportButton buttonLabel="Export Employee Payroll" />
+              ) : undefined
+            }
           >
               {runError && <p className="text-sm text-red-600">{runError}</p>}
               {preview?.alreadyRun && (

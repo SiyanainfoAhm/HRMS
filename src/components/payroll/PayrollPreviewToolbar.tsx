@@ -49,6 +49,8 @@ type Props = {
   onDownloadPreviewExcel?: () => void;
   onExportMonthlySummary?: () => void;
   onDownloadBankLetter?: () => void;
+  /** Extra download control (e.g. employee+payroll Excel with month/quarter pickers). */
+  employeePayrollExportSlot?: ReactNode;
   bankLetterLoading?: boolean;
   exportDisabled?: boolean;
   resetDisabled?: boolean;
@@ -87,6 +89,7 @@ export function PayrollPreviewToolbar({
   onDownloadPreviewExcel,
   onExportMonthlySummary,
   onDownloadBankLetter,
+  employeePayrollExportSlot,
   bankLetterLoading,
   exportDisabled,
   resetDisabled,
@@ -182,6 +185,7 @@ export function PayrollPreviewToolbar({
                 Download Bank Letter
               </Button>
             ) : null}
+            {employeePayrollExportSlot}
             {onResetDraft ? (
               <Button
                 type="button"

@@ -4,11 +4,13 @@ import { normalizeDigits, normalizePanInput } from "@/lib/employeeValidators";
 export type PayrollMasterUniqueRow = {
   id: string;
   employeeCode?: string | null;
+  name?: string | null;
   email?: string | null;
   phone?: string | null;
   aadhaar?: string | null;
   pan?: string | null;
   bankAccountNumber?: string | null;
+  employeeUserId?: string | null;
 };
 
 export function normalizeEmployeeCode(code: string): string {
