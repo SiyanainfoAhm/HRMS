@@ -165,6 +165,45 @@ final class EmployeePayrollExportLongFormatTest extends TestCase
         $this->assertNotContains('SHOULD_NOT_USE', $row);
     }
 
+    public function test_resolve_quarter_meta_fills_name_type_when_snapshot_blank(): void
+    {
+        $gov = new HrmsGovernmentMonthlyPayroll;
+        $gov->forceFill([
+            'has_quarter' => true,
+            'quarter_id' => null,
+            'quarter_name' => null,
+            'quarter_type' => null,
+            'quarter_rent_amount' => 500,
+            'payroll_master_id' => 'master-1',
+        ]);
+
+        $meta = $this->service()->resolveQuarterMeta(
+            $gov,
+            [
+                'hasQuarter' => true,
+                'quarterId' => 'q-1',
+                'quarterName' => 'B2/7',
+                'quarterType' => 'Type II',
+            ],
+            [
+                'master-1' => [
+                    'quarterId' => 'q-1',
+                    'hasQuarter' => true,
+                    'quarterName' => 'B2/7',
+                    'quarterType' => 'Type II',
+                ],
+            ],
+            [
+                'q-1' => ['name' => 'B2/7', 'type' => 'Type II'],
+            ],
+        );
+
+        $this->assertTrue($meta['assigned']);
+        $this->assertSame('q-1', $meta['quarterId']);
+        $this->assertSame('B2/7', $meta['name']);
+        $this->assertSame('Type II', $meta['type']);
+    }
+
     public function test_expected_row_count_formula_for_employee_month_pairs(): void
     {
         $employeesPerMonth = [2, 2, 2];

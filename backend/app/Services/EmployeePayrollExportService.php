@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\HrmsGovernmentMonthlyPayroll;
 use App\Models\HrmsPayrollMaster;
 use App\Models\HrmsPayrollPeriod;
+use App\Models\HrmsQuarter;
 use Illuminate\Support\Facades\Schema;
 use PhpOffice\PhpSpreadsheet\Cell\DataType;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
@@ -53,6 +54,8 @@ class EmployeePayrollExportService
 
         $mastersByUser = $this->loadMastersByUser($companyId);
         $monthlyByPeriod = $this->loadMonthlyByPeriod($companyId, $periodIds);
+        $mastersById = $this->loadMastersByIdForMonthly($companyId, $monthlyByPeriod);
+        $quartersById = $this->loadQuartersById($companyId);
         $customKeys = $this->collectCustomFieldKeys($monthlyByPeriod);
 
         $headers = $this->buildHeaders($customKeys);
@@ -79,13 +82,15 @@ class EmployeePayrollExportService
             });
 
             foreach ($monthRows as $gov) {
-                if ($quarterIds !== [] && ! $this->monthlyMatchesQuarterFilter($gov, $quarterIds)) {
+                $uid = (string) ($gov->employee_user_id ?? '');
+                $master = $mastersByUser[$uid] ?? null;
+                $quarterMeta = $this->resolveQuarterMeta($gov, $master, $mastersById, $quartersById);
+
+                if ($quarterIds !== [] && ! $this->quarterMetaMatchesFilter($quarterMeta, $quarterIds)) {
                     continue;
                 }
 
-                $uid = (string) ($gov->employee_user_id ?? '');
-                $master = $mastersByUser[$uid] ?? null;
-                $values = $this->buildDataRow($master, $period, $gov, $customKeys);
+                $values = $this->buildDataRow($master, $period, $gov, $customKeys, $quarterMeta);
 
                 foreach ($values as $colIndex0 => $value) {
                     $col = $colIndex0 + 1;
@@ -176,6 +181,154 @@ class EmployeePayrollExportService
         }
 
         return $map;
+    }
+
+    /**
+     * Masters linked from monthly.payroll_master_id (used when snapshot quarter name/type were not stored).
+     *
+     * @param  array<string, list<HrmsGovernmentMonthlyPayroll>>  $monthlyByPeriod
+     * @return array<string, array{quarterId: ?string, hasQuarter: bool, quarterName: ?string, quarterType: ?string}>
+     */
+    private function loadMastersByIdForMonthly(string $companyId, array $monthlyByPeriod): array
+    {
+        $ids = [];
+        foreach ($monthlyByPeriod as $rows) {
+            foreach ($rows as $gov) {
+                $mid = (string) ($gov->payroll_master_id ?? '');
+                if ($mid !== '') {
+                    $ids[$mid] = true;
+                }
+            }
+        }
+        if ($ids === []) {
+            return [];
+        }
+
+        $map = [];
+        $masters = HrmsPayrollMaster::query()
+            ->where('company_id', $companyId)
+            ->whereIn('id', array_keys($ids))
+            ->get();
+        foreach ($masters as $master) {
+            $formatted = $this->masterService->formatRow($master);
+            $map[(string) $master->id] = [
+                'quarterId' => isset($formatted['quarterId']) ? (string) $formatted['quarterId'] : (string) ($master->quarter_id ?? ''),
+                'hasQuarter' => (bool) ($formatted['hasQuarter'] ?? $formatted['quarterAssigned'] ?? $master->has_quarter ?? false),
+                'quarterName' => $formatted['quarterName'] ?? null,
+                'quarterType' => $formatted['quarterType'] ?? null,
+            ];
+            if ($map[(string) $master->id]['quarterId'] === '') {
+                $map[(string) $master->id]['quarterId'] = null;
+            }
+        }
+
+        return $map;
+    }
+
+    /**
+     * @return array<string, array{name: string, type: string}>
+     */
+    private function loadQuartersById(string $companyId): array
+    {
+        if (! Schema::hasTable('cirt_quarters')) {
+            return [];
+        }
+
+        $map = [];
+        $q = HrmsQuarter::query()->where('company_id', $companyId);
+        if (method_exists(HrmsQuarter::class, 'quarterType')) {
+            $q->with('quarterType');
+        }
+        foreach ($q->get() as $quarter) {
+            $type = '';
+            if (isset($quarter->quarterType) && is_object($quarter->quarterType)) {
+                $type = trim((string) ($quarter->quarterType->name ?? ''));
+            }
+            if ($type === '') {
+                $type = trim((string) ($quarter->quarter_type ?? ''));
+            }
+            $map[(string) $quarter->id] = [
+                'name' => trim((string) ($quarter->quarter_name ?? '')),
+                'type' => $type,
+            ];
+        }
+
+        return $map;
+    }
+
+    /**
+     * Prefer snapshot quarter fields; if generation left name/type blank, resolve via quarter_id
+     * or the payroll_master_id linked at run time (then current master as last resort when still assigned).
+     *
+     * @param  array<string, mixed>|null  $master
+     * @param  array<string, array{quarterId: ?string, hasQuarter: bool, quarterName: ?string, quarterType: ?string}>  $mastersById
+     * @param  array<string, array{name: string, type: string}>  $quartersById
+     * @return array{assigned: bool, quarterId: ?string, name: string, type: string}
+     */
+    public function resolveQuarterMeta(
+        HrmsGovernmentMonthlyPayroll $gov,
+        ?array $master,
+        array $mastersById = [],
+        array $quartersById = [],
+    ): array {
+        $rent = is_numeric($gov->quarter_rent_amount ?? null) ? (float) $gov->quarter_rent_amount : 0.0;
+        $assigned = ! empty($gov->has_quarter) || $rent > 0.0;
+
+        $name = trim((string) ($gov->quarter_name ?? ''));
+        $type = trim((string) ($gov->quarter_type ?? ''));
+        $quarterId = trim((string) ($gov->quarter_id ?? ''));
+        if ($quarterId === '') {
+            $quarterId = null;
+        }
+
+        $fillFromQuarterId = function (?string $id) use (&$name, &$type, &$quarterId, $quartersById): void {
+            if ($id === null || $id === '' || ! isset($quartersById[$id])) {
+                return;
+            }
+            $quarterId = $id;
+            if ($name === '') {
+                $name = $quartersById[$id]['name'];
+            }
+            if ($type === '') {
+                $type = $quartersById[$id]['type'];
+            }
+        };
+
+        $fillFromQuarterId($quarterId);
+
+        if ($assigned && ($name === '' || $type === '' || $quarterId === null)) {
+            $linkedId = (string) ($gov->payroll_master_id ?? '');
+            $linked = $linkedId !== '' ? ($mastersById[$linkedId] ?? null) : null;
+            if ($linked && ! empty($linked['hasQuarter'])) {
+                if ($name === '' && ! empty($linked['quarterName'])) {
+                    $name = trim((string) $linked['quarterName']);
+                }
+                if ($type === '' && ! empty($linked['quarterType'])) {
+                    $type = trim((string) $linked['quarterType']);
+                }
+                $fillFromQuarterId($linked['quarterId'] ?? null);
+            }
+        }
+
+        // Last resort: current master quarter meta when this month still shows quarter assigned/rent.
+        if ($assigned && ($name === '' || $type === '') && is_array($master)) {
+            if (! empty($master['hasQuarter']) || ! empty($master['quarterAssigned']) || ! empty($master['quarterId'])) {
+                if ($name === '' && ! empty($master['quarterName'])) {
+                    $name = trim((string) $master['quarterName']);
+                }
+                if ($type === '' && ! empty($master['quarterType'])) {
+                    $type = trim((string) $master['quarterType']);
+                }
+                $fillFromQuarterId(isset($master['quarterId']) ? (string) $master['quarterId'] : null);
+            }
+        }
+
+        return [
+            'assigned' => $assigned,
+            'quarterId' => $quarterId,
+            'name' => $name,
+            'type' => $type,
+        ];
     }
 
     /**
@@ -316,14 +469,19 @@ class EmployeePayrollExportService
      * @param  array{earnings: list<string>, deductions: list<string>}  $customKeys
      * @return list<string|int|float|null>
      */
+    /**
+     * @param  array{assigned?: bool, quarterId?: ?string, name?: string, type?: string}|null  $quarterMeta
+     */
     public function buildDataRow(
         ?array $master,
         HrmsPayrollPeriod $period,
         HrmsGovernmentMonthlyPayroll $gov,
         array $customKeys = ['earnings' => [], 'deductions' => []],
+        ?array $quarterMeta = null,
     ): array {
         $n = static fn ($v): float => is_numeric($v) ? (float) $v : 0.0;
         $master = $master ?? [];
+        $quarterMeta ??= $this->resolveQuarterMeta($gov, $master);
 
         $payLevel = $gov->pay_level !== null && $gov->pay_level !== ''
             ? $gov->pay_level
@@ -350,10 +508,9 @@ class EmployeePayrollExportService
             $master['bankIfsc'] ?? '',
             $this->monthLabel($period),
             $this->throughDay($period, $gov),
-            // Month-specific quarter from generated snapshot — not current Payroll Master.
-            ! empty($gov->has_quarter) ? 'Yes' : 'No',
-            (string) ($gov->quarter_name ?? ''),
-            (string) ($gov->quarter_type ?? ''),
+            ! empty($quarterMeta['assigned']) ? 'Yes' : 'No',
+            (string) ($quarterMeta['name'] ?? ''),
+            (string) ($quarterMeta['type'] ?? ''),
             $n($gov->basic_paid),
             $n($gov->da_paid),
             $n($gov->hra_paid),
@@ -455,11 +612,12 @@ class EmployeePayrollExportService
     }
 
     /**
+     * @param  array{assigned: bool, quarterId: ?string, name: string, type: string}  $quarterMeta
      * @param  list<string>  $quarterIds
      */
-    private function monthlyMatchesQuarterFilter(HrmsGovernmentMonthlyPayroll $gov, array $quarterIds): bool
+    private function quarterMetaMatchesFilter(array $quarterMeta, array $quarterIds): bool
     {
-        $qid = (string) ($gov->quarter_id ?? '');
+        $qid = (string) ($quarterMeta['quarterId'] ?? '');
         if ($qid === '') {
             return false;
         }
