@@ -1,12 +1,20 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Search } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { SelectField } from "@/components/ui/SelectField";
 import { fmtIn } from "./payrollRunPreviewShared";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+const BANK_LETTER_FORMAT_OPTIONS = [
+  { value: "docx", label: "Word (.docx)" },
+  { value: "xlsx", label: "Excel (.xlsx)" },
+  { value: "pdf", label: "PDF (.pdf)" },
+] as const;
+
+type BankLetterFormat = (typeof BANK_LETTER_FORMAT_OPTIONS)[number]["value"];
 
 type Totals = {
   employees: number;
@@ -48,7 +56,7 @@ type Props = {
   onResetDraft?: () => void;
   onDownloadPreviewExcel?: () => void;
   onExportMonthlySummary?: () => void;
-  onDownloadBankLetter?: (format: "docx" | "xlsx" | "pdf") => void;
+  onDownloadBankLetter?: (format: BankLetterFormat) => void;
   /** Extra download control (e.g. employee+payroll Excel with month/quarter pickers). */
   employeePayrollExportSlot?: ReactNode;
   bankLetterLoading?: boolean;
@@ -95,6 +103,8 @@ export function PayrollPreviewToolbar({
   resetDisabled,
   children,
 }: Props) {
+  const [bankLetterFormat, setBankLetterFormat] = useState<BankLetterFormat>("docx");
+
   const monthOptions = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((m) => ({
     value: String(m).padStart(2, "0"),
     label: MONTHS[m - 1],
@@ -172,43 +182,26 @@ export function PayrollPreviewToolbar({
               </Button>
             ) : null}
             {onDownloadBankLetter ? (
-              <div className="inline-flex flex-wrap items-center gap-1">
-                <span className="text-[11px] font-medium text-slate-600">Bank Letter</span>
+              <div className="inline-flex flex-wrap items-end gap-1.5">
+                <SelectField
+                  label="Bank Letter"
+                  value={bankLetterFormat}
+                  onChange={(v) => setBankLetterFormat(v as BankLetterFormat)}
+                  options={[...BANK_LETTER_FORMAT_OPTIONS]}
+                  disabled={running || exportDisabled || bankLetterLoading}
+                  className="w-40"
+                />
                 <Button
                   type="button"
                   size="sm"
                   variant="outline"
                   loading={bankLetterLoading}
                   disabled={running || exportDisabled || bankLetterLoading}
-                  onClick={() => onDownloadBankLetter("docx")}
-                  title="Download HDFC Bank Salary Letter (Word)"
-                  aria-label="Download Bank Letter Word"
+                  onClick={() => onDownloadBankLetter(bankLetterFormat)}
+                  title="Download bank letter in the selected format"
+                  aria-label="Download Bank Letter"
                 >
-                  Word
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  loading={bankLetterLoading}
-                  disabled={running || exportDisabled || bankLetterLoading}
-                  onClick={() => onDownloadBankLetter("xlsx")}
-                  title="Download Bank Letter Excel"
-                  aria-label="Download Bank Letter Excel"
-                >
-                  Excel
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  loading={bankLetterLoading}
-                  disabled={running || exportDisabled || bankLetterLoading}
-                  onClick={() => onDownloadBankLetter("pdf")}
-                  title="Download Bank Letter PDF"
-                  aria-label="Download Bank Letter PDF"
-                >
-                  PDF
+                  Download
                 </Button>
               </div>
             ) : null}
