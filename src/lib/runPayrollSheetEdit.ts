@@ -7,7 +7,7 @@ import type {
   GovernmentDeductionDefaults,
   GovernmentEarningPaidOverrides,
 } from "@/lib/governmentPayroll";
-import { sumCustomBagForTotal, type PayrollFieldDefinition } from "@/lib/payrollFieldTypes";
+import { sumCustomBagForTotal, normalizeDynamicFieldBag, type PayrollFieldDefinition } from "@/lib/payrollFieldTypes";
 import { hasOwn, parseAmountOrZero } from "@/lib/effectivePayrollValue";
 import type { GovRecalcPayload } from "@/lib/govRunPayrollCompute";
 
@@ -329,10 +329,10 @@ export function applyGovernmentSheetMonetaryEdit<T extends GovernmentSheetRow>(
     };
   } else if (field.startsWith("govCustom_")) {
     const key = field.slice("govCustom_".length);
-    const customEarnings = {
+    const customEarnings = normalizeDynamicFieldBag({
       ...asRecord(gm.customEarnings ?? gm.custom_earnings),
       [key]: value,
-    };
+    });
     gm = { ...gm, customEarnings, custom_earnings: customEarnings };
     gr = {
       ...gr,
@@ -340,10 +340,10 @@ export function applyGovernmentSheetMonetaryEdit<T extends GovernmentSheetRow>(
     };
   } else if (field.startsWith("govCustomDeduction_")) {
     const key = field.slice("govCustomDeduction_".length);
-    const customDeductions = {
+    const customDeductions = normalizeDynamicFieldBag({
       ...asRecord(gm.customDeductions ?? gm.custom_deductions),
       [key]: value,
-    };
+    });
     gm = { ...gm, customDeductions, custom_deductions: customDeductions };
     gr = {
       ...gr,

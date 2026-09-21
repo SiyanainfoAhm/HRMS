@@ -110,9 +110,56 @@ function titleFromFieldKey(key: string): string {
     .join(" ");
 }
 
+/**
+ * Normalize dynamic field_key variants to snake_case.
+ * specialAllowance / SpecialAllowance → special_allowance
+ */
+export function canonicalizeDynamicFieldKey(key: string): string {
+  const trimmed = String(key ?? "").trim();
+  if (!trimmed) return trimmed;
+  if (trimmed.includes("_")) return trimmed.toLowerCase();
+  return trimmed
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")
+    .toLowerCase();
+}
+
+/**
+ * Collapse camelCase aliases of the same field_key into one snake_case entry
+ * so Save Draft / generated payroll never shows or totals Special Allowance twice.
+ */
+export function normalizeDynamicFieldBag(
+  bag: Record<string, unknown> | null | undefined,
+  knownFieldKeys?: Iterable<string>,
+): Record<string, number> {
+  if (!bag || typeof bag !== "object") return {};
+  const knownList = knownFieldKeys ? [...knownFieldKeys] : [];
+  const aliases: Record<string, number> = {};
+  const preferred: Record<string, number> = {};
+
+  for (const [key, val] of Object.entries(bag)) {
+    const n = Number(val);
+    if (!Number.isFinite(n)) continue;
+    const snake = canonicalizeDynamicFieldKey(key);
+    const knownMatch = knownList.find(
+      (k) => k === key || k === snake || canonicalizeDynamicFieldKey(k) === snake,
+    );
+    const canonical = knownMatch ?? snake;
+    const rounded = Math.round(n);
+    if (key === canonical || key.includes("_")) {
+      preferred[canonical] = rounded;
+    } else {
+      aliases[canonical] = rounded;
+    }
+  }
+
+  return { ...aliases, ...preferred };
+}
+
 function savedCustomBag(
   g: Record<string, unknown> | null | undefined,
   group: "earnings" | "deductions",
+  knownFieldKeys?: Iterable<string>,
 ): Record<string, number> {
   if (!g) return {};
   const raw =
@@ -120,12 +167,7 @@ function savedCustomBag(
       ? g.customEarnings ?? g.custom_earnings
       : g.customDeductions ?? g.custom_deductions;
   if (!raw || typeof raw !== "object") return {};
-  const out: Record<string, number> = {};
-  for (const [key, val] of Object.entries(raw as Record<string, unknown>)) {
-    const n = Number(val);
-    if (Number.isFinite(n) && Math.round(n) !== 0) out[key] = Math.round(n);
-  }
-  return out;
+  return normalizeDynamicFieldBag(raw as Record<string, unknown>, knownFieldKeys);
 }
 
 function fieldMatchesRunGroup(field: PayrollFieldDefinition, group: "earnings" | "deductions"): boolean {
@@ -144,33 +186,48 @@ export function customRunFieldsForPreview(
     .sort((a, b) => a.displayOrder - b.displayOrder);
 
   const known = new Set(base.map((f) => f.fieldKey));
+  const knownCanonical = new Set([...known].map(canonicalizeDynamicFieldKey));
   const extras: PayrollFieldDefinition[] = [];
+  const knownKeys = allFields.map((f) => f.fieldKey);
 
   for (const row of savedRows) {
-    const bag = savedCustomBag(row.governmentMonthly as Record<string, unknown> | null | undefined, group);
+    const bag = savedCustomBag(
+      row.governmentMonthly as Record<string, unknown> | null | undefined,
+      group,
+      knownKeys,
+    );
     for (const key of Object.keys(bag)) {
-      if (known.has(key)) continue;
+      if (Math.round(Number(bag[key])) === 0) continue;
+      if (known.has(key) || knownCanonical.has(canonicalizeDynamicFieldKey(key))) continue;
+      const def =
+        allFields.find((f) => f.fieldKey === key) ??
+        allFields.find((f) => canonicalizeDynamicFieldKey(f.fieldKey) === canonicalizeDynamicFieldKey(key));
+      if (def) {
+        if (known.has(def.fieldKey)) continue;
+        known.add(def.fieldKey);
+        knownCanonical.add(canonicalizeDynamicFieldKey(def.fieldKey));
+        extras.push(def);
+        continue;
+      }
       known.add(key);
-      const def = allFields.find((f) => f.fieldKey === key);
-      extras.push(
-        def ?? {
-          id: `saved-${group}-${key}`,
-          fieldLabel: titleFromFieldKey(key),
-          fieldKey: key,
-          fieldGroup: group,
-          fieldType: "number",
-          calculationType: "manual_entry",
-          isRequired: false,
-          showInPayrollMaster: false,
-          showInRunPayroll: true,
-          showInSalarySlip: true,
-          includeInTotalEarnings: group === "earnings",
-          includeInTotalDeductions: group === "deductions",
-          isSystem: false,
-          isActive: true,
-          displayOrder: 999,
-        },
-      );
+      knownCanonical.add(canonicalizeDynamicFieldKey(key));
+      extras.push({
+        id: `saved-${group}-${key}`,
+        fieldLabel: titleFromFieldKey(key),
+        fieldKey: key,
+        fieldGroup: group,
+        fieldType: "number",
+        calculationType: "manual_entry",
+        isRequired: false,
+        showInPayrollMaster: false,
+        showInRunPayroll: true,
+        showInSalarySlip: true,
+        includeInTotalEarnings: group === "earnings",
+        includeInTotalDeductions: group === "deductions",
+        isSystem: false,
+        isActive: true,
+        displayOrder: 999,
+      });
     }
   }
 
@@ -183,11 +240,14 @@ export function sumCustomBagForTotal(
   fields: PayrollFieldDefinition[] | undefined,
   group: "earnings" | "deductions",
 ): number {
+  const normalized = normalizeDynamicFieldBag(bag, fields?.map((f) => f.fieldKey));
   let sum = 0;
-  for (const [key, val] of Object.entries(bag)) {
+  for (const [key, val] of Object.entries(normalized)) {
     const n = Number(val);
     if (!Number.isFinite(n)) continue;
-    const def = fields?.find((f) => f.fieldKey === key);
+    const def =
+      fields?.find((f) => f.fieldKey === key) ??
+      fields?.find((f) => canonicalizeDynamicFieldKey(f.fieldKey) === canonicalizeDynamicFieldKey(key));
     if (def) {
       if (group === "earnings" && !def.includeInTotalEarnings) continue;
       if (group === "deductions" && !def.includeInTotalDeductions) continue;

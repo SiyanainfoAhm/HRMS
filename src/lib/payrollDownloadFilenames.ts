@@ -43,3 +43,13 @@ export function payrollExtractWorkbookFilename(month: number | string, year: num
 export function payrollBankLetterFilename(month: number | string, year: number | string): string {
   return `Bank Letter ${formatPayrollMonthYear(month, year)}.docx`;
 }
+
+/** Bank letter Excel, e.g. "Bank Letter Sep 2026.xlsx" */
+export function payrollBankLetterExcelFilename(month: number | string, year: number | string): string {
+  return `Bank Letter ${formatPayrollMonthYear(month, year)}.xlsx`;
+}
+
+/** Bank letter PDF, e.g. "Bank Letter Sep 2026.pdf" */
+export function payrollBankLetterPdfFilename(month: number | string, year: number | string): string {
+  return `Bank Letter ${formatPayrollMonthYear(month, year)}.pdf`;
+}

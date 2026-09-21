@@ -52,13 +52,19 @@ import { downloadPayrollRunWorkbook, type PayrollWorkbookStatus } from "@/lib/pa
 import {
   payrollDetailWorkbookFilename,
   payrollExtractWorkbookFilename,
-  payrollBankLetterFilename,
 } from "@/lib/payrollDownloadFilenames";
 import {
   mapRowToBankLetterEmployee,
   validateBankLetterEmployees,
   type BankLetterEmployeeInput,
 } from "@/lib/payrollBankLetter";
+import {
+  buildBankLetterExcelBlob,
+  buildBankLetterPdfBlob,
+  payrollBankLetterFilenameForFormat,
+  triggerBlobDownload,
+  type BankLetterExportFormat,
+} from "@/lib/payrollBankLetterExport";
 import {
   sumResolvedPayrollTotals,
   type DraftEmployeeApiRow,
@@ -942,6 +948,8 @@ function PayrollPageContent() {
   const [bankLetterLoading, setBankLetterLoading] = useState(false);
   const [auditMode, setAuditMode] = useState(false);
   const [auditDirty, setAuditDirty] = useState(false);
+  /** Mirrors auditDirty for resolve effect (must not be an effect dep — see draftDirtyRef). */
+  const auditDirtyRef = useRef(false);
   const [auditSaving, setAuditSaving] = useState(false);
   const [auditReasonOpen, setAuditReasonOpen] = useState(false);
   const [auditReason, setAuditReason] = useState("");
@@ -1290,7 +1298,9 @@ function PayrollPageContent() {
       const runY = parseInt(runYear, 10);
       const runM = parseInt(runMonth, 10);
       const alreadyRun = Boolean(preview.alreadyRun);
-      const preserveEdits = auditMode && auditDirty;
+      // Use ref — putting auditDirty in deps re-runs this effect on first Days edit and
+      // restores stale rows before runRowEditsRef is synced (Days snap back / look locked).
+      const preserveEdits = auditMode && auditDirtyRef.current;
       setEditableRows(
         preview.rows.map((r: any) => {
           const uid = String(r.employeeUserId ?? "");
@@ -1330,7 +1340,6 @@ function PayrollPageContent() {
     runMonth,
     draftRevision,
     auditMode,
-    auditDirty,
   ]);
 
   useEffect(() => {
@@ -1446,8 +1455,10 @@ function PayrollPageContent() {
     value: number | string
   ) {
     if (!preview?.alreadyRun) {
+      draftDirtyRef.current = true;
       setDraftDirty(true);
     } else if (auditMode) {
+      auditDirtyRef.current = true;
       setAuditDirty(true);
       setResolvedRevision((n) => n + 1);
     }
@@ -1456,6 +1467,11 @@ function PayrollPageContent() {
     setEditableRows((prev) =>
       prev.map((row) => {
         if (row.employeeUserId !== employeeUserId) return row;
+        const commitEdit = (next: typeof row) => {
+          runRowEditsRef.current.set(employeeUserId, next);
+          resolvedPayrollByUserIdRef.current.set(employeeUserId, next as RunPayrollRowLike);
+          return next;
+        };
 
         if (row.payrollMode === "government" && row.govRecalc) {
           const dim = Math.max(1, Math.floor(Number(payDenom) || 30));
@@ -1475,11 +1491,11 @@ function PayrollPageContent() {
               row.governmentMonthly && typeof row.governmentMonthly === "object"
                 ? { ...(row.governmentMonthly as Record<string, unknown>), leaveRemarks: text }
                 : row.governmentMonthly;
-            return {
+            return commitEdit({
               ...row,
               govRecalc: { ...gr0, leaveRemarks: text },
               governmentMonthly: gm,
-            };
+            });
           }
 
           const numValue = typeof value === "number" ? value : Number(value) || 0;
@@ -1488,9 +1504,11 @@ function PayrollPageContent() {
           if (isGovernmentSheetMonetaryField(field)) {
             const fieldDefs =
               (payrollConfig?.fields as PayrollFieldDefinition[] | undefined) ?? undefined;
-            return applyGovernmentSheetMonetaryEdit(row, field, value, {
-              payrollFieldDefs: fieldDefs,
-            }) as typeof row;
+            return commitEdit(
+              applyGovernmentSheetMonetaryEdit(row, field, value, {
+                payrollFieldDefs: fieldDefs,
+              }) as typeof row,
+            );
           }
 
           const recompute = (
@@ -1509,7 +1527,9 @@ function PayrollPageContent() {
               ...computeOpts,
               arrearOverride: arrear,
             });
-            return governmentRowFromCompute(row, grReady, comp, capped, unpaidDays, incentiveBase, arrear) as typeof row;
+            return commitEdit(
+              governmentRowFromCompute(row, grReady, comp, capped, unpaidDays, incentiveBase, arrear) as typeof row,
+            );
           };
 
           if (field === "eolReferenceMonth" || field === "eolReferenceYear") {
@@ -1534,14 +1554,16 @@ function PayrollPageContent() {
             }
             void hydrateEolReferenceSalary(employeeUserId, clearMonetaryOverridesFromGovRecalc(grNext), runY, runM).then((grHydrated) => {
               setEditableRows((prev) =>
-                prev.map((r) =>
-                  r.employeeUserId === employeeUserId && r.govRecalc
-                    ? recompute(grHydrated, r.payDays, undefined, r, { clearMonetaryOverrides: true })
-                    : r,
-                ),
+                prev.map((r) => {
+                  if (r.employeeUserId !== employeeUserId || !r.govRecalc) return r;
+                  const next = recompute(grHydrated, r.payDays, undefined, r, { clearMonetaryOverrides: true });
+                  runRowEditsRef.current.set(employeeUserId, next);
+                  resolvedPayrollByUserIdRef.current.set(employeeUserId, next as RunPayrollRowLike);
+                  return next;
+                }),
               );
             });
-            return row;
+            return commitEdit(row);
           }
 
           if (field === "hplReferenceMonth" || field === "hplReferenceYear") {
@@ -1566,14 +1588,16 @@ function PayrollPageContent() {
             }
             void hydrateHplReferenceSalary(employeeUserId, clearMonetaryOverridesFromGovRecalc(grNext), runY, runM).then((grHydrated) => {
               setEditableRows((prev) =>
-                prev.map((r) =>
-                  r.employeeUserId === employeeUserId && r.govRecalc
-                    ? recompute(grHydrated, r.payDays, undefined, r, { clearMonetaryOverrides: true })
-                    : r,
-                ),
+                prev.map((r) => {
+                  if (r.employeeUserId !== employeeUserId || !r.govRecalc) return r;
+                  const next = recompute(grHydrated, r.payDays, undefined, r, { clearMonetaryOverrides: true });
+                  runRowEditsRef.current.set(employeeUserId, next);
+                  resolvedPayrollByUserIdRef.current.set(employeeUserId, next as RunPayrollRowLike);
+                  return next;
+                }),
               );
             });
-            return row;
+            return commitEdit(row);
           }
 
           if (field === "electricityUnitsConsumed") {
@@ -1636,17 +1660,17 @@ function PayrollPageContent() {
           }
           if (["incentive", "prBonus", "reimbursement", "tds"].includes(field)) {
             recalcGovTakeHome();
-            return next;
+            return commitEdit(next);
           }
           if (field === "takeHome") {
             next.takeHome = numValue;
-            return next;
+            return commitEdit(next);
           }
           if (field === "ctc") {
             next.ctc = numValue;
-            return next;
+            return commitEdit(next);
           }
-          return next;
+          return commitEdit(next);
         }
 
         const numValue = typeof value === "number" ? value : Number(value) || 0;
@@ -1700,7 +1724,7 @@ function PayrollPageContent() {
         } else if (field === "ctc") {
           next.ctc = numValue;
         }
-        return next;
+        return commitEdit(next);
       })
     );
   }
@@ -1878,6 +1902,10 @@ function PayrollPageContent() {
   useEffect(() => {
     draftDirtyRef.current = draftDirty;
   }, [draftDirty]);
+
+  useEffect(() => {
+    auditDirtyRef.current = auditDirty;
+  }, [auditDirty]);
 
   useEffect(() => {
     if (!draftDirty) return;
@@ -2690,6 +2718,7 @@ function PayrollPageContent() {
 
   function exitAuditMode() {
     setAuditMode(false);
+    auditDirtyRef.current = false;
     setAuditDirty(false);
     setAuditReasonOpen(false);
     setAuditReason("");
@@ -2719,6 +2748,7 @@ function PayrollPageContent() {
       }
       originalAuditByUserRef.current = snap;
       setAuditMode(true);
+      auditDirtyRef.current = false;
       setAuditDirty(false);
       showToast("success", "AUDIT MODE — Generated Payroll. Edits are not saved until you Update Generated Payroll.");
     } catch (err: unknown) {
@@ -2816,6 +2846,7 @@ function PayrollPageContent() {
       );
       setAuditReasonOpen(false);
       setAuditReason("");
+      auditDirtyRef.current = false;
       setAuditDirty(false);
       originalAuditByUserRef.current.clear();
       runRowEditsRef.current.clear();
@@ -2913,7 +2944,7 @@ function PayrollPageContent() {
     }
   }
 
-  async function downloadBankLetter() {
+  async function downloadBankLetter(format: BankLetterExportFormat = "docx") {
     setBankLetterLoading(true);
     try {
       const rows = await collectAllRunRowsForExport();
@@ -2927,6 +2958,22 @@ function PayrollPageContent() {
       const validated = validateBankLetterEmployees(employees);
       if (!validated.ok) {
         showToast("error", validated.message);
+        return;
+      }
+
+      const filename = payrollBankLetterFilenameForFormat(format, runMonth, runYear);
+
+      if (format === "xlsx") {
+        const blob = buildBankLetterExcelBlob(employees, runMonth, runYear);
+        triggerBlobDownload(blob, filename);
+        showToast("success", "Bank letter Excel downloaded.");
+        return;
+      }
+
+      if (format === "pdf") {
+        const blob = await buildBankLetterPdfBlob(employees, runMonth, runYear);
+        triggerBlobDownload(blob, filename);
+        showToast("success", "Bank letter PDF downloaded.");
         return;
       }
 
@@ -2971,15 +3018,8 @@ function PayrollPageContent() {
       }
 
       const blob = await res.blob();
-      const filename = payrollBankLetterFilename(runMonth, runYear);
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+      triggerBlobDownload(blob, filename);
+      showToast("success", "Bank letter Word downloaded.");
     } catch (err: unknown) {
       showToast("error", err instanceof Error ? err.message : "Failed to download bank letter");
     } finally {
@@ -3314,7 +3354,7 @@ function PayrollPageContent() {
             resetDisabled={!!preview?.alreadyRun || (!draftDirty && !draftMeta)}
             onDownloadPreviewExcel={() => void downloadRunExcel("detail")}
             onExportMonthlySummary={() => void downloadRunExcel("summary")}
-            onDownloadBankLetter={() => void downloadBankLetter()}
+            onDownloadBankLetter={(format) => void downloadBankLetter(format)}
             bankLetterLoading={bankLetterLoading}
             exportDisabled={editableRows.length === 0 && !draftMeta && !preview?.alreadyRun}
             employeePayrollExportSlot={

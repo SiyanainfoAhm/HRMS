@@ -48,7 +48,7 @@ type Props = {
   onResetDraft?: () => void;
   onDownloadPreviewExcel?: () => void;
   onExportMonthlySummary?: () => void;
-  onDownloadBankLetter?: () => void;
+  onDownloadBankLetter?: (format: "docx" | "xlsx" | "pdf") => void;
   /** Extra download control (e.g. employee+payroll Excel with month/quarter pickers). */
   employeePayrollExportSlot?: ReactNode;
   bankLetterLoading?: boolean;
@@ -172,18 +172,45 @@ export function PayrollPreviewToolbar({
               </Button>
             ) : null}
             {onDownloadBankLetter ? (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                loading={bankLetterLoading}
-                disabled={running || exportDisabled || bankLetterLoading}
-                onClick={onDownloadBankLetter}
-                title="Download HDFC Bank Salary Letter"
-                aria-label="Download HDFC Bank Salary Letter"
-              >
-                Download Bank Letter
-              </Button>
+              <div className="inline-flex flex-wrap items-center gap-1">
+                <span className="text-[11px] font-medium text-slate-600">Bank Letter</span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  loading={bankLetterLoading}
+                  disabled={running || exportDisabled || bankLetterLoading}
+                  onClick={() => onDownloadBankLetter("docx")}
+                  title="Download HDFC Bank Salary Letter (Word)"
+                  aria-label="Download Bank Letter Word"
+                >
+                  Word
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  loading={bankLetterLoading}
+                  disabled={running || exportDisabled || bankLetterLoading}
+                  onClick={() => onDownloadBankLetter("xlsx")}
+                  title="Download Bank Letter Excel"
+                  aria-label="Download Bank Letter Excel"
+                >
+                  Excel
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  loading={bankLetterLoading}
+                  disabled={running || exportDisabled || bankLetterLoading}
+                  onClick={() => onDownloadBankLetter("pdf")}
+                  title="Download Bank Letter PDF"
+                  aria-label="Download Bank Letter PDF"
+                >
+                  PDF
+                </Button>
+              </div>
             ) : null}
             {employeePayrollExportSlot}
             {onResetDraft ? (

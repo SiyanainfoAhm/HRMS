@@ -4,9 +4,11 @@
 import {
   deserializePayrollDraftEmployee,
   firstDefined,
+  keysToCamelDeep,
   normalizeDraftEmployeeApiRow,
   sumResolvedPayrollTotals,
 } from "./deserializePayrollDraftEmployee";
+import { normalizeDynamicFieldBag } from "./payrollFieldTypes";
 
 function assert(cond: unknown, msg: string): asserts cond {
   if (!cond) throw new Error(msg);
@@ -282,6 +284,98 @@ function testFirstDefinedDoesNotTreatZeroAsMissing() {
   assertEq(firstDefined(undefined, 0, 9), 0, "zero after undefined");
 }
 
+function testCustomEarningsFieldKeysPreservedAfterDraftDeserialize() {
+  const row = deserializePayrollDraftEmployee(
+    {
+      employeeUserId: "user-1",
+      rowPayload: {
+        government_monthly: {
+          basic_paid: 50000,
+          total_earnings: 52500,
+          total_deductions: 0,
+          net_salary: 52500,
+          custom_earnings: { special_allowance: 2500 },
+          deductions: {},
+        },
+        gov_recalc: {
+          customEarnings: { special_allowance: 2500 },
+        },
+        custom_field_values: { special_allowance: "2500" },
+      },
+    },
+    null,
+  );
+  const gm = row.governmentMonthly as {
+    customEarnings?: Record<string, number>;
+    totalEarnings?: number;
+  };
+  const gr = row.govRecalc as { customEarnings?: Record<string, number> };
+  assertEq(gm.customEarnings?.special_allowance, 2500, "gm customEarnings special_allowance");
+  assert(
+    gm.customEarnings?.specialAllowance === undefined,
+    "gm must not camelCase dynamic field_key special_allowance",
+  );
+  assertEq(gr.customEarnings?.special_allowance, 2500, "govRecalc customEarnings special_allowance");
+  assertEq(
+    (row.customFieldValues as Record<string, string> | undefined)?.special_allowance,
+    "2500",
+    "customFieldValues special_allowance",
+  );
+  assertEq(gm.totalEarnings, 52500, "totalEarnings kept");
+}
+
+function testKeysToCamelDeepPreservesCustomEarningsInnerKeys() {
+  const out = keysToCamelDeep({
+    government_monthly: {
+      custom_earnings: { special_allowance: 2500, night_shift: 100 },
+    },
+  }) as {
+    governmentMonthly: { customEarnings: Record<string, number> };
+  };
+  assertEq(out.governmentMonthly.customEarnings.special_allowance, 2500, "special_allowance kept");
+  assertEq(out.governmentMonthly.customEarnings.night_shift, 100, "night_shift kept");
+  assert(
+    out.governmentMonthly.customEarnings.specialAllowance === undefined,
+    "no specialAllowance key",
+  );
+}
+
+function testDuplicateCamelAndSnakeCustomEarningsCollapsed() {
+  const row = deserializePayrollDraftEmployee(
+    {
+      employeeUserId: "user-1",
+      rowPayload: {
+        government_monthly: {
+          total_earnings: 4000,
+          custom_earnings: { special_allowance: 2000, specialAllowance: 2000 },
+          deductions: {},
+        },
+        gov_recalc: {
+          customEarnings: { special_allowance: 2000, specialAllowance: 2000 },
+        },
+      },
+    },
+    null,
+  );
+  const gm = row.governmentMonthly as { customEarnings?: Record<string, number> };
+  const gr = row.govRecalc as { customEarnings?: Record<string, number> };
+  assertEq(gm.customEarnings?.special_allowance, 2000, "single snake key");
+  assert(gm.customEarnings?.specialAllowance === undefined, "camel alias removed from gm");
+  assertEq(Object.keys(gm.customEarnings ?? {}).length, 1, "gm one custom earning key");
+  assertEq(gr.customEarnings?.special_allowance, 2000, "govRecalc snake key");
+  assert(gr.customEarnings?.specialAllowance === undefined, "camel alias removed from govRecalc");
+}
+
+function testNormalizeDynamicFieldBagCollapsesAliases() {
+  const bag = normalizeDynamicFieldBag({
+    special_allowance: 2000,
+    specialAllowance: 2000,
+  });
+  assertEq(bag.special_allowance, 2000, "canonical amount");
+  assertEq(Object.keys(bag).length, 1, "one key only");
+  assert(bag.specialAllowance === undefined, "alias gone");
+}
+
 function testPreviewExportShapeUsesHydratedGm() {
   const row = deserializePayrollDraftEmployee(
     { employeeUserId: "user-1", rowPayload: samplePayload },
@@ -310,6 +404,10 @@ const tests = [
   testHeaderTotalsEqualHydratedRows,
   testFirstDefinedDoesNotTreatZeroAsMissing,
   testPreviewExportShapeUsesHydratedGm,
+  testCustomEarningsFieldKeysPreservedAfterDraftDeserialize,
+  testKeysToCamelDeepPreservesCustomEarningsInnerKeys,
+  testDuplicateCamelAndSnakeCustomEarningsCollapsed,
+  testNormalizeDynamicFieldBagCollapsesAliases,
 ];
 
 let failed = 0;

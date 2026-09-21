@@ -7,6 +7,11 @@ import {
   validateBankLetterEmployees,
   resolveBankLetterNetPay,
 } from "./payrollBankLetter";
+import {
+  formatBankLetterAmount,
+  payrollBankLetterFilenameForFormat,
+  bankLetterSalaryMonthLabel,
+} from "./payrollBankLetterExport";
 
 function assert(cond: unknown, msg: string): asserts cond {
   if (!cond) throw new Error(msg);
@@ -19,6 +24,11 @@ function assertEq(a: unknown, b: unknown, msg: string) {
 function testFilename() {
   assertEq(payrollBankLetterFilename(9, 2026), "Bank Letter Sep 2026.docx", "sep filename");
   assertEq(payrollBankLetterFilename("01", "2026"), "Bank Letter Jan 2026.docx", "jan filename");
+  assertEq(payrollBankLetterFilenameForFormat("xlsx", 9, 2026), "Bank Letter Sep 2026.xlsx", "xlsx");
+  assertEq(payrollBankLetterFilenameForFormat("pdf", 9, 2026), "Bank Letter Sep 2026.pdf", "pdf");
+  assertEq(bankLetterSalaryMonthLabel(9, 2026), "September 2026", "salary month");
+  assertEq(formatBankLetterAmount(127858), "1,27,858.00", "indian amount");
+  assertEq(formatBankLetterAmount(2139931), "21,39,931.00", "large indian amount");
 }
 
 function testUnsavedNetPreferred() {

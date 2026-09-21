@@ -3,6 +3,8 @@
  * Accepts snake_case payloads (apiProxy deep-transform on save) and camelCase.
  */
 
+import { canonicalizeDynamicFieldKey, normalizeDynamicFieldBag } from "@/lib/payrollFieldTypes";
+
 export function firstDefined<T>(...values: Array<T | null | undefined>): T | undefined {
   for (const v of values) {
     if (v !== undefined && v !== null) return v;
@@ -18,6 +20,19 @@ function snakeToCamelKey(key: string): string {
   return key.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
 }
 
+/**
+ * Maps keyed by dynamic payroll field_key (e.g. special_allowance).
+ * Outer property names are camelCased; inner keys must stay as field_key.
+ */
+const PRESERVE_DYNAMIC_FIELD_MAP_KEYS = new Set([
+  "customEarnings",
+  "custom_earnings",
+  "customDeductions",
+  "custom_deductions",
+  "customFieldValues",
+  "custom_field_values",
+]);
+
 /** Deep-convert object keys from snake_case to camelCase (arrays preserved). */
 export function keysToCamelDeep(value: unknown): unknown {
   if (Array.isArray(value)) {
@@ -28,7 +43,13 @@ export function keysToCamelDeep(value: unknown): unknown {
   }
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(value)) {
-    out[snakeToCamelKey(k)] = keysToCamelDeep(v);
+    const camelKey = snakeToCamelKey(k);
+    if (PRESERVE_DYNAMIC_FIELD_MAP_KEYS.has(k) || PRESERVE_DYNAMIC_FIELD_MAP_KEYS.has(camelKey)) {
+      // Keep field_key entries (special_allowance) — do not camelCase to specialAllowance.
+      out[camelKey] = isPlainObject(v) ? { ...v } : v;
+      continue;
+    }
+    out[camelKey] = keysToCamelDeep(v);
   }
   return out;
 }
@@ -302,6 +323,23 @@ export function deserializePayrollDraftEmployee(
     ...definedEntries(gm),
     deductions: effectiveDed,
   };
+  // Collapse special_allowance + specialAllowance duplicates from legacy drafts.
+  {
+    const earn = normalizeDynamicFieldBag(
+      (governmentMonthly.customEarnings ?? governmentMonthly.custom_earnings) as Record<string, unknown>,
+    );
+    const ded = normalizeDynamicFieldBag(
+      (governmentMonthly.customDeductions ?? governmentMonthly.custom_deductions) as Record<string, unknown>,
+    );
+    if (Object.keys(earn).length > 0) {
+      governmentMonthly.customEarnings = earn;
+      governmentMonthly.custom_earnings = earn;
+    }
+    if (Object.keys(ded).length > 0) {
+      governmentMonthly.customDeductions = ded;
+      governmentMonthly.custom_deductions = ded;
+    }
+  }
   if (totalEarnings !== undefined) governmentMonthly.totalEarnings = totalEarnings;
   // Totals re-derived below after deductions are Master-correct.
   if (typeof remarks === "string") governmentMonthly.leaveRemarks = remarks;
@@ -310,6 +348,16 @@ export function deserializePayrollDraftEmployee(
     ...(calcGovRecalc ?? {}),
     ...govRecalcFromDraft,
   };
+  {
+    const earn = normalizeDynamicFieldBag(
+      (govRecalc.customEarnings ?? govRecalc.custom_earnings) as Record<string, unknown>,
+    );
+    const ded = normalizeDynamicFieldBag(
+      (govRecalc.customDeductions ?? govRecalc.custom_deductions) as Record<string, unknown>,
+    );
+    if (Object.keys(earn).length > 0) govRecalc.customEarnings = earn;
+    if (Object.keys(ded).length > 0) govRecalc.customDeductions = ded;
+  }
   if (govRecalc.electricityUnitsConsumed === undefined && gm.electricityUnitsConsumed !== undefined) {
     govRecalc.electricityUnitsConsumed = gm.electricityUnitsConsumed;
   }
@@ -492,7 +540,17 @@ export function deserializePayrollDraftEmployee(
     netArrear: firstDefined(numOrUndef(payload.netArrear), numOrUndef(gm.netArrear), numOrUndef(calc.netArrear)),
     arrearLineIds: firstDefined(payload.arrearLineIds, calc.arrearLineIds),
     arrearLines: firstDefined(payload.arrearLines, calc.arrearLines),
-    customFieldValues: firstDefined(payload.customFieldValues, calc.customFieldValues),
+    customFieldValues: (() => {
+      const raw = firstDefined(payload.customFieldValues, calc.customFieldValues);
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+      const out: Record<string, string> = {};
+      for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+        const canon = canonicalizeDynamicFieldKey(k);
+        if (out[canon] != null && k !== canon) continue;
+        out[canon] = v == null ? "" : String(v);
+      }
+      return out;
+    })(),
     governmentMonthly,
     govRecalc,
     hasQuarter: firstDefined(payload.hasQuarter, gm.hasQuarter, calc.hasQuarter),

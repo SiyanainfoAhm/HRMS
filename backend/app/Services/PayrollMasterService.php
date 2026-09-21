@@ -425,6 +425,45 @@ final class PayrollMasterService
                         ->lockForUpdate()
                         ->first();
                 }
+
+                // Add-with-existing: resolve by email/code like import upsert so create becomes update.
+                if (! $existingMaster) {
+                    $linkedUserId = $this->resolveLinkedUserId(
+                        $payload,
+                        $companyId,
+                        is_string($userId) && $userId !== '' ? $userId : null,
+                    );
+                    if ($linkedUserId) {
+                        $payload['user_id'] = $linkedUserId;
+                        $payload['employee_user_id'] = $linkedUserId;
+                        $existingMaster = HrmsPayrollMaster::query()
+                            ->where('company_id', $companyId)
+                            ->where(function ($q) use ($linkedUserId) {
+                                $q->where('employee_user_id', $linkedUserId)->orWhere('user_id', $linkedUserId);
+                            })
+                            ->lockForUpdate()
+                            ->first();
+                    }
+                }
+
+                if (! $existingMaster) {
+                    $matched = $this->findExistingMaster($companyId, [
+                        'employee_code' => $payload['employee_code'] ?? $payload['employeeCode'] ?? null,
+                        'cpf_no' => $payload['cpf_no'] ?? $payload['cpfNo'] ?? null,
+                        'uan' => $payload['uan'] ?? null,
+                        'email' => $payload['email'] ?? null,
+                        'employee_id' => $payload['employee_id'] ?? $payload['employeeId'] ?? null,
+                        'user_id' => $payload['user_id'] ?? $payload['userId'] ?? $payload['employee_user_id'] ?? $payload['employeeUserId'] ?? null,
+                        'name' => $payload['name'] ?? null,
+                        'pay_level' => $payload['pay_level'] ?? $payload['payLevel'] ?? null,
+                    ]);
+                    if ($matched) {
+                        $existingMaster = HrmsPayrollMaster::query()
+                            ->where('id', $matched->id)
+                            ->lockForUpdate()
+                            ->first();
+                    }
+                }
             }
 
             if (! $existingMaster) {
@@ -2169,6 +2208,16 @@ final class PayrollMasterService
                             ->value('id');
                     }
                 }
+            }
+        }
+
+        // Create against an existing login user (no master yet / add-overwrite): ignore that user for uniqueness.
+        if (! $ignoreUserId && $companyId) {
+            $explicitUserId = $payload['employee_user_id'] ?? $payload['employeeUserId'] ?? $payload['user_id'] ?? $payload['userId'] ?? null;
+            if (is_string($explicitUserId) && $explicitUserId !== '') {
+                $ignoreUserId = $explicitUserId;
+            } else {
+                $ignoreUserId = $this->resolveLinkedUserId($payload, $companyId, null);
             }
         }
 

@@ -59,6 +59,22 @@ export function fmtIn(n: number): string {
   return n.toLocaleString("en-IN");
 }
 
+function lookupDynamicFieldAmount(
+  bag: Record<string, number> | null | undefined,
+  fieldKey: string,
+): number | undefined {
+  if (!bag) return undefined;
+  const direct = bag[fieldKey];
+  if (direct != null && Number.isFinite(Number(direct))) return Number(direct);
+  // Legacy drafts may have camelCased dynamic keys (special_allowance → specialAllowance).
+  const camelKey = fieldKey.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
+  if (camelKey !== fieldKey) {
+    const camel = bag[camelKey];
+    if (camel != null && Number.isFinite(Number(camel))) return Number(camel);
+  }
+  return undefined;
+}
+
 export function customFieldAmount(
   g: GovernmentPreviewMonthly | null | undefined,
   recalc: { customEarnings?: Record<string, number>; customDeductions?: Record<string, number> } | null | undefined,
@@ -71,12 +87,13 @@ export function customFieldAmount(
   const deductionsBag =
     g?.customDeductions ?? (gRecord?.custom_deductions as Record<string, number> | undefined);
   const bag = group === "earnings" ? earningsBag : deductionsBag;
-  const fromComputed = bag?.[fieldKey];
-  if (fromComputed != null && Number.isFinite(Number(fromComputed))) {
-    return Math.round(Number(fromComputed));
+  const fromComputed = lookupDynamicFieldAmount(bag, fieldKey);
+  if (fromComputed != null) {
+    return Math.round(fromComputed);
   }
   const recalcBag = group === "earnings" ? recalc?.customEarnings : recalc?.customDeductions;
-  return Math.round(Number(recalcBag?.[fieldKey] ?? 0) || 0);
+  const fromRecalc = lookupDynamicFieldAmount(recalcBag, fieldKey);
+  return Math.round(fromRecalc ?? 0);
 }
 
 export function FieldChip({

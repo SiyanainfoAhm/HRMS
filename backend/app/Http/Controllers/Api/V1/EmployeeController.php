@@ -10,6 +10,7 @@ use App\Services\PayrollMasterService;
 use App\Support\BankDetailsService;
 use App\Support\BankDetailsValidator;
 use App\Support\ApiPagination;
+use App\Support\CompanyAccess;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -204,17 +205,34 @@ class EmployeeController extends Controller
             ]);
         } else {
             $hrmsUser->update(array_filter([
+                'name' => $fullName ?: $hrmsUser->name,
                 'company_id' => $authUser->company_id,
                 'employment_status' => $data['employment_status'] ?? $hrmsUser->employment_status?->value,
                 'phone' => $data['phone'] ?? $hrmsUser->phone,
+                'date_of_birth' => $data['date_of_birth'] ?? $hrmsUser->date_of_birth,
+                'date_of_joining' => $data['date_of_joining'] ?? $hrmsUser->date_of_joining,
                 'gender' => $data['gender'] ?? $hrmsUser->gender,
+                'designation' => $data['designation'] ?? $hrmsUser->designation,
+                'designation_id' => $data['designation_id'] ?? $hrmsUser->designation_id,
+                'department_id' => $data['department_id'] ?? $hrmsUser->department_id,
+                'division_id' => $data['division_id'] ?? $hrmsUser->division_id,
+                'shift_id' => $data['shift_id'] ?? $hrmsUser->shift_id,
                 'gross_salary' => $data['gross_salary'] ?? $hrmsUser->gross_salary,
+                'tds_monthly' => $data['tds_monthly'] ?? $hrmsUser->tds_monthly,
                 'government_pay_level' => $data['government_pay_level'] ?? $hrmsUser->government_pay_level,
+                'aadhaar' => $data['aadhaar'] ?? $hrmsUser->aadhaar,
+                'pan' => $data['pan'] ?? $hrmsUser->pan,
+                'uan_number' => $data['uan_number'] ?? $hrmsUser->uan_number,
+                'pf_number' => $data['pf_number'] ?? $hrmsUser->pf_number,
+                'cpf_number' => $data['cpf_number'] ?? $hrmsUser->cpf_number,
+                'employee_code' => $data['employee_code'] ?? $hrmsUser->employee_code,
             ], fn ($v) => $v !== null));
+            if (isset($data['password']) && $data['password'] !== '') {
+                $hrmsUser->update(['password_hash' => Hash::make($data['password'])]);
+            }
         }
 
-        $employee = HrmsEmployee::create([
-            'user_id' => $hrmsUser->id,
+        $employeeAttrs = [
             'company_id' => $authUser->company_id,
             'first_name' => $data['first_name'],
             'last_name' => $data['last_name'] ?? null,
@@ -230,9 +248,22 @@ class EmployeeController extends Controller
             'manager_id' => $data['manager_id'] ?? null,
             'role_id' => $data['role_id'] ?? null,
             'is_active' => true,
-        ]);
+        ];
 
-        return response()->json(['employee' => $employee->load('user')], 201);
+        $employee = HrmsEmployee::query()
+            ->where('company_id', $authUser->company_id)
+            ->where('user_id', $hrmsUser->id)
+            ->first();
+
+        if ($employee) {
+            $employee->update($employeeAttrs);
+            $status = 200;
+        } else {
+            $employee = HrmsEmployee::create($employeeAttrs + ['user_id' => $hrmsUser->id]);
+            $status = 201;
+        }
+
+        return response()->json(['employee' => $employee->load('user')], $status);
     }
 
     private function generateEmployeeCode(): string

@@ -12,6 +12,11 @@ enum UserRole: string
         return $value === self::Employee->value ? self::Employee : self::Admin;
     }
 
+    public function isAdmin(): bool
+    {
+        return $this === self::Admin;
+    }
+
     public function isManagerial(): bool
     {
         return $this === self::Admin;
