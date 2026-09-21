@@ -986,8 +986,10 @@ function PayrollPageContent() {
   const originalAuditByUserRef = useRef<Map<string, PayrollAuditSnapshot>>(new Map());
   const [previewDivisionFilter, setPreviewDivisionFilter] = useState("");
   const [previewDepartmentFilter, setPreviewDepartmentFilter] = useState("");
+  const [previewDesignationFilter, setPreviewDesignationFilter] = useState("");
   const [runDivisions, setRunDivisions] = useState<Array<{ id: string; name: string }>>([]);
   const [runDepartments, setRunDepartments] = useState<Array<{ id: string; name: string; divisionId: string | null }>>([]);
+  const [runDesignations, setRunDesignations] = useState<Array<{ id: string; title: string }>>([]);
   const [runOrgFiltersLoading, setRunOrgFiltersLoading] = useState(false);
 
   const previewDivisionName = useMemo(
@@ -998,6 +1000,10 @@ function PayrollPageContent() {
     () => runDepartments.find((d) => d.id === previewDepartmentFilter)?.name ?? "",
     [runDepartments, previewDepartmentFilter],
   );
+  const previewDesignationName = useMemo(
+    () => runDesignations.find((d) => d.id === previewDesignationFilter)?.title ?? "",
+    [runDesignations, previewDesignationFilter],
+  );
 
   useEffect(() => {
     if (tab !== "run" || !canManage) return;
@@ -1005,13 +1011,15 @@ function PayrollPageContent() {
     setRunOrgFiltersLoading(true);
     (async () => {
       try {
-        const [divRes, depRes] = await Promise.all([
+        const [divRes, depRes, desRes] = await Promise.all([
           fetch("/api/settings/divisions"),
           fetch("/api/settings/departments"),
+          fetch("/api/settings/designations"),
         ]);
         if (cancelled) return;
         const divData = await divRes.json();
         const depData = await depRes.json();
+        const desData = await desRes.json();
         if (divRes.ok) {
           setRunDivisions(
             (divData.divisions ?? [])
@@ -1028,6 +1036,13 @@ function PayrollPageContent() {
                 name: d.name,
                 divisionId: d.division_id ?? null,
               })),
+          );
+        }
+        if (desRes.ok) {
+          setRunDesignations(
+            (desData.designations ?? [])
+              .filter((d: { is_active?: boolean }) => d.is_active !== false)
+              .map((d: { id: string; title: string }) => ({ id: d.id, title: d.title })),
           );
         }
       } catch {
@@ -1197,8 +1212,22 @@ function PayrollPageContent() {
     ];
   }, [runDepartments, previewDivisionFilter]);
 
+  const runDesignationFilterOptions = useMemo(
+    () => [
+      { value: "", label: "All designations" },
+      ...runDesignations
+        .slice()
+        .sort((a, b) => a.title.localeCompare(b.title))
+        .map((d) => ({ value: d.id, label: d.title })),
+    ],
+    [runDesignations],
+  );
+
   const hasActiveRunFilters = Boolean(
-    previewDivisionFilter || previewDepartmentFilter || debouncedPreviewSearch.trim(),
+    previewDivisionFilter ||
+      previewDepartmentFilter ||
+      previewDesignationFilter ||
+      debouncedPreviewSearch.trim(),
   );
 
   const previewTotals = useMemo(() => {
@@ -1933,6 +1962,7 @@ function PayrollPageContent() {
           filters: {
             division: previewDivisionName || undefined,
             department: previewDepartmentName || undefined,
+            designation: previewDesignationName || undefined,
           },
         });
         const res = await fetch(
@@ -1968,6 +1998,7 @@ function PayrollPageContent() {
     debouncedPreviewSearch,
     previewDivisionName,
     previewDepartmentName,
+    previewDesignationName,
   ]);
 
   useEffect(() => {
@@ -2497,6 +2528,7 @@ function PayrollPageContent() {
       if (search) params.set("search", search);
       if (previewDivisionName) params.set("division", previewDivisionName);
       if (previewDepartmentName) params.set("department", previewDepartmentName);
+      if (previewDesignationName) params.set("designation", previewDesignationName);
     }
     const previewRes = await fetch(`/api/payroll/run?${params.toString()}`);
     const previewData = await previewRes.json();
@@ -2722,6 +2754,7 @@ function PayrollPageContent() {
         filters: {
           division: previewDivisionName || undefined,
           department: previewDepartmentName || undefined,
+          designation: previewDesignationName || undefined,
         },
       });
       const res = await fetch(`/api/payroll/run?year=${runYear}&month=${runMonth}&runDay=${runDay}&${qs}`);
@@ -2961,6 +2994,9 @@ function PayrollPageContent() {
           status: workbookStatus(),
           includeDetail: kind === "detail",
           includeSummary: kind === "summary" || kind === "detail",
+          divisionName: previewDivisionName || undefined,
+          departmentName: previewDepartmentName || undefined,
+          designationName: previewDesignationName || undefined,
           filename:
             kind === "summary"
               ? payrollExtractWorkbookFilename(runMonth, runYear)
@@ -2995,6 +3031,9 @@ function PayrollPageContent() {
       const params = new URLSearchParams({ periodId: preview.existingPeriodId });
       if (previewDivisionFilter) params.set("divisionId", previewDivisionFilter);
       if (previewDepartmentFilter) params.set("departmentId", previewDepartmentFilter);
+      if (previewDivisionName) params.set("divisionName", previewDivisionName);
+      if (previewDepartmentName) params.set("departmentName", previewDepartmentName);
+      if (previewDesignationName) params.set("designationName", previewDesignationName);
       if (hasActiveRunFilters) {
         params.set(
           "employeeUserIds",
@@ -3392,6 +3431,12 @@ function PayrollPageContent() {
               setPreviewPage(1);
             }}
             departmentOptions={runDepartmentFilterOptions}
+            designationFilter={previewDesignationFilter}
+            onDesignationFilterChange={(v) => {
+              setPreviewDesignationFilter(v);
+              setPreviewPage(1);
+            }}
+            designationOptions={runDesignationFilterOptions}
             orgFiltersLoading={runOrgFiltersLoading}
             totals={previewTotals}
             filteredCount={filteredEditableRows.length}

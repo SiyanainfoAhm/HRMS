@@ -11,6 +11,7 @@ import {
 } from "@/lib/payrollExcelExport";
 import {
   buildMonthlySummarySheet,
+  payrollOrgFilterHeaderLines,
   type PayrollRunExportRow,
 } from "@/lib/payrollRunWorkbook";
 import * as XLSX from "xlsx-js-style";
@@ -19,6 +20,7 @@ import {
   applyColumnHeaderStyle,
   applyCurrencyCellStyle,
   applyIntegerCellStyle,
+  applyMetaStyle,
   applyReportTitleStyle,
   applyStatusBannerStyle,
   applyTotalCurrencyStyle,
@@ -147,6 +149,9 @@ function buildFinalizedDetailSheet(opts: {
   rowObjects: Array<Record<string, string | number>>;
   month: number;
   year: number;
+  divisionName?: string | null;
+  departmentName?: string | null;
+  designationName?: string | null;
 }): XLSX.WorkSheet {
   const { excelHeaders: headers, rowObjects, month, year } = opts;
   const amountCols = new Set(payrollExcelAmountColumnIndices(headers.length));
@@ -170,7 +175,16 @@ function buildFinalizedDetailSheet(opts: {
   mergeCells(merges, 1, 0, 1, lastCol);
   (ws["!rows"] as Array<{ hpt?: number }>)[1] = { hpt: 20 };
 
-  const headerRow = 3;
+  const filterLines = payrollOrgFilterHeaderLines(opts);
+  let nextRow = 2;
+  for (const line of filterLines) {
+    write(nextRow, 0, line, applyMetaStyle());
+    for (let c = 1; c <= lastCol; c++) write(nextRow, c, "", applyMetaStyle());
+    mergeCells(merges, nextRow, 0, nextRow, lastCol);
+    (ws["!rows"] as Array<{ hpt?: number }>)[nextRow] = { hpt: 18 };
+    nextRow += 1;
+  }
+  const headerRow = filterLines.length > 0 ? nextRow : 3;
   headers.forEach((h, c) => write(headerRow, c, h, applyColumnHeaderStyle()));
   (ws["!rows"] as Array<{ hpt?: number }>)[headerRow] = { hpt: 30 };
 
@@ -274,6 +288,10 @@ export async function GET(request: NextRequest) {
   if (!isAdminRole(session.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
+
+  const divisionName = request.nextUrl.searchParams.get("divisionName")?.trim() || undefined;
+  const departmentName = request.nextUrl.searchParams.get("departmentName")?.trim() || undefined;
+  const designationName = request.nextUrl.searchParams.get("designationName")?.trim() || undefined;
 
   const exportParams = new URLSearchParams({ period_id: periodId });
   for (const [key, target] of [
@@ -382,7 +400,15 @@ export async function GET(request: NextRequest) {
 
   XLSX.utils.book_append_sheet(
     wb,
-    buildFinalizedDetailSheet({ excelHeaders, rowObjects, month, year }),
+    buildFinalizedDetailSheet({
+      excelHeaders,
+      rowObjects,
+      month,
+      year,
+      divisionName,
+      departmentName,
+      designationName,
+    }),
     "Employee Detail",
   );
 
@@ -393,6 +419,9 @@ export async function GET(request: NextRequest) {
       year,
       status: "Finalized",
       exportedBy: session.name ?? session.email ?? undefined,
+      divisionName,
+      departmentName,
+      designationName,
     }),
     "Monthly Summary",
   );

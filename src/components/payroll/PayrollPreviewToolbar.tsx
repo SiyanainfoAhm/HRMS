@@ -60,6 +60,9 @@ type Props = {
   departmentFilter: string;
   onDepartmentFilterChange: (v: string) => void;
   departmentOptions: { value: string; label: string }[];
+  designationFilter: string;
+  onDesignationFilterChange: (v: string) => void;
+  designationOptions: { value: string; label: string }[];
   orgFiltersLoading?: boolean;
   totals: Totals;
   filteredCount: number;
@@ -100,6 +103,9 @@ export function PayrollPreviewToolbar({
   departmentFilter,
   onDepartmentFilterChange,
   departmentOptions,
+  designationFilter,
+  onDesignationFilterChange,
+  designationOptions,
   orgFiltersLoading,
   totals,
   filteredCount,
@@ -314,6 +320,16 @@ export function PayrollPreviewToolbar({
             options={departmentOptions}
             loading={orgFiltersLoading}
             placeholder={divisionFilter ? "All in division" : "All departments"}
+            searchable
+            className="w-48"
+          />
+          <SelectField
+            label="Designation"
+            value={designationFilter}
+            onChange={onDesignationFilterChange}
+            options={designationOptions}
+            loading={orgFiltersLoading}
+            placeholder="All designations"
             searchable
             className="w-48"
           />

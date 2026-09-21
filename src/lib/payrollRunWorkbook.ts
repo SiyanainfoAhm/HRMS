@@ -50,6 +50,22 @@ const MONTH_NAMES = [
 
 export type PayrollWorkbookStatus = "Calculated Preview" | "Draft" | "Unsaved Preview" | "Finalized";
 
+/** Header lines for the active Run Payroll org filters. Omitted when that filter is "all". */
+export function payrollOrgFilterHeaderLines(opts: {
+  divisionName?: string | null;
+  departmentName?: string | null;
+  designationName?: string | null;
+}): string[] {
+  const lines: string[] = [];
+  const division = opts.divisionName?.trim();
+  const department = opts.departmentName?.trim();
+  const designation = opts.designationName?.trim();
+  if (division) lines.push(`Division Name : ${division}`);
+  if (department) lines.push(`Department Name : ${department}`);
+  if (designation) lines.push(`Designation Name : ${designation}`);
+  return lines;
+}
+
 export type PayrollRunExportRow = {
   employeeUserId: string;
   employeeName?: string | null;
@@ -350,6 +366,9 @@ export function buildMonthlySummarySheet(
     year: number;
     status: PayrollWorkbookStatus;
     exportedBy?: string;
+    divisionName?: string | null;
+    departmentName?: string | null;
+    designationName?: string | null;
   },
 ): XLSX.WorkSheet {
   const summary = aggregatePayrollSummary(rows);
@@ -402,8 +421,15 @@ export function buildMonthlySummarySheet(
   fillMergedRange(ws, merges, 2, 0, LAST_COL, metaParts.join("  |  "), applyMetaStyle());
   (ws["!rows"] as Array<{ hpt?: number }>)[2] = { hpt: 18 };
 
-  // Blank
-  let row = 4;
+  const filterLines = payrollOrgFilterHeaderLines(opts);
+  let row = 3;
+  for (const line of filterLines) {
+    fillMergedRange(ws, merges, row, 0, LAST_COL, line, applyMetaStyle());
+    (ws["!rows"] as Array<{ hpt?: number }>)[row] = { hpt: 18 };
+    row += 1;
+  }
+  // Blank before the first section
+  row += 1;
 
   // A. Earnings
   fillMergedRange(ws, merges, row, 0, LAST_COL, "A. GROSS SALARY / EARNINGS", applySectionHeaderStyle());
@@ -523,7 +549,7 @@ export function buildMonthlySummarySheet(
     lastCol0: LAST_COL,
     freezeRows: 0,
     landscape: true,
-    titleRows: 3,
+    titleRows: 3 + filterLines.length,
   });
 
   return ws;
@@ -605,6 +631,9 @@ export function buildEmployeeDetailSheet(
     month: number;
     year: number;
     status: PayrollWorkbookStatus;
+    divisionName?: string | null;
+    departmentName?: string | null;
+    designationName?: string | null;
   },
 ): XLSX.WorkSheet {
   const govRows = rows
@@ -643,7 +672,14 @@ export function buildEmployeeDetailSheet(
   fillMergedRange(ws, merges, 1, 0, lastCol, banner, applyStatusBannerStyle(statusKind));
   (ws["!rows"] as Array<{ hpt?: number }>)[1] = { hpt: 20 };
 
-  const headerRow = 3;
+  const filterLines = payrollOrgFilterHeaderLines(opts);
+  let nextRow = 2;
+  for (const line of filterLines) {
+    fillMergedRange(ws, merges, nextRow, 0, lastCol, line, applyMetaStyle());
+    (ws["!rows"] as Array<{ hpt?: number }>)[nextRow] = { hpt: 18 };
+    nextRow += 1;
+  }
+  const headerRow = filterLines.length > 0 ? nextRow : 3;
   headers.forEach((h, c) => {
     cell(ws, headerRow, c, h, applyColumnHeaderStyle());
   });
@@ -779,6 +815,9 @@ export function buildPayrollRunWorkbook(
     exportedBy?: string;
     includeDetail?: boolean;
     includeSummary?: boolean;
+    divisionName?: string | null;
+    departmentName?: string | null;
+    designationName?: string | null;
   },
 ): XLSX.WorkBook {
   const includeDetail = opts.includeDetail !== false;
@@ -805,6 +844,9 @@ export function downloadPayrollRunWorkbook(
     includeDetail?: boolean;
     includeSummary?: boolean;
     filename?: string;
+    divisionName?: string | null;
+    departmentName?: string | null;
+    designationName?: string | null;
   },
 ): void {
   const wb = buildPayrollRunWorkbook(rows, opts);

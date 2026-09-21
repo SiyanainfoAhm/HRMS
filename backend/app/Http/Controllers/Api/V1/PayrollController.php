@@ -387,6 +387,7 @@ class PayrollController extends Controller
         $search = trim((string) $request->query('search', ''));
         $filterDepartment = trim((string) $request->query('department', ''));
         $filterDivision = trim((string) $request->query('division', ''));
+        $filterDesignation = trim((string) $request->query('designation', ''));
 
         $existingPeriod = HrmsPayrollPeriod::where('company_id', $user->company_id)
             ->whereDate('period_start', $periodStart)
@@ -476,6 +477,9 @@ class PayrollController extends Controller
                 continue;
             }
             if ($filterDivision !== '' && strcasecmp((string) ($m->division ?? ''), $filterDivision) !== 0) {
+                continue;
+            }
+            if ($filterDesignation !== '' && strcasecmp((string) ($m->designation ?? ''), $filterDesignation) !== 0) {
                 continue;
             }
 
