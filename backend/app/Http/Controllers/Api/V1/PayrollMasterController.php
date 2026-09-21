@@ -14,6 +14,7 @@ use App\Support\SpreadsheetImportSecurity;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use InvalidArgumentException;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class PayrollMasterController extends Controller
@@ -261,20 +262,54 @@ class PayrollMasterController extends Controller
 
         $data = $request->validate([
             'current' => ['required', 'array'],
-            'current.employeeCode' => ['required', 'string', 'max:64'],
+            // apiProxy converts camelCase → snake_case; accept both for safety.
+            'current.employee_code' => ['required_without:current.employeeCode', 'nullable', 'string', 'max:64'],
+            'current.employeeCode' => ['required_without:current.employee_code', 'nullable', 'string', 'max:64'],
+            'current.master_id' => ['nullable', 'uuid'],
             'current.masterId' => ['nullable', 'uuid'],
+            'current.user_id' => ['nullable', 'uuid'],
             'current.userId' => ['nullable', 'uuid'],
             'other' => ['required', 'array'],
-            'other.employeeCode' => ['required', 'string', 'max:64'],
+            'other.employee_code' => ['required_without:other.employeeCode', 'nullable', 'string', 'max:64'],
+            'other.employeeCode' => ['required_without:other.employee_code', 'nullable', 'string', 'max:64'],
+            'other.master_id' => ['nullable', 'uuid'],
             'other.masterId' => ['nullable', 'uuid'],
+            'other.user_id' => ['nullable', 'uuid'],
             'other.userId' => ['nullable', 'uuid'],
         ]);
 
-        $resolved = $this->service->resolveEmployeeCodeConflict(
-            (string) $user->company_id,
-            $data['current'],
-            $data['other'],
-        );
+        $current = $data['current'];
+        $other = $data['other'];
+        $currentCode = trim((string) ($current['employee_code'] ?? $current['employeeCode'] ?? ''));
+        $otherCode = trim((string) ($other['employee_code'] ?? $other['employeeCode'] ?? ''));
+        if ($currentCode === '' || $otherCode === '') {
+            $errors = [];
+            if ($currentCode === '') {
+                $errors['current.employee_code'] = ['The current employee code is required.'];
+            }
+            if ($otherCode === '') {
+                $errors['other.employee_code'] = ['The other employee code is required.'];
+            }
+
+            return response()->json([
+                'error' => 'Both employee codes are required.',
+                'message' => 'Both employee codes are required.',
+                'errors' => $errors,
+            ], 422);
+        }
+
+        try {
+            $resolved = $this->service->resolveEmployeeCodeConflict(
+                (string) $user->company_id,
+                $current,
+                $other,
+            );
+        } catch (InvalidArgumentException $e) {
+            return response()->json([
+                'error' => $e->getMessage(),
+                'message' => $e->getMessage(),
+            ], 422);
+        }
 
         return response()->json([
             'message' => 'Employee codes updated.',
@@ -317,17 +352,22 @@ class PayrollMasterController extends Controller
 
         $periodIds = $request->input('period_ids', $request->input('periodIds', []));
         $quarterIds = $request->input('quarter_ids', $request->input('quarterIds', []));
+        $employeeUserIds = $request->input('employee_user_ids', $request->input('employeeUserIds', []));
         if (! is_array($periodIds)) {
             $periodIds = array_filter(array_map('trim', explode(',', (string) $periodIds)));
         }
         if (! is_array($quarterIds)) {
             $quarterIds = array_filter(array_map('trim', explode(',', (string) $quarterIds)));
         }
+        if (! is_array($employeeUserIds)) {
+            $employeeUserIds = array_filter(array_map('trim', explode(',', (string) $employeeUserIds)));
+        }
 
         return $this->employeePayrollExport->export(
             (string) $user->company_id,
             array_values($periodIds),
             array_values($quarterIds),
+            array_values(array_map('strval', $employeeUserIds)),
         );
     }
 
@@ -364,7 +404,32 @@ class PayrollMasterController extends Controller
             abort(403);
         }
 
-        $calc = $this->calculator->calculateMaster($request->all());
+        $companyId = (string) ($request->user()->company_id ?? '');
+        $transportConfig = null;
+        if ($companyId !== '') {
+            $company = \App\Models\HrmsCompany::find($companyId);
+            if ($company) {
+                $transportConfig = PayrollCalculationService::normalizeTransportConfig([
+                    'transport_allowance_level_9_plus' => $company->transport_allowance_level_9_plus,
+                    'transport_allowance_level_3_8' => $company->transport_allowance_level_3_8,
+                    'transport_allowance_level_1_2' => $company->transport_allowance_level_1_2,
+                    'transport_allowance_level_1_2_enhanced' => $company->transport_allowance_level_1_2_enhanced,
+                    'transport_allowance_basic_threshold' => $company->transport_allowance_basic_threshold,
+                    'transport_allowance_high_min_level' => $company->transport_allowance_high_min_level,
+                    'transport_allowance_mid_min_level' => $company->transport_allowance_mid_min_level,
+                ]);
+            }
+        }
+
+        $calc = $this->calculator->calculateMaster(
+            $request->all(),
+            null,
+            null,
+            null,
+            null,
+            null,
+            $transportConfig,
+        );
 
         return response()->json(['preview' => $calc]);
     }

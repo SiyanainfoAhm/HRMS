@@ -77,7 +77,7 @@ export function resolveConvertPayrollMasterInput(
     deductionDefaults: masterRowToDeductionDefaults(dedRow),
   });
 
-  const slab = deriveTransportSlabFromLevel(base.payLevel);
+  const slab = deriveTransportSlabFromLevel(base.payLevel, grossBasic);
 
   return {
     grossBasic,

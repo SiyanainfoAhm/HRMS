@@ -26,11 +26,21 @@ class EmployeePayrollExportService
     /**
      * @param  list<string>  $periodIds
      * @param  list<string>  $quarterIds
+     * @param  list<string>  $employeeUserIds  When non-empty, only these employees are exported.
      */
-    public function export(string $companyId, array $periodIds, array $quarterIds = []): StreamedResponse
-    {
+    public function export(
+        string $companyId,
+        array $periodIds,
+        array $quarterIds = [],
+        array $employeeUserIds = [],
+    ): StreamedResponse {
         $periodIds = array_values(array_unique(array_filter($periodIds, static fn ($id) => is_string($id) && $id !== '')));
         $quarterIds = array_values(array_unique(array_filter($quarterIds, static fn ($id) => is_string($id) && $id !== '')));
+        $employeeUserIds = array_values(array_unique(array_filter(
+            $employeeUserIds,
+            static fn ($id) => is_string($id) && $id !== '',
+        )));
+        $employeeUserIdSet = $employeeUserIds === [] ? null : array_fill_keys($employeeUserIds, true);
 
         if ($periodIds === []) {
             abort(422, 'Select at least one payroll run month.');
@@ -83,6 +93,9 @@ class EmployeePayrollExportService
 
             foreach ($monthRows as $gov) {
                 $uid = (string) ($gov->employee_user_id ?? '');
+                if ($employeeUserIdSet !== null && ! isset($employeeUserIdSet[$uid])) {
+                    continue;
+                }
                 $master = $mastersByUser[$uid] ?? null;
                 $quarterMeta = $this->resolveQuarterMeta($gov, $master, $mastersById, $quartersById);
 
@@ -107,6 +120,10 @@ class EmployeePayrollExportService
                 }
                 $rowNum++;
             }
+        }
+
+        if ($rowNum === 2) {
+            abort(422, 'No employees match the selected periods, quarters, and filters.');
         }
 
         $lastDataRow = max(1, $rowNum - 1);

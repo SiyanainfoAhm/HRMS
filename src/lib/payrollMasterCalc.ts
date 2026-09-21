@@ -9,11 +9,24 @@ import {
   resolveMasterCpfBasisAmount,
 } from "./payrollCpfCalculation";
 import { sumCustomBagForTotal, type PayrollFieldDefinition } from "./payrollFieldTypes";
+import {
+  DEFAULT_TRANSPORT_ALLOWANCE_SETTINGS,
+  deriveTransportSlab,
+  getTransportBaseByPayLevel,
+  type TransportAllowanceSettings,
+} from "./transportAllowanceSettings";
 
 export const DEFAULT_DA_PERCENT = 53;
 export const DEFAULT_HRA_PERCENT = 30;
 export const DEFAULT_MEDICAL = 3000;
 export const DEFAULT_CPF_RATE_ON_TOTAL_EARNINGS = 0.12;
+
+export {
+  DEFAULT_TRANSPORT_ALLOWANCE_SETTINGS,
+  deriveTransportSlab,
+  getTransportBaseByPayLevel,
+  type TransportAllowanceSettings,
+};
 
 export type PayrollMasterPreviewInput = {
   payLevel?: number | string;
@@ -62,6 +75,8 @@ export type PayrollMasterPreviewInput = {
   quarterId?: string | null;
   quarterRent?: number;
   payrollFieldDefs?: import("./payrollFieldTypes").PayrollFieldDefinition[];
+  /** Institute Transport Allowance settings (from Settings → Institute). */
+  transportSettings?: TransportAllowanceSettings;
 };
 
 export type PayrollMasterPreview = {
@@ -86,23 +101,6 @@ function num(v: unknown, fallback = 0): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
-/** Government transport allowance base by pay level (levels 1–2: 1350, 3–8: 3600, 9+: 7200). */
-export function getTransportBaseByPayLevel(payLevel: number): number {
-  const lv = Math.max(0, Math.floor(Number(payLevel) || 0));
-  if (lv >= 9) return 7200;
-  if (lv >= 3) return 3600;
-  if (lv >= 1) return 1350;
-  return 0;
-}
-
-export function deriveTransportSlab(payLevel: number): { group: string; base: number } {
-  const base = getTransportBaseByPayLevel(payLevel);
-  if (payLevel >= 9) return { group: "LEVEL_9_ABOVE", base };
-  if (payLevel >= 3) return { group: "LEVEL_3_8", base };
-  if (payLevel >= 1) return { group: "LEVEL_1_2", base };
-  return { group: "UNKNOWN", base: 0 };
-}
-
 export function computePayrollMasterPreview(input: PayrollMasterPreviewInput): PayrollMasterPreview {
   const payLevel = Math.max(1, Math.floor(num(input.payLevel, 1)));
   const grossBasic = Math.max(0, input.grossBasicPay === "" ? 0 : num(input.grossBasicPay, 0));
@@ -112,7 +110,8 @@ export function computePayrollMasterPreview(input: PayrollMasterPreviewInput): P
   const medical =
     input.medical === "" ? 0 : Math.max(0, num(input.medical, DEFAULT_MEDICAL));
 
-  const slab = deriveTransportSlab(payLevel);
+  const transportSettings = input.transportSettings ?? DEFAULT_TRANSPORT_ALLOWANCE_SETTINGS;
+  const slab = deriveTransportSlab(payLevel, grossBasic, transportSettings);
   let transportBase = slab.base;
   let transportDa = roundRupees(transportBase * daPercent / 100);
   let transportTotal = roundRupees(transportBase + transportDa);
@@ -306,6 +305,7 @@ export function deriveEarningFieldValues(
     quarterId: input.quarterId,
     customEarnings: input.customEarnings,
     payrollFieldDefs: input.payrollFieldDefs,
+    transportSettings: input.transportSettings,
   });
   return {
     daAmount: preview.daAmount,

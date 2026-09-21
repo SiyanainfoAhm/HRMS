@@ -53,6 +53,11 @@ import {
   DEFAULT_HRA_PERCENT,
   DEFAULT_MEDICAL,
 } from "@/lib/payrollMasterCalc";
+import {
+  DEFAULT_TRANSPORT_ALLOWANCE_SETTINGS,
+  normalizeTransportAllowanceSettings,
+  type TransportAllowanceSettings,
+} from "@/lib/transportAllowanceSettings";
 import { GOVERNMENT_DEFAULT_CPF_RATE_ON_TOTAL_EARNINGS } from "@/lib/governmentPayroll";
 import { resolveNightAllowanceRateByPayLevel } from "@/lib/nightAllowanceCalculation";
 import {
@@ -371,6 +376,7 @@ const EARNING_DRIVER_KEYS = new Set([
   "daPercent",
   "hraPercent",
   "hasQuarter",
+  "transportBase",
 ]);
 
 /** Component edits that must resync derived Total Earnings (not drivers — those rebuild formula fields). */
@@ -898,6 +904,9 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
   const [codeConflictSaving, setCodeConflictSaving] = useState(false);
   const [companyDefaultDa, setCompanyDefaultDa] = useState(DEFAULT_DA_PERCENT);
   const [companyDefaultHra, setCompanyDefaultHra] = useState(DEFAULT_HRA_PERCENT);
+  const [companyTransportSettings, setCompanyTransportSettings] = useState<TransportAllowanceSettings>(
+    DEFAULT_TRANSPORT_ALLOWANCE_SETTINGS,
+  );
   const [quarterOptions, setQuarterOptions] = useState<
     Array<{
       id: string;
@@ -1369,10 +1378,12 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
         if (hra != null && Number.isFinite(Number(hra))) {
           setCompanyDefaultHra(Number(hra));
         }
+        setCompanyTransportSettings(normalizeTransportAllowanceSettings(data?.company));
       } catch {
         if (!cancelled) {
           setCompanyDefaultDa(DEFAULT_DA_PERCENT);
           setCompanyDefaultHra(DEFAULT_HRA_PERCENT);
+          setCompanyTransportSettings(DEFAULT_TRANSPORT_ALLOWANCE_SETTINGS);
         }
       }
     })();
@@ -1804,8 +1815,10 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
   }
 
   function earningStringsFromForm(f: MasterFormState, patch: Partial<MasterFormState> = {}) {
-    // Refresh transport slab only when pay level or DA% changes; otherwise keep explicit overrides (including 0).
-    const refreshTransport = "payLevel" in patch || "daPercent" in patch;
+    // Pay level / basic can move the slab. DA % and Transport Base must recompute Transport DA.
+    const refreshBase = "payLevel" in patch || "grossBasicPay" in patch;
+    const recomputeTransportDa =
+      refreshBase || "daPercent" in patch || "transportBase" in patch;
     const derived = deriveEarningFieldValues({
       payLevel: f.payLevel,
       grossBasicPay: f.grossBasicPay,
@@ -1816,19 +1829,22 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
       quarterId: f.hasQuarter ? f.quarterId : null,
       customEarnings: customNumericBagForTotalFromValues(f.customFieldValues, payrollFieldDefs, "earnings"),
       payrollFieldDefs,
-      ...(refreshTransport
-        ? {}
-        : {
-            transportBase: f.transportBase,
-            transportDa: f.transportDa,
-            transportTotal: f.transportTotal,
-          }),
+      transportSettings: companyTransportSettings,
     });
-    const nextTransport = refreshTransport
+    const transportBase = refreshBase ? String(derived.transportBase) : f.transportBase;
+    const baseNum =
+      transportBase.trim() === "" ? 0 : Math.max(0, Math.round(Number(transportBase) || 0));
+    const daPct = Number.isFinite(parseFloat(f.daPercent)) ? parseFloat(f.daPercent) : 0;
+    const transportDaNum = recomputeTransportDa
+      ? Math.round((baseNum * daPct) / 100)
+      : transportBase.trim() === ""
+        ? 0
+        : Math.max(0, Math.round(Number(f.transportDa) || 0));
+    const nextTransport = recomputeTransportDa
       ? {
-          transportBase: String(derived.transportBase),
-          transportDa: String(derived.transportDa),
-          transportTotal: String(derived.transportTotal),
+          transportBase,
+          transportDa: String(transportDaNum),
+          transportTotal: String(Math.round(baseNum + transportDaNum)),
         }
       : {
           transportBase: f.transportBase,
@@ -1841,6 +1857,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
       daPercent: f.daPercent,
       hraPercent: f.hraPercent,
       medical: f.medical,
+      transportSettings: companyTransportSettings,
       daAmount: String(derived.daAmount),
       hraAmount: String(derived.hraAmount),
       ...nextTransport,
@@ -1850,9 +1867,19 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
       quarterId: f.hasQuarter ? f.quarterId : null,
       quarterRent: f.hasQuarter ? parseQuarterRentInput(f.quarterRent) : 0,
     });
+    const refreshEarningAmounts =
+      "payLevel" in patch ||
+      "grossBasicPay" in patch ||
+      "daPercent" in patch ||
+      "hraPercent" in patch ||
+      "hasQuarter" in patch;
     return {
-      daAmount: String(derived.daAmount),
-      hraAmount: String(derived.hraAmount),
+      ...(refreshEarningAmounts
+        ? {
+            daAmount: String(derived.daAmount),
+            hraAmount: String(derived.hraAmount),
+          }
+        : {}),
       ...nextTransport,
       totalEarnings: String(summary.totalEarnings),
     };
@@ -1894,6 +1921,27 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
       }
       // Keep Total Earnings in sync with current earning components for save/autosave.
       if ([...EARNING_COMPONENT_KEYS].some((key) => key in patch) && !("totalEarnings" in patch)) {
+        if ("daAmount" in patch || "transportDa" in patch) {
+          const baseNum = Math.max(0, Math.round(Number(next.transportBase) || 0));
+          const basic = Math.max(0, Number(next.grossBasicPay) || 0);
+          let transportDaNum = Math.max(0, Math.round(Number(next.transportDa) || 0));
+          if ("daAmount" in patch) {
+            const daAmt = next.daAmount.trim() === "" ? 0 : Math.max(0, Number(next.daAmount) || 0);
+            const daPct = Number.isFinite(parseFloat(next.daPercent)) ? parseFloat(next.daPercent) : 0;
+            // DA amount is basic × DA%. Keep Transport DA on that same rate.
+            const effectivePct = basic > 0 ? (daAmt / basic) * 100 : daPct;
+            transportDaNum = Math.round((baseNum * effectivePct) / 100);
+          } else if (next.transportDa.trim() === "") {
+            transportDaNum = 0;
+          }
+          next = {
+            ...next,
+            transportDa: String(transportDaNum),
+            ...("transportTotal" in patch
+              ? {}
+              : { transportTotal: String(Math.round(baseNum + transportDaNum)) }),
+          };
+        }
         const summary = calculatePayrollMasterSummary({
           payLevel: next.payLevel,
           grossBasicPay: next.grossBasicPay,
@@ -1940,12 +1988,19 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     const otherId = otherUnique?.id ?? otherRow?.id ?? null;
     if (!otherId && !otherUnique && !otherRow) return false;
 
+    // Prefer a true swap: give the other employee this record's prior code (e.g. 728 ↔ 727).
+    const priorCurrentCode = (editBaseline?.employeeCode ?? editing?.employeeCode ?? "").trim();
     const suggestedOther = generateNextEmployeeCode([
       ...rows.map((r) => r.employeeCode ?? "").filter(Boolean),
       ...uniquenessRows.map((r) => r.employeeCode ?? "").filter(Boolean),
       disputed,
       form.employeeCode,
+      priorCurrentCode,
     ].filter(Boolean));
+    const defaultOtherCode =
+      priorCurrentCode && priorCurrentCode.toLowerCase() !== disputed.toLowerCase()
+        ? priorCurrentCode
+        : suggestedOther;
 
     setCodeConflict({
       disputedCode: disputed,
@@ -1966,7 +2021,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
         source: "master",
       },
       currentCode: disputed,
-      otherCode: suggestedOther,
+      otherCode: defaultOtherCode,
     });
     setApiFieldErrors({ employeeCode: "Employee Code already exists." });
     focusFirstInvalidField("employeeCode", "basic");
@@ -2028,13 +2083,19 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
             other?: EmployeeCodeConflictParty;
           };
           const disputed = String(conflict.employeeCode ?? form.employeeCode ?? "").trim();
-          const otherExisting = String(conflict.other?.employeeCode ?? disputed).trim();
+          const priorCurrentCode = (editBaseline?.employeeCode ?? editing?.employeeCode ?? "").trim();
           const suggestedOther = generateNextEmployeeCode([
             ...rows.map((r) => r.employeeCode ?? "").filter(Boolean),
             ...uniquenessRows.map((r) => r.employeeCode ?? "").filter(Boolean),
             disputed,
             form.employeeCode,
+            priorCurrentCode,
           ].filter(Boolean));
+          // Default to swapping codes when editing (prior code → other party).
+          const defaultOtherCode =
+            priorCurrentCode && priorCurrentCode.toLowerCase() !== disputed.toLowerCase()
+              ? priorCurrentCode
+              : suggestedOther;
           setCodeConflict({
             disputedCode: disputed,
             current: {
@@ -2046,10 +2107,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
             },
             other: conflict.other ?? {},
             currentCode: disputed || form.employeeCode,
-            otherCode:
-              otherExisting && otherExisting.toLowerCase() !== disputed.toLowerCase()
-                ? otherExisting
-                : suggestedOther,
+            otherCode: defaultOtherCode,
           });
           setApiFieldErrors({ employeeCode: msg });
           focusFirstInvalidField("employeeCode", "basic");
@@ -2124,23 +2182,36 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          // Snake_case keys: Next apiProxy converts camelCase→snake before Laravel.
+          // Send snake_case so validation always sees employee_code / master_id / user_id.
           current: {
-            masterId: codeConflict.current.masterId ?? editing?.id ?? null,
-            userId: codeConflict.current.userId ?? null,
-            employeeCode: currentCode,
+            master_id: codeConflict.current.masterId ?? editing?.id ?? null,
+            user_id: codeConflict.current.userId ?? null,
+            employee_code: currentCode,
           },
           other: {
-            masterId: codeConflict.other.masterId ?? null,
-            userId: codeConflict.other.userId ?? null,
-            employeeCode: otherCode,
+            master_id: codeConflict.other.masterId ?? null,
+            user_id: codeConflict.other.userId ?? null,
+            employee_code: otherCode,
           },
         }),
       });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data?.message || data?.error || "Could not resolve employee codes");
+        const validationMsgs = data?.errors
+          ? Object.values(data.errors as Record<string, string[]>)
+              .flat()
+              .filter((m): m is string => typeof m === "string" && m.trim() !== "")
+          : [];
+        throw new Error(
+          data?.message ||
+            data?.error ||
+            (validationMsgs.length ? validationMsgs.join(" ") : null) ||
+            "Could not resolve employee codes",
+        );
       }
 
+      const currentUserId = codeConflict.current.userId ?? null;
       patchForm({ employeeCode: currentCode });
       setApiFieldErrors((prev) => {
         const next = { ...prev };
@@ -2150,11 +2221,19 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
       setCodeConflict(null);
       showToast("success", "Employee codes updated. Saving…");
 
-      // Retry save with the resolved current code.
+      // Retry save with the resolved current code (use nextForm so payload isn't stale).
       const nextForm = { ...form, employeeCode: currentCode };
       setForm(nextForm);
       setFormSaving(true);
-      const payload = formToPayload(nextForm, payrollFieldDefs);
+      const payload = formToPayload(nextForm, payrollFieldDefs) as Record<string, unknown>;
+      // After resolving codes, include identity hints so create upserts / update targets correctly.
+      if (editing?.id) {
+        payload.id = editing.id;
+      }
+      if (currentUserId) {
+        payload.employeeUserId = currentUserId;
+        payload.userId = currentUserId;
+      }
       const saveRes = await fetch(editing ? `/api/payroll/master/${editing.id}` : "/api/payroll/master", {
         method: editing ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
@@ -2163,7 +2242,17 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
       });
       const saveData = await saveRes.json();
       if (!saveRes.ok) {
-        throw new Error(saveData?.message || saveData?.error || "Save failed after resolving codes");
+        const saveValidation = saveData?.errors
+          ? Object.values(saveData.errors as Record<string, string[]>)
+              .flat()
+              .filter((m): m is string => typeof m === "string" && m.trim() !== "")
+          : [];
+        throw new Error(
+          saveData?.message ||
+            saveData?.error ||
+            (saveValidation.length ? saveValidation.join(" ") : null) ||
+            "Save failed after resolving codes",
+        );
       }
       const saved = (saveData?.master ?? null) as PayrollMasterRecord | null;
       if (saved?.id) {

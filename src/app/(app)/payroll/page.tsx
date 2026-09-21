@@ -22,6 +22,11 @@ import {
   type GovernmentMonthlyComputed,
 } from "@/lib/governmentPayroll";
 import {
+  DEFAULT_TRANSPORT_ALLOWANCE_SETTINGS,
+  normalizeTransportAllowanceSettings,
+  type TransportAllowanceSettings,
+} from "@/lib/transportAllowanceSettings";
+import {
   masterAmountOr,
   masterRecordToDeductionDefaults,
   resolveMasterMedicalFixed,
@@ -367,6 +372,7 @@ function applyGovernmentPayrollRowCompute(
     runMonth: number;
     payrollConfig?: PayrollConfig | null;
     arrearOverride?: ReturnType<typeof arrearSnapshotFromRow>;
+    transportSettings?: TransportAllowanceSettings;
   },
 ) {
   const dim = Math.max(1, Math.floor(opts.daysInMonth));
@@ -377,6 +383,7 @@ function applyGovernmentPayrollRowCompute(
     runYear: opts.runYear,
     runMonth: opts.runMonth,
     governmentMonthly: (row.governmentMonthly as Record<string, unknown> | null) ?? null,
+    transportSettings: opts.transportSettings,
   });
   const withArrear = applyAutoArrearsToGovernmentMonthly(
     comp,
@@ -454,7 +461,10 @@ function govDeductionDefaultsFromMasterRow(row: MasterGridRow): GovernmentDeduct
   });
 }
 
-function computeGovernmentMasterDerived(row: MasterGridRow): Partial<MasterGridRow> {
+function computeGovernmentMasterDerived(
+  row: MasterGridRow,
+  transportSettings: TransportAllowanceSettings = DEFAULT_TRANSPORT_ALLOWANCE_SETTINGS,
+): Partial<MasterGridRow> {
   if (row.payrollMode !== "government" || row.governmentPayLevel == null) {
     return {
       govTotalEarnings: 0,
@@ -476,6 +486,7 @@ function computeGovernmentMasterDerived(row: MasterGridRow): Partial<MasterGridR
       hasQuarter: row.hasQuarter,
       quarterRent: row.quarterRent,
       deductionDefaults: govDeductionDefaultsFromMasterRow(row),
+      transportSettings,
     });
     const takeHome = Math.max(0, comp.netSalary + row.advanceBonus);
     const cpfLikeRunPayroll =
@@ -676,7 +687,11 @@ function buildPayslipEmployeeOptions(
   );
 }
 
-function buildMasterGridRow(apiRow: any, companyPt: number): MasterGridRow | null {
+function buildMasterGridRow(
+  apiRow: any,
+  companyPt: number,
+  transportSettings: TransportAllowanceSettings = DEFAULT_TRANSPORT_ALLOWANCE_SETTINGS,
+): MasterGridRow | null {
   const m = apiRow.master;
   if (!m) return null;
   const payrollMode = m.payrollMode === "government" ? "government" : "private";
@@ -806,7 +821,7 @@ function buildMasterGridRow(apiRow: any, companyPt: number): MasterGridRow | nul
       govEffectiveCpf: 0,
       govNetSalary: 0,
     };
-    return { ...base, ...computeGovernmentMasterDerived(base) };
+    return { ...base, ...computeGovernmentMasterDerived(base, transportSettings) };
   }
 
   const gross = Number(m.grossSalary) || 0;
@@ -884,6 +899,9 @@ function PayrollPageContent() {
   const [masters, setMasters] = useState<any[]>([]);
   const [mastersLoading, setMastersLoading] = useState(true);
   const [companyPt, setCompanyPt] = useState(200);
+  const [companyTransportSettings, setCompanyTransportSettings] = useState<TransportAllowanceSettings>(
+    DEFAULT_TRANSPORT_ALLOWANCE_SETTINGS,
+  );
   const [masterGrid, setMasterGrid] = useState<MasterGridRow[]>([]);
   const [masterRowSaving, setMasterRowSaving] = useState<string | null>(null);
   const [masterFocusId, setMasterFocusId] = useState<string | null>(null);
@@ -1183,26 +1201,6 @@ function PayrollPageContent() {
     previewDivisionFilter || previewDepartmentFilter || debouncedPreviewSearch.trim(),
   );
 
-  const payrollExportUrl = useMemo(() => {
-    if (!preview?.existingPeriodId) return null;
-    const params = new URLSearchParams({ periodId: preview.existingPeriodId });
-    if (previewDivisionFilter) params.set("divisionId", previewDivisionFilter);
-    if (previewDepartmentFilter) params.set("departmentId", previewDepartmentFilter);
-    if (hasActiveRunFilters && filteredEditableRows.length > 0) {
-      params.set(
-        "employeeUserIds",
-        filteredEditableRows.map((r) => r.employeeUserId).join(","),
-      );
-    }
-    return `/api/payroll/export?${params.toString()}`;
-  }, [
-    preview?.existingPeriodId,
-    previewDivisionFilter,
-    previewDepartmentFilter,
-    hasActiveRunFilters,
-    filteredEditableRows,
-  ]);
-
   const previewTotals = useMemo(() => {
     const allResolved = Array.from(resolvedPayrollByUserIdRef.current.values());
     const source =
@@ -1483,6 +1481,7 @@ function PayrollPageContent() {
             runYear: runY,
             runMonth: runM,
             payrollConfig,
+            transportSettings: companyTransportSettings,
           };
 
           if (field === "leaveRemarks") {
@@ -1805,8 +1804,12 @@ function PayrollPageContent() {
         if (cancelled) return;
         const pt = data?.company?.professional_tax_monthly;
         setCompanyPt(pt != null && Number(pt) >= 0 ? Number(pt) : 200);
+        setCompanyTransportSettings(normalizeTransportAllowanceSettings(data?.company));
       } catch {
-        if (!cancelled) setCompanyPt(200);
+        if (!cancelled) {
+          setCompanyPt(200);
+          setCompanyTransportSettings(DEFAULT_TRANSPORT_ALLOWANCE_SETTINGS);
+        }
       }
     })();
     return () => {
@@ -1821,10 +1824,10 @@ function PayrollPageContent() {
     }
     setMasterGrid(
       masters
-        .map((row) => buildMasterGridRow(row, companyPt))
+        .map((row) => buildMasterGridRow(row, companyPt, companyTransportSettings))
         .filter((r): r is MasterGridRow => r != null)
     );
-  }, [masters, companyPt]);
+  }, [masters, companyPt, companyTransportSettings]);
 
   const daysInSelectedMonth = new Date(
     parseInt(runYear, 10),
@@ -2012,6 +2015,7 @@ function PayrollPageContent() {
           payLevel: editGovLevel,
           daysInMonth: 30,
           unpaidDays: 0,
+          transportSettings: companyTransportSettings,
           deductionDefaults: {
             incomeTax: tds,
             pt,
@@ -2035,7 +2039,7 @@ function PayrollPageContent() {
             quarterRent: 0,
           },
         });
-        const slab = deriveTransportSlabFromLevel(editGovLevel);
+        const slab = deriveTransportSlabFromLevel(editGovLevel, gb, companyTransportSettings);
         const statutoryCpf =
           comp.deductions.cpf + comp.deductions.daCpf + comp.deductions.vpf;
         return {
@@ -2094,6 +2098,7 @@ function PayrollPageContent() {
     editTds,
     editAdvanceBonus,
     companyPt,
+    companyTransportSettings,
   ]);
 
   const masterHasGovernment = useMemo(
@@ -2113,7 +2118,7 @@ function PayrollPageContent() {
           if (patch.incomeTaxDefault !== undefined && patch.tds === undefined) {
             next.tds = next.incomeTaxDefault;
           }
-          return { ...next, ...computeGovernmentMasterDerived(next) };
+          return { ...next, ...computeGovernmentMasterDerived(next, companyTransportSettings) };
         }
         const stat = computeRowStatutory(next);
         return { ...next, ...stat };
@@ -2124,7 +2129,7 @@ function PayrollPageContent() {
   function undoMasterGridRow(employeeUserId: string) {
     const snap = masters.find((m) => m.employeeUserId === employeeUserId);
     if (!snap) return;
-    const rebuilt = buildMasterGridRow(snap, companyPt);
+    const rebuilt = buildMasterGridRow(snap, companyPt, companyTransportSettings);
     if (!rebuilt) return;
     setMasterGrid((prev) => prev.map((r) => (r.employeeUserId === employeeUserId ? rebuilt : r)));
   }
@@ -2467,14 +2472,32 @@ function PayrollPageContent() {
     return resolved as (typeof editableRows)[number];
   }
 
-  /** Full canonical payroll set for save/export/totals (never page/filter-limited). */
+  /** Full canonical payroll set for save/audit/prefetch (never page-limited). */
   async function collectAllRunRowsForExport(): Promise<typeof editableRows> {
+    return collectRunRowsForExport({ applyUiFilters: false });
+  }
+
+  /** Same as grid filters (division / department / search) + all matching employees. */
+  async function collectFilteredRunRowsForExport(): Promise<typeof editableRows> {
+    return collectRunRowsForExport({ applyUiFilters: true });
+  }
+
+  async function collectRunRowsForExport(options?: {
+    applyUiFilters?: boolean;
+  }): Promise<typeof editableRows> {
+    const applyUiFilters = Boolean(options?.applyUiFilters);
     const params = new URLSearchParams({
       year: runYear,
       month: runMonth,
       runDay,
       all: "1",
     });
+    if (applyUiFilters) {
+      const search = debouncedPreviewSearch.trim();
+      if (search) params.set("search", search);
+      if (previewDivisionName) params.set("division", previewDivisionName);
+      if (previewDepartmentName) params.set("department", previewDepartmentName);
+    }
     const previewRes = await fetch(`/api/payroll/run?${params.toString()}`);
     const previewData = await previewRes.json();
     if (!previewRes.ok) {
@@ -2502,7 +2525,7 @@ function PayrollPageContent() {
         payrollConfig: previewData.payrollConfig ?? payrollConfig,
         alreadyRun,
         draftDirty: draftDirtyRef.current,
-        preserveEdits: auditMode && auditDirty,
+        preserveEdits: auditMode && auditDirtyRef.current,
         cached: cached ?? null,
         draftStored: draftPayloadByUserRef.current.get(uid) ?? null,
       });
@@ -2900,9 +2923,14 @@ function PayrollPageContent() {
 
   async function downloadRunExcel(kind: "detail" | "summary") {
     try {
-      const rows = await collectAllRunRowsForExport();
+      const rows = await collectFilteredRunRowsForExport();
       if (rows.length === 0) {
-        showToast("error", "No employees to export.");
+        showToast(
+          "error",
+          hasActiveRunFilters
+            ? "No employees match the current filters."
+            : "No employees to export.",
+        );
         return;
       }
       downloadPayrollRunWorkbook(
@@ -2939,6 +2967,58 @@ function PayrollPageContent() {
               : payrollDetailWorkbookFilename(runMonth, runYear),
         },
       );
+      showToast(
+        "success",
+        `${kind === "summary" ? "Extract" : "Preview Excel"} downloaded.`,
+      );
+    } catch (err: unknown) {
+      showToast("error", err instanceof Error ? err.message : "Export failed");
+    }
+  }
+
+  async function downloadGeneratedExcel() {
+    if (!preview?.existingPeriodId) {
+      showToast("error", "No generated payroll period to export.");
+      return;
+    }
+    try {
+      const rows = await collectFilteredRunRowsForExport();
+      if (rows.length === 0) {
+        showToast(
+          "error",
+          hasActiveRunFilters
+            ? "No employees match the current filters."
+            : "No employees to export.",
+        );
+        return;
+      }
+      const params = new URLSearchParams({ periodId: preview.existingPeriodId });
+      if (previewDivisionFilter) params.set("divisionId", previewDivisionFilter);
+      if (previewDepartmentFilter) params.set("departmentId", previewDepartmentFilter);
+      if (hasActiveRunFilters) {
+        params.set(
+          "employeeUserIds",
+          rows.map((r) => String(r.employeeUserId ?? "")).filter(Boolean).join(","),
+        );
+      }
+      const res = await fetch(`/api/payroll/export?${params.toString()}`);
+      const contentType = res.headers.get("content-type") ?? "";
+      if (!res.ok) {
+        let message = "Failed to download Excel";
+        if (contentType.includes("application/json")) {
+          const data = await res.json();
+          message = data?.error || data?.message || message;
+        }
+        throw new Error(message);
+      }
+      const blob = await res.blob();
+      const cd = res.headers.get("content-disposition");
+      const match = cd?.match(/filename="?([^";\n]+)"?/i);
+      triggerBlobDownload(
+        blob,
+        match?.[1] ?? payrollDetailWorkbookFilename(runMonth, runYear),
+      );
+      showToast("success", "Excel downloaded.");
     } catch (err: unknown) {
       showToast("error", err instanceof Error ? err.message : "Export failed");
     }
@@ -2947,9 +3027,14 @@ function PayrollPageContent() {
   async function downloadBankLetter(format: BankLetterExportFormat = "docx") {
     setBankLetterLoading(true);
     try {
-      const rows = await collectAllRunRowsForExport();
+      const rows = await collectFilteredRunRowsForExport();
       if (rows.length === 0) {
-        showToast("error", "Bank letter cannot be generated. No employees were provided.");
+        showToast(
+          "error",
+          hasActiveRunFilters
+            ? "Bank letter cannot be generated. No employees match the current filters."
+            : "Bank letter cannot be generated. No employees were provided.",
+        );
         return;
       }
       const employees = rows.map((r) =>
@@ -3224,12 +3309,8 @@ function PayrollPageContent() {
             }
             generateLabel={
               preview?.alreadyRun && preview?.payrollComplete === false
-                ? hasActiveRunFilters
-                  ? "Add missing (filtered)"
-                  : "Add missing payslips"
-                : hasActiveRunFilters && (previewDivisionFilter || previewDepartmentFilter)
-                  ? "Generate (filtered)"
-                  : "Generate"
+                ? "Add missing payslips"
+                : "Generate"
             }
             extraActions={
               canShowAuditGeneratedAction({ alreadyRun: preview?.alreadyRun, isAdmin: canManage }) ? (
@@ -3359,7 +3440,19 @@ function PayrollPageContent() {
             exportDisabled={editableRows.length === 0 && !draftMeta && !preview?.alreadyRun}
             employeePayrollExportSlot={
               canManage ? (
-                <EmployeePayrollExportButton buttonLabel="Export Employee Payroll" />
+                <EmployeePayrollExportButton
+                  buttonLabel="Export Employee Payroll"
+                  resolveEmployeeUserIds={
+                    hasActiveRunFilters
+                      ? async () => {
+                          const rows = await collectFilteredRunRowsForExport();
+                          return rows
+                            .map((r) => String(r.employeeUserId ?? ""))
+                            .filter(Boolean);
+                        }
+                      : undefined
+                  }
+                />
               ) : undefined
             }
           >
@@ -3373,15 +3466,16 @@ function PayrollPageContent() {
                     ? ` ${preview.missingPayslipCount} missing slip(s).`
                     : null}
                       </span>
-                  {preview?.existingPeriodId && payrollExportUrl && (
-                    <a
-                      href={payrollExportUrl}
-                      download
-                    className="btn btn-outline btn-sm"
+                  {preview?.existingPeriodId ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => void downloadGeneratedExcel()}
                     >
-                      Download Excel{hasActiveRunFilters ? " (filtered)" : ""}
-                    </a>
-                  )}
+                      Download Excel
+                    </Button>
+                  ) : null}
                 </div>
               )}
           </PayrollPreviewToolbar>

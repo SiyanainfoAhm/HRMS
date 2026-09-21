@@ -54,10 +54,18 @@ class CompanyController extends Controller
             'professional_tax_monthly' => ['nullable', 'numeric'],
             'default_da_percent' => ['nullable', 'numeric', 'min:0', 'max:200'],
             'default_hra_percent' => ['nullable', 'numeric', 'min:0', 'max:200'],
+            'transport_allowance_level_9_plus' => ['nullable', 'numeric', 'min:0'],
+            'transport_allowance_level_3_8' => ['nullable', 'numeric', 'min:0'],
+            'transport_allowance_level_1_2' => ['nullable', 'numeric', 'min:0'],
+            'transport_allowance_level_1_2_enhanced' => ['nullable', 'numeric', 'min:0'],
+            'transport_allowance_basic_threshold' => ['nullable', 'numeric', 'min:0'],
+            'transport_allowance_high_min_level' => ['nullable', 'integer', 'min:2', 'max:99'],
+            'transport_allowance_mid_min_level' => ['nullable', 'integer', 'min:1', 'max:98'],
         ]);
 
         unset($data['name'], $data['code']);
         if ($data !== []) {
+            $this->assertTransportLevelBands($data, $company);
             $company->update($data);
         }
 
@@ -78,15 +86,31 @@ class CompanyController extends Controller
             'name', 'code', 'industry',
             'address_line1', 'address_line2', 'city', 'state', 'country', 'postal_code',
             'phone', 'professional_tax_annual', 'professional_tax_monthly', 'default_da_percent', 'default_hra_percent',
+            'transport_allowance_level_9_plus',
+            'transport_allowance_level_3_8',
+            'transport_allowance_level_1_2',
+            'transport_allowance_level_1_2_enhanced',
+            'transport_allowance_basic_threshold',
+            'transport_allowance_high_min_level',
+            'transport_allowance_mid_min_level',
         ]));
         unset($payload['name'], $payload['code']);
 
         $request->validate([
             'default_da_percent' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:200'],
             'default_hra_percent' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:200'],
+            'transport_allowance_level_9_plus' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'transport_allowance_level_3_8' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'transport_allowance_level_1_2' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'transport_allowance_level_1_2_enhanced' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'transport_allowance_basic_threshold' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'transport_allowance_high_min_level' => ['sometimes', 'nullable', 'integer', 'min:2', 'max:99'],
+            'transport_allowance_mid_min_level' => ['sometimes', 'nullable', 'integer', 'min:1', 'max:98'],
             'payroll_revision_effective_from' => ['nullable', 'date'],
             'apply_da_hra_revision' => ['nullable', 'boolean'],
         ]);
+
+        $this->assertTransportLevelBands($payload, $company);
 
         $baselineDa = $this->payrollArrearService->getCurrentTargetDaPercent($companyId);
         $oldDa = (float) ($company->default_da_percent ?? $baselineDa ?? 53);
@@ -213,5 +237,25 @@ class CompanyController extends Controller
         $profile['organization_name_editable'] = false;
 
         return $profile;
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    private function assertTransportLevelBands(array $payload, HrmsCompany $company): void
+    {
+        $high = array_key_exists('transport_allowance_high_min_level', $payload)
+            ? (int) ($payload['transport_allowance_high_min_level'] ?? $company->transport_allowance_high_min_level ?? 9)
+            : (int) ($company->transport_allowance_high_min_level ?? 9);
+        $mid = array_key_exists('transport_allowance_mid_min_level', $payload)
+            ? (int) ($payload['transport_allowance_mid_min_level'] ?? $company->transport_allowance_mid_min_level ?? 3)
+            : (int) ($company->transport_allowance_mid_min_level ?? 3);
+
+        if ($mid < 1 || $high < 2) {
+            abort(422, 'Transport Pay Level bands must be at least 1.');
+        }
+        if ($mid >= $high) {
+            abort(422, 'Middle band minimum Pay Level must be lower than the high band minimum.');
+        }
     }
 }

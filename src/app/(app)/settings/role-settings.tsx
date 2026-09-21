@@ -17,6 +17,12 @@ import { QuartersSettings } from "@/components/settings/QuartersSettings";
 import { NightAllowanceSettings } from "@/components/settings/NightAllowanceSettings";
 import { ElectricityTariffSettings } from "@/components/settings/ElectricityTariffSettings";
 import { cn } from "@/lib/cn";
+import {
+  DEFAULT_TRANSPORT_ALLOWANCE_SETTINGS,
+  normalizeTransportAllowanceSettings,
+  transportBandLabels,
+  transportSettingsToApiPayload,
+} from "@/lib/transportAllowanceSettings";
 
 export function SettingsContent() {
   const { role } = useAuth();
@@ -50,6 +56,13 @@ export function SettingsContent() {
     professionalTaxMonthly: "200",
     defaultDaPercent: "53",
     defaultHraPercent: "30",
+    transportAllowanceLevel9Plus: String(DEFAULT_TRANSPORT_ALLOWANCE_SETTINGS.level9Plus),
+    transportAllowanceLevel38: String(DEFAULT_TRANSPORT_ALLOWANCE_SETTINGS.level38),
+    transportAllowanceLevel12: String(DEFAULT_TRANSPORT_ALLOWANCE_SETTINGS.level12),
+    transportAllowanceLevel12Enhanced: String(DEFAULT_TRANSPORT_ALLOWANCE_SETTINGS.level12Enhanced),
+    transportAllowanceBasicThreshold: String(DEFAULT_TRANSPORT_ALLOWANCE_SETTINGS.basicThreshold),
+    transportAllowanceHighMinLevel: String(DEFAULT_TRANSPORT_ALLOWANCE_SETTINGS.highMinLevel),
+    transportAllowanceMidMinLevel: String(DEFAULT_TRANSPORT_ALLOWANCE_SETTINGS.midMinLevel),
     payrollRevisionEffectiveFrom: new Date().toISOString().slice(0, 10),
   });
   const [initialDaHra, setInitialDaHra] = useState({ da: "53", hra: "30" });
@@ -486,6 +499,31 @@ export function SettingsContent() {
       professionalTaxMonthly: String(company?.professional_tax_monthly ?? 200),
       defaultDaPercent: String(company?.default_da_percent ?? 53),
       defaultHraPercent: String(company?.default_hra_percent ?? 30),
+      transportAllowanceLevel9Plus: String(
+        company?.transport_allowance_level_9_plus ?? DEFAULT_TRANSPORT_ALLOWANCE_SETTINGS.level9Plus,
+      ),
+      transportAllowanceLevel38: String(
+        company?.transport_allowance_level_3_8 ?? DEFAULT_TRANSPORT_ALLOWANCE_SETTINGS.level38,
+      ),
+      transportAllowanceLevel12: String(
+        company?.transport_allowance_level_1_2 ?? DEFAULT_TRANSPORT_ALLOWANCE_SETTINGS.level12,
+      ),
+      transportAllowanceLevel12Enhanced: String(
+        company?.transport_allowance_level_1_2_enhanced ??
+          DEFAULT_TRANSPORT_ALLOWANCE_SETTINGS.level12Enhanced,
+      ),
+      transportAllowanceBasicThreshold: String(
+        company?.transport_allowance_basic_threshold ??
+          DEFAULT_TRANSPORT_ALLOWANCE_SETTINGS.basicThreshold,
+      ),
+      transportAllowanceHighMinLevel: String(
+        company?.transport_allowance_high_min_level ??
+          DEFAULT_TRANSPORT_ALLOWANCE_SETTINGS.highMinLevel,
+      ),
+      transportAllowanceMidMinLevel: String(
+        company?.transport_allowance_mid_min_level ??
+          DEFAULT_TRANSPORT_ALLOWANCE_SETTINGS.midMinLevel,
+      ),
       payrollRevisionEffectiveFrom: new Date().toISOString().slice(0, 10),
     });
     setInitialDaHra({
@@ -509,6 +547,29 @@ export function SettingsContent() {
         professionalTaxMonthly: form.professionalTaxMonthly ? parseFloat(form.professionalTaxMonthly) : 200,
         defaultDaPercent: form.defaultDaPercent ? parseFloat(form.defaultDaPercent) : 53,
         defaultHraPercent: form.defaultHraPercent ? parseFloat(form.defaultHraPercent) : 30,
+        ...transportSettingsToApiPayload({
+          level9Plus: form.transportAllowanceLevel9Plus
+            ? parseFloat(form.transportAllowanceLevel9Plus)
+            : DEFAULT_TRANSPORT_ALLOWANCE_SETTINGS.level9Plus,
+          level38: form.transportAllowanceLevel38
+            ? parseFloat(form.transportAllowanceLevel38)
+            : DEFAULT_TRANSPORT_ALLOWANCE_SETTINGS.level38,
+          level12: form.transportAllowanceLevel12
+            ? parseFloat(form.transportAllowanceLevel12)
+            : DEFAULT_TRANSPORT_ALLOWANCE_SETTINGS.level12,
+          level12Enhanced: form.transportAllowanceLevel12Enhanced
+            ? parseFloat(form.transportAllowanceLevel12Enhanced)
+            : DEFAULT_TRANSPORT_ALLOWANCE_SETTINGS.level12Enhanced,
+          basicThreshold: form.transportAllowanceBasicThreshold
+            ? parseFloat(form.transportAllowanceBasicThreshold)
+            : DEFAULT_TRANSPORT_ALLOWANCE_SETTINGS.basicThreshold,
+          highMinLevel: form.transportAllowanceHighMinLevel
+            ? parseInt(form.transportAllowanceHighMinLevel, 10)
+            : DEFAULT_TRANSPORT_ALLOWANCE_SETTINGS.highMinLevel,
+          midMinLevel: form.transportAllowanceMidMinLevel
+            ? parseInt(form.transportAllowanceMidMinLevel, 10)
+            : DEFAULT_TRANSPORT_ALLOWANCE_SETTINGS.midMinLevel,
+        }),
         payrollRevisionEffectiveFrom: form.payrollRevisionEffectiveFrom,
         applyDaHraRevision: true,
       };
@@ -713,6 +774,62 @@ export function SettingsContent() {
                     <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Default HRA</dt>
                     <dd className="mt-0.5 text-slate-800">
                       {company?.default_hra_percent != null ? `${Number(company.default_hra_percent)}%` : "30%"}
+                    </dd>
+                  </div>
+                  <div className="md:col-span-2 lg:col-span-3">
+                    <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                      Transport Allowance
+                    </dt>
+                    <dd className="mt-2">
+                      {(() => {
+                        const ta = normalizeTransportAllowanceSettings(company);
+                        const labels = transportBandLabels(ta);
+                        const fmt = (n: number) =>
+                          `₹${n.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
+                        return (
+                          <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                            <div>
+                              <dt className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
+                                {labels.high}
+                              </dt>
+                              <dd className="mt-0.5 tabular-nums text-slate-800">{fmt(ta.level9Plus)}</dd>
+                            </div>
+                            <div>
+                              <dt className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
+                                {labels.mid}
+                              </dt>
+                              <dd className="mt-0.5 tabular-nums text-slate-800">{fmt(ta.level38)}</dd>
+                            </div>
+                            <div>
+                              <dt className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
+                                {labels.low}
+                              </dt>
+                              <dd className="mt-0.5 tabular-nums text-slate-800">{fmt(ta.level12)}</dd>
+                            </div>
+                            <div>
+                              <dt className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
+                                {labels.lowEnhanced}
+                              </dt>
+                              <dd className="mt-0.5 tabular-nums text-slate-800">{fmt(ta.level12Enhanced)}</dd>
+                            </div>
+                            <div>
+                              <dt className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
+                                Basic Pay Threshold
+                              </dt>
+                              <dd className="mt-0.5 tabular-nums text-slate-800">{fmt(ta.basicThreshold)}</dd>
+                            </div>
+                            <div>
+                              <dt className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
+                                Pay Level Bands
+                              </dt>
+                              <dd className="mt-0.5 text-slate-800">
+                                High ≥ {ta.highMinLevel} · Mid ≥ {ta.midMinLevel} · Low 1–
+                                {Math.max(1, ta.midMinLevel - 1)}
+                              </dd>
+                            </div>
+                          </dl>
+                        );
+                      })()}
                     </dd>
                   </div>
                 </dl>
@@ -1388,6 +1505,170 @@ export function SettingsContent() {
                   <p className="mt-1 text-xs text-slate-500">
                     Applied together with DA when revising all current payroll master records.
                   </p>
+                </div>
+                <div className="md:col-span-3 rounded-lg border border-slate-200 bg-slate-50/80 p-3">
+                  <p className="text-sm font-medium text-slate-800">Transport Allowance</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Edit Pay Level bands and base amounts. DA on Transport uses the employee&apos;s DA %
+                    (or Default DA). The low band uses the enhanced amount when Basic Pay is at or above
+                    the threshold.
+                  </p>
+                  {(() => {
+                    const preview = normalizeTransportAllowanceSettings({
+                      transportAllowanceLevel9Plus: form.transportAllowanceLevel9Plus,
+                      transportAllowanceLevel38: form.transportAllowanceLevel38,
+                      transportAllowanceLevel12: form.transportAllowanceLevel12,
+                      transportAllowanceLevel12Enhanced: form.transportAllowanceLevel12Enhanced,
+                      transportAllowanceBasicThreshold: form.transportAllowanceBasicThreshold,
+                      transportAllowanceHighMinLevel: form.transportAllowanceHighMinLevel,
+                      transportAllowanceMidMinLevel: form.transportAllowanceMidMinLevel,
+                    });
+                    const labels = transportBandLabels(preview);
+                    return (
+                      <>
+                        <div className="mt-3 grid gap-3 md:grid-cols-2">
+                          <div>
+                            <label className="mb-1 block text-sm font-medium text-slate-700">
+                              High band starts at Pay Level
+                            </label>
+                            <input
+                              type="number"
+                              min="2"
+                              max="99"
+                              step="1"
+                              value={form.transportAllowanceHighMinLevel}
+                              onChange={(e) =>
+                                setForm((p) => ({
+                                  ...p,
+                                  transportAllowanceHighMinLevel: e.target.value,
+                                }))
+                              }
+                              placeholder="9"
+                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                            />
+                            <p className="mt-1 text-xs text-slate-500">
+                              Levels at or above this use the high amount ({labels.high}).
+                            </p>
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-sm font-medium text-slate-700">
+                              Mid band starts at Pay Level
+                            </label>
+                            <input
+                              type="number"
+                              min="1"
+                              max="98"
+                              step="1"
+                              value={form.transportAllowanceMidMinLevel}
+                              onChange={(e) =>
+                                setForm((p) => ({
+                                  ...p,
+                                  transportAllowanceMidMinLevel: e.target.value,
+                                }))
+                              }
+                              placeholder="3"
+                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                            />
+                            <p className="mt-1 text-xs text-slate-500">
+                              Must be lower than the high band start. Mid = {labels.mid}; Low = {labels.low}.
+                            </p>
+                          </div>
+                        </div>
+                        <div className="mt-3 grid gap-3 md:grid-cols-3">
+                          <div>
+                            <label className="mb-1 block text-sm font-medium text-slate-700">
+                              {labels.high} (₹)
+                            </label>
+                            <input
+                              type="number"
+                              min="0"
+                              step="1"
+                              value={form.transportAllowanceLevel9Plus}
+                              onChange={(e) =>
+                                setForm((p) => ({ ...p, transportAllowanceLevel9Plus: e.target.value }))
+                              }
+                              placeholder="7200"
+                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-sm font-medium text-slate-700">
+                              {labels.mid} (₹)
+                            </label>
+                            <input
+                              type="number"
+                              min="0"
+                              step="1"
+                              value={form.transportAllowanceLevel38}
+                              onChange={(e) =>
+                                setForm((p) => ({ ...p, transportAllowanceLevel38: e.target.value }))
+                              }
+                              placeholder="3600"
+                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-sm font-medium text-slate-700">
+                              {labels.low} (₹)
+                            </label>
+                            <input
+                              type="number"
+                              min="0"
+                              step="1"
+                              value={form.transportAllowanceLevel12}
+                              onChange={(e) =>
+                                setForm((p) => ({ ...p, transportAllowanceLevel12: e.target.value }))
+                              }
+                              placeholder="1350"
+                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-sm font-medium text-slate-700">
+                              {labels.lowEnhanced} (₹)
+                            </label>
+                            <input
+                              type="number"
+                              min="0"
+                              step="1"
+                              value={form.transportAllowanceLevel12Enhanced}
+                              onChange={(e) =>
+                                setForm((p) => ({
+                                  ...p,
+                                  transportAllowanceLevel12Enhanced: e.target.value,
+                                }))
+                              }
+                              placeholder="3600"
+                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                            />
+                          </div>
+                          <div className="md:col-span-2">
+                            <label className="mb-1 block text-sm font-medium text-slate-700">
+                              Low-band Basic Pay Threshold (₹)
+                            </label>
+                            <input
+                              type="number"
+                              min="0"
+                              step="1"
+                              value={form.transportAllowanceBasicThreshold}
+                              onChange={(e) =>
+                                setForm((p) => ({
+                                  ...p,
+                                  transportAllowanceBasicThreshold: e.target.value,
+                                }))
+                              }
+                              placeholder="24200"
+                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                            />
+                            <p className="mt-1 text-xs text-slate-500">
+                              When Basic Pay is at or above this amount, {labels.low} uses the enhanced
+                              Transport Allowance.
+                            </p>
+                          </div>
+                        </div>
+                      </>
+                    );
+                  })()}
                 </div>
                 {(form.defaultDaPercent !== initialDaHra.da || form.defaultHraPercent !== initialDaHra.hra) && (
                   <div className="md:col-span-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">

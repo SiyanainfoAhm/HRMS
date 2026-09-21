@@ -17,6 +17,125 @@ final class PayrollCalculationService
 
     public const DEFAULT_MEDICAL = 3000.0;
 
+    public const DEFAULT_TRANSPORT_LEVEL_9_PLUS = 7200.0;
+
+    public const DEFAULT_TRANSPORT_LEVEL_3_8 = 3600.0;
+
+    public const DEFAULT_TRANSPORT_LEVEL_1_2 = 1350.0;
+
+    public const DEFAULT_TRANSPORT_LEVEL_1_2_ENHANCED = 3600.0;
+
+    public const DEFAULT_TRANSPORT_BASIC_THRESHOLD = 24200.0;
+
+    public const DEFAULT_TRANSPORT_HIGH_MIN_LEVEL = 9;
+
+    public const DEFAULT_TRANSPORT_MID_MIN_LEVEL = 3;
+
+    /**
+     * @return array{
+     *   level_9_plus: float,
+     *   level_3_8: float,
+     *   level_1_2: float,
+     *   level_1_2_enhanced: float,
+     *   basic_threshold: float,
+     *   high_min_level: int,
+     *   mid_min_level: int,
+     * }
+     */
+    public static function defaultTransportConfig(): array
+    {
+        return [
+            'level_9_plus' => self::DEFAULT_TRANSPORT_LEVEL_9_PLUS,
+            'level_3_8' => self::DEFAULT_TRANSPORT_LEVEL_3_8,
+            'level_1_2' => self::DEFAULT_TRANSPORT_LEVEL_1_2,
+            'level_1_2_enhanced' => self::DEFAULT_TRANSPORT_LEVEL_1_2_ENHANCED,
+            'basic_threshold' => self::DEFAULT_TRANSPORT_BASIC_THRESHOLD,
+            'high_min_level' => self::DEFAULT_TRANSPORT_HIGH_MIN_LEVEL,
+            'mid_min_level' => self::DEFAULT_TRANSPORT_MID_MIN_LEVEL,
+        ];
+    }
+
+    /**
+     * Normalize institute / request transport settings into calculation config keys.
+     *
+     * @param  array<string, mixed>|null  $config
+     * @return array{
+     *   level_9_plus: float,
+     *   level_3_8: float,
+     *   level_1_2: float,
+     *   level_1_2_enhanced: float,
+     *   basic_threshold: float,
+     *   high_min_level: int,
+     *   mid_min_level: int,
+     * }
+     */
+    public static function normalizeTransportConfig(?array $config): array
+    {
+        $defaults = self::defaultTransportConfig();
+        if ($config === null || $config === []) {
+            return $defaults;
+        }
+
+        $pickFloat = static function (array $keys, float $fallback) use ($config): float {
+            foreach ($keys as $key) {
+                if (array_key_exists($key, $config) && $config[$key] !== null && $config[$key] !== '') {
+                    return max(0, (float) $config[$key]);
+                }
+            }
+
+            return $fallback;
+        };
+
+        $pickInt = static function (array $keys, int $fallback) use ($config): int {
+            foreach ($keys as $key) {
+                if (array_key_exists($key, $config) && $config[$key] !== null && $config[$key] !== '') {
+                    return max(1, (int) $config[$key]);
+                }
+            }
+
+            return $fallback;
+        };
+
+        $highMin = $pickInt([
+            'high_min_level', 'highMinLevel',
+            'transport_allowance_high_min_level', 'transportAllowanceHighMinLevel',
+        ], $defaults['high_min_level']);
+        $midMin = $pickInt([
+            'mid_min_level', 'midMinLevel',
+            'transport_allowance_mid_min_level', 'transportAllowanceMidMinLevel',
+        ], $defaults['mid_min_level']);
+
+        // Keep contiguous bands: mid < high.
+        if ($midMin >= $highMin) {
+            $midMin = max(1, $highMin - 1);
+        }
+
+        return [
+            'level_9_plus' => $pickFloat([
+                'level_9_plus', 'level9Plus',
+                'transport_allowance_level_9_plus', 'transportAllowanceLevel9Plus',
+            ], $defaults['level_9_plus']),
+            'level_3_8' => $pickFloat([
+                'level_3_8', 'level38',
+                'transport_allowance_level_3_8', 'transportAllowanceLevel38',
+            ], $defaults['level_3_8']),
+            'level_1_2' => $pickFloat([
+                'level_1_2', 'level12',
+                'transport_allowance_level_1_2', 'transportAllowanceLevel12',
+            ], $defaults['level_1_2']),
+            'level_1_2_enhanced' => $pickFloat([
+                'level_1_2_enhanced', 'level12Enhanced',
+                'transport_allowance_level_1_2_enhanced', 'transportAllowanceLevel12Enhanced',
+            ], $defaults['level_1_2_enhanced']),
+            'basic_threshold' => $pickFloat([
+                'basic_threshold', 'basicThreshold',
+                'transport_allowance_basic_threshold', 'transportAllowanceBasicThreshold',
+            ], $defaults['basic_threshold']),
+            'high_min_level' => $highMin,
+            'mid_min_level' => $midMin,
+        ];
+    }
+
     /**
      * @return array{
      *   pay_level: int,
@@ -61,6 +180,7 @@ final class PayrollCalculationService
         ?array $cpfConfig = null,
         ?array $customEarnings = null,
         ?array $customDeductions = null,
+        ?array $transportConfig = null,
     ): array
     {
         $payLevel = max(1, (int) ($input['pay_level'] ?? $input['payLevel'] ?? 1));
@@ -68,7 +188,8 @@ final class PayrollCalculationService
         $daPercent = (float) ($input['da_percent'] ?? $input['daPercent'] ?? $defaultDaPercent ?? self::DEFAULT_DA_PERCENT);
         $hraPercent = (float) ($input['hra_percent'] ?? $input['hraPercent'] ?? $defaultHraPercent ?? self::DEFAULT_HRA_PERCENT);
         $medical = (float) ($input['medical'] ?? $input['medical_fixed'] ?? $input['medicalFixed'] ?? self::DEFAULT_MEDICAL);
-        $slab = $this->deriveTransportSlab($payLevel);
+        $resolvedTransport = self::normalizeTransportConfig($transportConfig);
+        $slab = $this->deriveTransportSlab($payLevel, $grossBasic, $resolvedTransport);
         $transportBase = $slab['base'];
         $transportDa = $this->roundRupees($transportBase * $daPercent / 100);
         $transportTotal = $this->roundRupees($transportBase + $transportDa);
@@ -84,7 +205,7 @@ final class PayrollCalculationService
             $hraAmount = $this->optionalAmountOverride($input, ['hra_amount', 'hraAmount', 'hra'], $hraAmount);
         }
         $transportBase = $this->optionalAmountOverride($input, ['transport_base', 'transportBase'], $transportBase);
-        $transportDa = $this->optionalAmountOverride($input, ['transport_da', 'transportDa'], $transportDa);
+        $transportDa = $this->optionalAmountOverride($input, ['transport_da', 'transportDa'], $this->roundRupees($transportBase * $daPercent / 100));
         $transportTotal = $this->optionalAmountOverride(
             $input,
             ['transport_total', 'transportTotal', 'trans'],
@@ -192,32 +313,33 @@ final class PayrollCalculationService
         ];
     }
 
-    public function getTransportBaseByPayLevel(int $payLevel): float
+    public function getTransportBaseByPayLevel(int $payLevel, float $grossBasic = 0, ?array $transportConfig = null): float
     {
-        if ($payLevel >= 9) {
-            return 7200.0;
-        }
-        if ($payLevel >= 3) {
-            return 3600.0;
-        }
-        if ($payLevel >= 1) {
-            return 1350.0;
-        }
-
-        return 0.0;
+        return $this->deriveTransportSlab($payLevel, $grossBasic, $transportConfig)['base'];
     }
 
-    /** @return array{group: string, base: float} */
-    public function deriveTransportSlab(int $payLevel, float $grossBasic = 0): array
+    /**
+     * @param  array<string, mixed>|null  $transportConfig
+     * @return array{group: string, base: float}
+     */
+    public function deriveTransportSlab(int $payLevel, float $grossBasic = 0, ?array $transportConfig = null): array
     {
-        if ($payLevel >= 9) {
-            return ['group' => 'LEVEL_9_ABOVE', 'base' => 7200.0];
+        $config = self::normalizeTransportConfig($transportConfig);
+        $highMin = (int) $config['high_min_level'];
+        $midMin = (int) $config['mid_min_level'];
+
+        if ($payLevel >= $highMin) {
+            return ['group' => 'LEVEL_9_ABOVE', 'base' => $config['level_9_plus']];
         }
-        if ($payLevel >= 3) {
-            return ['group' => 'LEVEL_3_8', 'base' => 3600.0];
+        if ($payLevel >= $midMin) {
+            return ['group' => 'LEVEL_3_8', 'base' => $config['level_3_8']];
         }
         if ($payLevel >= 1) {
-            return ['group' => 'LEVEL_1_2', 'base' => 1350.0];
+            if ($grossBasic >= $config['basic_threshold']) {
+                return ['group' => 'LEVEL_1_2_ENHANCED', 'base' => $config['level_1_2_enhanced']];
+            }
+
+            return ['group' => 'LEVEL_1_2', 'base' => $config['level_1_2']];
         }
 
         return ['group' => 'UNKNOWN', 'base' => 0.0];

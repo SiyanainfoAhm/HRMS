@@ -71,6 +71,7 @@ export type GovRecalcPayload = {
   cpfConfig?: CpfCalculationConfig;
   hasQuarter?: boolean;
   quarterRent?: number;
+  transportSettings?: import("./transportAllowanceSettings").TransportAllowanceSettings;
 };
 
 export function defaultGovRecalcReferencePeriod(runYear: number, runMonth: number) {
@@ -91,6 +92,7 @@ export function runGovernmentPayrollCompute(
     runYear: number;
     runMonth: number;
     governmentMonthly?: Record<string, unknown> | null;
+    transportSettings?: import("./transportAllowanceSettings").TransportAllowanceSettings;
   },
 ) {
   const dim = Math.max(1, Math.floor(opts.daysInMonth));
@@ -154,6 +156,7 @@ export function runGovernmentPayrollCompute(
     quarterRent: gr.quarterRent,
     ...governmentMonthlyExtras(gr, opts.payrollConfig),
     cpfConfig: gr.cpfConfig,
+    transportSettings: gr.transportSettings ?? opts.transportSettings,
   });
   return { comp, capped, unpaidDays };
 }

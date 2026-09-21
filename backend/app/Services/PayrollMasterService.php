@@ -1513,13 +1513,15 @@ final class PayrollMasterService
         return (float) $calc['take_home'];
     }
 
-    /** @return array{da: float, hra: float} */
+    /** @return array{da: float, hra: float, transport: array<string, float>} */
     private function resolveCompanyPayrollDefaults(?string $companyId): array
     {
+        $defaultTransport = PayrollCalculationService::defaultTransportConfig();
         if (! $companyId) {
             return [
                 'da' => PayrollCalculationService::DEFAULT_DA_PERCENT,
                 'hra' => PayrollCalculationService::DEFAULT_HRA_PERCENT,
+                'transport' => $defaultTransport,
             ];
         }
 
@@ -1529,20 +1531,29 @@ final class PayrollMasterService
             $cache[$companyId] = [
                 'da' => (float) ($company?->default_da_percent ?? PayrollCalculationService::DEFAULT_DA_PERCENT),
                 'hra' => (float) ($company?->default_hra_percent ?? PayrollCalculationService::DEFAULT_HRA_PERCENT),
+                'transport' => PayrollCalculationService::normalizeTransportConfig($company ? [
+                    'transport_allowance_level_9_plus' => $company->transport_allowance_level_9_plus,
+                    'transport_allowance_level_3_8' => $company->transport_allowance_level_3_8,
+                    'transport_allowance_level_1_2' => $company->transport_allowance_level_1_2,
+                    'transport_allowance_level_1_2_enhanced' => $company->transport_allowance_level_1_2_enhanced,
+                    'transport_allowance_basic_threshold' => $company->transport_allowance_basic_threshold,
+                    'transport_allowance_high_min_level' => $company->transport_allowance_high_min_level,
+                    'transport_allowance_mid_min_level' => $company->transport_allowance_mid_min_level,
+                ] : null),
             ];
         }
 
         return $cache[$companyId];
     }
 
-    /** @return array{0: ?float, 1: ?float} */
+    /** @return array{0: ?float, 1: ?float, 2: array<string, float>} */
     private function resolveCalcDefaults(?string $companyId, array $payload): array
     {
         $defaults = $this->resolveCompanyPayrollDefaults($companyId);
         $defaultDa = $this->payloadMissingPercent($payload, 'da_percent', 'daPercent') ? $defaults['da'] : null;
         $defaultHra = $this->payloadMissingPercent($payload, 'hra_percent', 'hraPercent') ? $defaults['hra'] : null;
 
-        return [$defaultDa, $defaultHra];
+        return [$defaultDa, $defaultHra, $defaults['transport']];
     }
 
     private function formatPercentField(mixed $value, float $fallback): float
@@ -2312,9 +2323,11 @@ final class PayrollMasterService
 
     /**
      * Atomically reassign employee codes for both parties in a conflict dialog.
+     * For two existing employees, parks the current party on a temporary code first so
+     * exchanging codes (e.g. 728 ↔ 727) never collides mid-update.
      *
-     * @param  array{masterId?: string|null, userId?: string|null, employeeCode: string}  $current
-     * @param  array{masterId?: string|null, userId?: string|null, employeeCode: string}  $other
+     * @param  array{masterId?: string|null, userId?: string|null, employeeCode?: string, employee_code?: string}  $current
+     * @param  array{masterId?: string|null, userId?: string|null, employeeCode?: string, employee_code?: string}  $other
      * @return array{current: array<string, mixed>, other: array<string, mixed>}
      */
     public function resolveEmployeeCodeConflict(string $companyId, array $current, array $other): array
@@ -2329,54 +2342,138 @@ final class PayrollMasterService
         }
 
         return DB::transaction(function () use ($companyId, $current, $other, $currentCode, $otherCode) {
-            $otherMasterId = $other['masterId'] ?? $other['master_id'] ?? null;
-            $otherUserId = $other['userId'] ?? $other['user_id'] ?? null;
-            $currentMasterId = $current['masterId'] ?? $current['master_id'] ?? null;
-            $currentUserId = $current['userId'] ?? $current['user_id'] ?? null;
+            [$currentMasterId, $currentUserId] = $this->resolvePartyIdentity($companyId, $current);
+            [$otherMasterId, $otherUserId] = $this->resolvePartyIdentity($companyId, $other);
 
-            // Reassign the other party first so the disputed code becomes free for current.
-            $otherParty = $this->applyEmployeeCodeOnly(
-                $companyId,
-                is_string($otherMasterId) ? $otherMasterId : null,
-                is_string($otherUserId) ? $otherUserId : null,
-                $otherCode,
-                is_string($currentMasterId) ? $currentMasterId : null,
-                is_string($currentUserId) ? $currentUserId : null,
-            );
+            $currentHasTarget = $currentMasterId !== null || $currentUserId !== null;
+            $otherHasTarget = $otherMasterId !== null || $otherUserId !== null;
 
-            $currentParty = null;
-            if ((is_string($currentMasterId) && $currentMasterId !== '') || (is_string($currentUserId) && $currentUserId !== '')) {
+            if ($currentHasTarget && $otherHasTarget) {
+                // Park current first so their previous code is free for the other party (true swap).
+                $tempCode = $this->allocateTemporaryEmployeeCode($companyId);
+                $this->applyEmployeeCodeOnly(
+                    $companyId,
+                    $currentMasterId,
+                    $currentUserId,
+                    $tempCode,
+                    $otherMasterId,
+                    $otherUserId,
+                );
+
+                $otherParty = $this->applyEmployeeCodeOnly(
+                    $companyId,
+                    $otherMasterId,
+                    $otherUserId,
+                    $otherCode,
+                    $currentMasterId,
+                    $currentUserId,
+                );
+
                 $currentParty = $this->applyEmployeeCodeOnly(
                     $companyId,
-                    is_string($currentMasterId) ? $currentMasterId : null,
-                    is_string($currentUserId) ? $currentUserId : null,
+                    $currentMasterId,
+                    $currentUserId,
                     $currentCode,
-                    is_string($otherMasterId) ? $otherMasterId : null,
-                    is_string($otherUserId) ? $otherUserId : null,
+                    $otherMasterId,
+                    $otherUserId,
                 );
-            } else {
-                // Adding a new employee — only free the code; form save will assign it.
-                $this->assertEmployeeCodeAvailable(
-                    $companyId,
-                    $currentCode,
-                    null,
-                    null,
-                );
-                $currentParty = [
+
+                return [
+                    'current' => $currentParty,
+                    'other' => $otherParty,
+                ];
+            }
+
+            // Other exists; current is still being added — free the disputed code for the form save.
+            $otherParty = $this->applyEmployeeCodeOnly(
+                $companyId,
+                $otherMasterId,
+                $otherUserId,
+                $otherCode,
+                $currentMasterId,
+                $currentUserId,
+            );
+
+            $this->assertEmployeeCodeAvailable(
+                $companyId,
+                $currentCode,
+                $currentMasterId,
+                $currentUserId,
+                $otherMasterId,
+                $otherUserId,
+            );
+
+            return [
+                'current' => [
                     'masterId' => null,
                     'userId' => null,
                     'employeeCode' => $currentCode,
                     'name' => null,
                     'email' => null,
                     'source' => 'pending',
-                ];
-            }
-
-            return [
-                'current' => $currentParty,
+                ],
                 'other' => $otherParty,
             ];
         });
+    }
+
+    /**
+     * @param  array<string, mixed>  $party
+     * @return array{0: ?string, 1: ?string}
+     */
+    private function resolvePartyIdentity(string $companyId, array $party): array
+    {
+        $masterId = $party['masterId'] ?? $party['master_id'] ?? null;
+        $userId = $party['userId'] ?? $party['user_id'] ?? null;
+        $masterId = is_string($masterId) && $masterId !== '' ? $masterId : null;
+        $userId = is_string($userId) && $userId !== '' ? $userId : null;
+
+        if ($masterId && ! $userId) {
+            $master = HrmsPayrollMaster::query()
+                ->where('company_id', $companyId)
+                ->where('id', $masterId)
+                ->first(['employee_user_id', 'user_id']);
+            $linked = $master?->employee_user_id ?? $master?->user_id;
+            $userId = is_string($linked) && $linked !== '' ? $linked : null;
+        }
+
+        if ($userId && ! $masterId) {
+            $masterQ = HrmsPayrollMaster::query()
+                ->where('company_id', $companyId)
+                ->where(function ($q) use ($userId) {
+                    $q->where('employee_user_id', $userId)->orWhere('user_id', $userId);
+                });
+            $this->scopeCurrentMaster($masterQ);
+            $found = $masterQ->value('id');
+            $masterId = is_string($found) && $found !== '' ? $found : null;
+        }
+
+        return [$masterId, $userId];
+    }
+
+    private function allocateTemporaryEmployeeCode(string $companyId): string
+    {
+        for ($attempt = 0; $attempt < 16; $attempt++) {
+            $code = 'TMP'.strtoupper(bin2hex(random_bytes(4)));
+            $normalized = mb_strtolower($code);
+            $masterTaken = HrmsPayrollMaster::query()
+                ->where('company_id', $companyId)
+                ->whereRaw('LOWER(TRIM(employee_code)) = ?', [$normalized]);
+            $this->scopeCurrentMaster($masterTaken);
+            if ($masterTaken->exists()) {
+                continue;
+            }
+            if (HrmsUser::query()
+                ->where('company_id', $companyId)
+                ->whereRaw('LOWER(TRIM(employee_code)) = ?', [$normalized])
+                ->exists()) {
+                continue;
+            }
+
+            return $code;
+        }
+
+        abort(422, 'Could not allocate a temporary employee code for the exchange.');
     }
 
     /**
@@ -4243,6 +4340,7 @@ final class PayrollMasterService
             $cpfConfigPayload,
             $this->fieldService->customEarningsForTotal($companyId, $customValues),
             $this->fieldService->customDeductionsForTotal($companyId, $customValues),
+            $this->resolveCompanyPayrollDefaults($companyId)['transport'],
         );
     }
 

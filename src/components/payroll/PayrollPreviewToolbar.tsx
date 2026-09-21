@@ -1,18 +1,34 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
-import { Search } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { ChevronDown, FileSpreadsheet, FileText, Search } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { SelectField } from "@/components/ui/SelectField";
+import { cn } from "@/lib/cn";
 import { fmtIn } from "./payrollRunPreviewShared";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 const BANK_LETTER_FORMAT_OPTIONS = [
-  { value: "docx", label: "Word (.docx)" },
-  { value: "xlsx", label: "Excel (.xlsx)" },
-  { value: "pdf", label: "PDF (.pdf)" },
-] as const;
+  {
+    value: "docx" as const,
+    label: "Word document",
+    hint: ".docx · HDFC letter template",
+    Icon: FileText,
+  },
+  {
+    value: "xlsx" as const,
+    label: "Excel workbook",
+    hint: ".xlsx · employee salary table",
+    Icon: FileSpreadsheet,
+  },
+  {
+    value: "pdf" as const,
+    label: "PDF letter",
+    hint: ".pdf · printable advice",
+    Icon: FileText,
+  },
+];
 
 type BankLetterFormat = (typeof BANK_LETTER_FORMAT_OPTIONS)[number]["value"];
 
@@ -103,7 +119,26 @@ export function PayrollPreviewToolbar({
   resetDisabled,
   children,
 }: Props) {
-  const [bankLetterFormat, setBankLetterFormat] = useState<BankLetterFormat>("docx");
+  const [bankLetterOpen, setBankLetterOpen] = useState(false);
+  const bankLetterRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!bankLetterOpen) return;
+    function onDocMouseDown(e: MouseEvent) {
+      if (!bankLetterRef.current?.contains(e.target as Node)) {
+        setBankLetterOpen(false);
+      }
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setBankLetterOpen(false);
+    }
+    document.addEventListener("mousedown", onDocMouseDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocMouseDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [bankLetterOpen]);
 
   const monthOptions = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((m) => ({
     value: String(m).padStart(2, "0"),
@@ -120,6 +155,8 @@ export function PayrollPreviewToolbar({
         : statusKind === "draft"
           ? "bg-sky-50 text-sky-900"
           : "bg-slate-100 text-slate-700";
+
+  const bankLetterDisabled = running || exportDisabled || bankLetterLoading;
 
   return (
     <div className="shrink-0 border-b border-brand-border bg-white px-3 py-2">
@@ -182,27 +219,62 @@ export function PayrollPreviewToolbar({
               </Button>
             ) : null}
             {onDownloadBankLetter ? (
-              <div className="inline-flex flex-wrap items-end gap-1.5">
-                <SelectField
-                  label="Bank Letter"
-                  value={bankLetterFormat}
-                  onChange={(v) => setBankLetterFormat(v as BankLetterFormat)}
-                  options={[...BANK_LETTER_FORMAT_OPTIONS]}
-                  disabled={running || exportDisabled || bankLetterLoading}
-                  className="w-40"
-                />
-                <Button
+              <div className="relative" ref={bankLetterRef}>
+                <button
                   type="button"
-                  size="sm"
-                  variant="outline"
-                  loading={bankLetterLoading}
-                  disabled={running || exportDisabled || bankLetterLoading}
-                  onClick={() => onDownloadBankLetter(bankLetterFormat)}
-                  title="Download bank letter in the selected format"
-                  aria-label="Download Bank Letter"
+                  disabled={bankLetterDisabled}
+                  onClick={() => setBankLetterOpen((o) => !o)}
+                  aria-haspopup="menu"
+                  aria-expanded={bankLetterOpen}
+                  title="Download bank letter"
+                  className={cn(
+                    "btn btn-outline btn-sm !rounded-lg inline-flex items-center gap-1.5",
+                    bankLetterDisabled && "cursor-not-allowed opacity-50",
+                  )}
                 >
-                  Download
-                </Button>
+                  {bankLetterLoading ? (
+                    <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
+                  ) : null}
+                  Bank Letter
+                  <ChevronDown
+                    className={cn(
+                      "h-3.5 w-3.5 text-slate-500 transition-transform duration-150",
+                      bankLetterOpen && "rotate-180",
+                    )}
+                    aria-hidden
+                  />
+                </button>
+                {bankLetterOpen && !bankLetterDisabled ? (
+                  <div
+                    role="menu"
+                    aria-label="Bank letter format"
+                    className="absolute left-0 top-[calc(100%+6px)] z-[90] w-64 overflow-hidden rounded-xl border border-slate-200/90 bg-white py-1.5 shadow-[0_12px_28px_-8px_rgba(15,23,42,0.18)] ring-1 ring-black/5"
+                  >
+                    <p className="px-3 pb-1.5 pt-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-400">
+                      Choose format
+                    </p>
+                    {BANK_LETTER_FORMAT_OPTIONS.map(({ value, label, hint, Icon }) => (
+                      <button
+                        key={value}
+                        type="button"
+                        role="menuitem"
+                        className="flex w-full items-start gap-2.5 px-3 py-2 text-left transition-colors hover:bg-slate-50 focus:bg-slate-50 focus:outline-none"
+                        onClick={() => {
+                          setBankLetterOpen(false);
+                          onDownloadBankLetter(value);
+                        }}
+                      >
+                        <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-600">
+                          <Icon className="h-4 w-4" aria-hidden />
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block text-[13px] font-medium text-slate-800">{label}</span>
+                          <span className="block text-[11px] text-slate-500">{hint}</span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             ) : null}
             {employeePayrollExportSlot}

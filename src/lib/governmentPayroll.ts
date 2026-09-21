@@ -23,27 +23,33 @@ import {
   type ElectricityTariffConfig,
 } from "./electricityTariffCalculation";
 
+import {
+  DEFAULT_TRANSPORT_ALLOWANCE_SETTINGS,
+  deriveTransportSlab,
+  getTransportBaseByPayLevel,
+  type TransportAllowanceSettings,
+} from "./transportAllowanceSettings";
+
 export type TransportSlab = { transportSlabGroup: string; transportBase: number };
 
-/** Government transport allowance base by pay level (levels 1–2: 1350, 3–8: 3600, 9+: 7200). */
-export function getTransportBaseByPayLevel(payLevel: number): number {
-  const lv = Math.max(0, Math.floor(Number(payLevel) || 0));
-  if (lv >= 9) return 7200;
-  if (lv >= 3) return 3600;
-  if (lv >= 1) return 1350;
-  return 0;
-}
+export {
+  DEFAULT_TRANSPORT_ALLOWANCE_SETTINGS,
+  getTransportBaseByPayLevel,
+  type TransportAllowanceSettings,
+};
 
-export function deriveTransportSlabFromLevel(level: number | null | undefined): TransportSlab {
+export function deriveTransportSlabFromLevel(
+  level: number | null | undefined,
+  grossBasicPay = 0,
+  settings: TransportAllowanceSettings = DEFAULT_TRANSPORT_ALLOWANCE_SETTINGS,
+): TransportSlab {
   if (level == null || !Number.isFinite(Number(level))) {
     throw new Error("government_pay_level is required for government payroll");
   }
   const lv = Math.floor(Number(level));
   if (lv < 1) throw new Error("government_pay_level must be at least 1");
-  const transportBase = getTransportBaseByPayLevel(lv);
-  if (lv >= 9) return { transportSlabGroup: "LEVEL_9_ABOVE", transportBase };
-  if (lv >= 3) return { transportSlabGroup: "LEVEL_3_8", transportBase };
-  return { transportSlabGroup: "LEVEL_1_2", transportBase };
+  const slab = deriveTransportSlab(lv, grossBasicPay, settings);
+  return { transportSlabGroup: slab.group, transportBase: slab.base };
 }
 
 export type GovernmentDeductionDefaults = {
@@ -186,6 +192,8 @@ export type GovernmentMonthlyInput = {
   earningPaidOverrides?: GovernmentEarningPaidOverrides;
   /** Company CPF configuration from Settings */
   cpfConfig?: CpfCalculationConfig;
+  /** Institute Transport Allowance settings from Settings → Institute. */
+  transportSettings?: TransportAllowanceSettings;
   /** Custom earning field values (non-system) */
   customEarnings?: Record<string, number>;
   /** Custom deduction field values (non-system) */
@@ -289,13 +297,17 @@ export type GovernmentMonthlyComputed = {
 };
 
 export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): GovernmentMonthlyComputed {
-  const slab = deriveTransportSlabFromLevel(input.payLevel);
+  const gb = Number(input.grossBasic) || 0;
+  const slab = deriveTransportSlabFromLevel(
+    input.payLevel,
+    gb,
+    input.transportSettings ?? DEFAULT_TRANSPORT_ALLOWANCE_SETTINGS,
+  );
   const daPctForTransport = Number(input.daPercent) || 0;
   const transportDa = roundRupees((slab.transportBase * daPctForTransport) / 100);
   const transportActual = roundRupees(slab.transportBase + transportDa);
   const transportPaid = transportActual;
 
-  const gb = Number(input.grossBasic) || 0;
   const daPct = Number(input.daPercent) || 0;
   const hraPct = Number(input.hraPercent) || 0;
   const medFixed = Number(input.medicalFixed) || 0;

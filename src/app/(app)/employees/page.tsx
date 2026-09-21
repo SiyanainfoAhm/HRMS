@@ -476,7 +476,9 @@ export default function EmployeesPage() {
     }
   }
   const transportBasePreview =
-    Number.isFinite(levelNum) && levelNum >= 1 ? getTransportBaseByPayLevel(levelNum) : 0;
+    Number.isFinite(levelNum) && levelNum >= 1
+      ? getTransportBaseByPayLevel(levelNum, Number(grossBasic) || 0)
+      : 0;
   const calculatedMonthlyGross = govPreview?.totalEarnings ?? 0;
   const calculatedNet = govPreview?.netSalary ?? 0;
 
@@ -1222,7 +1224,9 @@ export default function EmployeesPage() {
                   />
                   {payLevelError && <p className="mt-1 text-xs text-red-600">{payLevelError}</p>}
                   <p className="mt-1 text-xs text-slate-500">
-                    Transport base (auto): ₹{transportBasePreview > 0 ? transportBasePreview.toLocaleString("en-IN") : "—"} (levels 1–2: 1350, 3–8: 3600, 9+: 7200)
+                    Transport base (auto): ₹
+                    {transportBasePreview > 0 ? transportBasePreview.toLocaleString("en-IN") : "—"}{" "}
+                    (from Institute Transport Allowance settings by Pay Level / Basic Pay)
                   </p>
                 </div>
                 <div className="md:col-span-1">

@@ -42,6 +42,11 @@ type Props = {
   buttonLabel?: string;
   disabled?: boolean;
   className?: string;
+  /**
+   * When set (e.g. Run Payroll active division/department/search filters),
+   * resolve the matching employee user IDs and restrict the Excel export.
+   */
+  resolveEmployeeUserIds?: () => Promise<string[]>;
 };
 
 /**
@@ -52,6 +57,7 @@ export function EmployeePayrollExportButton({
   buttonLabel = "Export Employee Payroll",
   disabled = false,
   className,
+  resolveEmployeeUserIds,
 }: Props) {
   const { showToast } = useToast();
   const [open, setOpen] = useState(false);
@@ -152,6 +158,13 @@ export function EmployeePayrollExportButton({
       if (selectedQuarterIds.length > 0) {
         qs.set("quarterIds", selectedQuarterIds.join(","));
       }
+      if (resolveEmployeeUserIds) {
+        const ids = await resolveEmployeeUserIds();
+        if (ids.length === 0) {
+          throw new Error("No employees match the current Run Payroll filters.");
+        }
+        qs.set("employeeUserIds", ids.join(","));
+      }
       await downloadFromApi(
         `/api/payroll/master/export-employee-payroll?${qs.toString()}`,
         "cirt_employee_payroll_export.xlsx",
@@ -183,7 +196,11 @@ export function EmployeePayrollExportButton({
         open={open}
         onClose={() => !downloading && setOpen(false)}
         title="Export Employee Payroll Excel"
-        description="One row per employee per selected month (long format). Month-specific amounts come from generated payroll. Choose 1–3 run months. Optionally filter by up to 3 quarters."
+        description={
+          resolveEmployeeUserIds
+            ? "One row per employee per selected month. Restricted to employees matching the current Run Payroll filters (division / department / search). Optionally filter by up to 3 quarters."
+            : "One row per employee per selected month (long format). Month-specific amounts come from generated payroll. Choose 1–3 run months. Optionally filter by up to 3 quarters."
+        }
         size="md"
         footer={
           <>

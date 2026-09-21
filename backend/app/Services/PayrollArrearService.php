@@ -1661,7 +1661,7 @@ final class PayrollArrearService
 
             return [
                 'basic' => $basic,
-                'transport_base' => $this->transportBaseFromPayLevel($payLevel, $newMaster, $employeeUserId),
+                'transport_base' => $this->transportBaseFromPayLevel($payLevel, $newMaster, $employeeUserId, $companyId),
                 'old_da_percent' => $oldDaPercent,
                 'cpf_rate' => $cpfRate,
                 'monthly_payroll_id' => $gov->id,
@@ -1682,7 +1682,7 @@ final class PayrollArrearService
 
         return [
             'basic' => $basic,
-            'transport_base' => $this->transportBaseFromPayLevel($payLevel, $master, $employeeUserId),
+            'transport_base' => $this->transportBaseFromPayLevel($payLevel, $master, $employeeUserId, $companyId),
             'old_da_percent' => $oldDaPercent,
             'cpf_rate' => $this->resolveCpfRate($master->id, $employeeUserId, $companyId, $periodStart),
             'monthly_payroll_id' => null,
@@ -1780,25 +1780,57 @@ final class PayrollArrearService
         return $this->masterService->findMasterOrHistoryById($masterId);
     }
 
-    private function transportBaseFromPayLevel(int $payLevel, ?HrmsPayrollMaster $master, string $employeeUserId): float
+    private function transportBaseFromPayLevel(int $payLevel, ?HrmsPayrollMaster $master, string $employeeUserId, ?string $companyId = null): float
     {
+        $basic = (float) ($master?->gross_basic_pay ?? $master?->gross_basic ?? 0);
+        $config = $this->transportConfigForCompany($companyId ?? $master?->company_id);
         if ($payLevel >= 1) {
-            return $this->calculator->getTransportBaseByPayLevel($payLevel);
+            return $this->calculator->getTransportBaseByPayLevel($payLevel, $basic, $config);
         }
         if ($master) {
-            return $this->calculator->getTransportBaseByPayLevel((int) ($master->pay_level ?? 1));
+            return $this->calculator->getTransportBaseByPayLevel((int) ($master->pay_level ?? 1), $basic, $config);
         }
 
-        return 3600.0;
+        return (float) ($config['level_3_8'] ?? PayrollCalculationService::DEFAULT_TRANSPORT_LEVEL_3_8);
     }
 
     private function transportBaseFromMaster(?HrmsPayrollMaster $master, string $employeeUserId): float
     {
         if ($master) {
-            return $this->calculator->getTransportBaseByPayLevel((int) ($master->pay_level ?? 1));
+            $basic = (float) ($master->gross_basic_pay ?? $master->gross_basic ?? 0);
+
+            return $this->calculator->getTransportBaseByPayLevel(
+                (int) ($master->pay_level ?? 1),
+                $basic,
+                $this->transportConfigForCompany($master->company_id),
+            );
         }
 
-        return 3600.0;
+        return PayrollCalculationService::DEFAULT_TRANSPORT_LEVEL_3_8;
+    }
+
+    /** @return array<string, float> */
+    private function transportConfigForCompany(?string $companyId): array
+    {
+        if (! $companyId) {
+            return PayrollCalculationService::defaultTransportConfig();
+        }
+
+        static $cache = [];
+        if (! array_key_exists($companyId, $cache)) {
+            $company = HrmsCompany::find($companyId);
+            $cache[$companyId] = PayrollCalculationService::normalizeTransportConfig($company ? [
+                'transport_allowance_level_9_plus' => $company->transport_allowance_level_9_plus,
+                'transport_allowance_level_3_8' => $company->transport_allowance_level_3_8,
+                'transport_allowance_level_1_2' => $company->transport_allowance_level_1_2,
+                'transport_allowance_level_1_2_enhanced' => $company->transport_allowance_level_1_2_enhanced,
+                'transport_allowance_basic_threshold' => $company->transport_allowance_basic_threshold,
+                'transport_allowance_high_min_level' => $company->transport_allowance_high_min_level,
+                'transport_allowance_mid_min_level' => $company->transport_allowance_mid_min_level,
+            ] : null);
+        }
+
+        return $cache[$companyId];
     }
 
     private function employeeLabel(string $employeeUserId): string

@@ -18,7 +18,16 @@ class HrmsCompany extends Model
     protected $fillable = [
         'name', 'code', 'industry',
         'address_line1', 'address_line2', 'city', 'state', 'country', 'postal_code',
-        'phone', 'professional_tax_annual', 'professional_tax_monthly', 'default_da_percent', 'default_hra_percent', 'logo_url',
+        'phone', 'professional_tax_annual', 'professional_tax_monthly',
+        'default_da_percent', 'default_hra_percent',
+        'transport_allowance_level_9_plus',
+        'transport_allowance_level_3_8',
+        'transport_allowance_level_1_2',
+        'transport_allowance_level_1_2_enhanced',
+        'transport_allowance_basic_threshold',
+        'transport_allowance_high_min_level',
+        'transport_allowance_mid_min_level',
+        'logo_url',
     ];
 
     protected function casts(): array
@@ -28,6 +37,13 @@ class HrmsCompany extends Model
             'professional_tax_monthly' => 'decimal:2',
             'default_da_percent' => 'decimal:2',
             'default_hra_percent' => 'decimal:2',
+            'transport_allowance_level_9_plus' => 'decimal:2',
+            'transport_allowance_level_3_8' => 'decimal:2',
+            'transport_allowance_level_1_2' => 'decimal:2',
+            'transport_allowance_level_1_2_enhanced' => 'decimal:2',
+            'transport_allowance_basic_threshold' => 'decimal:2',
+            'transport_allowance_high_min_level' => 'integer',
+            'transport_allowance_mid_min_level' => 'integer',
             'created_at' => 'datetime',
             'updated_at' => 'datetime',
         ];
