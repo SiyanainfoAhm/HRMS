@@ -159,14 +159,15 @@ export function deriveTransportSlab(
   return { group: "UNKNOWN", base: 0 };
 }
 
+/** Exact snake_case keys Laravel expects (digits cannot round-trip via camelCase). */
 export function transportSettingsToApiPayload(settings: TransportAllowanceSettings) {
   return {
-    transportAllowanceLevel9Plus: settings.level9Plus,
-    transportAllowanceLevel38: settings.level38,
-    transportAllowanceLevel12: settings.level12,
-    transportAllowanceLevel12Enhanced: settings.level12Enhanced,
-    transportAllowanceBasicThreshold: settings.basicThreshold,
-    transportAllowanceHighMinLevel: settings.highMinLevel,
-    transportAllowanceMidMinLevel: settings.midMinLevel,
+    transport_allowance_level_9_plus: settings.level9Plus,
+    transport_allowance_level_3_8: settings.level38,
+    transport_allowance_level_1_2: settings.level12,
+    transport_allowance_level_1_2_enhanced: settings.level12Enhanced,
+    transport_allowance_basic_threshold: settings.basicThreshold,
+    transport_allowance_high_min_level: settings.highMinLevel,
+    transport_allowance_mid_min_level: settings.midMinLevel,
   };
 }

@@ -96,6 +96,28 @@ class CompanyController extends Controller
         ]));
         unset($payload['name'], $payload['code']);
 
+        // Recover mangled keys from naive camelCase→snake (e.g. Level38 → level38).
+        $transportKeyAliases = [
+            'transport_allowance_level_9_plus' => ['transport_allowance_level9_plus'],
+            'transport_allowance_level_3_8' => ['transport_allowance_level38', 'transport_allowance_level_38'],
+            'transport_allowance_level_1_2' => ['transport_allowance_level12', 'transport_allowance_level_12'],
+            'transport_allowance_level_1_2_enhanced' => [
+                'transport_allowance_level12_enhanced',
+                'transport_allowance_level_12_enhanced',
+            ],
+        ];
+        foreach ($transportKeyAliases as $canonical => $aliases) {
+            if (array_key_exists($canonical, $payload) && $payload[$canonical] !== null && $payload[$canonical] !== '') {
+                continue;
+            }
+            foreach ($aliases as $alias) {
+                if ($request->exists($alias) && $request->input($alias) !== null && $request->input($alias) !== '') {
+                    $payload[$canonical] = $request->input($alias);
+                    break;
+                }
+            }
+        }
+
         $request->validate([
             'default_da_percent' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:200'],
             'default_hra_percent' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:200'],

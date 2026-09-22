@@ -3,6 +3,7 @@ import {
   deriveTransportSlabFromLevel,
   masterRowToDeductionDefaults,
 } from "@/lib/governmentPayroll";
+import type { TransportAllowanceSettings } from "@/lib/transportAllowanceSettings";
 
 function pickNum(o: Record<string, unknown>, keys: string[], fallback: number): number {
   for (const k of keys) {
@@ -35,6 +36,7 @@ export function resolveConvertPayrollMasterInput(
     payLevel: number;
     ptMonthly: number;
     tdsMonthly: number;
+    transportSettings?: TransportAllowanceSettings;
   },
 ): ResolvedConvertPayroll {
   const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
@@ -75,9 +77,10 @@ export function resolveConvertPayrollMasterInput(
     daysInMonth: 30,
     unpaidDays: 0,
     deductionDefaults: masterRowToDeductionDefaults(dedRow),
+    transportSettings: base.transportSettings,
   });
 
-  const slab = deriveTransportSlabFromLevel(base.payLevel, grossBasic);
+  const slab = deriveTransportSlabFromLevel(base.payLevel, grossBasic, base.transportSettings);
 
   return {
     grossBasic,

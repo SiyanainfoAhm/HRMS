@@ -539,7 +539,18 @@ export function SettingsContent() {
     setSaving(true);
     setFormError(null);
     try {
-      const { name: _name, code: _code, ...editableForm } = form;
+      const {
+        name: _name,
+        code: _code,
+        transportAllowanceLevel9Plus: _ta9,
+        transportAllowanceLevel38: _ta38,
+        transportAllowanceLevel12: _ta12,
+        transportAllowanceLevel12Enhanced: _ta12e,
+        transportAllowanceBasicThreshold: _taThresh,
+        transportAllowanceHighMinLevel: _taHigh,
+        transportAllowanceMidMinLevel: _taMid,
+        ...editableForm
+      } = form;
       const payload = {
         ...editableForm,
         industry: form.industry === "Other" ? form.industryOther.trim() : form.industry,

@@ -18,6 +18,11 @@ import {
   masterRowToDeductionDefaults,
 } from "@/lib/governmentPayroll";
 import { resolveConvertPayrollMasterInput } from "@/lib/convertToCurrentPayroll";
+import {
+  DEFAULT_TRANSPORT_ALLOWANCE_SETTINGS,
+  normalizeTransportAllowanceSettings,
+  type TransportAllowanceSettings,
+} from "@/lib/transportAllowanceSettings";
 import type { AppRole } from "@/lib/roles";
 import { isAdminRole } from "@/lib/roles";
 import {
@@ -196,6 +201,9 @@ export default function EmployeesPage() {
   const [deleting, setDeleting] = useState(false);
 
   const [companyPtMonthly, setCompanyPtMonthly] = useState<number>(200);
+  const [companyTransportSettings, setCompanyTransportSettings] = useState<TransportAllowanceSettings>(
+    DEFAULT_TRANSPORT_ALLOWANCE_SETTINGS,
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -258,11 +266,12 @@ export default function EmployeesPage() {
         payLevel: convertPayLevel,
         ptMonthly: companyPtMonthly,
         tdsMonthly: convertPayrollForm.tds,
+        transportSettings: companyTransportSettings,
       });
     } catch {
       return null;
     }
-  }, [convertStep, convertPayrollForm, convertPayLevel, companyPtMonthly]);
+  }, [convertStep, convertPayrollForm, convertPayLevel, companyPtMonthly, companyTransportSettings]);
 
   const filteredDesignations = useMemo<{ id: string; title: string }[]>(() => {
     const q = designation.trim().toLowerCase();
@@ -281,9 +290,10 @@ export default function EmployeesPage() {
         if (res.ok && data?.company && !cancelled) {
           const pt = data.company.professional_tax_monthly ?? data.company.professional_tax_annual ?? 200;
           setCompanyPtMonthly(Number(pt));
+          setCompanyTransportSettings(normalizeTransportAllowanceSettings(data.company));
         }
       } catch {
-        // keep default 200
+        // keep defaults
       }
     })();
     return () => {
@@ -470,6 +480,7 @@ export default function EmployeesPage() {
           tds: incomeTaxNum,
           pt_default: ptMonthly,
         }),
+        transportSettings: companyTransportSettings,
       });
     } catch {
       govPreview = null;
@@ -477,7 +488,7 @@ export default function EmployeesPage() {
   }
   const transportBasePreview =
     Number.isFinite(levelNum) && levelNum >= 1
-      ? getTransportBaseByPayLevel(levelNum, Number(grossBasic) || 0)
+      ? getTransportBaseByPayLevel(levelNum, Number(grossBasic) || 0, companyTransportSettings)
       : 0;
   const calculatedMonthlyGross = govPreview?.totalEarnings ?? 0;
   const calculatedNet = govPreview?.netSalary ?? 0;
@@ -2914,7 +2925,7 @@ export default function EmployeesPage() {
                           <label className="mb-1 block text-sm font-medium text-slate-700">Transport base (from pay level)</label>
                           <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
                             {convertPayLevel != null && convertPayLevel >= 1
-                              ? `₹${getTransportBaseByPayLevel(convertPayLevel).toLocaleString("en-IN")}`
+                              ? `₹${getTransportBaseByPayLevel(convertPayLevel, convertPayrollForm.gross_basic, companyTransportSettings).toLocaleString("en-IN")}`
                               : "—"}
                           </div>
                           <p className="mt-1 text-xs text-slate-500">Transport DA uses the same DA % as salary.</p>
