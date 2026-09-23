@@ -229,6 +229,9 @@ type Props = {
   readOnly: boolean;
   customEarningFields?: PayrollFieldDefinition[];
   customDeductionFields?: PayrollFieldDefinition[];
+  /** Active definitions from Settings. Saved payroll snapshots retain their original fields. */
+  payrollFieldDefs?: PayrollFieldDefinition[];
+  preserveSavedFields?: boolean;
   onUpdate: (employeeUserId: string, field: string, value: number | string) => void;
 };
 
@@ -461,6 +464,8 @@ function GovernmentEmployeeDetail({
   readOnly,
   customEarningFields,
   customDeductionFields,
+  payrollFieldDefs,
+  preserveSavedFields,
   onUpdate,
 }: {
   row: GovernmentRunPreviewRow;
@@ -471,6 +476,8 @@ function GovernmentEmployeeDetail({
   readOnly: boolean;
   customEarningFields: PayrollFieldDefinition[];
   customDeductionFields: PayrollFieldDefinition[];
+  payrollFieldDefs?: PayrollFieldDefinition[];
+  preserveSavedFields?: boolean;
   onUpdate: Props["onUpdate"];
 }) {
   const scrollerRef = useRef<PayrollScrollerHandle>(null);
@@ -483,6 +490,9 @@ function GovernmentEmployeeDetail({
   const hplRefYear = leave.hplReferenceYear ?? runYear;
   const eolBasis = Math.round(Number(gRecord?.eolBasisAmount ?? 0) || 0);
   const hplBasis = Math.round(Number(gRecord?.hplBasisAmount ?? 0) || 0);
+  const activeFieldKeys = new Set(payrollFieldDefs?.filter((field) => field.isActive).map((field) => field.fieldKey));
+  const isVisibleConfiguredField = (fieldKey?: string) =>
+    preserveSavedFields || !fieldKey || activeFieldKeys.has(fieldKey);
   const gb = row.grossMonthly ?? 0;
   const displayName = row.employeeName || row.employeeEmail || "—";
   const totalEarn = v(g, "totalEarnings");
@@ -779,7 +789,7 @@ function GovernmentEmployeeDetail({
             <PayrollComponentScroller ref={scrollerRef}>
               <div className="flex flex-col gap-2.5">
                 <PayrollSectionRow title="Earnings" titleClassName="text-emerald-900">
-                  {GOV_PREVIEW_EARNING_FIELDS.map(({ key, label }) => (
+                  {GOV_PREVIEW_EARNING_FIELDS.filter((field) => isVisibleConfiguredField(field.fieldKey)).map(({ key, label }) => (
                     <FieldChip
                       key={key}
                       label={label}
@@ -799,7 +809,7 @@ function GovernmentEmployeeDetail({
                   ))}
                 </PayrollSectionRow>
                 <PayrollSectionRow title="Deductions" titleClassName="text-rose-900">
-                  {GOV_PREVIEW_DEDUCTION_FIELDS.map(({ key, label }) => (
+                  {GOV_PREVIEW_DEDUCTION_FIELDS.filter((field) => isVisibleConfiguredField(field.fieldKey)).map(({ key, label }) => (
                     <FieldChip
                       key={key}
                       label={label}
@@ -837,6 +847,8 @@ export function GovernmentRunPreviewTable({
   readOnly,
   customEarningFields = [],
   customDeductionFields = [],
+  payrollFieldDefs = [],
+  preserveSavedFields = false,
   onUpdate,
 }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -914,6 +926,8 @@ export function GovernmentRunPreviewTable({
               readOnly={readOnly}
               customEarningFields={customEarningFields}
               customDeductionFields={customDeductionFields}
+              payrollFieldDefs={payrollFieldDefs}
+              preserveSavedFields={preserveSavedFields}
               onUpdate={onUpdate}
             />
           ) : (

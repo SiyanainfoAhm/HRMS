@@ -3542,6 +3542,8 @@ function PayrollPageContent() {
                       readOnly={(!auditMode && !!preview?.alreadyRun) || running || auditSaving}
                       customEarningFields={runPayrollCustomEarningFields}
                       customDeductionFields={runPayrollCustomDeductionFields}
+                      payrollFieldDefs={payrollConfig?.fields ?? []}
+                      preserveSavedFields={Boolean(preview?.alreadyRun || draftMeta)}
                       onUpdate={updateEditableRow}
                     />
                 ) : preview?.daysInMonth ? (

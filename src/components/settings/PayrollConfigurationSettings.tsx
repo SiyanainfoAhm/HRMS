@@ -19,7 +19,6 @@ import {
   FIELD_GROUPS,
   FIELD_TYPES,
   fieldKeyFromLabel,
-  RETIRED_PAYROLL_FIELD_KEYS,
   type PayrollFieldDefinition,
   type PayrollFieldGroup,
 } from "@/lib/payrollFieldTypes";
@@ -132,6 +131,7 @@ export function PayrollConfigurationSettings() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [fields, setFields] = useState<PayrollFieldDefinition[]>([]);
   const [groupFilter, setGroupFilter] = useState<string>("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("all");
   const [search, setSearch] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [form, setForm] = useState<FieldFormState>(emptyFieldForm());
@@ -185,8 +185,9 @@ export function PayrollConfigurationSettings() {
   const filteredFields = useMemo(() => {
     const q = search.trim().toLowerCase();
     return fields.filter((f) => {
-      if (RETIRED_PAYROLL_FIELD_KEYS.has(f.fieldKey)) return false;
       if (groupFilter !== "all" && f.fieldGroup !== groupFilter) return false;
+      if (statusFilter === "active" && !f.isActive) return false;
+      if (statusFilter === "inactive" && f.isActive) return false;
       if (!q) return true;
       return (
         f.fieldLabel.toLowerCase().includes(q) ||
@@ -194,7 +195,7 @@ export function PayrollConfigurationSettings() {
         String(f.fieldGroup).toLowerCase().includes(q)
       );
     });
-  }, [fields, groupFilter, search]);
+  }, [fields, groupFilter, statusFilter, search]);
 
   const groupLabel = (g: string) => FIELD_GROUPS.find((x) => x.value === g)?.label ?? g;
 
@@ -274,6 +275,22 @@ export function PayrollConfigurationSettings() {
       await load();
     } catch (e: unknown) {
       showToast("error", e instanceof Error ? e.message : "Deactivate failed");
+    }
+  }
+
+  async function activateField(id: string) {
+    try {
+      const res = await fetch("/api/settings/payroll-fields/update", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, isActive: true }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(parseApiError(data, "Activate failed"));
+      showToast("success", "Field activated");
+      await load();
+    } catch (e: unknown) {
+      showToast("error", e instanceof Error ? e.message : "Activate failed");
     }
   }
 
@@ -430,6 +447,17 @@ export function PayrollConfigurationSettings() {
                   ...FIELD_GROUPS.map((g) => ({ value: g.value, label: g.label })),
                 ]}
               />
+              <SelectField
+                label="Status"
+                value={statusFilter}
+                onChange={(value) => setStatusFilter(value as "all" | "active" | "inactive")}
+                className="min-w-[180px]"
+                options={[
+                  { value: "all", label: "All statuses" },
+                  { value: "active", label: "Active" },
+                  { value: "inactive", label: "Deactivated" },
+                ]}
+              />
             </div>
 
             {loading ? (
@@ -491,11 +519,15 @@ export function PayrollConfigurationSettings() {
                             <Button size="sm" variant="outline" onClick={() => openEdit(f)}>
                               Edit
                             </Button>
-                            {!f.isSystem && f.isActive ? (
+                            {f.isActive ? (
                               <Button size="sm" variant="outline" onClick={() => deactivateField(f.id)}>
                                 Deactivate
                               </Button>
-                            ) : null}
+                            ) : (
+                              <Button size="sm" variant="outline" onClick={() => activateField(f.id)}>
+                                Activate
+                              </Button>
+                            )}
                             {!f.isSystem ? (
                               <Button
                                 size="sm"
@@ -504,10 +536,6 @@ export function PayrollConfigurationSettings() {
                                 onClick={() => setDeleteTarget(f)}
                               >
                                 Delete
-                              </Button>
-                            ) : f.isActive ? (
-                              <Button size="sm" variant="outline" onClick={() => deactivateField(f.id)}>
-                                Deactivate
                               </Button>
                             ) : null}
                           </div>

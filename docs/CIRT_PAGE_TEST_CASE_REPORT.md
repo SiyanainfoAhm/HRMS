@@ -138,5 +138,6 @@ Manual QA suite for all active CIRT HRMS pages (Sep 2026).
 
 | ID | Tester | Date | Result (Pass/Fail) | Notes |
 |----|--------|------|--------------------|-------|
-| AUTH-001 | | | | |
+| AUTH-001 | 
+| | | |
 | … | | | | |
