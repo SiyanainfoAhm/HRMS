@@ -176,6 +176,18 @@ function fieldMatchesRunGroup(field: PayrollFieldDefinition, group: "earnings" |
   return field.fieldGroup === "deductions" || field.fieldGroup === "statutory";
 }
 
+/**
+ * Numeric Statutory and Deduction fields are employee contributions or
+ * recoveries. They always reduce take-home pay, including fields created
+ * before the automatic include-in-total flag was introduced.
+ */
+function isNumericPayrollDeduction(field: PayrollFieldDefinition): boolean {
+  return (
+    (field.fieldGroup === "statutory" || field.fieldGroup === "deductions") &&
+    field.fieldType === "number"
+  );
+}
+
 /** Include saved custom field values in run preview when payroll was already generated. */
 export function customRunFieldsForPreview(
   allFields: PayrollFieldDefinition[],
@@ -251,7 +263,11 @@ export function sumCustomBagForTotal(
       fields?.find((f) => canonicalizeDynamicFieldKey(f.fieldKey) === canonicalizeDynamicFieldKey(key));
     if (def) {
       if (group === "earnings" && !def.includeInTotalEarnings) continue;
-      if (group === "deductions" && !def.includeInTotalDeductions) continue;
+      if (
+        group === "deductions" &&
+        !def.includeInTotalDeductions &&
+        !isNumericPayrollDeduction(def)
+      ) continue;
     }
     sum += n;
   }
@@ -284,7 +300,12 @@ export function customNumericBagForTotalFromValues(
   for (const [key, val] of Object.entries(bag)) {
     const def = fields.find((f) => f.fieldKey === key);
     if (group === "earnings" && def && !def.includeInTotalEarnings) continue;
-    if (group === "deductions" && def && !def.includeInTotalDeductions) continue;
+    if (
+      group === "deductions" &&
+      def &&
+      !def.includeInTotalDeductions &&
+      !isNumericPayrollDeduction(def)
+    ) continue;
     out[key] = val;
   }
   return out;

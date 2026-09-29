@@ -819,6 +819,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
   const [listPage, setListPage] = useState(1);
   const [listPerPage, setListPerPage] = useState(DEFAULT_PAGE_SIZE);
   const [listSearch, setListSearch] = useState("");
+  const [listStatusFilter, setListStatusFilter] = useState<"active" | "inactive" | "all">("active");
   const [listMeta, setListMeta] = useState<PaginationMeta>(emptyPaginationMeta());
   const debouncedListSearch = useDebouncedValue(listSearch);
   const [uniquenessRows, setUniquenessRows] = useState<PayrollMasterUniqueRow[]>([]);
@@ -1311,6 +1312,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
         page: listPage,
         perPage: listPerPage,
         search: debouncedListSearch,
+        filters: { status: listStatusFilter === "all" ? undefined : listStatusFilter },
       });
       const res = await fetch(`/api/payroll/master?${qs}&_=${Date.now()}`, { cache: "no-store" });
       const data = await res.json();
@@ -1339,7 +1341,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [showToast, listPage, listPerPage, debouncedListSearch]);
+  }, [showToast, listPage, listPerPage, debouncedListSearch, listStatusFilter]);
 
   useEffect(() => {
     if (canManage) loadRows();
@@ -2548,6 +2550,21 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
               setListPage(1);
             }}
             aria-label="Search payroll master"
+          />
+          <SelectField
+            id="payroll-master-status-filter"
+            label="Status"
+            className="min-w-[160px]"
+            value={listStatusFilter}
+            onChange={(value) => {
+              setListStatusFilter(value as "active" | "inactive" | "all");
+              setListPage(1);
+            }}
+            options={[
+              { value: "active", label: "Active employees" },
+              { value: "inactive", label: "Deactivated employees" },
+              { value: "all", label: "All employees" },
+            ]}
           />
           {loading ? <span className="text-xs text-slate-400">Loading…</span> : null}
         </div>

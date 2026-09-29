@@ -142,7 +142,9 @@ class PayrollFieldService
             && ! array_key_exists('include_in_total_deductions', $data) && ! array_key_exists('includeInTotalDeductions', $data)) {
             $includeDeductions = true;
         }
-        if ($group === 'statutory' && $fieldType === 'number') {
+        // A numeric field in either recovery group is always deducted. This
+        // also guards against clients sending the checkbox's default false.
+        if (in_array($group, ['deductions', 'statutory'], true) && $fieldType === 'number') {
             $includeDeductions = true;
         }
 
@@ -208,10 +210,9 @@ class PayrollFieldService
                 ? (bool) $data['includeInTotalDeductions']
                 : $field->include_in_total_deductions);
 
-        // A numeric statutory field represents a contribution/recovery and is
-        // always part of total deductions. Text statutory identifiers (PAN,
-        // UAN, etc.) remain excluded.
-        if ($newGroup === 'statutory' && $newType === 'number') {
+        // Numeric fields in either recovery group are always deductions.
+        // Text statutory identifiers (PAN, UAN, etc.) remain excluded.
+        if (in_array($newGroup, ['deductions', 'statutory'], true) && $newType === 'number') {
             $includeInTotalDeductions = true;
         }
         if ($newType !== $field->field_type && $this->fieldHasValues($field)) {
@@ -675,8 +676,17 @@ class PayrollFieldService
             ->where('company_id', $companyId)
             ->where('is_active', true)
             ->where('is_system', false)
-            ->whereIn('field_group', ['deductions', 'statutory'])
-            ->where('include_in_total_deductions', true)
+            ->where(function ($query): void {
+                $query
+                    // Numeric Deduction and Statutory values are recoveries by
+                    // definition. Include legacy/imported records even if their
+                    // include-in-total flag was not saved.
+                    ->whereIn('field_group', ['deductions', 'statutory'])
+                    ->where(function ($query): void {
+                        $query->where('field_type', 'number')
+                            ->orWhere('include_in_total_deductions', true);
+                    });
+            })
             ->get();
 
         foreach ($fields as $field) {

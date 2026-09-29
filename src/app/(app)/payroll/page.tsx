@@ -1376,11 +1376,12 @@ function PayrollPageContent() {
     auditMode,
   ]);
 
-  // Config loads after the first preview response on some visits. Re-total the
-  // already-rendered sheet with the field inclusion flags so visible custom
-  // earnings/deductions and Gross / Deductions / Net never disagree.
+  // Config loads after the first preview response on some visits. Re-total a
+  // new run with the field inclusion flags so visible custom
+  // earnings/deductions and Gross / Deductions / Net never disagree. Saved
+  // drafts and generated payroll are snapshots and must retain stored totals.
   useEffect(() => {
-    if (!payrollConfig?.fields?.length) return;
+    if (!payrollConfig?.fields?.length || preview?.alreadyRun || draftMeta) return;
     setEditableRows((rows) =>
       rows.map((row) => {
         if (row.payrollMode !== "government" || !row.governmentMonthly || typeof row.governmentMonthly !== "object") {
@@ -1403,7 +1404,7 @@ function PayrollPageContent() {
       }),
     );
     setResolvedRevision((n) => n + 1);
-  }, [payrollConfig]);
+  }, [payrollConfig, preview?.alreadyRun, draftMeta]);
 
   useEffect(() => {
     for (const row of editableRows) {

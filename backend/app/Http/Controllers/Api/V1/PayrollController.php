@@ -394,7 +394,17 @@ class PayrollController extends Controller
             ->first();
 
         $companyId = (string) $user->company_id;
-        $employeeUserIds = $this->collectPayrollEmployeeUserIds($companyId);
+        // A completed period is an immutable audit view, so retain people who
+        // have since been deactivated there. New/upcoming runs only include
+        // active payroll-master records.
+        $isGeneratedPayrollPeriod = $existingPeriod && (
+            HrmsPayslip::query()->where('payroll_period_id', $existingPeriod->id)->exists()
+            || HrmsGovernmentMonthlyPayroll::query()
+                ->where('payroll_period_id', $existingPeriod->id)
+                ->where('company_id', $companyId)
+                ->exists()
+        );
+        $employeeUserIds = $this->collectPayrollEmployeeUserIds($companyId, ! $isGeneratedPayrollPeriod);
 
         $usersById = HrmsUser::whereIn('id', $employeeUserIds)->get()->keyBy('id');
         $employeesByUserId = HrmsEmployee::whereIn('user_id', $employeeUserIds)
@@ -2001,11 +2011,17 @@ class PayrollController extends Controller
      *
      * @return list<string>
      */
-    private function collectPayrollEmployeeUserIds(string $companyId): array
+    private function collectPayrollEmployeeUserIds(string $companyId, bool $activeOnly = true): array
     {
-        return HrmsPayrollMaster::query()
+        $query = HrmsPayrollMaster::query()
             ->where('company_id', $companyId)
-            ->whereNull('effective_to')
+            ->whereNull('effective_to');
+
+        if ($activeOnly) {
+            $query->where('status', 'active');
+        }
+
+        return $query
             ->get()
             ->map(fn (HrmsPayrollMaster $m) => $m->employee_user_id ?? $m->user_id)
             ->filter()
