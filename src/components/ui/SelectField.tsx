@@ -9,6 +9,7 @@ export type SelectOption = { value: string; label: string; disabled?: boolean };
 type Props = {
   id?: string;
   label?: string;
+  ariaLabel?: string;
   value: string;
   onChange: (value: string) => void;
   options: SelectOption[];
@@ -24,6 +25,7 @@ type Props = {
 export function SelectField({
   id,
   label,
+  ariaLabel,
   value,
   onChange,
   options,
@@ -58,6 +60,7 @@ export function SelectField({
         <div className="relative">
           <select
             id={id}
+            aria-label={ariaLabel}
             value={value}
             required={required}
             disabled={disabled || loading}
@@ -101,6 +104,7 @@ export function SelectField({
       <button
         type="button"
         id={id}
+        aria-label={ariaLabel}
         disabled={disabled || loading}
         onClick={() => !disabled && !loading && setOpen((o) => !o)}
         className={cn(

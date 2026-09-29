@@ -2553,7 +2553,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
           />
           <SelectField
             id="payroll-master-status-filter"
-            label="Status"
+            ariaLabel="Payroll master status filter"
             className="min-w-[160px]"
             value={listStatusFilter}
             onChange={(value) => {
