@@ -425,23 +425,33 @@ export function deserializePayrollDraftEmployee(
     govRecalc.earningPaidOverrides = earningOverrides;
   }
 
-  // Recompute deduction/net totals from effective deductions when we have component amounts.
+  // A draft is an exact Run Payroll snapshot. Prefer its stored totals over a
+  // component re-sum: custom fields live in JSON bags and would otherwise be
+  // omitted here after reopening the draft.
   const sumDed = Object.values(effectiveDed).reduce((s, n) => s + (Number.isFinite(n) ? n : 0), 0);
   const earnForNet =
     firstDefined(numOrUndef(governmentMonthly.totalEarnings), totalEarnings, numOrUndef(calcGm.totalEarnings)) ?? 0;
+  const savedTotalDeductions = firstDefined(
+    numOrUndef(gm.totalDeductions),
+    numOrUndef(gm.total_deductions),
+    totalDeductions,
+  );
   const resolvedTotalDeductions =
-    Object.keys(effectiveDed).length > 0
+    savedTotalDeductions ??
+    (Object.keys(effectiveDed).length > 0
       ? Math.round(sumDed)
       : Math.round(
           firstDefined(totalDeductions, numOrUndef(gm.totalDeductions), numOrUndef(calcGm.totalDeductions)) ?? 0,
-        );
+        ));
+  const savedNetPay = firstDefined(numOrUndef(gm.netSalary), numOrUndef(gm.net_salary), netPay);
   const resolvedNetPay =
-    Object.keys(effectiveDed).length > 0
+    savedNetPay ??
+    (Object.keys(effectiveDed).length > 0
       ? Math.round(earnForNet - sumDed)
       : Math.round(
           firstDefined(netPay, numOrUndef(gm.netSalary), numOrUndef(calcGm.netSalary), earnForNet - resolvedTotalDeductions) ??
             earnForNet - resolvedTotalDeductions,
-        );
+        ));
   governmentMonthly.totalDeductions = resolvedTotalDeductions;
   governmentMonthly.netSalary = resolvedNetPay;
 

@@ -70,6 +70,9 @@ export type PayrollRunExportRow = {
   employeeUserId: string;
   employeeName?: string | null;
   employeeCode?: string | null;
+  division?: string | null;
+  department?: string | null;
+  designation?: string | null;
   payDays?: number | null;
   grossPay?: number | null;
   netPay?: number | null;
@@ -619,6 +622,7 @@ const TEXT_HEADERS = new Set([
   "EmployeeCode",
   "Division",
   "Department",
+  "Designation",
   "Remarks",
   "NightAllowanceEligible",
   "QuarterName",
@@ -641,7 +645,7 @@ export function buildEmployeeDetailSheet(
     .filter((g): g is GovernmentMonthlyRow => g != null) as unknown as Array<Record<string, unknown>>;
   const dynamicCols = collectDynamicPayrollExcelColumns(govRows);
   const headers = buildPayrollExcelHeaders(dynamicCols);
-  const amountCols = new Set(payrollExcelAmountColumnIndices(headers.length));
+  const amountCols = new Set(payrollExcelAmountColumnIndices(headers));
 
   const banner =
     opts.status === "Finalized"
@@ -712,6 +716,7 @@ export function buildEmployeeDetailSheet(
       String(r.employeeName ?? ""),
       gm ? { kind: "row", row: gm } : null,
       dynamicCols,
+      { division: r.division, department: r.department, designation: r.designation },
     ) as Record<string, string | number>;
 
     const excelRow = dataStart + idx;
@@ -785,10 +790,15 @@ export function buildEmployeeDetailSheet(
     if (i < 2) return 22;
     if (h === "Remarks") return 28;
     if (h === "EmployeeName") return 24;
+    // Organisation names are commonly longer than their IDs/numeric payroll values.
+    // Keep these readable in every Run Payroll Excel export.
+    if (h === "Division") return 26;
+    if (h === "Department") return 32;
+    if (h === "Designation") return 32;
     if (TEXT_HEADERS.has(h)) return 16;
     return 12;
   });
-  ws["!cols"] = autoFitColumnsWithLimits(widths, { min: 10, max: 36 });
+  ws["!cols"] = autoFitColumnsWithLimits(widths, { min: 10, max: 40 });
 
   const autoFilterRef = `A${headerRow + 1}:${XLSX.utils.encode_col(lastCol)}${totalsRow}`;
   configurePayrollPrintSetup(ws as unknown as Record<string, unknown>, {

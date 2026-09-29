@@ -174,6 +174,7 @@ Route::prefix('v1')->group(function () {
             Route::post('payroll/payslips', [PayrollController::class, 'storePayslips']);
             Route::get('payroll/export', [PayrollController::class, 'export']);
             Route::get('payroll/drafts', [PayrollDraftController::class, 'show']);
+            Route::get('payroll/drafts/audits', [PayrollDraftController::class, 'auditLogs']);
             Route::post('payroll/drafts', [PayrollDraftController::class, 'store']);
             Route::delete('payroll/drafts', [PayrollDraftController::class, 'destroy']);
             Route::post('payroll/bank-letter', [PayrollBankLetterController::class, 'store']);

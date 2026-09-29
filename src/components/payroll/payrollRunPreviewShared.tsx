@@ -48,15 +48,17 @@ export const payrollDaysInputClass = "payroll-days-input";
 export const inpWide = payrollAmountInputClass;
 
 export function d(m: GovernmentPreviewMonthly | null | undefined, k: keyof GovernmentPreviewMonthly["deductions"]): number {
-  return Math.round(Number(m?.deductions?.[k] ?? 0));
+  const value = Number(m?.deductions?.[k] ?? 0);
+  return Number.isFinite(value) ? Math.round(value * 100) / 100 : 0;
 }
 
 export function v(m: GovernmentPreviewMonthly | null | undefined, k: keyof GovernmentPreviewMonthly): number {
-  return Math.round(Number((m as Record<string, unknown>)?.[k as string] ?? 0));
+  const value = Number((m as Record<string, unknown>)?.[k as string] ?? 0);
+  return Number.isFinite(value) ? Math.round(value * 100) / 100 : 0;
 }
 
 export function fmtIn(n: number): string {
-  return n.toLocaleString("en-IN");
+  return n.toLocaleString("en-IN", { maximumFractionDigits: 2 });
 }
 
 function lookupDynamicFieldAmount(
@@ -89,11 +91,11 @@ export function customFieldAmount(
   const bag = group === "earnings" ? earningsBag : deductionsBag;
   const fromComputed = lookupDynamicFieldAmount(bag, fieldKey);
   if (fromComputed != null) {
-    return Math.round(fromComputed);
+    return Math.round(fromComputed * 100) / 100;
   }
   const recalcBag = group === "earnings" ? recalc?.customEarnings : recalc?.customDeductions;
   const fromRecalc = lookupDynamicFieldAmount(recalcBag, fieldKey);
-  return Math.round(fromRecalc ?? 0);
+  return Math.round((fromRecalc ?? 0) * 100) / 100;
 }
 
 export function FieldChip({
@@ -118,7 +120,7 @@ export function FieldChip({
         <input
           type="number"
           min={0}
-          step={1}
+          step="0.01"
           value={value}
           onChange={(e) => {
             const raw = e.target.value;
@@ -127,7 +129,7 @@ export function FieldChip({
               return;
             }
             const n = Number(raw);
-            onChange(Number.isFinite(n) ? Math.max(0, Math.round(n)) : 0);
+            onChange(Number.isFinite(n) ? Math.max(0, n) : 0);
           }}
           className={payrollAmountInputClass}
         />

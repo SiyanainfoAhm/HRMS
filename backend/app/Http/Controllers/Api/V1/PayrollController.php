@@ -518,6 +518,7 @@ class PayrollController extends Controller
                 'division' => $org['division'],
                 'departmentId' => $org['departmentId'],
                 'divisionId' => $org['divisionId'],
+                'designation' => $m->designation ?? $empUser->designation ?? null,
                 'payrollMode' => $payrollMode,
                 'governmentPayLevel' => $payLevel,
                 'dateOfJoining' => $dateOfJoining,
@@ -1448,7 +1449,25 @@ class PayrollController extends Controller
         }
 
         $userIds = $payslips->pluck('employee_user_id')->filter()->unique()->values();
-        $users = HrmsUser::whereIn('id', $userIds)->get(['id', 'name', 'email']);
+        $employeesByUserId = HrmsEmployee::whereIn('user_id', $userIds)
+            ->with(['division', 'department', 'designation'])
+            ->get()
+            ->keyBy('user_id');
+        $users = HrmsUser::whereIn('id', $userIds)
+            ->get(['id', 'name', 'email', 'division_id', 'department_id', 'designation'])
+            ->map(function (HrmsUser $employeeUser) use ($employeesByUserId) {
+                $employee = $employeesByUserId->get($employeeUser->id);
+
+                return [
+                    'id' => $employeeUser->id,
+                    'name' => $employeeUser->name,
+                    'email' => $employeeUser->email,
+                    'division' => $employee?->division?->name,
+                    'department' => $employee?->department?->name,
+                    'designation' => $employee?->designation?->title ?? $employeeUser->designation,
+                ];
+            })
+            ->values();
 
         $governmentMonthly = HrmsGovernmentMonthlyPayroll::where('payroll_period_id', $periodId)
             ->where('company_id', $user->company_id)

@@ -71,4 +71,11 @@ class PayrollDraftController extends Controller
 
         return response()->json($result);
     }
+
+    public function auditLogs(Request $request): JsonResponse
+    {
+        return response()->json([
+            'logs' => $this->service->resetAuditLogs((string) $request->user()->company_id),
+        ]);
+    }
 }

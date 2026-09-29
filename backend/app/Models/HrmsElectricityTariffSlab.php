@@ -22,6 +22,7 @@ class HrmsElectricityTariffSlab extends Model
             'from_unit' => 'integer',
             'to_unit' => 'integer',
             'rate_per_unit' => 'decimal:4',
+            'fuel_charge_per_unit' => 'decimal:4',
             'sort_order' => 'integer',
             'created_at' => 'datetime',
             'updated_at' => 'datetime',

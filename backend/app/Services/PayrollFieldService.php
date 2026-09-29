@@ -131,13 +131,18 @@ class PayrollFieldService
         }
 
         $group = (string) ($data['field_group'] ?? $data['fieldGroup'] ?? 'earnings');
+        $fieldType = (string) ($data['field_type'] ?? $data['fieldType'] ?? 'number');
         $includeEarnings = (bool) ($data['include_in_total_earnings'] ?? $data['includeInTotalEarnings'] ?? false);
         $includeDeductions = (bool) ($data['include_in_total_deductions'] ?? $data['includeInTotalDeductions'] ?? false);
 
         if ($group === 'earnings' && ! array_key_exists('include_in_total_earnings', $data) && ! array_key_exists('includeInTotalEarnings', $data)) {
             $includeEarnings = true;
         }
-        if ($group === 'deductions' && ! array_key_exists('include_in_total_deductions', $data) && ! array_key_exists('includeInTotalDeductions', $data)) {
+        if (in_array($group, ['deductions', 'statutory'], true) && $fieldType === 'number'
+            && ! array_key_exists('include_in_total_deductions', $data) && ! array_key_exists('includeInTotalDeductions', $data)) {
+            $includeDeductions = true;
+        }
+        if ($group === 'statutory' && $fieldType === 'number') {
             $includeDeductions = true;
         }
 
@@ -147,7 +152,7 @@ class PayrollFieldService
             'field_label' => trim((string) ($data['field_label'] ?? $data['fieldLabel'] ?? '')),
             'field_key' => $fieldKey,
             'field_group' => $group,
-            'field_type' => (string) ($data['field_type'] ?? $data['fieldType'] ?? 'number'),
+            'field_type' => $fieldType,
             'calculation_type' => (string) ($data['calculation_type'] ?? $data['calculationType'] ?? 'manual_entry'),
             'default_value' => $data['default_value'] ?? $data['defaultValue'] ?? null,
             'dropdown_options' => $data['dropdown_options'] ?? $data['dropdownOptions'] ?? null,
@@ -196,6 +201,19 @@ class PayrollFieldService
         }
 
         $newType = (string) ($data['field_type'] ?? $data['fieldType'] ?? $field->field_type);
+        $newGroup = (string) ($data['field_group'] ?? $data['fieldGroup'] ?? $field->field_group);
+        $includeInTotalDeductions = array_key_exists('include_in_total_deductions', $data)
+            ? (bool) $data['include_in_total_deductions']
+            : (array_key_exists('includeInTotalDeductions', $data)
+                ? (bool) $data['includeInTotalDeductions']
+                : $field->include_in_total_deductions);
+
+        // A numeric statutory field represents a contribution/recovery and is
+        // always part of total deductions. Text statutory identifiers (PAN,
+        // UAN, etc.) remain excluded.
+        if ($newGroup === 'statutory' && $newType === 'number') {
+            $includeInTotalDeductions = true;
+        }
         if ($newType !== $field->field_type && $this->fieldHasValues($field)) {
             throw ValidationException::withMessages(['field_type' => ['Cannot change field type after values exist.']]);
         }
@@ -203,7 +221,7 @@ class PayrollFieldService
         $field->update([
             'field_label' => $data['field_label'] ?? $data['fieldLabel'] ?? $field->field_label,
             'field_key' => $newKey,
-            'field_group' => $data['field_group'] ?? $data['fieldGroup'] ?? $field->field_group,
+            'field_group' => $newGroup,
             'field_type' => $newType,
             'calculation_type' => $data['calculation_type'] ?? $data['calculationType'] ?? $field->calculation_type,
             'default_value' => array_key_exists('default_value', $data) ? $data['default_value'] : (array_key_exists('defaultValue', $data) ? $data['defaultValue'] : $field->default_value),
@@ -213,7 +231,7 @@ class PayrollFieldService
             'show_in_run_payroll' => array_key_exists('show_in_run_payroll', $data) ? (bool) $data['show_in_run_payroll'] : (array_key_exists('showInRunPayroll', $data) ? (bool) $data['showInRunPayroll'] : $field->show_in_run_payroll),
             'show_in_salary_slip' => array_key_exists('show_in_salary_slip', $data) ? (bool) $data['show_in_salary_slip'] : (array_key_exists('showInSalarySlip', $data) ? (bool) $data['showInSalarySlip'] : $field->show_in_salary_slip),
             'include_in_total_earnings' => array_key_exists('include_in_total_earnings', $data) ? (bool) $data['include_in_total_earnings'] : (array_key_exists('includeInTotalEarnings', $data) ? (bool) $data['includeInTotalEarnings'] : $field->include_in_total_earnings),
-            'include_in_total_deductions' => array_key_exists('include_in_total_deductions', $data) ? (bool) $data['include_in_total_deductions'] : (array_key_exists('includeInTotalDeductions', $data) ? (bool) $data['includeInTotalDeductions'] : $field->include_in_total_deductions),
+            'include_in_total_deductions' => $includeInTotalDeductions,
             'is_active' => array_key_exists('is_active', $data) ? (bool) $data['is_active'] : (array_key_exists('isActive', $data) ? (bool) $data['isActive'] : $field->is_active),
             'display_order' => (int) ($data['display_order'] ?? $data['displayOrder'] ?? $field->display_order),
         ]);

@@ -154,7 +154,7 @@ function buildFinalizedDetailSheet(opts: {
   designationName?: string | null;
 }): XLSX.WorkSheet {
   const { excelHeaders: headers, rowObjects, month, year } = opts;
-  const amountCols = new Set(payrollExcelAmountColumnIndices(headers.length));
+  const amountCols = new Set(payrollExcelAmountColumnIndices(headers));
   const ws = XLSX.utils.aoa_to_sheet([]) as XLSX.WorkSheet;
   const merges: Array<{ s: { r: number; c: number }; e: { r: number; c: number } }> = [];
   ws["!rows"] = [];
@@ -328,8 +328,14 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "No payslips found" }, { status: 404 });
   }
 
-  const users = (payload.users ?? []) as { id: string; name?: string | null }[];
-  const nameById = new Map(users.map((u) => [u.id, u.name ?? ""]));
+  const users = (payload.users ?? []) as Array<{
+    id: string;
+    name?: string | null;
+    division?: string | null;
+    department?: string | null;
+    designation?: string | null;
+  }>;
+  const userById = new Map(users.map((u) => [u.id, u]));
 
   const govList = (payload.governmentMonthly ?? []) as Record<string, unknown>[];
   const govByUser = new Map(
@@ -368,9 +374,10 @@ export async function GET(request: NextRequest) {
     const govRow = mode === "government" ? govByUser.get(uid) : null;
     return buildPayrollExcelRow(
       slip,
-      nameById.get(uid) ?? "",
+      userById.get(uid)?.name ?? "",
       govRow ? { kind: "row", row: govRow } : null,
       dynamicCols,
+      userById.get(uid),
     ) as Record<string, string | number>;
   });
 
@@ -379,7 +386,7 @@ export async function GET(request: NextRequest) {
     const gov = govByUser.get(uid);
     return {
       employeeUserId: uid,
-      employeeName: nameById.get(uid) ?? null,
+      employeeName: userById.get(uid)?.name ?? null,
       payDays: num(p.pay_days ?? p.payDays),
       grossPay: num(p.gross_pay ?? p.grossPay),
       netPay: num(p.net_pay ?? p.netPay),

@@ -11,6 +11,7 @@ import {
 } from "./runPayrollSheetEdit";
 import type { GovRecalcPayload } from "./govRunPayrollCompute";
 import type { GovernmentDeductionDefaults } from "./governmentPayroll";
+import type { PayrollFieldDefinition } from "./payrollFieldTypes";
 
 function assert(cond: unknown, msg: string): asserts cond {
   if (!cond) throw new Error(msg);
@@ -220,6 +221,40 @@ assertEq((zeroed.deductions as { cpf: number }).cpf, 0, "TEST22 cpf 0 after tota
 
 assertEq(sumSheetEarnings(gm), 30000, "sum earnings");
 assertEq(sumSheetDeductions(gm), 0, "sum deductions");
+
+// Included custom fields must remain in totals when a sheet is recalculated;
+// fields not marked for inclusion must not affect pay.
+const customFieldDefs: PayrollFieldDefinition[] = [
+  {
+    id: "earning-included", fieldLabel: "Special Allowance", fieldKey: "special_allowance",
+    fieldGroup: "earnings", fieldType: "number", calculationType: "manual_entry",
+    isRequired: false, showInPayrollMaster: true, showInRunPayroll: true, showInSalarySlip: true,
+    includeInTotalEarnings: true, includeInTotalDeductions: false, isSystem: false, isActive: true, displayOrder: 1,
+  },
+  {
+    id: "earning-excluded", fieldLabel: "Display Only Allowance", fieldKey: "display_only_allowance",
+    fieldGroup: "earnings", fieldType: "number", calculationType: "manual_entry",
+    isRequired: false, showInPayrollMaster: true, showInRunPayroll: true, showInSalarySlip: true,
+    includeInTotalEarnings: false, includeInTotalDeductions: false, isSystem: false, isActive: true, displayOrder: 2,
+  },
+  {
+    id: "deduction-included", fieldLabel: "Custom Recovery", fieldKey: "custom_recovery",
+    fieldGroup: "deductions", fieldType: "number", calculationType: "manual_entry",
+    isRequired: false, showInPayrollMaster: true, showInRunPayroll: true, showInSalarySlip: true,
+    includeInTotalEarnings: false, includeInTotalDeductions: true, isSystem: false, isActive: true, displayOrder: 3,
+  },
+];
+const customTotals = recalculateGovernmentSheetTotals(
+  {
+    ...(baseRow().governmentMonthly as Record<string, unknown>),
+    customEarnings: { special_allowance: 1200, display_only_allowance: 900 },
+    customDeductions: { custom_recovery: 350 },
+  },
+  customFieldDefs,
+);
+assertEq(customTotals.totalEarnings, baseRow().grossPay + 1200, "included custom earning total");
+assertEq(customTotals.totalDeductions, baseRow().deductions + 350, "included custom deduction total");
+assertEq(customTotals.netSalary, baseRow().netPay + 850, "custom fields net total");
 
 // Freeze: overrides present after edit
 assert(

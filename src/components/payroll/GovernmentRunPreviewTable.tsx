@@ -271,6 +271,7 @@ function electricityBillFromRow(row: GovernmentRunPreviewRow): ElectricityBillBr
       totalExact: Number(gm.electricityTotal ?? 0),
       total: Number(gm.electricityTotal ?? 0),
       slabPortions: [],
+      fuelSlabPortions: [],
       manualOverride: Boolean(gr?.electricityManualOverride),
       manualAmount: null,
     };
@@ -282,6 +283,8 @@ function ElectricityBreakdownButton({ row }: { row: GovernmentRunPreviewRow }) {
   const [open, setOpen] = useState(false);
   const bill = electricityBillFromRow(row);
   if (!bill) return null;
+  const money = (value: number) =>
+    `₹${Number(value || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   return (
     <>
       <button
@@ -310,31 +313,40 @@ function ElectricityBreakdownButton({ row }: { row: GovernmentRunPreviewRow }) {
           </div>
           <div className="flex justify-between gap-4">
             <dt className="text-slate-500">Sthir Aakar</dt>
-            <dd className="tabular-nums">{fmtIn(bill.sthirAakar)}</dd>
+            <dd className="tabular-nums">{money(bill.sthirAakar)}</dd>
           </div>
           <div className="flex justify-between gap-4">
             <dt className="text-slate-500">Electricity Charges</dt>
-            <dd className="tabular-nums">{fmtIn(bill.consumptionCharge)}</dd>
+            <dd className="tabular-nums">{money(bill.consumptionCharge)}</dd>
           </div>
           <div className="flex justify-between gap-4">
             <dt className="text-slate-500">Vahan Aakar</dt>
-            <dd className="tabular-nums">{fmtIn(bill.vahanAakar)}</dd>
+            <dd className="tabular-nums">{money(bill.vahanAakar)}</dd>
           </div>
           <div className="flex justify-between gap-4">
             <dt className="text-slate-500">Fuel Charges</dt>
-            <dd className="tabular-nums">{fmtIn(bill.fuelCharge)}</dd>
+            <dd className="tabular-nums">{money(bill.fuelCharge)}</dd>
           </div>
+          {bill.fuelSlabPortions.length > 0 ? (
+            <div className="rounded bg-slate-50 px-2 py-1.5 text-xs text-slate-600">
+              {bill.fuelSlabPortions.map((portion, index) => (
+                <p key={index} className="tabular-nums">
+                  Fuel {portion.fromUnit}–{portion.toUnit ?? "∞"}: {portion.units} × ₹{portion.ratePerUnit.toFixed(4)} = {money(portion.amount)}
+                </p>
+              ))}
+            </div>
+          ) : null}
           <div className="flex justify-between gap-4 border-t border-slate-100 pt-1.5">
             <dt className="text-slate-500">Subtotal</dt>
-            <dd className="tabular-nums">{fmtIn(bill.subtotal)}</dd>
+            <dd className="tabular-nums">{money(bill.subtotal)}</dd>
           </div>
           <div className="flex justify-between gap-4">
             <dt className="text-slate-500">Electricity Duty @{bill.dutyPercentage}%</dt>
-            <dd className="tabular-nums">{fmtIn(bill.dutyAmount)}</dd>
+            <dd className="tabular-nums">{money(bill.dutyAmount)}</dd>
           </div>
           <div className="flex justify-between gap-4 border-t border-slate-200 pt-1.5 font-semibold">
-            <dt>Total</dt>
-            <dd className="tabular-nums">{fmtIn(bill.total)}</dd>
+            <dt>Payroll deduction</dt>
+            <dd className="tabular-nums">{money(bill.total)}</dd>
           </div>
           {bill.manualOverride ? (
             <p className="pt-1 text-xs text-amber-800">Manual Electricity override is active for this month.</p>

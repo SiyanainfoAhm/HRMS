@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\HrmsPayrollDraft;
 use App\Models\HrmsPayrollDraftEmployee;
+use App\Models\HrmsPayrollDraftAudit;
 use App\Models\HrmsPayslip;
 use App\Models\HrmsPayrollPeriod;
 use Illuminate\Support\Facades\DB;
@@ -278,13 +279,57 @@ class PayrollDraftService
             return ['deleted' => false, 'message' => 'No draft to reset.'];
         }
 
-        $draft->update([
-            'status' => HrmsPayrollDraft::STATUS_DISCARDED,
-            'updated_by' => $userId,
-            'version' => (int) $draft->version + 1,
-        ]);
+        DB::transaction(function () use ($draft, $companyId, $year, $month, $userId) {
+            $employees = $draft->employees()
+                ->orderBy('employee_code')
+                ->get(['employee_user_id', 'employee_code']);
+
+            HrmsPayrollDraftAudit::create([
+                'id' => (string) Str::uuid(),
+                'company_id' => $companyId,
+                'payroll_draft_id' => $draft->id,
+                'payroll_year' => $year,
+                'payroll_month' => $month,
+                'action' => 'reset',
+                'employee_count' => $employees->count(),
+                'employee_snapshot' => $employees->map(fn (HrmsPayrollDraftEmployee $employee) => [
+                    'employeeUserId' => $employee->employee_user_id,
+                    'employeeCode' => $employee->employee_code,
+                ])->values()->all(),
+                'performed_by' => $userId,
+            ]);
+
+            $draft->update([
+                'status' => HrmsPayrollDraft::STATUS_DISCARDED,
+                'updated_by' => $userId,
+                'version' => (int) $draft->version + 1,
+            ]);
+        });
 
         return ['deleted' => true, 'message' => 'Draft discarded.'];
+    }
+
+    /** @return list<array<string, mixed>> */
+    public function resetAuditLogs(string $companyId): array
+    {
+        return HrmsPayrollDraftAudit::query()
+            ->where('company_id', $companyId)
+            ->with('performedBy:id,name,email')
+            ->latest('created_at')
+            ->limit(250)
+            ->get()
+            ->map(fn (HrmsPayrollDraftAudit $audit) => [
+                'id' => $audit->id,
+                'action' => $audit->action,
+                'payrollMonth' => (int) $audit->payroll_month,
+                'payrollYear' => (int) $audit->payroll_year,
+                'employeeCount' => (int) $audit->employee_count,
+                'performedBy' => $audit->performedBy?->name ?? $audit->performedBy?->email ?? 'Unknown user',
+                'performedAt' => $audit->created_at?->toIso8601String(),
+                'employees' => $audit->employee_snapshot ?? [],
+            ])
+            ->values()
+            ->all();
     }
 
     public function markFinalized(string $companyId, int $year, int $month, ?string $periodId, string $userId): void

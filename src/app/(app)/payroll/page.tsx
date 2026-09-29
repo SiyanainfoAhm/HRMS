@@ -265,9 +265,14 @@ function governmentRowFromCompute<T extends {
   unpaidDays: number,
   incentiveBase: T,
   arrear?: ReturnType<typeof arrearSnapshotFromRow>,
+  payrollFieldDefs?: PayrollFieldDefinition[],
 ) {
   // Re-apply frozen sheet overrides after any full compute (days / EOL / HPL workflow).
-  const gm = applyFrozenSheetOverridesToComputed(gr, comp as unknown as Record<string, unknown>);
+  const gm = applyFrozenSheetOverridesToComputed(
+    gr,
+    comp as unknown as Record<string, unknown>,
+    payrollFieldDefs,
+  );
   const totalEarnings = Number(gm.totalEarnings ?? comp.totalEarnings) || 0;
   const totalDeductions = Number(gm.totalDeductions ?? comp.totalDeductions) || 0;
   const netSalary = Number(gm.netSalary ?? comp.netSalary) || 0;
@@ -309,6 +314,7 @@ function governmentRowFromCompute<T extends {
 function applyFrozenSheetOverridesToComputed(
   gr: GovRecalcPayload,
   comp: Record<string, unknown>,
+  payrollFieldDefs?: PayrollFieldDefinition[],
 ): Record<string, unknown> {
   const eo = gr.earningPaidOverrides ?? {};
   const paidDed = gr.deductionPaidOverrides ?? {};
@@ -357,9 +363,10 @@ function applyFrozenSheetOverridesToComputed(
           ? { quarterRent: gr.deductionDefaults.quarterRent }
           : {}),
       },
+      payrollFieldDefs,
     );
   }
-  return recalculateGovernmentSheetTotals(gm);
+  return recalculateGovernmentSheetTotals(gm, payrollFieldDefs);
 }
 
 function applyGovernmentPayrollRowCompute(
@@ -1369,6 +1376,35 @@ function PayrollPageContent() {
     auditMode,
   ]);
 
+  // Config loads after the first preview response on some visits. Re-total the
+  // already-rendered sheet with the field inclusion flags so visible custom
+  // earnings/deductions and Gross / Deductions / Net never disagree.
+  useEffect(() => {
+    if (!payrollConfig?.fields?.length) return;
+    setEditableRows((rows) =>
+      rows.map((row) => {
+        if (row.payrollMode !== "government" || !row.governmentMonthly || typeof row.governmentMonthly !== "object") {
+          return row;
+        }
+        const gm = recalculateGovernmentSheetTotals(
+          row.governmentMonthly as Record<string, unknown>,
+          payrollConfig.fields,
+        );
+        const deductions = Number(gm.totalDeductions ?? 0);
+        const grossPay = Number(gm.totalEarnings ?? 0);
+        const netPay = Number(gm.netSalary ?? 0);
+        const next = { ...row, governmentMonthly: gm, grossPay, deductions, netPay };
+        const uid = String(next.employeeUserId ?? "");
+        if (uid) {
+          resolvedPayrollByUserIdRef.current.set(uid, next as RunPayrollRowLike);
+          runRowEditsRef.current.set(uid, next as RunPayrollRowLike);
+        }
+        return next;
+      }),
+    );
+    setResolvedRevision((n) => n + 1);
+  }, [payrollConfig]);
+
   useEffect(() => {
     for (const row of editableRows) {
       const uid = String(row.employeeUserId ?? "");
@@ -1556,7 +1592,16 @@ function PayrollPageContent() {
               arrearOverride: arrear,
             });
             return commitEdit(
-              governmentRowFromCompute(row, grReady, comp, capped, unpaidDays, incentiveBase, arrear) as typeof row,
+              governmentRowFromCompute(
+                row,
+                grReady,
+                comp,
+                capped,
+                unpaidDays,
+                incentiveBase,
+                arrear,
+                payrollConfig?.fields,
+              ) as typeof row,
             );
           };
 
@@ -2956,7 +3001,11 @@ function PayrollPageContent() {
 
   async function downloadRunExcel(kind: "detail" | "summary") {
     try {
-      const rows = await collectFilteredRunRowsForExport();
+      // With no active filters, always use the complete period, never the
+      // currently visible page of the preview table.
+      const rows = hasActiveRunFilters
+        ? await collectFilteredRunRowsForExport()
+        : await collectAllRunRowsForExport();
       if (rows.length === 0) {
         showToast(
           "error",
@@ -2973,6 +3022,9 @@ function PayrollPageContent() {
             employeeUserId: r.employeeUserId,
             employeeName: r.employeeName,
             employeeCode: (anyRow.employeeCode as string | null | undefined) ?? null,
+            division: (anyRow.division as string | null | undefined) ?? null,
+            department: (anyRow.department as string | null | undefined) ?? null,
+            designation: (anyRow.designation as string | null | undefined) ?? null,
             payDays: r.payDays,
             grossPay: r.grossPay,
             netPay: r.netPay,

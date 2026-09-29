@@ -234,7 +234,12 @@ export function PayrollConfigurationSettings() {
       showInRunPayroll: form.showInRunPayroll,
       showInSalarySlip: form.showInSalarySlip,
       includeInTotalEarnings: form.fieldGroup === "earnings" ? form.includeInTotalEarnings : false,
-      includeInTotalDeductions: form.fieldGroup === "deductions" ? form.includeInTotalDeductions : false,
+      // Numeric statutory contributions/recoveries are deductions too.  Keep
+      // their inclusion choice instead of silently sending false to the API.
+      includeInTotalDeductions:
+        form.fieldGroup === "deductions" || form.fieldGroup === "statutory"
+          ? form.includeInTotalDeductions
+          : false,
       isActive: form.isActive,
       displayOrder: parseInt(form.displayOrder, 10) || 0,
     };
@@ -716,11 +721,12 @@ export function PayrollConfigurationSettings() {
                 onChange={(v) => setForm((f) => ({ ...f, includeInTotalEarnings: v }))}
               />
             ) : null}
-            {form.fieldGroup === "deductions" ? (
+            {form.fieldGroup === "deductions" || form.fieldGroup === "statutory" ? (
               <Toggle
-                label="Include in total deductions"
-                checked={form.includeInTotalDeductions}
+                label={form.fieldGroup === "statutory" && form.fieldType === "number" ? "Included in total deductions" : "Include in total deductions"}
+                checked={form.fieldGroup === "statutory" && form.fieldType === "number" ? true : form.includeInTotalDeductions}
                 onChange={(v) => setForm((f) => ({ ...f, includeInTotalDeductions: v }))}
+                disabled={form.fieldGroup === "statutory" && form.fieldType === "number"}
               />
             ) : null}
             <Toggle

@@ -20,6 +20,7 @@ import {
   applyDeductionPaidOverridesToGm,
   mergeDeductionDefaultsWithPaidOverrides,
 } from "@/lib/runPayrollSheetEdit";
+import type { PayrollFieldDefinition } from "@/lib/payrollFieldTypes";
 import { hasOwn } from "@/lib/effectivePayrollValue";
 
 export type RunPayrollRowLike = Record<string, unknown> & {
@@ -132,7 +133,11 @@ function computeGovernmentRow(
       governmentMonthly: (base.governmentMonthly as Record<string, unknown> | null) ?? null,
     });
     const withArrear = applyAutoArrearsToGovernmentMonthly(comp, arrearSnapshotFromRow(r));
-    const frozen = applyFrozenSheetOverridesToComputed(gr, withArrear as unknown as Record<string, unknown>);
+    const frozen = applyFrozenSheetOverridesToComputed(
+      gr,
+      withArrear as unknown as Record<string, unknown>,
+      (payrollConfig as { fields?: PayrollFieldDefinition[] } | null | undefined)?.fields,
+    );
     base.governmentMonthly = frozen;
     base.grossMonthly = gr.grossBasic;
     base.grossPay = Number(frozen.totalEarnings ?? withArrear.totalEarnings) || 0;
@@ -169,6 +174,7 @@ function computeGovernmentRow(
 function applyFrozenSheetOverridesToComputed(
   gr: GovRecalcPayload,
   comp: Record<string, unknown>,
+  payrollFieldDefs?: PayrollFieldDefinition[],
 ): Record<string, unknown> {
   const eo = gr.earningPaidOverrides ?? {};
   const paidDed = gr.deductionPaidOverrides ?? {};
@@ -217,10 +223,11 @@ function applyFrozenSheetOverridesToComputed(
           ? { quarterRent: gr.deductionDefaults.quarterRent }
           : {}),
       },
+      payrollFieldDefs,
     );
     return gm;
   }
-  return recalculateGovernmentSheetTotals(gm);
+  return recalculateGovernmentSheetTotals(gm, payrollFieldDefs);
 }
 
 /** True when governmentMonthly looks like a real computed snapshot (not empty/missing). */

@@ -262,6 +262,7 @@ class ElectricityTariffService
                 'fromUnit' => (int) $s->from_unit,
                 'toUnit' => $s->to_unit === null ? null : (int) $s->to_unit,
                 'ratePerUnit' => (float) $s->rate_per_unit,
+                'fuelChargePerUnit' => (float) ($s->fuel_charge_per_unit ?? 0),
                 'sortOrder' => (int) $s->sort_order,
             ])->values()->all(),
         ];
@@ -274,7 +275,7 @@ class ElectricityTariffService
 
     public function roundDeduction(float $n): float
     {
-        return (float) round(max(0, $n));
+        return $this->roundMoney2($n);
     }
 
     /**
@@ -286,7 +287,6 @@ class ElectricityTariffService
         $slabs = is_array($tariff['slabs'] ?? null) ? $tariff['slabs'] : [];
         if ($tariff && $slabs !== []) {
             $sthir = $this->roundMoney2((float) ($tariff['sthirAakar'] ?? $tariff['sthir_aakar'] ?? 0));
-            $fuel = $this->roundMoney2((float) ($tariff['fuelCharge'] ?? $tariff['fuel_charge'] ?? 0));
             $vahanRate = max(0, (float) ($tariff['vahanAakarPerUnit'] ?? $tariff['vahan_aakar_per_unit'] ?? 0));
             $dutyPct = max(0, (float) ($tariff['dutyPercentage'] ?? $tariff['duty_percentage'] ?? 0));
             $slabInput = array_map(static function ($s) {
@@ -294,10 +294,18 @@ class ElectricityTariffService
                     'from_unit' => $s['fromUnit'] ?? $s['from_unit'] ?? 0,
                     'to_unit' => array_key_exists('toUnit', $s) ? $s['toUnit'] : ($s['to_unit'] ?? null),
                     'rate_per_unit' => $s['ratePerUnit'] ?? $s['rate_per_unit'] ?? 0,
+                    'fuel_charge_per_unit' => $s['fuelChargePerUnit'] ?? $s['fuel_charge_per_unit'] ?? 0,
                     'sort_order' => $s['sortOrder'] ?? $s['sort_order'] ?? 0,
                 ];
             }, $slabs);
             $calc = $this->calculateSlabCharge($units, $slabInput);
+            $hasDynamicFuel = collect($slabs)->contains(
+                fn (array $s) => array_key_exists('fuelChargePerUnit', $s) || array_key_exists('fuel_charge_per_unit', $s),
+            );
+            $fuelInput = array_map(static fn (array $s) => [...$s, 'rate_per_unit' => $s['fuel_charge_per_unit'] ?? 0], $slabInput);
+            $fuel = $hasDynamicFuel
+                ? $this->calculateSlabCharge($units, $fuelInput)['charge']
+                : $this->roundMoney2((float) ($tariff['fuelCharge'] ?? $tariff['fuel_charge'] ?? 0));
             $vahan = $this->roundMoney2($units * $vahanRate);
             $subtotal = $this->roundMoney2($sthir + $calc['charge'] + $vahan + $fuel);
             $duty = $this->roundMoney2(($subtotal * $dutyPct) / 100);
@@ -395,6 +403,7 @@ class ElectricityTariffService
                 'from_unit' => max(0, (int) ($s['from_unit'] ?? $s['fromUnit'] ?? 0)),
                 'to_unit' => $to === null || $to === '' ? null : max(0, (int) $to),
                 'rate_per_unit' => max(0, (float) ($s['rate_per_unit'] ?? $s['ratePerUnit'] ?? 0)),
+                'fuel_charge_per_unit' => max(0, (float) ($s['fuel_charge_per_unit'] ?? $s['fuelChargePerUnit'] ?? 0)),
                 'sort_order' => (int) ($s['sort_order'] ?? $s['sortOrder'] ?? ($i + 1)),
             ];
         }
@@ -462,6 +471,7 @@ class ElectricityTariffService
                 'from_unit' => $slab['from_unit'],
                 'to_unit' => $slab['to_unit'],
                 'rate_per_unit' => $slab['rate_per_unit'],
+                'fuel_charge_per_unit' => $slab['fuel_charge_per_unit'],
                 'sort_order' => $slab['sort_order'],
             ]);
         }

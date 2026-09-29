@@ -4,6 +4,9 @@ import type { GovernmentMonthlyComputed } from "@/lib/governmentPayroll";
 export const PAYROLL_EXCEL_HEADER = [
   "AccountNumber",
   "EmployeeName",
+  "Division",
+  "Department",
+  "Designation",
   "PayLevel",
   "PayDays",
   "Basic",
@@ -256,7 +259,10 @@ function quarterExcelColumns(opts: {
 function govFromComputed(
   c: GovernmentMonthlyComputed,
   payLevel: number,
-): Omit<Record<PayrollExcelHeader, string | number>, "AccountNumber" | "EmployeeName"> {
+): Omit<
+  Record<PayrollExcelHeader, string | number>,
+  "AccountNumber" | "EmployeeName" | "Division" | "Department" | "Designation"
+> {
   const d = c.deductions;
   return {
     PayLevel: payLevel,
@@ -323,7 +329,10 @@ function govFromComputed(
 
 function govFromDbRow(
   r: GovernmentMonthlyRow,
-): Omit<Record<PayrollExcelHeader, string | number>, "AccountNumber" | "EmployeeName"> {
+): Omit<
+  Record<PayrollExcelHeader, string | number>,
+  "AccountNumber" | "EmployeeName" | "Division" | "Department" | "Designation"
+> {
   return {
     PayLevel: n(r.pay_level),
     PayDays: 0,
@@ -402,13 +411,17 @@ export function buildPayrollExcelRow(
   userName: string,
   gov: GovernmentExcelSource | null | undefined,
   dynamicCols: DynamicPayrollExcelColumn[] = [],
+  org?: { division?: string | null; department?: string | null; designation?: string | null },
 ): Record<string, string | number> {
   const accountNum = p.bank_account_number != null ? String(p.bank_account_number) : "";
   const mode = p.payroll_mode === "government" ? "government" : "private";
   const netPay = n(p.net_pay);
   const professionalTax = n(p.professional_tax);
 
-  const basePrivate: Omit<Record<PayrollExcelHeader, string | number>, "AccountNumber" | "EmployeeName"> = {
+  const basePrivate: Omit<
+    Record<PayrollExcelHeader, string | number>,
+    "AccountNumber" | "EmployeeName" | "Division" | "Department" | "Designation"
+  > = {
     PayLevel: 0,
     PayDays: n(p.pay_days),
     Basic: n(p.basic),
@@ -467,7 +480,10 @@ export function buildPayrollExcelRow(
     NetPay: netPay,
   };
 
-  let body: Omit<Record<PayrollExcelHeader, string | number>, "AccountNumber" | "EmployeeName">;
+  let body: Omit<
+    Record<PayrollExcelHeader, string | number>,
+    "AccountNumber" | "EmployeeName" | "Division" | "Department" | "Designation"
+  >;
 
   if (mode === "government" && gov) {
     const g = gov.kind === "computed" ? govFromComputed(gov.comp, gov.payLevel) : govFromDbRow(gov.row);
@@ -496,6 +512,9 @@ export function buildPayrollExcelRow(
   return {
     AccountNumber: accountNum,
     EmployeeName: userName,
+    Division: org?.division ?? "",
+    Department: org?.department ?? "",
+    Designation: org?.designation ?? "",
     ...body,
     ...dynamicValuesFromGov(govRow, dynamicCols),
     ...quarterExport,
@@ -515,8 +534,13 @@ function quarterExportFromGov(gov: GovernmentMonthlyRow | null | undefined): Qua
 /** Columns that must not appear in Run Payroll export (duplicate / deprecated labels). */
 export const PAYROLL_EXCEL_REMOVED_COLUMNS = ["PayrollMode", "PT", "TakeHome"] as const;
 
-/** 0-based column indices to center (all numeric fields after name). */
-export function payrollExcelAmountColumnIndices(headerCount: number): number[] {
-  const skip = 2;
-  return Array.from({ length: Math.max(0, headerCount - skip) }, (_, i) => i + skip);
+/** 0-based indices for monetary values; counts, rates, and identifiers remain plain numbers. */
+export function payrollExcelAmountColumnIndices(headers: readonly string[]): number[] {
+  const nonMonetary = new Set([
+    "AccountNumber", "EmployeeName", "EmployeeCode", "Division", "Department", "Designation",
+    "PayLevel", "PayDays", "NightHours", "NightAllowanceRate", "NightAllowanceCeiling",
+    "NightAllowanceEligible", "ElectricityUnits", "ElectricityUnitRate", "Remarks",
+    "QuarterAssigned", "QuarterName", "QuarterType",
+  ]);
+  return headers.flatMap((header, index) => (nonMonetary.has(header) ? [] : [index]));
 }

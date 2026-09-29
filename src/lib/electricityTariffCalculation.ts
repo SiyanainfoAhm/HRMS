@@ -9,6 +9,8 @@ export type ElectricityTariffSlab = {
   /** null / undefined = no upper limit */
   toUnit: number | null;
   ratePerUnit: number;
+  /** Fuel charge per unit for this slab (kept separate from electricity rate). */
+  fuelChargePerUnit?: number;
   sortOrder?: number;
 };
 
@@ -48,6 +50,8 @@ export type ElectricityBillBreakdown = {
   /** Whole-rupee amount for payroll deduction fields. */
   total: number;
   slabPortions: ElectricitySlabPortion[];
+  /** Progressive fuel-charge portions, retained for the Run Payroll breakdown. */
+  fuelSlabPortions: ElectricitySlabPortion[];
   manualOverride: boolean;
   manualAmount: number | null;
 };
@@ -60,8 +64,7 @@ export function roundMoney2(n: number): number {
 
 /** Whole rupees — matches governmentPayroll.roundRupees for final deductions. */
 export function roundElectricityDeduction(n: number): number {
-  if (!Number.isFinite(n)) return 0;
-  return Math.round(Math.max(0, n));
+  return roundMoney2(n);
 }
 
 export function normalizeElectricitySlabs(slabs: ElectricityTariffSlab[]): ElectricityTariffSlab[] {
@@ -73,6 +76,7 @@ export function normalizeElectricitySlabs(slabs: ElectricityTariffSlab[]): Elect
           ? null
           : Math.max(0, Number(s.toUnit) || 0),
       ratePerUnit: Math.max(0, Number(s.ratePerUnit) || 0),
+      fuelChargePerUnit: Math.max(0, Number(s.fuelChargePerUnit) || 0),
       sortOrder: s.sortOrder ?? i + 1,
     }))
     .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.fromUnit - b.fromUnit);
@@ -198,6 +202,7 @@ export function calculateElectricityBill(input: CalculateElectricityBillInput): 
     totalExact: 0,
     total: 0,
     slabPortions: [],
+    fuelSlabPortions: [],
     manualOverride,
     manualAmount,
     ...partial,
@@ -249,7 +254,16 @@ function computeTariffBreakdown(
 ): Omit<ElectricityBillBreakdown, "units" | "applicable" | "mode" | "manualOverride" | "manualAmount"> {
   if (tariff && Array.isArray(tariff.slabs) && tariff.slabs.length > 0) {
     const sthirAakar = roundMoney2(Number(tariff.sthirAakar) || 0);
-    const fuelCharge = roundMoney2(Number(tariff.fuelCharge) || 0);
+    // New tariffs calculate fuel progressively by unit slab. Keep the former
+    // flat field only for historical tariffs that have no slab fuel rates.
+    const hasDynamicFuel = tariff.slabs.some((slab) => slab.fuelChargePerUnit !== undefined);
+    const fuelCalc = hasDynamicFuel
+      ? calculateElectricitySlabCharge(
+          units,
+          tariff.slabs.map((slab) => ({ ...slab, ratePerUnit: slab.fuelChargePerUnit ?? 0 })),
+        )
+      : { charge: roundMoney2(Number(tariff.fuelCharge) || 0), portions: [] };
+    const fuelCharge = fuelCalc.charge;
     const vahanRate = Math.max(0, Number(tariff.vahanAakarPerUnit) || 0);
     const dutyPercentage = Math.max(0, Number(tariff.dutyPercentage) || 0);
     const { charge: consumptionCharge, portions } = calculateElectricitySlabCharge(units, tariff.slabs);
@@ -269,6 +283,7 @@ function computeTariffBreakdown(
       totalExact,
       total: roundElectricityDeduction(totalExact),
       slabPortions: portions,
+      fuelSlabPortions: fuelCalc.portions,
     };
   }
 
@@ -289,6 +304,7 @@ function computeTariffBreakdown(
       slabPortions: [
         { fromUnit: 0, toUnit: units, units, ratePerUnit: rate, amount: consumptionCharge },
       ],
+      fuelSlabPortions: [],
     };
   }
 
@@ -305,6 +321,7 @@ function computeTariffBreakdown(
     totalExact: fixed,
     total: fixed,
     slabPortions: [],
+    fuelSlabPortions: [],
   };
 }
 
@@ -313,13 +330,13 @@ export const DEFAULT_APRIL_2026_ELECTRICITY_TARIFF: ElectricityTariffConfig = {
   effectiveFrom: "2026-04-01",
   sthirAakar: 130,
   vahanAakarPerUnit: 1.6,
-  fuelCharge: 200.7,
+  fuelCharge: 0,
   dutyPercentage: 16,
   slabs: [
-    { fromUnit: 0, toUnit: 100, ratePerUnit: 3.96, sortOrder: 1 },
-    { fromUnit: 101, toUnit: 300, ratePerUnit: 10.8, sortOrder: 2 },
-    { fromUnit: 301, toUnit: 500, ratePerUnit: 15.03, sortOrder: 3 },
-    { fromUnit: 501, toUnit: 1000, ratePerUnit: 17.53, sortOrder: 4 },
-    { fromUnit: 1001, toUnit: null, ratePerUnit: 17.53, sortOrder: 5 },
+    { fromUnit: 0, toUnit: 100, ratePerUnit: 3.96, fuelChargePerUnit: 0.35, sortOrder: 1 },
+    { fromUnit: 101, toUnit: 300, ratePerUnit: 10.8, fuelChargePerUnit: 0.65, sortOrder: 2 },
+    { fromUnit: 301, toUnit: 500, ratePerUnit: 15.03, fuelChargePerUnit: 0.85, sortOrder: 3 },
+    { fromUnit: 501, toUnit: 1000, ratePerUnit: 17.53, fuelChargePerUnit: 0.95, sortOrder: 4 },
+    { fromUnit: 1001, toUnit: null, ratePerUnit: 17.53, fuelChargePerUnit: 0.95, sortOrder: 5 },
   ],
 };

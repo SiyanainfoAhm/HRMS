@@ -17,7 +17,7 @@ import type { PayrollMasterRecord } from "./PayrollMasterScreen";
 
 function fmt(n: number | null | undefined) {
   if (n == null || Number.isNaN(n)) return "—";
-  return Math.round(n).toLocaleString("en-IN");
+  return n.toLocaleString("en-IN", { maximumFractionDigits: 2 });
 }
 
 function earningAmount(basic: number | null | undefined, percent: number | string | null | undefined) {

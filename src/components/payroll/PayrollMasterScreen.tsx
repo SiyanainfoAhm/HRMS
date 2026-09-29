@@ -773,7 +773,7 @@ function payrollStructureChanged(form: MasterFormState, baseline: MasterFormStat
 
 function fmt(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return "—";
-  return Math.round(n).toLocaleString("en-IN");
+  return n.toLocaleString("en-IN", { maximumFractionDigits: 2 });
 }
 
 async function downloadFromApi(path: string, fallbackName: string) {
@@ -2997,7 +2997,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                                 type="number"
                                 numeric
                                 min={0}
-                                step={1}
+                                step="0.01"
                                 value={form.quarterRent}
                                 onChange={(e) =>
                                   patchForm({ quarterRent: e.target.value })
@@ -3011,8 +3011,8 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                                 return (
                                   <p className="mt-1 text-xs text-slate-500">
                                     {custom
-                                      ? `Default ₹${Math.round(selected.monthlyRent).toLocaleString("en-IN")} • Custom rent ₹${Math.round(current).toLocaleString("en-IN")}`
-                                      : `Default rent: ₹${Math.round(selected.monthlyRent).toLocaleString("en-IN")}/month`}
+                                      ? `Default ₹${selected.monthlyRent.toLocaleString("en-IN", { maximumFractionDigits: 2 })} • Custom rent ₹${current.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`
+                                      : `Default rent: ₹${selected.monthlyRent.toLocaleString("en-IN", { maximumFractionDigits: 2 })}/month`}
                                   </p>
                                 );
                               })()}

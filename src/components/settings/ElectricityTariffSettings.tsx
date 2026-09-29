@@ -20,7 +20,7 @@ export type ElectricityTariffRecord = ElectricityTariffConfig & {
   isActive: boolean;
 };
 
-type SlabForm = { fromUnit: string; toUnit: string; ratePerUnit: string };
+type SlabForm = { fromUnit: string; toUnit: string; ratePerUnit: string; fuelChargePerUnit: string };
 
 type TariffForm = {
   effectiveFrom: string;
@@ -32,7 +32,7 @@ type TariffForm = {
 };
 
 function emptySlab(): SlabForm {
-  return { fromUnit: "", toUnit: "", ratePerUnit: "" };
+  return { fromUnit: "", toUnit: "", ratePerUnit: "", fuelChargePerUnit: "" };
 }
 
 function defaultForm(): TariffForm {
@@ -47,6 +47,7 @@ function defaultForm(): TariffForm {
       fromUnit: String(s.fromUnit),
       toUnit: s.toUnit === null ? "" : String(s.toUnit),
       ratePerUnit: String(s.ratePerUnit),
+      fuelChargePerUnit: String(s.fuelChargePerUnit ?? 0),
     })),
   };
 }
@@ -56,6 +57,7 @@ function parseSlabs(forms: SlabForm[]): ElectricityTariffSlab[] {
     fromUnit: Number(s.fromUnit) || 0,
     toUnit: s.toUnit.trim() === "" ? null : Number(s.toUnit),
     ratePerUnit: Number(s.ratePerUnit) || 0,
+    fuelChargePerUnit: Number(s.fuelChargePerUnit) || 0,
     sortOrder: i + 1,
   }));
 }
@@ -109,6 +111,7 @@ export function ElectricityTariffSettings() {
         fromUnit: String(s.fromUnit),
         toUnit: s.toUnit === null || s.toUnit === undefined ? "" : String(s.toUnit),
         ratePerUnit: String(s.ratePerUnit),
+        fuelChargePerUnit: String(s.fuelChargePerUnit ?? 0),
       })),
     });
     setFormError(null);
@@ -207,7 +210,7 @@ export function ElectricityTariffSettings() {
               <th className="px-2 py-2">Effective from</th>
               <th className="px-2 py-2">Sthir</th>
               <th className="px-2 py-2">Vahan /u</th>
-              <th className="px-2 py-2">Fuel</th>
+              <th className="px-2 py-2">Fuel / unit slabs</th>
               <th className="px-2 py-2">Duty %</th>
               <th className="px-2 py-2">Slabs</th>
               <th className="px-2 py-2">Status</th>
@@ -227,7 +230,9 @@ export function ElectricityTariffSettings() {
                   <td className="px-2 py-2 font-medium">{t.effectiveFrom}</td>
                   <td className="px-2 py-2 tabular-nums">{t.sthirAakar}</td>
                   <td className="px-2 py-2 tabular-nums">{t.vahanAakarPerUnit}</td>
-                  <td className="px-2 py-2 tabular-nums">{t.fuelCharge}</td>
+                  <td className="px-2 py-2 tabular-nums">
+                    {(t.slabs ?? []).map((s) => s.fuelChargePerUnit ?? 0).join(" / ") || "â€”"}
+                  </td>
                   <td className="px-2 py-2 tabular-nums">{t.dutyPercentage}</td>
                   <td className="px-2 py-2">{t.slabs?.length ?? 0}</td>
                   <td className="px-2 py-2">
@@ -288,12 +293,6 @@ export function ElectricityTariffSettings() {
                 onChange={(e) => setForm((f) => ({ ...f, vahanAakarPerUnit: e.target.value }))}
               />
             </FormField>
-            <FormField label="Fuel Charges">
-              <Input
-                value={form.fuelCharge}
-                onChange={(e) => setForm((f) => ({ ...f, fuelCharge: e.target.value }))}
-              />
-            </FormField>
             <FormField label="Duty %">
               <Input
                 value={form.dutyPercentage}
@@ -304,7 +303,7 @@ export function ElectricityTariffSettings() {
 
           <div>
             <div className="mb-2 flex items-center justify-between">
-              <p className="text-sm font-medium text-slate-800">Unit slabs</p>
+              <p className="text-sm font-medium text-slate-800">Unit slabs and fuel charge / unit</p>
               <Button
                 type="button"
                 size="sm"
@@ -316,7 +315,7 @@ export function ElectricityTariffSettings() {
             </div>
             <div className="space-y-2">
               {form.slabs.map((s, idx) => (
-                <div key={idx} className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2">
+                <div key={idx} className="grid grid-cols-[1fr_1fr_1fr_1fr_auto] gap-2">
                   <Input
                     placeholder="From"
                     value={s.fromUnit}
@@ -346,6 +345,17 @@ export function ElectricityTariffSettings() {
                       setForm((f) => {
                         const slabs = [...f.slabs];
                         slabs[idx] = { ...slabs[idx], ratePerUnit: e.target.value };
+                        return { ...f, slabs };
+                      })
+                    }
+                  />
+                  <Input
+                    placeholder="Fuel / unit"
+                    value={s.fuelChargePerUnit}
+                    onChange={(e) =>
+                      setForm((f) => {
+                        const slabs = [...f.slabs];
+                        slabs[idx] = { ...slabs[idx], fuelChargePerUnit: e.target.value };
                         return { ...f, slabs };
                       })
                     }

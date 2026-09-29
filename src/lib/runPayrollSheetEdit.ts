@@ -80,7 +80,7 @@ export const SHEET_ARREAR_KEYS = [
 export type SheetArrearKey = (typeof SHEET_ARREAR_KEYS)[number];
 
 function roundRupees(n: number): number {
-  return Math.round(Number.isFinite(n) ? n : 0);
+  return Math.round((Number.isFinite(n) ? n : 0) * 100) / 100;
 }
 
 function amount(v: unknown): number {
@@ -200,6 +200,7 @@ export function applyDeductionPaidOverridesToGm(
   gm: GovernmentMonthlySheetState,
   masterDefaults: GovernmentDeductionDefaults | null | undefined,
   paidOverrides: Partial<GovernmentDeductionDefaults> | null | undefined,
+  payrollFieldDefs?: PayrollFieldDefinition[],
 ): GovernmentMonthlySheetState {
   const merged = mergeDeductionDefaultsWithPaidOverrides(masterDefaults, paidOverrides);
   const next: GovernmentMonthlySheetState = {
@@ -210,7 +211,7 @@ export function applyDeductionPaidOverridesToGm(
     next.quarterRent = merged.quarterRent;
     next.quarter_rent = merged.quarterRent;
   }
-  return recalculateGovernmentSheetTotals(next);
+  return recalculateGovernmentSheetTotals(next, payrollFieldDefs);
 }
 
 export type GovernmentSheetRow = {

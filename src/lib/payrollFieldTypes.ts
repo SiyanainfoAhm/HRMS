@@ -47,6 +47,7 @@ export type ElectricityTariffConfigDto = {
     fromUnit: number;
     toUnit: number | null;
     ratePerUnit: number;
+    fuelChargePerUnit?: number;
     sortOrder?: number;
   }>;
   isActive?: boolean;
@@ -145,7 +146,7 @@ export function normalizeDynamicFieldBag(
       (k) => k === key || k === snake || canonicalizeDynamicFieldKey(k) === snake,
     );
     const canonical = knownMatch ?? snake;
-    const rounded = Math.round(n);
+    const rounded = Math.round(n * 100) / 100;
     if (key === canonical || key.includes("_")) {
       preferred[canonical] = rounded;
     } else {
@@ -254,7 +255,7 @@ export function sumCustomBagForTotal(
     }
     sum += n;
   }
-  return Math.round(sum);
+  return Math.round(sum * 100) / 100;
 }
 
 export function customNumericBagFromValues(

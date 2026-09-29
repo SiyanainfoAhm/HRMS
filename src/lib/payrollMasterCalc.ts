@@ -93,7 +93,7 @@ export type PayrollMasterPreview = {
 };
 
 function roundRupees(n: number): number {
-  return Math.round(n);
+  return Math.round((Number.isFinite(n) ? n : 0) * 100) / 100;
 }
 
 function num(v: unknown, fallback = 0): number {
