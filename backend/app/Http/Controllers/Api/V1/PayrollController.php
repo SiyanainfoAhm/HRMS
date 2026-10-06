@@ -394,16 +394,41 @@ class PayrollController extends Controller
             ->first();
 
         $companyId = (string) $user->company_id;
+        $generatedMonthlyQuery = $existingPeriod
+            ? HrmsGovernmentMonthlyPayroll::query()
+                ->where('company_id', $companyId)
+                ->where('payroll_period_id', $existingPeriod->id)
+            : null;
+        $hasGeneratedMonthly = $generatedMonthlyQuery?->exists() ?? false;
+
+        // A generated month is a historical snapshot.  In particular, do not
+        // start with Payroll Master here: its current population may differ
+        // from the population that was actually generated for the period.
+        if ($existingPeriod && $hasGeneratedMonthly) {
+            return $this->generatedMonthlyPreviewResponse(
+                $user,
+                $existingPeriod,
+                $year,
+                $month,
+                $effectiveRunDay,
+                $periodStart,
+                $periodEndThroughRun,
+                $daysInMonth,
+                $returnAll,
+                $page,
+                $perPage,
+                $search,
+                $filterDepartment,
+                $filterDivision,
+                $filterDesignation,
+            );
+        }
+
         // A completed period is an immutable audit view, so retain people who
         // have since been deactivated there. New/upcoming runs only include
         // active payroll-master records.
-        $isGeneratedPayrollPeriod = $existingPeriod && (
-            HrmsPayslip::query()->where('payroll_period_id', $existingPeriod->id)->exists()
-            || HrmsGovernmentMonthlyPayroll::query()
-                ->where('payroll_period_id', $existingPeriod->id)
-                ->where('company_id', $companyId)
-                ->exists()
-        );
+        $isGeneratedPayrollPeriod = $existingPeriod
+            && HrmsPayslip::query()->where('payroll_period_id', $existingPeriod->id)->exists();
         $employeeUserIds = $this->collectPayrollEmployeeUserIds($companyId, ! $isGeneratedPayrollPeriod);
 
         $usersById = HrmsUser::whereIn('id', $employeeUserIds)->get()->keyBy('id');
@@ -855,9 +880,12 @@ class PayrollController extends Controller
                 ], 400);
             }
 
-            if (! HrmsPayslip::where('payroll_period_id', $existingPeriod->id)->exists()) {
+            if (! HrmsGovernmentMonthlyPayroll::query()
+                ->where('company_id', $user->company_id)
+                ->where('payroll_period_id', $existingPeriod->id)
+                ->exists()) {
                 return response()->json([
-                    'error' => 'No payslips exist yet for this period. Run full payroll first.',
+                    'error' => 'No generated monthly payroll exists for this period. Run full payroll first.',
                 ], 400);
             }
 
@@ -1082,13 +1110,13 @@ class PayrollController extends Controller
             ->flip()
             ->all();
 
-        $existingMonthlyUserIds = HrmsGovernmentMonthlyPayroll::query()
+        $existingMonthlyByUserId = HrmsGovernmentMonthlyPayroll::query()
             ->where('payroll_period_id', $period->id)
             ->where('company_id', $user->company_id)
             ->whereIn('employee_user_id', $employeeUserIds)
-            ->pluck('employee_user_id')
-            ->flip()
-            ->all();
+            ->get()
+            ->keyBy('employee_user_id');
+        $existingMonthlyUserIds = $existingMonthlyByUserId->keys()->flip()->all();
 
         $usersById = HrmsUser::query()
             ->where('company_id', $user->company_id)
@@ -1116,8 +1144,10 @@ class PayrollController extends Controller
             $masterEmployeeIds,
             $payrollConfig,
             $companyId,
+            $completeMissing,
             $existingPayslipUserIds,
             $existingMonthlyUserIds,
+            $existingMonthlyByUserId,
             $usersById,
             $mastersByUserId,
             &$generated,
@@ -1142,7 +1172,12 @@ class PayrollController extends Controller
                 )));
             }
 
-            if (! isset($masterEmployeeIds[$employeeUserId])) {
+            // Completing missing payslips is restricted to the persisted
+            // monthly-payroll population, never today's Payroll Master list.
+            if ($completeMissing && ! $existingMonthlyByUserId->has($employeeUserId)) {
+                return;
+            }
+            if (! $completeMissing && ! isset($masterEmployeeIds[$employeeUserId])) {
                 return;
             }
 
@@ -1151,13 +1186,22 @@ class PayrollController extends Controller
                 return;
             }
 
-            if (isset($existingPayslipUserIds[$employeeUserId]) || isset($existingMonthlyUserIds[$employeeUserId])) {
+            if (isset($existingPayslipUserIds[$employeeUserId])
+                || (! $completeMissing && isset($existingMonthlyUserIds[$employeeUserId]))) {
                 return;
             }
 
             $payDays = (float) ($row['pay_days'] ?? $row['payDays'] ?? 0);
             $payrollMode = $row['payroll_mode'] ?? $row['payrollMode'] ?? 'private';
             $gm = $row['government_monthly'] ?? $row['governmentMonthly'] ?? null;
+            $generatedMonthly = $existingMonthlyByUserId->get($employeeUserId);
+            if ($completeMissing && $generatedMonthly) {
+                // Ignore client recalculation for historical rows.  The saved
+                // monthly record is the sole source for a replacement payslip.
+                $payDays = (float) ($generatedMonthly->paid_days ?? 0);
+                $payrollMode = 'government';
+                $gm = $this->governmentMonthlyPreviewFromDb($generatedMonthly);
+            }
             if (is_array($gm)) {
                 try {
                     $gm['leaveRemarks'] = $this->normalizeLeaveRemarks(
@@ -1174,7 +1218,7 @@ class PayrollController extends Controller
             if ($payrollMode === 'government' && is_array($gm)) {
                 $ded = is_array($gm['deductions'] ?? null) ? $gm['deductions'] : [];
                 $pfEmpGov = (float) ($row['pf_employee'] ?? $row['pfEmployee'] ?? 0);
-                if ($pfEmpGov <= 0) {
+                if ($completeMissing || $pfEmpGov <= 0) {
                     $pfEmpGov = (float) (($ded['cpf'] ?? 0) + ($ded['daCpf'] ?? $ded['da_cpf'] ?? 0)
                         + ($ded['vpf'] ?? 0) + ($ded['pfLoan'] ?? $ded['pf_loan'] ?? 0));
                 }
@@ -1194,7 +1238,9 @@ class PayrollController extends Controller
                     'allowances' => 0,
                     'deductions' => (float) ($gm['totalDeductions'] ?? $gm['total_deductions'] ?? $row['deductions'] ?? 0),
                     'gross_pay' => (float) ($gm['totalEarnings'] ?? $gm['total_earnings'] ?? $row['grossPay'] ?? $row['gross_pay'] ?? 0),
-                    'net_pay' => (float) ($row['takeHome'] ?? $row['take_home'] ?? $gm['netSalary'] ?? $gm['net_salary'] ?? $row['netPay'] ?? 0),
+                    'net_pay' => $completeMissing
+                        ? (float) ($gm['netSalary'] ?? $gm['net_salary'] ?? 0)
+                        : (float) ($row['takeHome'] ?? $row['take_home'] ?? $gm['netSalary'] ?? $gm['net_salary'] ?? $row['netPay'] ?? 0),
                     'pay_days' => $payDays,
                     'ctc' => (float) ($row['ctc'] ?? 0),
                     'pf_employee' => $pfEmpGov,
@@ -1213,22 +1259,24 @@ class PayrollController extends Controller
                     'created_by' => $createdByEmployeeId,
                 ]);
 
-                $govMonthlyId = $this->insertGovernmentMonthlyFromPreview(
-                    $companyId,
-                    $period->id,
-                    $employeeUserId,
-                    $payslip->id,
-                    $master?->id,
-                    $year,
-                    $month,
-                    $daysInMonth,
-                    (int) round($payDays),
-                    $gm,
-                    (int) ($master?->pay_level ?? $empUser->government_pay_level ?? 0),
-                    (float) ($master?->da_percent ?? 53),
-                    $periodEnd,
-                    $payrollConfig,
-                );
+                $govMonthlyId = $completeMissing && $generatedMonthly
+                    ? tap($generatedMonthly, fn (HrmsGovernmentMonthlyPayroll $monthly) => $monthly->update(['payslip_id' => $payslip->id]))->id
+                    : $this->insertGovernmentMonthlyFromPreview(
+                        $companyId,
+                        $period->id,
+                        $employeeUserId,
+                        $payslip->id,
+                        $master?->id,
+                        $year,
+                        $month,
+                        $daysInMonth,
+                        (int) round($payDays),
+                        $gm,
+                        (int) ($master?->pay_level ?? $empUser->government_pay_level ?? 0),
+                        (float) ($master?->da_percent ?? 53),
+                        $periodEnd,
+                        $payrollConfig,
+                    );
                 if ($govMonthlyId) {
                     $monthlyPayrollIdsByEmployee[$employeeUserId] = $govMonthlyId;
                 }
@@ -1500,6 +1548,184 @@ class PayrollController extends Controller
                 ],
             ),
         ]);
+    }
+
+    /**
+     * Build a historical preview exclusively from cirt_monthly_payroll rows.
+     * Current employee records are consulted for display/filter metadata only;
+     * no Payroll Master values are used to calculate or extend the snapshot.
+     */
+    private function generatedMonthlyPreviewResponse(
+        HrmsUser $requestUser,
+        HrmsPayrollPeriod $period,
+        int $year,
+        int $month,
+        int $runDay,
+        string $periodStart,
+        string $periodEndThroughRun,
+        int $daysInMonth,
+        bool $returnAll,
+        int $page,
+        int $perPage,
+        string $search,
+        string $filterDepartment,
+        string $filterDivision,
+        string $filterDesignation,
+    ): JsonResponse {
+        $companyId = (string) $requestUser->company_id;
+        $govRows = HrmsGovernmentMonthlyPayroll::query()
+            ->where('company_id', $companyId)
+            ->where('payroll_period_id', $period->id)
+            ->get()
+            ->keyBy('employee_user_id');
+        $employeeUserIds = $govRows->keys()->filter()->values()->all();
+        $payslips = HrmsPayslip::query()
+            ->where('company_id', $companyId)
+            ->where('payroll_period_id', $period->id)
+            ->whereIn('employee_user_id', $employeeUserIds)
+            ->get()
+            ->keyBy('employee_user_id');
+        $usersById = HrmsUser::query()->whereIn('id', $employeeUserIds)->get()->keyBy('id');
+        $employeesByUserId = HrmsEmployee::query()
+            ->whereIn('user_id', $employeeUserIds)
+            ->with(['division', 'department'])
+            ->get()
+            ->keyBy('user_id');
+
+        $rows = [];
+        foreach ($govRows as $employeeUserId => $gov) {
+            $employee = $employeesByUserId->get($employeeUserId);
+            $employeeUser = $usersById->get($employeeUserId);
+            $department = $employee?->department?->name;
+            $division = $employee?->division?->name;
+            $designation = $employeeUser?->designation;
+            $employeeCode = $employee?->employee_code ?? $employeeUser?->employee_code;
+
+            if ($search !== '') {
+                $term = mb_strtolower($search);
+                $haystack = mb_strtolower(implode(' ', array_filter([
+                    (string) $employeeCode,
+                    (string) ($employeeUser?->name ?? ''),
+                    (string) ($employeeUser?->email ?? ''),
+                ])));
+                if (! str_contains($haystack, $term)) {
+                    continue;
+                }
+            }
+            if ($filterDepartment !== '' && strcasecmp((string) $department, $filterDepartment) !== 0) {
+                continue;
+            }
+            if ($filterDivision !== '' && strcasecmp((string) $division, $filterDivision) !== 0) {
+                continue;
+            }
+            if ($filterDesignation !== '' && strcasecmp((string) $designation, $filterDesignation) !== 0) {
+                continue;
+            }
+
+            $slip = $payslips->get($employeeUserId);
+            $rows[] = $this->mapGeneratedMonthlyToPreviewRow(
+                $gov,
+                $employeeUser,
+                $employee,
+                $slip,
+            );
+        }
+
+        $total = count($rows);
+        $pageRows = $returnAll
+            ? $rows
+            : array_slice($rows, ($page - 1) * $perPage, $perPage);
+        $meta = $returnAll
+            ? ApiPagination::meta($total, 1, max(1, $total))
+            : ApiPagination::meta($total, $page, $perPage);
+        $missingPayslipCount = $govRows->keys()->diff($payslips->keys())->count();
+        $arrearEnriched = $this->enrichPreviewWithArrears(
+            $pageRows,
+            $companyId,
+            $year,
+            $month,
+            $period->id,
+            true,
+        );
+
+        $previewBase = [
+            'year' => $year,
+            'month' => $month,
+            'runDay' => $runDay,
+            'periodStart' => $periodStart,
+            'periodEnd' => $periodEndThroughRun,
+            'periodName' => $period->period_name ?? date('F Y', strtotime($periodStart)).' (through day '.$runDay.')',
+            'daysInMonth' => $daysInMonth,
+            'workingDaysInFullMonth' => $daysInMonth,
+            'workingDaysThroughRunDay' => $runDay,
+            'effectiveRunDay' => $runDay,
+        ];
+
+        return response()->json([
+            'preview' => array_merge($previewBase, [
+                'alreadyRun' => true,
+                'existingPeriodId' => $period->id,
+                'isLocked' => (bool) $period->is_locked,
+                // The set being checked is precisely the generated monthly set.
+                'payrollComplete' => $missingPayslipCount === 0,
+                'missingPayslipCount' => $missingPayslipCount,
+                'rows' => $arrearEnriched['rows'],
+                'meta' => $meta,
+                'arrearWarnings' => $arrearEnriched['warnings'],
+                'arrearPeriods' => $arrearEnriched['arrearPeriods'] ?? [],
+            ]),
+            'payrollConfig' => array_merge($this->fieldService->getPayrollConfig($companyId), [
+                'nightAllowanceRates' => $this->nightAllowanceService->listForCompany($companyId, true),
+                'electricityTariff' => $this->electricityTariffForDate($companyId, $periodEndThroughRun),
+            ]),
+        ]);
+    }
+
+    /** @return array<string, mixed> */
+    private function mapGeneratedMonthlyToPreviewRow(
+        HrmsGovernmentMonthlyPayroll $gov,
+        ?HrmsUser $user,
+        ?HrmsEmployee $employee,
+        ?HrmsPayslip $payslip,
+    ): array {
+        $governmentMonthly = $this->governmentMonthlyPreviewFromDb($gov);
+        $deductions = (float) ($gov->total_deductions ?? 0);
+        $gross = (float) ($gov->total_earnings ?? 0);
+        $net = (float) ($gov->net_salary ?? 0);
+
+        return [
+            'employeeUserId' => $gov->employee_user_id,
+            'employeeName' => $user?->name,
+            'employeeEmail' => $user?->email ?? '',
+            'employeeCode' => $employee?->employee_code ?? $user?->employee_code,
+            'department' => $employee?->department?->name,
+            'division' => $employee?->division?->name,
+            'departmentId' => $employee?->department_id,
+            'divisionId' => $employee?->division_id,
+            'designation' => $user?->designation,
+            'payrollMode' => 'government',
+            'payDays' => (int) round((float) ($gov->paid_days ?? 0)),
+            'unpaidLeaveDays' => (int) ($gov->unpaid_days ?? 0),
+            'grossPay' => (int) round($gross),
+            'deductions' => (int) round($deductions),
+            'netPay' => (int) round($net),
+            'takeHome' => (int) round($net),
+            'pfEmployee' => (int) round((float) (($gov->cpf_amount ?? 0) + ($gov->da_cpf_amount ?? 0) + ($gov->vpf_amount ?? 0) + ($gov->pf_loan_amount ?? 0))),
+            'pfEmployer' => 0,
+            'esicEmployee' => 0,
+            'esicEmployer' => 0,
+            'profTax' => (int) round((float) ($gov->pt_amount ?? 0)),
+            'tds' => (float) ($gov->income_tax_amount ?? 0),
+            'governmentMonthly' => $governmentMonthly,
+            'govRecalc' => [
+                'hplDays' => (int) ($gov->hpl_days ?? 0),
+                'eolDays' => (int) ($gov->eol_days ?? 0),
+                'leaveRemarks' => $this->normalizeLeaveRemarksSafe($gov->leave_remarks ?? null),
+            ],
+            'monthlyPayrollId' => $gov->id,
+            'payslipId' => $payslip?->id,
+            'payslipPending' => $payslip === null,
+        ];
     }
 
     private function mapSavedPayslipToPreviewRow(
