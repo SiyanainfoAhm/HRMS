@@ -249,8 +249,39 @@ function SummaryStat({ label, value, emphasis }: { label: string; value: string;
 function electricityBillFromRow(row: GovernmentRunPreviewRow): ElectricityBillBreakdown | null {
   const gm = row.governmentMonthly as Record<string, unknown> | null | undefined;
   const gr = row.govRecalc as Record<string, unknown> | null | undefined;
-  const bill = (gm?.electricityBill ?? gr?.electricityBill) as ElectricityBillBreakdown | undefined;
-  if (bill && typeof bill === "object") return bill;
+  const bill = gm?.electricityBill ?? gr?.electricityBill;
+  if (bill && typeof bill === "object") {
+    // Saved payroll snapshots created before the fuel-slab breakdown was added do
+    // not contain every current breakdown field. Normalise them before rendering
+    // so a unit edit cannot take down the whole Run Payroll screen.
+    const saved = bill as Partial<ElectricityBillBreakdown>;
+    const numberOrZero = (value: unknown) => {
+      const valueAsNumber = Number(value);
+      return Number.isFinite(valueAsNumber) ? valueAsNumber : 0;
+    };
+    return {
+      units: numberOrZero(saved.units),
+      applicable: saved.applicable !== false,
+      mode: saved.mode === "manual_fixed" ? "manual_fixed" : "unit_based",
+      tariffId: typeof saved.tariffId === "string" ? saved.tariffId : null,
+      sthirAakar: numberOrZero(saved.sthirAakar),
+      consumptionCharge: numberOrZero(saved.consumptionCharge),
+      vahanAakar: numberOrZero(saved.vahanAakar),
+      fuelCharge: numberOrZero(saved.fuelCharge),
+      subtotal: numberOrZero(saved.subtotal),
+      dutyPercentage: numberOrZero(saved.dutyPercentage),
+      dutyAmount: numberOrZero(saved.dutyAmount),
+      totalExact: numberOrZero(saved.totalExact),
+      total: numberOrZero(saved.total),
+      slabPortions: Array.isArray(saved.slabPortions) ? saved.slabPortions : [],
+      fuelSlabPortions: Array.isArray(saved.fuelSlabPortions) ? saved.fuelSlabPortions : [],
+      manualOverride: Boolean(saved.manualOverride),
+      manualAmount:
+        saved.manualAmount === null || saved.manualAmount === undefined
+          ? null
+          : numberOrZero(saved.manualAmount),
+    };
+  }
   if (gm && typeof gm.electricityTotal === "number") {
     return {
       units: Number(gm.electricityUnitsConsumed ?? gr?.electricityUnitsConsumed ?? 0),
