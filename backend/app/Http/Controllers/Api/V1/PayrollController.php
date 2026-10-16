@@ -1692,6 +1692,17 @@ class PayrollController extends Controller
         $deductions = (float) ($gov->total_deductions ?? 0);
         $gross = (float) ($gov->total_earnings ?? 0);
         $net = (float) ($gov->net_salary ?? 0);
+        // Generated rows can be opened without a current Payroll Master. Keep a
+        // complete recalculation context so a Run Payroll edit never attempts to
+        // calculate with the partial leave-only payload that older responses sent.
+        $grossBasic = (float) ($gov->basic_actual ?? 0);
+        $daPercent = $grossBasic > 0
+            ? round(((float) ($gov->da_actual ?? 0) / $grossBasic) * 100, 2)
+            : 53.0;
+        $hraPercent = $grossBasic > 0
+            ? round(((float) ($gov->hra_actual ?? 0) / $grossBasic) * 100, 2)
+            : 30.0;
+        $payLevel = max(1, (int) ($gov->pay_level ?? $user?->government_pay_level ?? 1));
 
         return [
             'employeeUserId' => $gov->employee_user_id,
@@ -1718,9 +1729,42 @@ class PayrollController extends Controller
             'tds' => (float) ($gov->income_tax_amount ?? 0),
             'governmentMonthly' => $governmentMonthly,
             'govRecalc' => [
+                'grossBasic' => $grossBasic,
+                'daPercent' => $daPercent,
+                'hraPercent' => $hraPercent,
+                'medicalFixed' => (float) ($gov->medical_actual ?? 0),
+                'payLevel' => $payLevel,
                 'hplDays' => (int) ($gov->hpl_days ?? 0),
                 'eolDays' => (int) ($gov->eol_days ?? 0),
                 'leaveRemarks' => $this->normalizeLeaveRemarksSafe($gov->leave_remarks ?? null),
+                'electricityUnitsConsumed' => (float) ($gov->electricity_units_consumed ?? 0),
+                'nightHours' => (float) ($gov->night_hours ?? 0),
+                'nightAllowanceRate' => (float) ($gov->night_allowance_rate ?? 0),
+                'nightAllowanceSlabNo' => $gov->night_allowance_slab_no,
+                'hasQuarter' => (float) ($gov->quarter_rent_amount ?? 0) > 0,
+                'quarterRent' => (float) ($gov->quarter_rent_amount ?? 0),
+                'deductionDefaults' => [
+                    'incomeTax' => (float) ($gov->income_tax_amount ?? 0),
+                    'pt' => (float) ($gov->pt_amount ?? 0),
+                    'lic' => (float) ($gov->lic_amount ?? 0),
+                    'cpf' => (float) ($gov->cpf_amount ?? 0),
+                    'daCpf' => (float) ($gov->da_cpf_amount ?? 0),
+                    'vpf' => (float) ($gov->vpf_amount ?? 0),
+                    'pfLoan' => (float) ($gov->pf_loan_amount ?? 0),
+                    'postOffice' => (float) ($gov->post_office_amount ?? 0),
+                    'creditSociety' => (float) ($gov->credit_society_amount ?? 0),
+                    'stdLicenceFee' => (float) ($gov->std_licence_fee_amount ?? 0),
+                    'electricity' => (float) ($gov->electricity_amount ?? 0),
+                    'water' => (float) ($gov->water_amount ?? 0),
+                    'mess' => (float) ($gov->mess_amount ?? 0),
+                    'loanRecovery' => (float) ($gov->loan_recovery_amount ?? 0),
+                    'welfare' => (float) ($gov->welfare_amount ?? 0),
+                    'hpl' => (float) ($gov->hpl_amount ?? 0),
+                    'eol' => (float) ($gov->eol_amount ?? 0),
+                    'vehCharge' => (float) ($gov->veh_charge_amount ?? 0),
+                    'other' => (float) ($gov->other_deduction_amount ?? 0),
+                    'quarterRent' => (float) ($gov->quarter_rent_amount ?? 0),
+                ],
             ],
             'monthlyPayrollId' => $gov->id,
             'payslipId' => $payslip?->id,

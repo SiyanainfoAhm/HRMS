@@ -1583,6 +1583,13 @@ function PayrollPageContent() {
             incentiveBase: typeof row = row,
             opts?: { clearMonetaryOverrides?: boolean },
           ) => {
+            // Older generated-row responses only contained leave metadata. Do
+            // not let a stale browser response throw from the calculator; a
+            // refreshed response now includes the complete saved context.
+            if (!Number.isFinite(Number(gr.payLevel)) || Number(gr.payLevel) < 1) {
+              showToast("error", "This saved payroll row is missing its pay level. Refresh the payroll page and try again.");
+              return commitEdit(row);
+            }
             // Calculation drivers: wipe monthly monetary overrides, then full calc.
             const grForCalc = opts?.clearMonetaryOverrides
               ? clearMonetaryOverridesFromGovRecalc(gr)
