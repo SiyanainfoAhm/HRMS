@@ -19,6 +19,9 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
  */
 class EmployeePayrollExportService
 {
+    /** @var list<string> Dedicated classifications emitted as fixed export columns. */
+    private const FIXED_CUSTOM_COMPONENTS = ['telephone_allowance', 'gpf'];
+
     public function __construct(
         private readonly PayrollMasterService $masterService,
     ) {}
@@ -376,9 +379,15 @@ class EmployeePayrollExportService
         foreach ($monthlyByPeriod as $rows) {
             foreach ($rows as $gov) {
                 foreach (array_keys($this->normalizeCustomMap($gov->custom_earnings)) as $key) {
+                    if (in_array($key, self::FIXED_CUSTOM_COMPONENTS, true)) {
+                        continue;
+                    }
                     $earnings[$key] = true;
                 }
                 foreach (array_keys($this->normalizeCustomMap($gov->custom_deductions)) as $key) {
+                    if (in_array($key, self::FIXED_CUSTOM_COMPONENTS, true)) {
+                        continue;
+                    }
                     $deductions[$key] = true;
                 }
             }
@@ -430,6 +439,7 @@ class EmployeePayrollExportService
             'Transport Paid',
             'Medical Paid',
             'Night Allowance',
+            'Telephone Allowance',
         ];
 
         foreach ($customKeys['earnings'] as $key) {
@@ -443,6 +453,7 @@ class EmployeePayrollExportService
             'LIC',
             'CPF',
             'DA CPF',
+            'GPF',
             'VPF',
             'PF Loan',
             'Post Office',
@@ -516,6 +527,8 @@ class EmployeePayrollExportService
         $n = static fn ($v): float => is_numeric($v) ? (float) $v : 0.0;
         $master = $master ?? [];
         $quarterMeta ??= $this->resolveQuarterMeta($gov, $master);
+        $customEarnings = $this->normalizeCustomMap($gov->custom_earnings);
+        $customDeductions = $this->normalizeCustomMap($gov->custom_deductions);
 
         $payLevel = $gov->pay_level !== null && $gov->pay_level !== ''
             ? $gov->pay_level
@@ -551,9 +564,9 @@ class EmployeePayrollExportService
             $n($gov->transport_paid),
             $n($gov->medical_paid),
             $n($gov->night_allowance_paid ?? $gov->night_allowance_amount ?? 0),
+            $n($customEarnings['telephone_allowance'] ?? 0),
         ];
 
-        $customEarnings = $this->normalizeCustomMap($gov->custom_earnings);
         foreach ($customKeys['earnings'] as $key) {
             $row[] = isset($customEarnings[$key]) ? $n($customEarnings[$key]) : '';
         }
@@ -565,6 +578,7 @@ class EmployeePayrollExportService
             $n($gov->lic_amount ?? 0),
             $n($gov->cpf_amount ?? 0),
             $n($gov->da_cpf_amount ?? 0),
+            $n($customDeductions['gpf'] ?? 0),
             $n($gov->vpf_amount ?? 0),
             $n($gov->pf_loan_amount ?? 0),
             $n($gov->post_office_amount ?? 0),
@@ -583,7 +597,6 @@ class EmployeePayrollExportService
             $n($gov->other_deduction_amount ?? 0),
         ]);
 
-        $customDeductions = $this->normalizeCustomMap($gov->custom_deductions);
         foreach ($customKeys['deductions'] as $key) {
             $row[] = isset($customDeductions[$key]) ? $n($customDeductions[$key]) : '';
         }

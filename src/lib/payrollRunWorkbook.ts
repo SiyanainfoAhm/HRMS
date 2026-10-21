@@ -284,9 +284,12 @@ export function aggregatePayrollSummary(rows: PayrollRunExportRow[]) {
   };
 }
 
-function nonZeroEntries(map: Record<string, number>): NamedAmount[] {
+/**
+ * The summary is an audit report, not a compact voucher: retain zero-value
+ * components so users can distinguish "configured at zero" from "omitted".
+ */
+function summaryEntries(map: Record<string, number>): NamedAmount[] {
   return Object.entries(map)
-    .filter(([, amount]) => amount !== 0)
     .map(([label, amount]) => ({ label, amount }));
 }
 
@@ -452,8 +455,8 @@ export function buildMonthlySummarySheet(
   row += 1;
 
   const earningItems = [
-    ...nonZeroEntries(summary.earnings),
-    ...nonZeroEntries(summary.arrears),
+    ...summaryEntries(summary.earnings),
+    ...summaryEntries(summary.arrears),
   ];
   row = writePairedAmountRows(ws, row, earningItems);
 
@@ -480,7 +483,7 @@ export function buildMonthlySummarySheet(
   (ws["!rows"] as Array<{ hpt?: number }>)[row] = { hpt: 18 };
   row += 1;
 
-  row = writePairedAmountRows(ws, row, nonZeroEntries(summary.deductions));
+  row = writePairedAmountRows(ws, row, summaryEntries(summary.deductions));
 
   writeFullWidthTotal(ws, merges, row, "TOTAL DEDUCTIONS", summary.totalDeductions, "total");
   row += 1;

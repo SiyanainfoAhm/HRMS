@@ -50,6 +50,8 @@ final class EmployeePayrollExportLongFormatTest extends TestCase
         $this->assertSame('Month', $headers[18]);
         $this->assertSame('Through Day', $headers[19]);
         $this->assertContains('Basic Paid', $headers);
+        $this->assertContains('Telephone Allowance', $headers);
+        $this->assertContains('GPF', $headers);
         $this->assertContains('Special Allowance', $headers);
         $this->assertContains('Custom Recovery', $headers);
         $this->assertContains('Net Salary', $headers);
@@ -123,8 +125,8 @@ final class EmployeePayrollExportLongFormatTest extends TestCase
             'cpf_arrear' => 10,
             'net_arrear' => 140,
             'net_salary' => 132770,
-            'custom_earnings' => ['Special Allowance' => 2500],
-            'custom_deductions' => [],
+            'custom_earnings' => ['Special Allowance' => 2500, 'telephone_allowance' => 350],
+            'custom_deductions' => ['gpf' => 41666],
         ]);
 
         $master = [
@@ -168,6 +170,8 @@ final class EmployeePayrollExportLongFormatTest extends TestCase
         $this->assertSame(4870.0, $map['Electricity']);
         $this->assertSame(350.0, $map['Electricity Units']);
         $this->assertSame(2500.0, $map['Special Allowance']);
+        $this->assertSame(350.0, $map['Telephone Allowance']);
+        $this->assertSame(41666.0, $map['GPF']);
         $this->assertSame(132770.0, $map['Net Salary']);
         $this->assertNotContains('SHOULD_NOT_USE', $row);
     }

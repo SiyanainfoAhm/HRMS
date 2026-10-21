@@ -23,6 +23,7 @@ export const PAYROLL_EXCEL_HEADER = [
   "NightAllowanceEligible",
   "UniformAllowance",
   "EducationAllowance",
+  "TelephoneAllowance",
   "DAArrears",
   "TransportArrears",
   "Encashment",
@@ -32,6 +33,7 @@ export const PAYROLL_EXCEL_HEADER = [
   "LIC",
   "CPF",
   "DACPF",
+  "GPF",
   "VPF",
   "PFLoan",
   "PostOffice",
@@ -184,6 +186,15 @@ function titleFromFieldKey(key: string): string {
     .join(" ");
 }
 
+// These are configurable employee-level values, but have a fixed accounting
+// classification in every payroll export. Keeping them out of the generic
+// dynamic tail prevents a second GPF/Telephone column.
+const CANONICAL_CUSTOM_EXPORT_KEYS = new Set(["telephone_allowance", "gpf"]);
+
+function customAmount(raw: unknown, key: string): number {
+  return n(parseCustomBag(raw)[key]);
+}
+
 /** Collect unique dynamic field keys from government monthly rows for export. */
 export function collectDynamicPayrollExcelColumns(
   govRows: Array<Record<string, unknown>>,
@@ -197,6 +208,7 @@ export function collectDynamicPayrollExcelColumns(
       parseCustomBag(g.customDeductions ?? g.custom_deductions),
     ]) {
       for (const key of Object.keys(bag)) {
+        if (CANONICAL_CUSTOM_EXPORT_KEYS.has(key)) continue;
         if (seen.has(key)) continue;
         seen.add(key);
         cols.push({
@@ -281,6 +293,7 @@ function govFromComputed(
     NightAllowanceEligible: c.nightAllowanceEligible === false ? "No" : "Yes",
     UniformAllowance: c.uniformAllowancePaid,
     EducationAllowance: c.educationAllowancePaid,
+    TelephoneAllowance: customAmount(c.customEarnings, "telephone_allowance"),
     DAArrears: c.daArrearsPaid,
     TransportArrears: c.transportArrearsPaid,
     Encashment: c.encashmentPaid,
@@ -290,6 +303,7 @@ function govFromComputed(
     LIC: d.lic,
     CPF: d.cpf,
     DACPF: d.daCpf,
+    GPF: customAmount(c.customDeductions, "gpf"),
     VPF: d.vpf,
     PFLoan: d.pfLoan,
     PostOffice: d.postOffice,
@@ -350,6 +364,7 @@ function govFromDbRow(
     NightAllowanceEligible: r.night_allowance_eligible === false ? "No" : "Yes",
     UniformAllowance: n(r.uniform_allowance_paid),
     EducationAllowance: n(r.education_allowance_paid),
+    TelephoneAllowance: customAmount(r.custom_earnings, "telephone_allowance"),
     DAArrears: n(r.da_arrears_paid),
     TransportArrears: n(r.transport_arrears_paid),
     Encashment: n(r.encashment_paid),
@@ -359,6 +374,7 @@ function govFromDbRow(
     LIC: n(r.lic_amount),
     CPF: n(r.cpf_amount),
     DACPF: n(r.da_cpf_amount),
+    GPF: customAmount(r.custom_deductions, "gpf"),
     VPF: n(r.vpf_amount),
     PFLoan: n(r.pf_loan_amount),
     PostOffice: n(r.post_office_amount),
@@ -438,6 +454,7 @@ export function buildPayrollExcelRow(
     NightAllowanceEligible: "Yes",
     UniformAllowance: 0,
     EducationAllowance: 0,
+    TelephoneAllowance: 0,
     DAArrears: 0,
     TransportArrears: 0,
     Encashment: 0,
@@ -447,6 +464,7 @@ export function buildPayrollExcelRow(
     LIC: 0,
     CPF: 0,
     DACPF: 0,
+    GPF: 0,
     VPF: 0,
     PFLoan: 0,
     PostOffice: 0,
