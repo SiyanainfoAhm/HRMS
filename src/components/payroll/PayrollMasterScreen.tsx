@@ -31,7 +31,6 @@ import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { DatePickerField } from "@/components/ui/DatePickerField";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { FileUpload } from "@/components/ui/FileUpload";
-import { EmployeePayrollExportButton } from "@/components/payroll/EmployeePayrollExportButton";
 import { FormField } from "@/components/ui/FormField";
 import { Input } from "@/components/ui/Input";
 import { Modal } from "@/components/ui/Modal";
@@ -821,6 +820,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
   const [listSearch, setListSearch] = useState("");
   const [listStatusFilter, setListStatusFilter] = useState<"active" | "inactive" | "all">("active");
   const [listMeta, setListMeta] = useState<PaginationMeta>(emptyPaginationMeta());
+  const [selectedMasterIds, setSelectedMasterIds] = useState<Set<string>>(new Set());
   const debouncedListSearch = useDebouncedValue(listSearch);
   const [uniquenessRows, setUniquenessRows] = useState<PayrollMasterUniqueRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -2297,25 +2297,6 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     }
   }
 
-  async function handleSync() {
-    setBusy("sync");
-    try {
-      const res = await fetch("/api/payroll/master/sync-existing-employees", { method: "POST" });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || "Sync failed");
-      showToast(
-        "success",
-        `Sync complete: ${data.created_master_rows ?? 0} created, ${data.skipped_existing_rows ?? 0} skipped`,
-      );
-      dispatchHrmsChange("payroll_master");
-      await loadRows();
-    } catch (e: unknown) {
-      showToast("error", e instanceof Error ? e.message : "Sync failed");
-    } finally {
-      setBusy(null);
-    }
-  }
-
   function resetImportState() {
     importPreviewRequestRef.current += 1;
     setImportFile(null);
@@ -2468,10 +2449,16 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     }
   }
 
-  async function handleExport() {
+  async function handleExport(selectedOnly = false) {
+    const selectedIds = Array.from(selectedMasterIds);
+    if (selectedOnly && selectedIds.length === 0) {
+      showToast("error", "Select at least one employee before exporting selected employees.");
+      return;
+    }
     setBusy("export");
     try {
-      await downloadFromApi("/api/payroll/master/export", "cirt_payroll_master.xlsx");
+      const query = selectedOnly ? `?masterIds=${encodeURIComponent(selectedIds.join(","))}` : "";
+      await downloadFromApi(`/api/payroll/master/export${query}`, "cirt_payroll_master.xlsx");
     } catch (e: unknown) {
       showToast("error", e instanceof Error ? e.message : "Export failed");
     } finally {
@@ -2527,12 +2514,11 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
               <Button size="sm" variant="outline" onClick={handleDownloadTemplate}>
                 Download Template
               </Button>
-              <Button size="sm" variant="outline" onClick={handleExport} loading={busy === "export"} disabled={busy === "export"}>
-                {busy === "export" ? "Exporting..." : "Export Master"}
+              <Button size="sm" variant="outline" onClick={() => void handleExport(false)} loading={busy === "export"} disabled={busy === "export"}>
+                {busy === "export" ? "Exporting..." : `Export All (${listMeta.total})`}
               </Button>
-              <EmployeePayrollExportButton />
-              <Button size="sm" variant="outline" onClick={handleSync} loading={busy === "sync"} disabled={busy === "sync"}>
-                Sync Employees
+              <Button size="sm" variant="outline" onClick={() => void handleExport(true)} loading={busy === "export"} disabled={busy === "export" || selectedMasterIds.size === 0}>
+                {busy === "export" ? "Exporting..." : `Export Selected (${selectedMasterIds.size})`}
               </Button>
             </>
           ) : undefined
@@ -2572,7 +2558,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
           <div className="p-6">
             <EmptyState
               title="No employees yet"
-              description="Add an employee, import from Excel, or sync existing employees."
+              description="Add an employee or import from the Payroll Master template."
               action={
                 canWrite ? (
                   <Button size="sm" onClick={openAdd}>
@@ -2588,6 +2574,17 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
             canWrite={canWrite}
             cpfRateLabel={cpfBadge}
             customColumns={masterGridCustomColumns}
+            selectedMasterIds={selectedMasterIds}
+            onToggleSelection={(id, checked) => setSelectedMasterIds((current) => {
+              const next = new Set(current);
+              if (checked) next.add(id); else next.delete(id);
+              return next;
+            })}
+            onToggleVisibleSelection={(ids, checked) => setSelectedMasterIds((current) => {
+              const next = new Set(current);
+              ids.forEach((id) => checked ? next.add(id) : next.delete(id));
+              return next;
+            })}
             resetKey={rows.map((r) => r.id).join(",")}
             onEdit={openEdit}
             onDeactivate={setDeactivateTarget}

@@ -11,6 +11,7 @@ use App\Models\HrmsDivision;
 use App\Models\HrmsEmployee;
 use App\Models\HrmsPayrollMaster;
 use App\Models\HrmsPayrollMasterHistory;
+use App\Models\HrmsQuarter;
 use App\Models\HrmsUser;
 use App\Support\ApiPagination;
 use App\Support\GovernmentPayLevel;
@@ -932,10 +933,22 @@ final class PayrollMasterService
         ];
     }
 
-    public function exportSpreadsheet(?string $companyId, string $format = 'xlsx'): StreamedResponse
+    /** @param list<string> $masterIds */
+    public function exportSpreadsheet(?string $companyId, string $format = 'xlsx', array $masterIds = []): StreamedResponse
     {
         $this->importCompanyContext = $companyId;
-        $rows = $this->listForCompany($companyId);
+        $masterIds = array_values(array_unique(array_filter($masterIds, static fn ($id) => is_string($id) && $id !== '')));
+        if ($masterIds === []) {
+            $masters = $this->baseMasterListQuery($companyId)
+                ->orderBy('employee_code')
+                ->get();
+        } else {
+            $masters = $this->baseMasterListQuery($companyId)
+                ->whereIn('id', $masterIds)
+                ->orderBy('employee_code')
+                ->get();
+        }
+        $rows = $this->formatExportRows($masters, $companyId);
         $sheet = new Spreadsheet;
         $this->writeMasterExportSheet($sheet, $rows);
 
@@ -954,6 +967,54 @@ final class PayrollMasterService
                 ? 'text/csv'
                 : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         ]);
+    }
+
+    /**
+     * Export requires persisted master values, not interactive CPF previews or
+     * per-row quarter lookups. Preload its two relations to prevent N+1 queries
+     * and keep a full 83-row export below the PHP request limit.
+     *
+     * @param  \Illuminate\Support\Collection<int, HrmsPayrollMaster>  $masters
+     * @return list<array<string, mixed>>
+     */
+    private function formatExportRows($masters, ?string $companyId): array
+    {
+        if ($masters->isEmpty()) {
+            return [];
+        }
+        $userIds = $masters->map(fn (HrmsPayrollMaster $m) => $m->user_id ?? $m->employee_user_id)->filter()->unique()->values()->all();
+        $usersById = $userIds === [] ? collect() : HrmsUser::whereIn('id', $userIds)->get()->keyBy('id');
+        $quarterIds = $masters->pluck('quarter_id')->filter()->unique()->values()->all();
+        $quartersById = $quarterIds === []
+            ? collect()
+            : HrmsQuarter::query()
+                ->with('quarterType')
+                ->when($companyId, fn ($query) => $query->where('company_id', $companyId))
+                ->whereIn('id', $quarterIds)
+                ->get()
+                ->keyBy('id');
+        $customByMaster = $companyId
+            ? $this->fieldService->getCustomFieldValuesForMasters($companyId, $masters->pluck('id')->all())
+            : [];
+
+        return $masters->map(function (HrmsPayrollMaster $master) use ($usersById, $quartersById, $customByMaster): array {
+            $row = $master->getAttributes();
+            $userId = $master->user_id ?? $master->employee_user_id;
+            $user = $userId ? $usersById->get($userId) : null;
+            $quarter = $master->quarter_id ? $quartersById->get($master->quarter_id) : null;
+            $row['employee_code'] = $master->employee_code;
+            $row['name'] = $master->name;
+            $row['email'] = $master->email;
+            $row['user_role'] = $user ? UserRole::fromStored(is_string($user->role) ? $user->role : null)->value : UserRole::Employee->value;
+            $row['quarterAssigned'] = (bool) ($master->has_quarter ?? false);
+            $row['quarterName'] = $quarter?->quarter_name ?? $master->quarter_name ?? '';
+            $row['quarterType'] = $quarter?->quarterType?->name ?? $quarter?->quarter_type ?? $master->quarter_type ?? '';
+            $row['quarterRent'] = (float) ($master->quarter_rent ?? $quarter?->monthly_rent ?? 0);
+            $row['hasQuarter'] = (bool) ($master->has_quarter ?? false);
+            $row['customFieldValues'] = $customByMaster[$master->id] ?? [];
+
+            return $row;
+        })->values()->all();
     }
 
     public function templateDownload(string $format, ?string $companyId = null): StreamedResponse
@@ -1427,7 +1488,8 @@ final class PayrollMasterService
     }
 
     /** @param  array<string, mixed>  $r */
-    private function rowToExport(array $r): array
+    /** @param list<array{key: string, header: string}>|null $columns */
+    private function rowToExport(array $r, ?array $columns = null): array
     {
         $customValues = is_array($r['customFieldValues'] ?? null) ? $r['customFieldValues'] : [];
 
@@ -1448,7 +1510,7 @@ final class PayrollMasterService
             }
 
             return $r[$key] ?? $r[Str::camel($key)] ?? '';
-        }, $this->masterExportColumnDefs());
+        }, $columns ?? $this->masterExportColumnDefs());
     }
 
     /** @return list<array{key: string, header: string}> */
@@ -1484,13 +1546,14 @@ final class PayrollMasterService
     {
         $activeSheet = $sheet->getActiveSheet();
         $activeSheet->setTitle('Payroll Master');
-        $headers = $this->exportDisplayHeaders();
+        $columns = $this->masterExportColumnDefs();
+        $headers = array_map(fn (array $col) => $col['header'], $columns);
         $activeSheet->fromArray($headers, null, 'A1');
         $lastCol = Coordinate::stringFromColumnIndex(max(1, count($headers)));
         $activeSheet->getStyle('A1:'.$lastCol.'1')->getFont()->setBold(true);
         $i = 2;
         foreach ($rows as $r) {
-            $activeSheet->fromArray($this->rowToExport($r), null, 'A'.$i);
+            $activeSheet->fromArray($this->rowToExport($r, $columns), null, 'A'.$i);
             $i++;
         }
     }

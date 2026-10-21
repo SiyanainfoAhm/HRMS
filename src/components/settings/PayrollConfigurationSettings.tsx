@@ -14,7 +14,6 @@ import { AppPageLoader } from "@/components/ui/AppPageLoader";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { cn } from "@/lib/cn";
 import {
-  CALCULATION_TYPES,
   earningFieldsForCpfBasis,
   FIELD_GROUPS,
   FIELD_TYPES,
@@ -486,7 +485,6 @@ export function PayrollConfigurationSettings() {
                       <th>Key</th>
                       <th>Group</th>
                       <th>Type</th>
-                      <th>Calc</th>
                       <th>Req</th>
                       <th>Master</th>
                       <th>Run</th>
@@ -509,7 +507,6 @@ export function PayrollConfigurationSettings() {
                         <td className="font-mono text-xs text-slate-600">{f.fieldKey}</td>
                         <td>{groupLabel(f.fieldGroup)}</td>
                         <td>{f.fieldType}</td>
-                        <td>{(f.calculationType || "manual_entry").replace(/_/g, " ")}</td>
                         <td>{f.isRequired ? "Yes" : "—"}</td>
                         <td>{f.showInPayrollMaster ? "Yes" : "—"}</td>
                         <td>{f.showInRunPayroll ? "Yes" : "—"}</td>
@@ -669,13 +666,6 @@ export function PayrollConfigurationSettings() {
               options={FIELD_TYPES.map((t) => ({ value: t.value, label: t.label }))}
             />
           </div>
-          <SelectField
-            label="Calculation type"
-            value={form.calculationType}
-            disabled={form.isSystem}
-            onChange={(v) => setForm((f) => ({ ...f, calculationType: v }))}
-            options={CALCULATION_TYPES.map((t) => ({ value: t.value, label: t.label }))}
-          />
           <FormField label="Default value (optional)">
             <Input
               value={form.defaultValue}

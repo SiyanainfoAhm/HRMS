@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, ChevronLeft, ChevronRight, RotateCcw } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
 import { fmtIn } from "./payrollRunPreviewShared";
 
 type Props = {
@@ -14,7 +14,8 @@ type Props = {
   showScrollButtons: boolean;
   onScrollLeft: () => void;
   onScrollRight: () => void;
-  onResetScroll: () => void;
+  onScrollHoldStart?: (direction: "left" | "right") => void;
+  onScrollHoldStop?: () => void;
   hideExpandToggle?: boolean;
 };
 
@@ -32,7 +33,8 @@ export function PayrollEmployeeCardHeader({
   showScrollButtons,
   onScrollLeft,
   onScrollRight,
-  onResetScroll,
+  onScrollHoldStart,
+  onScrollHoldStop,
   hideExpandToggle,
 }: Props) {
   return (
@@ -81,20 +83,11 @@ export function PayrollEmployeeCardHeader({
 
       {showScrollButtons ? (
         <div className="ml-auto flex shrink-0 items-center gap-1">
-          <button type="button" onClick={onScrollLeft} className={iconBtn} aria-label="Scroll left">
+          <button type="button" onClick={onScrollLeft} onPointerDown={() => onScrollHoldStart?.("left")} onPointerUp={onScrollHoldStop} onPointerLeave={onScrollHoldStop} onPointerCancel={onScrollHoldStop} onKeyUp={onScrollHoldStop} className={iconBtn} aria-label="Scroll left">
             <ChevronLeft className="h-4 w-4" />
           </button>
-          <button type="button" onClick={onScrollRight} className={iconBtn} aria-label="Scroll right">
+          <button type="button" onClick={onScrollRight} onPointerDown={() => onScrollHoldStart?.("right")} onPointerUp={onScrollHoldStop} onPointerLeave={onScrollHoldStop} onPointerCancel={onScrollHoldStop} onKeyUp={onScrollHoldStop} className={iconBtn} aria-label="Scroll right">
             <ChevronRight className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            onClick={onResetScroll}
-            className="inline-flex h-6 items-center gap-1 rounded-md border border-slate-200 bg-white px-1.5 text-[11px] text-slate-600 shadow-sm hover:bg-slate-50"
-            aria-label="Reset scroll position"
-          >
-            <RotateCcw className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Reset</span>
           </button>
         </div>
       ) : null}

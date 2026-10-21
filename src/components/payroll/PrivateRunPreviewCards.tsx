@@ -129,7 +129,8 @@ function PrivateEmployeeCard({
         showScrollButtons={expanded}
         onScrollLeft={() => scrollerRef.current?.scrollLeft()}
         onScrollRight={() => scrollerRef.current?.scrollRight()}
-        onResetScroll={() => scrollerRef.current?.resetScroll()}
+        onScrollHoldStart={(direction) => scrollerRef.current?.startScroll(direction)}
+        onScrollHoldStop={() => scrollerRef.current?.stopScroll()}
       />
 
       <div className={expanded ? "flex flex-col md:flex-row" : "px-4 py-3"}>

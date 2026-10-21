@@ -53,7 +53,6 @@ export function SettingsContent() {
     state: "",
     country: "",
     postalCode: "",
-    professionalTaxAnnual: "200",
     professionalTaxMonthly: "200",
     defaultDaPercent: "53",
     defaultHraPercent: "30",
@@ -496,7 +495,6 @@ export function SettingsContent() {
       state: company?.state ?? "",
       country: company?.country ?? "",
       postalCode: company?.postal_code ?? "",
-      professionalTaxAnnual: String(company?.professional_tax_annual ?? 200),
       professionalTaxMonthly: String(company?.professional_tax_monthly ?? 200),
       defaultDaPercent: String(company?.default_da_percent ?? 53),
       defaultHraPercent: String(company?.default_hra_percent ?? 30),
@@ -555,7 +553,6 @@ export function SettingsContent() {
       const payload = {
         ...editableForm,
         industry: form.industry === "Other" ? form.industryOther.trim() : form.industry,
-        professionalTaxAnnual: form.professionalTaxAnnual ? parseFloat(form.professionalTaxAnnual) : 200,
         professionalTaxMonthly: form.professionalTaxMonthly ? parseFloat(form.professionalTaxMonthly) : 200,
         defaultDaPercent: form.defaultDaPercent ? parseFloat(form.defaultDaPercent) : 53,
         defaultHraPercent: form.defaultHraPercent ? parseFloat(form.defaultHraPercent) : 30,
@@ -762,14 +759,6 @@ export function SettingsContent() {
                     </dd>
                   </div>
                   <div>
-                    <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">PT annual (₹)</dt>
-                    <dd className="mt-0.5 tabular-nums text-slate-800">
-                      {company?.professional_tax_annual != null
-                        ? Number(company.professional_tax_annual).toLocaleString("en-IN")
-                        : "—"}
-                    </dd>
-                  </div>
-                  <div>
                     <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">PT monthly (₹)</dt>
                     <dd className="mt-0.5 tabular-nums text-slate-800">
                       {company?.professional_tax_monthly != null
@@ -960,24 +949,11 @@ export function SettingsContent() {
                   <h2 className="mb-1 text-lg font-semibold text-slate-900">Roles</h2>
                   <p className="muted">System roles are Admin and Employee. Legacy role keys are shown as Admin.</p>
                 </div>
-                {canManage && (
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    onClick={() => {
-                      setModuleError(null);
-                      setRoleForm({ id: "", roleKey: "employee", name: "", description: "", isDefault: false });
-                      setIsRolesDialogOpen(true);
-                    }}
-                  >
-                    Add role
-                  </button>
-                )}
               </div>
               {moduleTabLoading ? (
                 <AppPageLoader variant="inline" message="Loading settings..." submessage="" />
               ) : roles.length === 0 ? (
-                <EmptyState title="No roles" description="Add roles to assign permissions." />
+                <EmptyState title="No roles" description="Contact an administrator to restore required system roles." />
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-sm">
@@ -1452,21 +1428,6 @@ export function SettingsContent() {
                     onChange={(e) => setForm((p) => ({ ...p, postalCode: e.target.value }))}
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                   />
-                </div>
-                <div className="md:col-span-1">
-                  <label className="mb-1 block text-sm font-medium text-slate-700">
-                    PT (annual ₹)
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="1"
-                    value={form.professionalTaxAnnual}
-                    onChange={(e) => setForm((p) => ({ ...p, professionalTaxAnnual: e.target.value }))}
-                    placeholder="200"
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                  />
-                  <p className="mt-1 text-xs text-slate-500">For take-home calculation.</p>
                 </div>
                 <div className="md:col-span-1">
                   <label className="mb-1 block text-sm font-medium text-slate-700">

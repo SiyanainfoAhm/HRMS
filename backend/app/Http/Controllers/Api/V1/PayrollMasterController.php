@@ -372,8 +372,12 @@ class PayrollMasterController extends Controller
             abort(403);
         }
         $format = $request->query('format') === 'csv' ? 'csv' : 'xlsx';
+        $masterIds = $request->query('master_ids', $request->query('masterIds', []));
+        if (! is_array($masterIds)) {
+            $masterIds = array_filter(array_map('trim', explode(',', (string) $masterIds)));
+        }
 
-        return $this->service->exportSpreadsheet($request->user()->company_id, $format);
+        return $this->service->exportSpreadsheet($request->user()->company_id, $format, array_values($masterIds));
     }
 
     public function deactivate(Request $request, string $id): JsonResponse

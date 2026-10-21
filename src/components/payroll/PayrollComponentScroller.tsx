@@ -13,7 +13,8 @@ import {
 export type PayrollScrollerHandle = {
   scrollLeft: () => void;
   scrollRight: () => void;
-  resetScroll: () => void;
+  startScroll: (direction: "left" | "right") => void;
+  stopScroll: () => void;
 };
 
 type Props = {
@@ -31,6 +32,8 @@ export const PayrollComponentScroller = forwardRef<PayrollScrollerHandle, Props>
   const contentInnerRef = useRef<HTMLDivElement>(null);
   const [contentWidth, setContentWidth] = useState(0);
   const syncing = useRef(false);
+  const animationFrameRef = useRef<number | null>(null);
+  const directionRef = useRef<-1 | 1>(1);
 
   useEffect(() => {
     const el = contentInnerRef.current;
@@ -64,12 +67,39 @@ export const PayrollComponentScroller = forwardRef<PayrollScrollerHandle, Props>
     () => contentScrollRef.current?.scrollBy({ left: 400, behavior: "smooth" }),
     [],
   );
-  const resetScroll = useCallback(
-    () => contentScrollRef.current?.scrollTo({ left: 0, behavior: "smooth" }),
-    [],
-  );
+  const stopScroll = useCallback(() => {
+    if (animationFrameRef.current !== null) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+  }, []);
+  const startScroll = useCallback((direction: "left" | "right") => {
+    stopScroll();
+    directionRef.current = direction === "left" ? -1 : 1;
+    const step = () => {
+      const content = contentScrollRef.current;
+      if (!content) return;
+      const before = content.scrollLeft;
+      content.scrollLeft += directionRef.current * 12;
+      if (content.scrollLeft === before) {
+        stopScroll();
+        return;
+      }
+      animationFrameRef.current = requestAnimationFrame(step);
+    };
+    animationFrameRef.current = requestAnimationFrame(step);
+  }, [stopScroll]);
 
-  useImperativeHandle(ref, () => ({ scrollLeft, scrollRight, resetScroll }), [scrollLeft, scrollRight, resetScroll]);
+  useEffect(() => {
+    const stop = () => stopScroll();
+    window.addEventListener("blur", stop);
+    return () => {
+      window.removeEventListener("blur", stop);
+      stopScroll();
+    };
+  }, [stopScroll]);
+
+  useImperativeHandle(ref, () => ({ scrollLeft, scrollRight, startScroll, stopScroll }), [scrollLeft, scrollRight, startScroll, stopScroll]);
 
   return (
     <div className={`flex min-w-0 flex-col ${className}`}>

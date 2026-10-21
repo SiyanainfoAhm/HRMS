@@ -47,6 +47,9 @@ type Props = {
   customColumns?: { key: string; label: string; fieldType: string }[];
   onEdit: (row: PayrollMasterRecord) => void;
   onDeactivate: (row: PayrollMasterRecord) => void;
+  selectedMasterIds?: Set<string>;
+  onToggleSelection?: (id: string, checked: boolean) => void;
+  onToggleVisibleSelection?: (ids: string[], checked: boolean) => void;
   resetKey?: string | number;
 };
 
@@ -60,7 +63,9 @@ function customCellValue(row: PayrollMasterRecord, key: string, fieldType: strin
   return raw;
 }
 
-export function PayrollMasterDataGrid({ rows, canWrite, cpfRateLabel, customColumns = [], onEdit, onDeactivate, resetKey }: Props) {
+export function PayrollMasterDataGrid({ rows, canWrite, cpfRateLabel, customColumns = [], onEdit, onDeactivate, selectedMasterIds, onToggleSelection, onToggleVisibleSelection, resetKey }: Props) {
+  const visibleIds = rows.map((row) => row.id);
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedMasterIds?.has(id));
   return (
     <DataTableShell
       resetScrollKey={resetKey ?? rows.length}
@@ -74,6 +79,14 @@ export function PayrollMasterDataGrid({ rows, canWrite, cpfRateLabel, customColu
       <table className="w-full min-w-[1400px] border-collapse text-sm">
         <thead>
           <tr className={dataThSticky}>
+            {onToggleSelection ? <th className={`${dataTh} w-10 !px-2`}>
+              <input
+                type="checkbox"
+                aria-label="Select all visible employees"
+                checked={allVisibleSelected}
+                onChange={(event) => onToggleVisibleSelection?.(visibleIds, event.target.checked)}
+              />
+            </th> : null}
             <th className={`${dataTh} ${stickyLeft} min-w-[4.5rem]`}>Code</th>
             <th className={`${dataTh} ${stickyLeft2} min-w-[10rem] !text-left`}>Name</th>
             <th className={dataTh}>Designation</th>
@@ -125,6 +138,14 @@ export function PayrollMasterDataGrid({ rows, canWrite, cpfRateLabel, customColu
               key={row.id}
               className={`group transition-colors hover:bg-brand-blue/[0.03] ${i % 2 === 1 ? "bg-slate-50/40" : "bg-white"}`}
             >
+              {onToggleSelection ? <td className={`${dataTd} !px-2 text-center`}>
+                <input
+                  type="checkbox"
+                  aria-label={`Select ${row.employeeCode || row.name || "employee"}`}
+                  checked={Boolean(selectedMasterIds?.has(row.id))}
+                  onChange={(event) => onToggleSelection(row.id, event.target.checked)}
+                />
+              </td> : null}
               <td className={`${dataTdLeft} ${stickyLeft} font-mono text-xs text-slate-600`}>{row.employeeCode || "—"}</td>
               <td className={`${dataTdLeft} ${stickyLeft2} max-w-[12rem]`}>
                 <span className="block truncate font-medium text-slate-900" title={row.name ?? row.email ?? undefined}>

@@ -554,7 +554,8 @@ function GovernmentEmployeeDetail({
         showScrollButtons
         onScrollLeft={() => scrollerRef.current?.scrollLeft()}
         onScrollRight={() => scrollerRef.current?.scrollRight()}
-        onResetScroll={() => scrollerRef.current?.resetScroll()}
+        onScrollHoldStart={(direction) => scrollerRef.current?.startScroll(direction)}
+        onScrollHoldStop={() => scrollerRef.current?.stopScroll()}
         hideExpandToggle
       />
 
