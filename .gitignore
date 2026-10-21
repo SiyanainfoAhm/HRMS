@@ -38,3 +38,37 @@ yarn-error.log*
 # Flutter runtime config (keep secrets out of git)
 apps/hrms_mobile/assets/config.json
 
+# Confidential payroll and employee data
+*.xlsx
+*.xls
+*.xlsm
+*.xlsb
+*.csv
+
+# CIRT salary import and reconciliation data
+/data/imports/
+/backend/data/imports/
+/reconciliation-output/
+/outputs/
+/.artifact-work/
+/.phase2-build/
+/backend/storage/app/reconciliation/
+/backend/storage/app/backups/
+
+# Database backups and dumps
+*.dump
+*.sql.gz
+*.backup
+
+# Environment secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+/backend/.env
+/backend/.env.*
+
+# Runtime logs and temporary files
+*.log
+*.tmp
+

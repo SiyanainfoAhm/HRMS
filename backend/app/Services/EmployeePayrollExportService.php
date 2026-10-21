@@ -25,17 +25,14 @@ class EmployeePayrollExportService
 
     /**
      * @param  list<string>  $periodIds
-     * @param  list<string>  $quarterIds
      * @param  list<string>  $employeeUserIds  When non-empty, only these employees are exported.
      */
     public function export(
         string $companyId,
         array $periodIds,
-        array $quarterIds = [],
         array $employeeUserIds = [],
     ): StreamedResponse {
         $periodIds = array_values(array_unique(array_filter($periodIds, static fn ($id) => is_string($id) && $id !== '')));
-        $quarterIds = array_values(array_unique(array_filter($quarterIds, static fn ($id) => is_string($id) && $id !== '')));
         $employeeUserIds = array_values(array_unique(array_filter(
             $employeeUserIds,
             static fn ($id) => is_string($id) && $id !== '',
@@ -47,9 +44,6 @@ class EmployeePayrollExportService
         }
         if (count($periodIds) > 3) {
             abort(422, 'Select at most 3 payroll run months.');
-        }
-        if (count($quarterIds) > 3) {
-            abort(422, 'Select at most 3 quarters.');
         }
 
         $periods = HrmsPayrollPeriod::query()
@@ -68,9 +62,52 @@ class EmployeePayrollExportService
         $quartersById = $this->loadQuartersById($companyId);
         $customKeys = $this->collectCustomFieldKeys($monthlyByPeriod);
 
+        $sheet = $this->buildSpreadsheet(
+            $periods->all(),
+            $monthlyByPeriod,
+            $mastersByUser,
+            $mastersById,
+            $quartersById,
+            $customKeys,
+            $employeeUserIdSet,
+        );
+        if ($sheet->getActiveSheet()->getHighestDataRow() < 2) {
+            abort(422, 'No employees match the selected payroll months and explicit filters.');
+        }
+
+        $filename = 'cirt_employee_payroll_export_'.date('Ymd_His').'.xlsx';
+
+        return response()->streamDownload(function () use ($sheet) {
+            (new Xlsx($sheet))->save('php://output');
+        }, $filename, [
+            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        ]);
+    }
+
+    /**
+     * Build the saved-snapshot workbook used by both the HTTP export and isolated
+     * regression tests. Residential accommodation metadata is output-only; it
+     * never selects or excludes payroll rows.
+     *
+     * @param  list<HrmsPayrollPeriod>  $periods
+     * @param  array<string, list<HrmsGovernmentMonthlyPayroll>>  $monthlyByPeriod
+     * @param  array<string, array<string, mixed>>  $mastersByUser
+     * @param  array<string, array{quarterId: ?string, hasQuarter: bool, quarterName: ?string, quarterType: ?string}>  $mastersById
+     * @param  array<string, array{name: string, type: string}>  $quartersById
+     * @param  array{earnings: list<string>, deductions: list<string>}  $customKeys
+     * @param  array<string, true>|null  $employeeUserIdSet
+     */
+    public function buildSpreadsheet(
+        array $periods,
+        array $monthlyByPeriod,
+        array $mastersByUser,
+        array $mastersById,
+        array $quartersById,
+        array $customKeys,
+        ?array $employeeUserIdSet = null,
+    ): Spreadsheet {
         $headers = $this->buildHeaders($customKeys);
         $amountColIndexes = $this->amountColumnIndexes($headers);
-
         $sheet = new Spreadsheet;
         $active = $sheet->getActiveSheet();
         $active->setTitle('Employee Payroll');
@@ -85,31 +122,23 @@ class EmployeePayrollExportService
             $pid = (string) $period->id;
             $monthRows = $monthlyByPeriod[$pid] ?? [];
             usort($monthRows, function (HrmsGovernmentMonthlyPayroll $a, HrmsGovernmentMonthlyPayroll $b) use ($mastersByUser) {
-                $codeA = $this->employeeCodeFor($a, $mastersByUser);
-                $codeB = $this->employeeCodeFor($b, $mastersByUser);
-
-                return strnatcasecmp($codeA, $codeB);
+                return strnatcasecmp($this->employeeCodeFor($a, $mastersByUser), $this->employeeCodeFor($b, $mastersByUser));
             });
-
             foreach ($monthRows as $gov) {
                 $uid = (string) ($gov->employee_user_id ?? '');
                 if ($employeeUserIdSet !== null && ! isset($employeeUserIdSet[$uid])) {
                     continue;
                 }
-                $master = $mastersByUser[$uid] ?? null;
-                $quarterMeta = $this->resolveQuarterMeta($gov, $master, $mastersById, $quartersById);
-
-                if ($quarterIds !== [] && ! $this->quarterMetaMatchesFilter($quarterMeta, $quarterIds)) {
-                    continue;
-                }
-
-                $values = $this->buildDataRow($master, $period, $gov, $customKeys, $quarterMeta);
-
+                $values = $this->buildDataRow(
+                    $mastersByUser[$uid] ?? null,
+                    $period,
+                    $gov,
+                    $customKeys,
+                    $this->resolveQuarterMeta($gov, $mastersByUser[$uid] ?? null, $mastersById, $quartersById),
+                );
                 foreach ($values as $colIndex0 => $value) {
-                    $col = $colIndex0 + 1;
-                    $coord = $this->colLetter($col).$rowNum;
+                    $coord = $this->colLetter($colIndex0 + 1).$rowNum;
                     if ($colIndex0 === 0) {
-                        // Preserve leading zeroes on Employee Code (e.g. 001).
                         $active->setCellValueExplicit($coord, (string) $value, DataType::TYPE_STRING);
                     } elseif (in_array($colIndex0, $amountColIndexes, true) && $value !== '' && $value !== null && is_numeric($value)) {
                         $active->setCellValue($coord, 0 + $value);
@@ -121,24 +150,12 @@ class EmployeePayrollExportService
                 $rowNum++;
             }
         }
-
-        if ($rowNum === 2) {
-            abort(422, 'No employees match the selected periods, quarters, and filters.');
-        }
-
-        $lastDataRow = max(1, $rowNum - 1);
-        $active->setAutoFilter('A1:'.$lastHeaderCol.$lastDataRow);
+        $active->setAutoFilter('A1:'.$lastHeaderCol.max(1, $rowNum - 1));
         foreach (range(1, count($headers)) as $i) {
             $active->getColumnDimension($this->colLetter($i))->setAutoSize(true);
         }
 
-        $filename = 'cirt_employee_payroll_export_'.date('Ymd_His').'.xlsx';
-
-        return response()->streamDownload(function () use ($sheet) {
-            (new Xlsx($sheet))->save('php://output');
-        }, $filename, [
-            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        ]);
+        return $sheet;
     }
 
     /**
@@ -626,20 +643,6 @@ class EmployeePayrollExportService
         $master = $mastersByUser[$uid] ?? null;
 
         return (string) ($master['employeeCode'] ?? '');
-    }
-
-    /**
-     * @param  array{assigned: bool, quarterId: ?string, name: string, type: string}  $quarterMeta
-     * @param  list<string>  $quarterIds
-     */
-    private function quarterMetaMatchesFilter(array $quarterMeta, array $quarterIds): bool
-    {
-        $qid = (string) ($quarterMeta['quarterId'] ?? '');
-        if ($qid === '') {
-            return false;
-        }
-
-        return in_array($qid, $quarterIds, true);
     }
 
     /**

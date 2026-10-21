@@ -64,7 +64,7 @@ export function roundMoney2(n: number): number {
 
 /** Whole rupees — matches governmentPayroll.roundRupees for final deductions. */
 export function roundElectricityDeduction(n: number): number {
-  return roundMoney2(n);
+  return Math.round(Math.max(0, Number.isFinite(n) ? n : 0));
 }
 
 export function normalizeElectricitySlabs(slabs: ElectricityTariffSlab[]): ElectricityTariffSlab[] {

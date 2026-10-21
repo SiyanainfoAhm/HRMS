@@ -275,7 +275,9 @@ class ElectricityTariffService
 
     public function roundDeduction(float $n): float
     {
-        return $this->roundMoney2($n);
+        // Payroll deduction fields are stored in whole rupees. Keep the
+        // bill breakdown in paisa and round only the final deduction.
+        return (float) round(max(0, $n), 0);
     }
 
     /**

@@ -203,6 +203,54 @@ final class PayrollDynamicFieldsTest extends TestCase
         $this->assertGreaterThan($base['take_home'], $withAllowance['take_home']);
     }
 
+    public function test_multiple_custom_components_are_counted_once_in_each_total(): void
+    {
+        $base = $this->calculator->calculateMaster(
+            [
+                'pay_level' => 5,
+                'gross_basic_pay' => 48000,
+                'da_percent' => 53,
+                'hra_percent' => 30,
+                'medical' => 3000,
+                'cpf_default' => 0,
+            ],
+            null,
+            null,
+            ['cpf_percentage' => 12, 'cpf_basis_field_keys' => ['gross_basic']],
+        );
+
+        $calculated = $this->calculator->calculateMaster(
+            [
+                'pay_level' => 5,
+                'gross_basic_pay' => 48000,
+                'da_percent' => 53,
+                'hra_percent' => 30,
+                'medical' => 3000,
+                'cpf_default' => 0,
+            ],
+            null,
+            null,
+            ['cpf_percentage' => 12, 'cpf_basis_field_keys' => ['gross_basic']],
+            ['education_allowance' => 1200, 'telephone_allowance' => 800],
+            ['gpf' => 500, 'staff_recovery' => 300, 'electricity_adjustment' => 200],
+        );
+
+        $this->assertSame($base['total_earnings'] + 2000, $calculated['total_earnings']);
+        $this->assertSame($base['total_deductions'] + 1000, $calculated['total_deductions']);
+        $this->assertSame($calculated['total_earnings'] - $calculated['total_deductions'], $calculated['take_home']);
+        $this->assertEquals(500.0, $calculated['custom_deductions']['gpf']);
+    }
+
+    public function test_custom_calculation_contract_does_not_claim_a_generic_percentage_engine(): void
+    {
+        $servicePath = dirname(__DIR__, 2).'/app/Services/PayrollFieldService.php';
+        $source = file_get_contents($servicePath);
+
+        $this->assertIsString($source);
+        $this->assertStringContainsString('assertSupportedCustomCalculationType', $source);
+        $this->assertStringContainsString('Percentage and formula fields require a dedicated payroll rule', $source);
+    }
+
     public function test_dyn_001_payroll_field_apis_exist(): void
     {
         $routes = file_get_contents(dirname(__DIR__, 2).'/routes/api.php');
@@ -213,6 +261,17 @@ final class PayrollDynamicFieldsTest extends TestCase
         $this->assertStringContainsString('settings/payroll-calculation-settings', $routes);
         $this->assertFileExists(dirname(__DIR__, 2).'/app/Services/PayrollFieldService.php');
         $this->assertFileExists(dirname(__DIR__, 2).'/app/Support/PayrollFieldRegistry.php');
+    }
+
+    public function test_system_registry_keeps_gpf_and_telephone_as_separate_classified_components(): void
+    {
+        $defs = collect(PayrollFieldRegistry::systemFieldDefinitions())->keyBy('field_key');
+
+        $this->assertSame('earnings', $defs['telephone_allowance']['field_group']);
+        $this->assertTrue($defs['telephone_allowance']['include_in_total_earnings']);
+        $this->assertSame('deductions', $defs['gpf']['field_group']);
+        $this->assertTrue($defs['gpf']['include_in_total_deductions']);
+        $this->assertNotSame($defs['gpf']['field_key'], $defs['cpf']['field_key']);
     }
 
     public function test_default_cpf_basis_matches_legacy_total_earnings_components(): void

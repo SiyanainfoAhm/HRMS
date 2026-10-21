@@ -351,13 +351,9 @@ class PayrollMasterController extends Controller
         }
 
         $periodIds = $request->input('period_ids', $request->input('periodIds', []));
-        $quarterIds = $request->input('quarter_ids', $request->input('quarterIds', []));
         $employeeUserIds = $request->input('employee_user_ids', $request->input('employeeUserIds', []));
         if (! is_array($periodIds)) {
             $periodIds = array_filter(array_map('trim', explode(',', (string) $periodIds)));
-        }
-        if (! is_array($quarterIds)) {
-            $quarterIds = array_filter(array_map('trim', explode(',', (string) $quarterIds)));
         }
         if (! is_array($employeeUserIds)) {
             $employeeUserIds = array_filter(array_map('trim', explode(',', (string) $employeeUserIds)));
@@ -366,7 +362,6 @@ class PayrollMasterController extends Controller
         return $this->employeePayrollExport->export(
             (string) $user->company_id,
             array_values($periodIds),
-            array_values($quarterIds),
             array_values(array_map('strval', $employeeUserIds)),
         );
     }

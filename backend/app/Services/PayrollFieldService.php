@@ -132,6 +132,8 @@ class PayrollFieldService
 
         $group = (string) ($data['field_group'] ?? $data['fieldGroup'] ?? 'earnings');
         $fieldType = (string) ($data['field_type'] ?? $data['fieldType'] ?? 'number');
+        $calculationType = (string) ($data['calculation_type'] ?? $data['calculationType'] ?? 'manual_entry');
+        $this->assertSupportedCustomCalculationType($calculationType);
         $includeEarnings = (bool) ($data['include_in_total_earnings'] ?? $data['includeInTotalEarnings'] ?? false);
         $includeDeductions = (bool) ($data['include_in_total_deductions'] ?? $data['includeInTotalDeductions'] ?? false);
 
@@ -155,7 +157,7 @@ class PayrollFieldService
             'field_key' => $fieldKey,
             'field_group' => $group,
             'field_type' => $fieldType,
-            'calculation_type' => (string) ($data['calculation_type'] ?? $data['calculationType'] ?? 'manual_entry'),
+            'calculation_type' => $calculationType,
             'default_value' => $data['default_value'] ?? $data['defaultValue'] ?? null,
             'dropdown_options' => $data['dropdown_options'] ?? $data['dropdownOptions'] ?? null,
             'is_required' => (bool) ($data['is_required'] ?? $data['isRequired'] ?? false),
@@ -204,6 +206,12 @@ class PayrollFieldService
 
         $newType = (string) ($data['field_type'] ?? $data['fieldType'] ?? $field->field_type);
         $newGroup = (string) ($data['field_group'] ?? $data['fieldGroup'] ?? $field->field_group);
+        $newCalculationType = (string) ($data['calculation_type'] ?? $data['calculationType'] ?? $field->calculation_type);
+        if (! $field->is_system
+            && $newCalculationType !== $field->calculation_type
+            && (array_key_exists('calculation_type', $data) || array_key_exists('calculationType', $data))) {
+            $this->assertSupportedCustomCalculationType($newCalculationType);
+        }
         $includeInTotalDeductions = array_key_exists('include_in_total_deductions', $data)
             ? (bool) $data['include_in_total_deductions']
             : (array_key_exists('includeInTotalDeductions', $data)
@@ -224,7 +232,7 @@ class PayrollFieldService
             'field_key' => $newKey,
             'field_group' => $newGroup,
             'field_type' => $newType,
-            'calculation_type' => $data['calculation_type'] ?? $data['calculationType'] ?? $field->calculation_type,
+            'calculation_type' => $newCalculationType,
             'default_value' => array_key_exists('default_value', $data) ? $data['default_value'] : (array_key_exists('defaultValue', $data) ? $data['defaultValue'] : $field->default_value),
             'dropdown_options' => $data['dropdown_options'] ?? $data['dropdownOptions'] ?? $field->dropdown_options,
             'is_required' => array_key_exists('is_required', $data) ? (bool) $data['is_required'] : (array_key_exists('isRequired', $data) ? (bool) $data['isRequired'] : $field->is_required),
@@ -778,6 +786,25 @@ class PayrollFieldService
         }
 
         return HrmsPayrollFieldValue::query()->where('field_definition_id', $field->id)->exists();
+    }
+
+    /**
+     * Generic custom values are employee-entered amounts.  Percentage and formula
+     * fields require an explicitly defined base/formula, which the shared payroll
+     * engine deliberately does not infer.  System fields retain their dedicated
+     * formula implementations (for example CPF).
+     */
+    private function assertSupportedCustomCalculationType(string $calculationType): void
+    {
+        if (in_array($calculationType, ['manual_entry', 'fixed_amount'], true)) {
+            return;
+        }
+
+        throw ValidationException::withMessages([
+            'calculation_type' => [
+                'Custom payroll fields support employee-entered amounts or fixed employee amounts only. Percentage and formula fields require a dedicated payroll rule.',
+            ],
+        ]);
     }
 
   /** @return array<string, mixed> */

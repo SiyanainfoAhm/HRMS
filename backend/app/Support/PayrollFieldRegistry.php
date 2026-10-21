@@ -79,6 +79,8 @@ final class PayrollFieldRegistry
             $row(['field_label' => 'N. All.', 'field_key' => 'night_allowance', 'field_group' => 'earnings', 'field_type' => 'number', 'include_in_total_earnings' => true]),
             $row(['field_label' => 'Uniform Allowance', 'field_key' => 'uniform_allowance', 'field_group' => 'earnings', 'field_type' => 'number', 'include_in_total_earnings' => true]),
             $row(['field_label' => 'Education Allowance', 'field_key' => 'education_allowance', 'field_group' => 'earnings', 'field_type' => 'number', 'include_in_total_earnings' => true]),
+            // Separate statutory/accounting classifications; never fold into Other Allowance.
+            $row(['field_label' => 'Telephone Allowance', 'field_key' => 'telephone_allowance', 'field_group' => 'earnings', 'field_type' => 'number', 'include_in_total_earnings' => true]),
             $row(['field_label' => 'DA Arrears', 'field_key' => 'da_arrears', 'field_group' => 'earnings', 'field_type' => 'number', 'include_in_total_earnings' => true]),
             $row(['field_label' => 'Transport Arrears', 'field_key' => 'transport_arrears', 'field_group' => 'earnings', 'field_type' => 'number', 'include_in_total_earnings' => true]),
             $row(['field_label' => 'Gross Arrears', 'field_key' => 'gross_arrears', 'field_group' => 'earnings', 'field_type' => 'number', 'include_in_total_earnings' => true]),
@@ -92,6 +94,8 @@ final class PayrollFieldRegistry
             $row(['field_label' => 'LIC', 'field_key' => 'lic', 'field_group' => 'deductions', 'field_type' => 'number', 'include_in_total_deductions' => true]),
             $row(['field_label' => 'CPF', 'field_key' => 'cpf', 'field_group' => 'deductions', 'field_type' => 'number', 'include_in_total_deductions' => true, 'calculation_type' => 'formula_based']),
             $row(['field_label' => 'DA CPF', 'field_key' => 'da_cpf', 'field_group' => 'deductions', 'field_type' => 'number', 'include_in_total_deductions' => true]),
+            // GPF is intentionally independent of CPF and DA CPF.
+            $row(['field_label' => 'GPF', 'field_key' => 'gpf', 'field_group' => 'deductions', 'field_type' => 'number', 'include_in_total_deductions' => true]),
             $row(['field_label' => 'VPF', 'field_key' => 'vpf', 'field_group' => 'deductions', 'field_type' => 'number', 'include_in_total_deductions' => true]),
             $row(['field_label' => 'Post Office', 'field_key' => 'post_office', 'field_group' => 'deductions', 'field_type' => 'number', 'include_in_total_deductions' => true]),
             $row(['field_label' => 'Credit Society', 'field_key' => 'credit_society', 'field_group' => 'deductions', 'field_type' => 'number', 'include_in_total_deductions' => true]),

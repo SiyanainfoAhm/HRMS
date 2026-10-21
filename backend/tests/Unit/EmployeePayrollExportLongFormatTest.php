@@ -8,6 +8,8 @@ use App\Services\EmployeePayrollExportService;
 use Carbon\Carbon;
 use Illuminate\Contracts\Console\Kernel;
 use PHPUnit\Framework\TestCase;
+use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use ReflectionClass;
 
 /**
@@ -24,6 +26,11 @@ final class EmployeePayrollExportLongFormatTest extends TestCase
         if (! self::$booted) {
             $app = require dirname(__DIR__, 2).'/bootstrap/app.php';
             $app->make(Kernel::class)->bootstrap();
+            // This plain PHPUnit test bootstraps Laravel directly rather than
+            // through Tests\\TestCase; restore the temporary framework handler
+            // so PHPUnit can verify the test leaves its handler stack intact.
+            restore_error_handler();
+            restore_exception_handler();
             self::$booted = true;
         }
     }
@@ -210,6 +217,86 @@ final class EmployeePayrollExportLongFormatTest extends TestCase
         $this->assertSame(6, array_sum($employeesPerMonth));
     }
 
+    public function test_three_month_workbook_round_trip_uses_snapshot_union_and_not_accommodation_or_audit_state(): void
+    {
+        $periods = [
+            $this->period('june', '2026-06-01', 'June 2026'),
+            $this->period('july', '2026-07-01', 'July 2026'),
+            $this->period('august', '2026-08-01', 'August 2026'),
+        ];
+        $months = [
+            'june' => range(1, 10),
+            'july' => range(1, 12),
+            'august' => range(2, 12),
+        ];
+        $monthlyByPeriod = [];
+        $masters = [];
+        foreach ($months as $periodId => $employeeNumbers) {
+            foreach ($employeeNumbers as $number) {
+                $uid = 'employee-'.$number;
+                $masters[$uid] = [
+                    'employeeCode' => str_pad((string) $number, 3, '0', STR_PAD_LEFT),
+                    'name' => 'Employee '.$number,
+                    'status' => $number <= 3 ? 'audited' : 'unaudited',
+                    // Only two employees have accommodation, which must not filter rows.
+                    'quarterAssigned' => $number <= 2,
+                    'quarterName' => $number <= 2 ? 'Q-'.$number : '',
+                    'quarterType' => $number <= 2 ? 'Type I' : '',
+                    'quarterRent' => $number <= 2 ? 500 : 0,
+                ];
+                $monthlyByPeriod[$periodId][] = $this->snapshot(
+                    $uid,
+                    $number,
+                    $periodId === 'june' ? ['June Custom Earn' => 10] : ($periodId === 'july' ? ['July Custom Earn' => 20] : []),
+                    $periodId === 'august' ? ['August Custom Deduction' => 5] : [],
+                );
+            }
+        }
+
+        $sheet = $this->service()->buildSpreadsheet(
+            $periods,
+            $monthlyByPeriod,
+            $masters,
+            [],
+            [],
+            ['earnings' => ['July Custom Earn', 'June Custom Earn'], 'deductions' => ['August Custom Deduction']],
+        );
+        $path = tempnam(sys_get_temp_dir(), 'cirt-export-');
+        self::assertIsString($path);
+        try {
+            (new Xlsx($sheet))->save($path);
+            $roundTrip = IOFactory::load($path)->getActiveSheet()->toArray(null, true, true, false);
+        } finally {
+            @unlink($path);
+        }
+
+        $headers = $roundTrip[0];
+        $rows = array_slice($roundTrip, 1);
+        // A: 10 + 12 + 11 actual employee-month snapshots, with a 12-person union.
+        $this->assertCount(33, $rows);
+        $codes = array_unique(array_column($rows, 0));
+        sort($codes);
+        $this->assertCount(12, $codes);
+        $this->assertSame('001', $codes[0]);
+        $this->assertSame('012', $codes[11]);
+        $column = array_flip($headers);
+        // B/C: audit and residential accommodation values do not exclude any row.
+        $this->assertCount(2, array_filter($rows, static fn (array $row): bool => $row[0] === '001'));
+        $this->assertCount(2, array_filter($rows, static fn (array $row): bool => $row[0] === '012'));
+        $this->assertSame('Yes', $rows[0][$column['Quarter Assigned']]);
+        $this->assertSame('No', $rows[2][$column['Quarter Assigned']]);
+        // D/E: dynamic fields survive the actual XLSX write/read and remain month-specific.
+        $this->assertArrayHasKey('June Custom Earn', $column);
+        $this->assertArrayHasKey('July Custom Earn', $column);
+        $this->assertArrayHasKey('August Custom Deduction', $column);
+        $juneEmployeeOne = array_values(array_filter($rows, static fn (array $row): bool => $row[0] === '001' && $row[18] === 'June 2026'))[0];
+        $this->assertSame(10.0, (float) $juneEmployeeOne[$column['June Custom Earn']]);
+        $this->assertSame(null, $juneEmployeeOne[$column['July Custom Earn']]);
+        // F: an explicit employee-ID set narrows only when supplied.
+        $selected = $this->service()->buildSpreadsheet($periods, $monthlyByPeriod, $masters, [], [], ['earnings' => [], 'deductions' => []], ['employee-12' => true]);
+        $this->assertSame(2, $selected->getActiveSheet()->getHighestDataRow() - 1);
+    }
+
     public function test_service_source_no_longer_builds_wide_month_headers(): void
     {
         $path = dirname(__DIR__, 2).'/app/Services/EmployeePayrollExportService.php';
@@ -217,6 +304,39 @@ final class EmployeePayrollExportLongFormatTest extends TestCase
         $this->assertIsString($source);
         $this->assertStringNotContainsString("\$label.' - '.", $source);
         $this->assertStringContainsString("'Month'", $source);
+        $this->assertStringNotContainsString('quarterMetaMatchesFilter', $source);
+        $this->assertStringNotContainsString('quarterIds', $source);
         $this->assertTrue((new ReflectionClass(EmployeePayrollExportService::class))->hasMethod('buildHeaders'));
+    }
+
+    private function period(string $id, string $start, string $name): HrmsPayrollPeriod
+    {
+        $period = new HrmsPayrollPeriod;
+        $period->id = $id;
+        $period->period_name = $name;
+        $period->period_start = Carbon::parse($start);
+
+        return $period;
+    }
+
+    /** @param array<string, int|float> $earnings @param array<string, int|float> $deductions */
+    private function snapshot(string $employeeUserId, int $number, array $earnings, array $deductions): HrmsGovernmentMonthlyPayroll
+    {
+        $snapshot = new HrmsGovernmentMonthlyPayroll;
+        $snapshot->forceFill([
+            'employee_user_id' => $employeeUserId,
+            'basic_paid' => 1000 + $number,
+            'total_earnings' => 1000 + $number + array_sum($earnings),
+            'total_deductions' => array_sum($deductions),
+            'net_salary' => 1000 + $number + array_sum($earnings) - array_sum($deductions),
+            'has_quarter' => $number <= 2,
+            'quarter_name' => $number <= 2 ? 'Q-'.$number : null,
+            'quarter_type' => $number <= 2 ? 'Type I' : null,
+            'quarter_rent_amount' => $number <= 2 ? 500 : 0,
+            'custom_earnings' => $earnings,
+            'custom_deductions' => $deductions,
+        ]);
+
+        return $snapshot;
     }
 }

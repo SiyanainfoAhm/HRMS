@@ -3011,9 +3011,9 @@ function PayrollPageContent() {
     try {
       // With no active filters, always use the complete period, never the
       // currently visible page of the preview table.
-      const rows = hasActiveRunFilters
-        ? await collectFilteredRunRowsForExport()
-        : await collectAllRunRowsForExport();
+      // Preview/search filters are display state. The standard payroll reports
+      // are complete unless the user explicitly selects a filtered scope.
+      const rows = await collectAllRunRowsForExport();
       if (rows.length === 0) {
         showToast(
           "error",
@@ -3078,7 +3078,7 @@ function PayrollPageContent() {
       return;
     }
     try {
-      const rows = await collectFilteredRunRowsForExport();
+      const rows = await collectAllRunRowsForExport();
       if (rows.length === 0) {
         showToast(
           "error",
@@ -3089,17 +3089,6 @@ function PayrollPageContent() {
         return;
       }
       const params = new URLSearchParams({ periodId: preview.existingPeriodId });
-      if (previewDivisionFilter) params.set("divisionId", previewDivisionFilter);
-      if (previewDepartmentFilter) params.set("departmentId", previewDepartmentFilter);
-      if (previewDivisionName) params.set("divisionName", previewDivisionName);
-      if (previewDepartmentName) params.set("departmentName", previewDepartmentName);
-      if (previewDesignationName) params.set("designationName", previewDesignationName);
-      if (hasActiveRunFilters) {
-        params.set(
-          "employeeUserIds",
-          rows.map((r) => String(r.employeeUserId ?? "")).filter(Boolean).join(","),
-        );
-      }
       const res = await fetch(`/api/payroll/export?${params.toString()}`);
       const contentType = res.headers.get("content-type") ?? "";
       if (!res.ok) {
@@ -3126,7 +3115,9 @@ function PayrollPageContent() {
   async function downloadBankLetter(format: BankLetterExportFormat = "docx") {
     setBankLetterLoading(true);
     try {
-      const rows = await collectFilteredRunRowsForExport();
+      // A payroll document is complete by default; audit/search state cannot
+      // reduce its recipient population.
+      const rows = await collectAllRunRowsForExport();
       if (rows.length === 0) {
         showToast(
           "error",

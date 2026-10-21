@@ -44,6 +44,12 @@ function titleFromFieldKey(key: string): string {
     .join(" ");
 }
 
+/** A stored field key is immutable once it has employee values, so it is safe as a historical reference. */
+function historicalFieldLabel(key: string, configuredLabel?: string): string {
+  const label = configuredLabel?.trim() || titleFromFieldKey(key);
+  return `${label} (${key})`;
+}
+
 function customSnapshotPairs(
   gov: GovernmentMonthlySlip,
   column: "custom_earnings" | "custom_deductions",
@@ -65,17 +71,30 @@ function customSnapshotPairs(
 
   const group: "earnings" | "deductions" = column === "custom_earnings" ? "earnings" : "deductions";
   if (fieldMetas?.length) {
-    return fieldMetas
+    const shown = new Set<string>();
+    const configured = fieldMetas
       .filter((m) => m.showInSalarySlip && payslipFieldMatchesGroup(m, group))
       .sort((a, b) => a.displayOrder - b.displayOrder)
-      .map((m) => [m.fieldLabel, Math.round(Number(obj[m.fieldKey] ?? 0) || 0)] as [string, number]);
+      .map((m) => {
+        shown.add(m.fieldKey);
+        return [historicalFieldLabel(m.fieldKey, m.fieldLabel), Math.round(Number(obj[m.fieldKey] ?? 0) || 0)] as [string, number];
+      });
+
+    // Definitions may be deactivated or deleted after a payroll is saved.  Do
+    // not let current configuration erase a historical payment from its slip.
+    const historical = Object.entries(obj)
+      .filter(([key, value]) => !shown.has(key) && Number(value) !== 0)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, value]) => [historicalFieldLabel(key), Math.round(Number(value) || 0)] as [string, number]);
+
+    return [...configured, ...historical];
   }
 
   const out: [string, number][] = [];
   for (const [key, val] of Object.entries(obj)) {
     const n = Number(val);
     if (!Number.isFinite(n) || n === 0) continue;
-    out.push([titleFromFieldKey(key), n]);
+    out.push([historicalFieldLabel(key), n]);
   }
   return out;
 }

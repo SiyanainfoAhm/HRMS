@@ -87,8 +87,6 @@ export const FIELD_TYPES = [
 export const CALCULATION_TYPES = [
   { value: "manual_entry", label: "Manual Entry" },
   { value: "fixed_amount", label: "Fixed Amount" },
-  { value: "percentage_based", label: "Percentage Based" },
-  { value: "formula_based", label: "Formula Based" },
 ];
 
 export function fieldKeyFromLabel(label: string): string {
