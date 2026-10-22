@@ -1561,6 +1561,9 @@ class PayrollController extends Controller
                 'id' => $period->id,
                 'periodStart' => $period->period_start?->format('Y-m-d'),
                 'periodName' => $period->period_name,
+                // The export banner must use persisted payroll state, not the
+                // mere presence of saved snapshot rows.
+                'isLocked' => (bool) $period->is_locked,
             ],
             'payslips' => $payslips,
             'users' => $users,

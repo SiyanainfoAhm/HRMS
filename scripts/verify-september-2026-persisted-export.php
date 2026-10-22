@@ -1,0 +1,4 @@
+<?php
+declare(strict_types=1);
+use PhpOffice\PhpSpreadsheet\IOFactory;require __DIR__.'/../backend/vendor/autoload.php';
+$path=__DIR__.'/../outputs/cirt-september-2026-reconciliation/CIRT_September_2026_Persisted_Component_Export.xlsx';$s=IOFactory::load($path)->getActiveSheet();$h=[];foreach($s->getRowIterator(1,1)->current()->getCellIterator() as $c)$h[$c->getColumn()]=(string)$c->getValue();$sums=[];foreach(['Special Pay','Telephone Allowance','Gross Arrear','Education Allowance','Encashment','CPF','Electricity','GPF','Total Earnings','Total Deductions','Net Salary'] as $label)$sums[$label]=0;for($r=2;$r<=$s->getHighestDataRow();$r++){foreach($h as $col=>$label)if(isset($sums[$label]))$sums[$label]+=(float)$s->getCell($col.$r)->getValue();}echo json_encode(['rows'=>$s->getHighestDataRow()-1,'sums'=>$sums,'headers'=>$h],JSON_PRETTY_PRINT),PHP_EOL;

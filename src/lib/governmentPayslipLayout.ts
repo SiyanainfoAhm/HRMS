@@ -46,8 +46,8 @@ function titleFromFieldKey(key: string): string {
 
 /** A stored field key is immutable once it has employee values, so it is safe as a historical reference. */
 function historicalFieldLabel(key: string, configuredLabel?: string): string {
-  const label = configuredLabel?.trim() || titleFromFieldKey(key);
-  return `${label} (${key})`;
+  const configured = configuredLabel?.trim();
+  return configured || `${titleFromFieldKey(key)} (${key})`;
 }
 
 function customSnapshotPairs(
@@ -137,6 +137,7 @@ export function governmentPayslipEarningPairs(
     ["Education Allowance", gnum(gov, "education_allowance_paid")],
     ["DA Arrears", gnum(gov, "da_arrears_paid")],
     ["Transport Arrears", gnum(gov, "transport_arrears_paid")],
+    ["Gross Arrears", gnum(gov, "gross_arrear")],
     ["Encashment", gnum(gov, "encashment_paid")],
     ["Encashment DA", gnum(gov, "encashment_da_paid")],
   ];

@@ -111,6 +111,9 @@ function camelGov(g: GovernmentMonthlyRow): Record<string, unknown> {
     transportArrearsPaid: g.transport_arrears_paid,
     encashmentPaid: g.encashment_paid,
     encashmentDaPaid: g.encashment_da_paid,
+    grossArrear: g.gross_arrear,
+    cpfArrear: g.cpf_arrear,
+    netArrear: g.net_arrear,
     totalEarnings: g.total_earnings,
     totalDeductions: g.total_deductions,
     netSalary: g.net_salary,
@@ -152,6 +155,7 @@ function buildFinalizedDetailSheet(opts: {
   divisionName?: string | null;
   departmentName?: string | null;
   designationName?: string | null;
+  status: "Finalized" | "Draft";
 }): XLSX.WorkSheet {
   const { excelHeaders: headers, rowObjects, month, year } = opts;
   const amountCols = new Set(payrollExcelAmountColumnIndices(headers));
@@ -170,8 +174,9 @@ function buildFinalizedDetailSheet(opts: {
   mergeCells(merges, 0, 0, 0, lastCol);
   (ws["!rows"] as Array<{ hpt?: number }>)[0] = { hpt: 28 };
 
-  write(1, 0, "FINALIZED", applyStatusBannerStyle("final"));
-  for (let c = 1; c <= lastCol; c++) write(1, c, "", applyStatusBannerStyle("final"));
+  const isFinalized = opts.status === "Finalized";
+  write(1, 0, isFinalized ? "FINALIZED" : "DRAFT — NOT FINALIZED", applyStatusBannerStyle(isFinalized ? "final" : "draft"));
+  for (let c = 1; c <= lastCol; c++) write(1, c, "", applyStatusBannerStyle(isFinalized ? "final" : "draft"));
   mergeCells(merges, 1, 0, 1, lastCol);
   (ws["!rows"] as Array<{ hpt?: number }>)[1] = { hpt: 20 };
 
@@ -361,6 +366,7 @@ export async function GET(request: NextRequest) {
   const excelHeaders = buildPayrollExcelHeaders(dynamicCols);
 
   const periodStart = String(payload.period?.periodStart ?? payload.period?.period_start ?? "");
+  const payrollStatus: "Finalized" | "Draft" = Boolean(payload.period?.isLocked ?? payload.period?.is_locked) ? "Finalized" : "Draft";
   const [y, m] = periodStart.split("-").map(Number);
   const fileName =
     y && m
@@ -415,6 +421,7 @@ export async function GET(request: NextRequest) {
       divisionName,
       departmentName,
       designationName,
+      status: payrollStatus,
     }),
     "Employee Detail",
   );
@@ -424,7 +431,7 @@ export async function GET(request: NextRequest) {
     buildMonthlySummarySheet(summaryRows, {
       month,
       year,
-      status: "Finalized",
+      status: payrollStatus,
       exportedBy: session.name ?? session.email ?? undefined,
       divisionName,
       departmentName,

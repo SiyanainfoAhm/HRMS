@@ -438,8 +438,15 @@ class EmployeePayrollExportService
             'HRA Paid',
             'Transport Paid',
             'Medical Paid',
+            'Special Pay',
             'Night Allowance',
+            'Education Allowance',
             'Telephone Allowance',
+            'Encashment',
+            'Encashment DA',
+            'DA Arrear',
+            'Transport Arrear',
+            'Gross Arrear',
         ];
 
         foreach ($customKeys['earnings'] as $key) {
@@ -478,9 +485,6 @@ class EmployeePayrollExportService
 
         return array_merge($headers, [
             'Total Deductions',
-            'DA Arrear',
-            'Transport Arrear',
-            'Gross Arrear',
             'CPF Arrear',
             'Net Arrear',
             'Net Salary',
@@ -563,8 +567,15 @@ class EmployeePayrollExportService
             $n($gov->hra_paid),
             $n($gov->transport_paid),
             $n($gov->medical_paid),
+            $n($gov->sp_pay_paid),
             $n($gov->night_allowance_paid ?? $gov->night_allowance_amount ?? 0),
+            $n($gov->education_allowance_paid ?? 0),
             $n($customEarnings['telephone_allowance'] ?? 0),
+            $n($gov->encashment_paid ?? 0),
+            $n($gov->encashment_da_paid ?? 0),
+            $n($gov->da_arrears_paid ?? 0),
+            $n($gov->transport_arrears_paid ?? 0),
+            $n($gov->gross_arrear ?? 0),
         ];
 
         foreach ($customKeys['earnings'] as $key) {
@@ -603,9 +614,6 @@ class EmployeePayrollExportService
 
         return array_merge($row, [
             $n($gov->total_deductions),
-            $n($gov->da_arrears_paid ?? 0),
-            $n($gov->transport_arrears_paid ?? 0),
-            $n($gov->gross_arrear ?? 0),
             $n($gov->cpf_arrear ?? 0),
             $n($gov->net_arrear ?? 0),
             $n($gov->net_salary),

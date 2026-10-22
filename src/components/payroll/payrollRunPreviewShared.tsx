@@ -5,7 +5,7 @@ import type { GovernmentPreviewMonthly } from "./GovernmentRunPreviewTable";
 
 export const GOV_PREVIEW_EARNING_FIELDS: { key: keyof GovernmentPreviewMonthly; label: string; fieldKey?: string }[] = [
   { key: "basicPaid", label: "Basic", fieldKey: "gross_basic" },
-  { key: "spPayPaid", label: "SP", fieldKey: "sp_pay" },
+  { key: "spPayPaid", label: "Special Pay", fieldKey: "sp_pay" },
   { key: "daPaid", label: "DA", fieldKey: "da" },
   { key: "transportPaid", label: "Transport", fieldKey: "transport" },
   { key: "hraPaid", label: "HRA", fieldKey: "hra" },
@@ -18,6 +18,7 @@ export const GOV_PREVIEW_EARNING_FIELDS: { key: keyof GovernmentPreviewMonthly; 
   { key: "transportArrearsPaid", label: "Tr. arr.", fieldKey: "transport_arrears" },
   { key: "encashmentPaid", label: "Encash." },
   { key: "encashmentDaPaid", label: "Enc. DA" },
+  { key: "grossArrear", label: "Gross Arrear", fieldKey: "gross_arrears" },
 ];
 
 export const GOV_PREVIEW_DEDUCTION_FIELDS: { key: keyof GovernmentPreviewMonthly["deductions"]; label: string; fieldKey?: string }[] = [

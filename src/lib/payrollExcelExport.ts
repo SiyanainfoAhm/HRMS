@@ -26,6 +26,7 @@ export const PAYROLL_EXCEL_HEADER = [
   "TelephoneAllowance",
   "DAArrears",
   "TransportArrears",
+  "GrossArrears",
   "Encashment",
   "EncashmentDA",
   "GrossTotal",
@@ -114,6 +115,9 @@ export type GovernmentMonthlyRow = {
   education_allowance_paid?: number | null;
   da_arrears_paid?: number | null;
   transport_arrears_paid?: number | null;
+  gross_arrear?: number | null;
+  cpf_arrear?: number | null;
+  net_arrear?: number | null;
   encashment_paid?: number | null;
   encashment_da_paid?: number | null;
   income_tax_amount?: number | null;
@@ -296,6 +300,7 @@ function govFromComputed(
     TelephoneAllowance: customAmount(c.customEarnings, "telephone_allowance"),
     DAArrears: c.daArrearsPaid,
     TransportArrears: c.transportArrearsPaid,
+    GrossArrears: n((c as unknown as Record<string, unknown>).grossArrear),
     Encashment: c.encashmentPaid,
     EncashmentDA: c.encashmentDaPaid,
     GrossTotal: c.totalEarnings,
@@ -367,6 +372,7 @@ function govFromDbRow(
     TelephoneAllowance: customAmount(r.custom_earnings, "telephone_allowance"),
     DAArrears: n(r.da_arrears_paid),
     TransportArrears: n(r.transport_arrears_paid),
+    GrossArrears: n(r.gross_arrear),
     Encashment: n(r.encashment_paid),
     EncashmentDA: n(r.encashment_da_paid),
     GrossTotal: n(r.total_earnings),
@@ -457,6 +463,7 @@ export function buildPayrollExcelRow(
     TelephoneAllowance: 0,
     DAArrears: 0,
     TransportArrears: 0,
+    GrossArrears: 0,
     Encashment: 0,
     EncashmentDA: 0,
     GrossTotal: n(p.gross_pay),

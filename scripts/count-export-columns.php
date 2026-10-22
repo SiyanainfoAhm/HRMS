@@ -1,0 +1,4 @@
+<?php
+declare(strict_types=1);
+use App\Models\HrmsGovernmentMonthlyPayroll;use App\Models\HrmsPayrollPeriod;use App\Models\HrmsUser;use App\Services\EmployeePayrollExportService;use Illuminate\Contracts\Console\Kernel;
+require __DIR__.'/../backend/vendor/autoload.php';$app=require __DIR__.'/../backend/bootstrap/app.php';$app->make(Kernel::class)->bootstrap();$u=HrmsUser::where('role','super_admin')->sole();$s=$app->make(EmployeePayrollExportService::class);$p=HrmsPayrollPeriod::findOrFail('a30895ff-b1a4-4775-bd2b-cdf8d6e5004f');$m=HrmsGovernmentMonthlyPayroll::where('payroll_period_id',$p->id)->firstOrFail();$h=$s->buildHeaders(['earnings'=>[],'deductions'=>[]]);$r=$s->buildDataRow(null,$p,$m,['earnings'=>[],'deductions'=>[]]);echo json_encode(['headers'=>count($h),'row'=>count($r),'headers_list'=>$h],JSON_PRETTY_PRINT),PHP_EOL;
