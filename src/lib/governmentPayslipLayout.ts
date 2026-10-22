@@ -137,7 +137,7 @@ export function governmentPayslipEarningPairs(
     ["Education Allowance", gnum(gov, "education_allowance_paid")],
     ["DA Arrears", gnum(gov, "da_arrears_paid")],
     ["Transport Arrears", gnum(gov, "transport_arrears_paid")],
-    ["Gross Arrears", gnum(gov, "gross_arrear")],
+    ["Arrears", gnum(gov, "gross_arrear")],
     ["Encashment", gnum(gov, "encashment_paid")],
     ["Encashment DA", gnum(gov, "encashment_da_paid")],
   ];

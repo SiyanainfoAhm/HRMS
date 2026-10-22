@@ -446,7 +446,7 @@ class EmployeePayrollExportService
             'Encashment DA',
             'DA Arrear',
             'Transport Arrear',
-            'Gross Arrear',
+            'Arrears',
         ];
 
         foreach ($customKeys['earnings'] as $key) {

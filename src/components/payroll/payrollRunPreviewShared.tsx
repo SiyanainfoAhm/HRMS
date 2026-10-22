@@ -18,7 +18,7 @@ export const GOV_PREVIEW_EARNING_FIELDS: { key: keyof GovernmentPreviewMonthly; 
   { key: "transportArrearsPaid", label: "Tr. arr.", fieldKey: "transport_arrears" },
   { key: "encashmentPaid", label: "Encash." },
   { key: "encashmentDaPaid", label: "Enc. DA" },
-  { key: "grossArrear", label: "Gross Arrear", fieldKey: "gross_arrears" },
+  { key: "grossArrear", label: "Arrears", fieldKey: "gross_arrears" },
 ];
 
 export const GOV_PREVIEW_DEDUCTION_FIELDS: { key: keyof GovernmentPreviewMonthly["deductions"]; label: string; fieldKey?: string }[] = [
