@@ -3,6 +3,7 @@
 namespace Tests\Unit;
 
 use App\Models\HrmsGovernmentMonthlyPayroll;
+use App\Models\HrmsPayslip;
 use App\Models\HrmsPayrollPeriod;
 use App\Services\EmployeePayrollExportService;
 use Carbon\Carbon;
@@ -51,6 +52,9 @@ final class EmployeePayrollExportLongFormatTest extends TestCase
         $this->assertSame('Through Day', $headers[19]);
         $this->assertContains('Basic Paid', $headers);
         $this->assertContains('Telephone Allowance', $headers);
+        $this->assertContains('Advance', $headers);
+        $this->assertContains('PR Bonus', $headers);
+        $this->assertContains('Reimbursement', $headers);
         $this->assertContains('GPF', $headers);
         $this->assertContains('Special Allowance', $headers);
         $this->assertContains('Custom Recovery', $headers);
@@ -128,6 +132,13 @@ final class EmployeePayrollExportLongFormatTest extends TestCase
             'custom_earnings' => ['Special Allowance' => 2500, 'telephone_allowance' => 350],
             'custom_deductions' => ['gpf' => 41666],
         ]);
+        $payslip = new HrmsPayslip;
+        $payslip->forceFill([
+            'incentive' => 125,
+            'pr_bonus' => 250,
+            'reimbursement' => 375,
+        ]);
+        $gov->setRelation('payslip', $payslip);
 
         $master = [
             'employeeCode' => '001',
@@ -171,6 +182,9 @@ final class EmployeePayrollExportLongFormatTest extends TestCase
         $this->assertSame(350.0, $map['Electricity Units']);
         $this->assertSame(2500.0, $map['Special Allowance']);
         $this->assertSame(350.0, $map['Telephone Allowance']);
+        $this->assertSame(125.0, $map['Advance']);
+        $this->assertSame(250.0, $map['PR Bonus']);
+        $this->assertSame(375.0, $map['Reimbursement']);
         $this->assertSame(41666.0, $map['GPF']);
         $this->assertSame(132770.0, $map['Net Salary']);
         $this->assertNotContains('SHOULD_NOT_USE', $row);

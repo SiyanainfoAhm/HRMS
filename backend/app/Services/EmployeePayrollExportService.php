@@ -204,6 +204,7 @@ class EmployeePayrollExportService
         }
 
         $q = HrmsGovernmentMonthlyPayroll::query()
+            ->with('payslip')
             ->whereIn('payroll_period_id', $periodIds);
         if (Schema::hasColumn('cirt_monthly_payroll', 'company_id')) {
             $q->where('company_id', $companyId);
@@ -447,6 +448,9 @@ class EmployeePayrollExportService
             'DA Arrear',
             'Transport Arrear',
             'Arrears',
+            'Advance',
+            'PR Bonus',
+            'Reimbursement',
         ];
 
         foreach ($customKeys['earnings'] as $key) {
@@ -576,6 +580,9 @@ class EmployeePayrollExportService
             $n($gov->da_arrears_paid ?? 0),
             $n($gov->transport_arrears_paid ?? 0),
             $n($gov->gross_arrear ?? 0),
+            $n($gov->payslip?->incentive ?? 0),
+            $n($gov->payslip?->pr_bonus ?? 0),
+            $n($gov->payslip?->reimbursement ?? 0),
         ];
 
         foreach ($customKeys['earnings'] as $key) {
