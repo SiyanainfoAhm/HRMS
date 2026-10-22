@@ -256,6 +256,39 @@ assertEq(customTotals.totalEarnings, baseRow().grossPay + 1200, "included custom
 assertEq(customTotals.totalDeductions, baseRow().deductions + 350, "included custom deduction total");
 assertEq(customTotals.netSalary, baseRow().netPay + 850, "custom fields net total");
 
+// Historical/manual Gross Arrear is not represented by the DA/Transport
+// arrear lines, so it must be included once; its CPF arrear must be deducted.
+const historicalArrear = applyGovernmentSheetMonetaryEdit(baseRow(), "grossArrear", 1200);
+const historicalArrearWithCpf = applyGovernmentSheetMonetaryEdit(historicalArrear, "cpfArrear", 120);
+const historicalGm = historicalArrearWithCpf.governmentMonthly as {
+  totalEarnings: number;
+  totalDeductions: number;
+  netSalary: number;
+};
+assertEq(historicalGm.totalEarnings, baseRow().grossPay + 1200, "historical arrear adds to earnings once");
+assertEq(historicalGm.totalDeductions, baseRow().deductions + 120, "CPF arrear adds to deductions");
+assertEq(historicalGm.netSalary, baseRow().netPay + 1080, "historical arrear changes net pay");
+
+// When Gross Arrear is the DA + Transport reporting total it must not be
+// double-counted. Editing the displayed Net Arrear derives CPF Arrear.
+const detailedArrear = applyGovernmentSheetMonetaryEdit(baseRow(), "daArrear", 400);
+const detailedArrear2 = applyGovernmentSheetMonetaryEdit(detailedArrear, "transportArrear", 100);
+assertEq(
+  (detailedArrear2.governmentMonthly as { totalEarnings: number }).totalEarnings,
+  baseRow().grossPay + 500,
+  "detailed arrear included once",
+);
+const netArrearEdit = applyGovernmentSheetMonetaryEdit(detailedArrear2, "netArrear", 450);
+assertEq(netArrearEdit.cpfArrear, 50, "net arrear derives CPF arrear");
+assertEq(netArrearEdit.netPay, baseRow().netPay + 450, "net arrear edit changes net pay");
+
+// Side-panel payment fields are named earnings and must update the actual
+// monthly Net Pay, not merely a transient take-home display.
+const settlement = applyGovernmentSheetMonetaryEdit(baseRow(), "prBonus", 750);
+assertEq(settlement.grossPay, baseRow().grossPay + 750, "PR bonus adds to gross");
+assertEq(settlement.netPay, baseRow().netPay + 750, "PR bonus adds to net");
+assertEq(settlement.takeHome, settlement.netPay, "take-home matches saved net");
+
 // Freeze: overrides present after edit
 assert(
   row.govRecalc?.earningPaidOverrides &&

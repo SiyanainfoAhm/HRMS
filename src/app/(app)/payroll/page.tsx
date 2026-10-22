@@ -268,9 +268,20 @@ function governmentRowFromCompute<T extends {
   payrollFieldDefs?: PayrollFieldDefinition[],
 ) {
   // Re-apply frozen sheet overrides after any full compute (days / EOL / HPL workflow).
-  const gm = applyFrozenSheetOverridesToComputed(
+  const computedGm = applyFrozenSheetOverridesToComputed(
     gr,
     comp as unknown as Record<string, unknown>,
+    payrollFieldDefs,
+  );
+  // Side-panel payment lines are real payable components. Keep their named
+  // values inside the monthly sheet before deriving Gross/Deductions/Net.
+  const gm = recalculateGovernmentSheetTotals(
+    {
+      ...computedGm,
+      incentive: Number(incentiveBase.incentive) || 0,
+      prBonus: Number(incentiveBase.prBonus) || 0,
+      reimbursement: Number(incentiveBase.reimbursement) || 0,
+    },
     payrollFieldDefs,
   );
   const totalEarnings = Number(gm.totalEarnings ?? comp.totalEarnings) || 0;
@@ -302,11 +313,7 @@ function governmentRowFromCompute<T extends {
     pfEmployer: 0,
     esicEmployee: 0,
     esicEmployer: 0,
-    takeHome:
-      Math.round(netSalary) +
-      Math.round(Number(incentiveBase.incentive) || 0) +
-      Math.round(Number(incentiveBase.prBonus) || 0) +
-      Math.round(Number(incentiveBase.reimbursement) || 0),
+    takeHome: Math.round(netSalary),
   };
 }
 
@@ -1602,9 +1609,10 @@ function PayrollPageContent() {
               ? clearMonetaryOverridesFromGovRecalc(gr)
               : gr;
             const grReady = ensureReferenceSalariesForRecompute(grForCalc, runY, runM);
+            const currentArrear = arrear ?? arrearSnapshotFromRow(incentiveBase);
             const { comp, capped, unpaidDays } = applyGovernmentPayrollRowCompute(row, grReady, payDaysVal, {
               ...computeOpts,
-              arrearOverride: arrear,
+              arrearOverride: currentArrear,
             });
             return commitEdit(
               governmentRowFromCompute(
@@ -1614,7 +1622,7 @@ function PayrollPageContent() {
                 capped,
                 unpaidDays,
                 incentiveBase,
-                arrear,
+                currentArrear,
                 payrollConfig?.fields,
               ) as typeof row,
             );

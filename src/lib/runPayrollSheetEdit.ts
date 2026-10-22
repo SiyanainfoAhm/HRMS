@@ -77,6 +77,20 @@ export const SHEET_ARREAR_KEYS = [
   "netArrear",
 ] as const;
 
+/**
+ * These values are entered in the Run Payroll side panel and are persisted on
+ * the payslip as separate, named payment lines.  They must also participate in
+ * the monthly payroll total; keeping them only in `takeHome` made the visible
+ * Net Pay disagree with the saved snapshot and export.
+ */
+export const SHEET_SETTLEMENT_EARNING_KEYS = [
+  "incentive",
+  "prBonus",
+  "reimbursement",
+] as const;
+
+export type SheetSettlementEarningKey = (typeof SHEET_SETTLEMENT_EARNING_KEYS)[number];
+
 export type SheetArrearKey = (typeof SHEET_ARREAR_KEYS)[number];
 
 function roundRupees(n: number): number {
@@ -94,6 +108,20 @@ function asRecord(v: unknown): Record<string, unknown> {
     : {};
 }
 
+/**
+ * `grossArrear` is the reported total of DA and Transport arrears in the
+ * normal arrear workflow.  A manually-recorded historical arrear can instead
+ * exist only in `grossArrear`.  Include only the part not already represented
+ * by the two earning lines, so either form affects pay exactly once.
+ */
+function supplementalGrossArrear(gm: Record<string, unknown>): number {
+  const gross = amount(gm.grossArrear ?? gm.gross_arrear);
+  const detailed =
+    amount(gm.daArrearsPaid ?? gm.da_arrears_paid) +
+    amount(gm.transportArrearsPaid ?? gm.transport_arrears_paid);
+  return Math.max(0, roundRupees(gross - detailed));
+}
+
 /** Sum current earning paid lines + custom earnings included in totals. */
 export function sumSheetEarnings(
   gm: Record<string, unknown>,
@@ -103,6 +131,12 @@ export function sumSheetEarnings(
   for (const key of SHEET_EARNING_KEYS) {
     sum += amount(gm[key]);
   }
+  // Named one-off payments entered in Run Payroll are earnings, not display
+  // metadata.  Persisting them in the aggregate keeps Net Pay/export aligned.
+  for (const key of SHEET_SETTLEMENT_EARNING_KEYS) {
+    sum += amount(gm[key]);
+  }
+  sum += supplementalGrossArrear(gm);
   const custom = asRecord(gm.customEarnings ?? gm.custom_earnings) as Record<string, number>;
   sum += sumCustomBagForTotal(custom, payrollFieldDefs, "earnings");
   return roundRupees(sum);
@@ -118,6 +152,8 @@ export function sumSheetDeductions(
   for (const key of SHEET_DEDUCTION_KEYS) {
     sum += amount(ded[key]);
   }
+  // CPF arrear is stored separately from the regular CPF line.
+  sum += amount(gm.cpfArrear ?? gm.cpf_arrear);
   const custom = asRecord(gm.customDeductions ?? gm.custom_deductions) as Record<string, number>;
   sum += sumCustomBagForTotal(custom, payrollFieldDefs, "deductions");
   return roundRupees(sum);
@@ -245,9 +281,6 @@ function syncRowAggregatesFromGm<T extends GovernmentSheetRow>(
   const totalDeductions = amount(gm.totalDeductions ?? gm.total_deductions);
   const netSalary = amount(gm.netSalary ?? gm.net_salary);
   const ded = asRecord(gm.deductions);
-  const incentive = amount(row.incentive);
-  const prBonus = amount(row.prBonus);
-  const reimbursement = amount(row.reimbursement);
   return {
     ...row,
     governmentMonthly: gm,
@@ -257,7 +290,8 @@ function syncRowAggregatesFromGm<T extends GovernmentSheetRow>(
     tds: amount(ded.incomeTax),
     profTax: amount(ded.pt),
     pfEmployee: roundRupees(amount(ded.cpf) + amount(ded.daCpf) + amount(ded.vpf)),
-    takeHome: roundRupees(netSalary + incentive + prBonus + reimbursement),
+    // Net Salary already contains the named side-panel payments.
+    takeHome: netSalary,
   };
 }
 
@@ -350,6 +384,11 @@ export function applyGovernmentSheetMonetaryEdit<T extends GovernmentSheetRow>(
       ...gr,
       customDeductions: customDeductions as Record<string, number>,
     };
+  } else if ((SHEET_SETTLEMENT_EARNING_KEYS as readonly string[]).includes(field)) {
+    const key = field as SheetSettlementEarningKey;
+    gm = { ...gm, [key]: value };
+    // Keep the row/payslip value and the monthly component value together.
+    row = { ...row, [key]: value } as T;
   } else if ((SHEET_ARREAR_KEYS as readonly string[]).includes(field)) {
     const arrearKey = field as SheetArrearKey;
     const next = {
@@ -366,7 +405,11 @@ export function applyGovernmentSheetMonetaryEdit<T extends GovernmentSheetRow>(
         next.grossArrear = roundRupees(next.daArrear + next.transportArrear);
       }
     }
-    if (arrearKey === "grossArrear" || arrearKey === "cpfArrear") {
+    if (arrearKey === "netArrear") {
+      // Net arrear is a derived amount.  Editing it changes only the matching
+      // CPF-arrear deduction, never adds a second earnings line.
+      next.cpfArrear = Math.max(0, roundRupees(next.grossArrear - next.netArrear));
+    } else if (arrearKey === "grossArrear" || arrearKey === "cpfArrear") {
       const prevAutoNet =
         amount(row.netArrear) === Math.max(0, amount(row.grossArrear) - amount(row.cpfArrear));
       if (prevAutoNet) {
@@ -422,6 +465,7 @@ export function isGovernmentSheetMonetaryField(field: string): boolean {
     return (SHEET_DEDUCTION_KEYS as readonly string[]).includes(field.slice("govDeduction_".length));
   }
   if (field.startsWith("govCustom_") || field.startsWith("govCustomDeduction_")) return true;
+  if ((SHEET_SETTLEMENT_EARNING_KEYS as readonly string[]).includes(field)) return true;
   return (SHEET_ARREAR_KEYS as readonly string[]).includes(field);
 }
 
