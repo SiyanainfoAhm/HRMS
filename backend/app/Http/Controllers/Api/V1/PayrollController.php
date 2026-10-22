@@ -23,6 +23,7 @@ use App\Services\PayrollDraftService;
 use App\Services\PayrollFieldService;
 use App\Services\QuarterService;
 use App\Services\PayrollMasterService;
+use App\Services\PayrollPreflightValidationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -40,6 +41,7 @@ class PayrollController extends Controller
         private readonly PayrollDraftService $draftService,
         private readonly PayrollAmendmentService $amendmentService,
         private readonly ElectricityTariffService $electricityTariffService,
+        private readonly PayrollPreflightValidationService $preflightValidationService,
     ) {}
 
     public function periods(Request $request): JsonResponse
@@ -460,7 +462,7 @@ class PayrollController extends Controller
                 ->where('company_id', $companyId)
                 ->whereNull('effective_to')
                 ->pluck('id')
-                ->all(),
+            ->all(), $periodEnd,
         );
 
         $employees = [];
@@ -636,6 +638,19 @@ class PayrollController extends Controller
                 $customValues = $customFieldsByMasterId[$m->id] ?? [];
                 $row['govRecalc']['customEarnings'] = $this->fieldService->customEarningsFromValues((string) $user->company_id, $customValues);
                 $row['govRecalc']['customDeductions'] = $this->fieldService->customDeductionsFromValues((string) $user->company_id, $customValues);
+                // These dedicated earnings are stored as per-master values but
+                // must feed their canonical payroll lines, not a generic custom
+                // bucket (which would duplicate them in gross/export output).
+                $componentOverrides = [
+                    'spPayPaid' => $customValues['sp_pay'] ?? null,
+                    'educationAllowancePaid' => $customValues['education_allowance'] ?? null,
+                    'encashmentPaid' => $customValues['encashment'] ?? null,
+                ];
+                foreach ($componentOverrides as $key => $value) {
+                    if ($value !== null && $value !== '' && is_numeric($value)) {
+                        $row['govRecalc']['earningPaidOverrides'][$key] = (float) $value;
+                    }
+                }
                 $cpfResolved = $this->fieldService->resolveCpfConfigForMaster((string) $user->company_id, $m);
                 $row['govRecalc']['cpfConfig'] = [
                     'cpfPercentage' => $cpfResolved['cpf_percentage'],
@@ -687,6 +702,9 @@ class PayrollController extends Controller
             $employees[] = $row;
         }
 
+        $preflightValidation = $this->preflightValidationService->validate(
+            $employees, $payrollConfig, $this->electricityTariffForDate($companyId, $periodEndThroughRun), $periodEndThroughRun,
+        );
         $totalEmployees = count($employees);
         if ($returnAll) {
             $employeesPage = $employees;
@@ -732,6 +750,7 @@ class PayrollController extends Controller
                     'meta' => $paginationMeta,
                     'arrearWarnings' => $arrearEnriched['warnings'],
                     'arrearPeriods' => $arrearEnriched['arrearPeriods'] ?? [],
+                    'prePayrollValidation' => $preflightValidation,
                 ]),
                 'payrollConfig' => array_merge($payrollConfig, [
                     'nightAllowanceRates' => $ndaRatesPreloaded,
@@ -832,6 +851,7 @@ class PayrollController extends Controller
                 'meta' => $mergedMeta,
                 'arrearWarnings' => $arrearEnriched['warnings'],
                 'arrearPeriods' => $arrearEnriched['arrearPeriods'] ?? [],
+                'prePayrollValidation' => $preflightValidation,
             ]),
             'payrollConfig' => array_merge($payrollConfig, [
                 'nightAllowanceRates' => $ndaRatesPreloaded,
@@ -902,6 +922,10 @@ class PayrollController extends Controller
 
         if (! is_array($rows) || $rows === []) {
             return response()->json(['error' => 'rows are required (payroll preview data)'], 422);
+        }
+        $calculationIssues = $this->preflightValidationService->validateCalculatedRows($rows);
+        if ($calculationIssues !== []) {
+            return response()->json(['error' => 'Payroll validation failed.', 'code' => 'PAYROLL_VALIDATION_FAILED', 'blockingErrors' => $calculationIssues], 422);
         }
 
         $periodStart = sprintf('%04d-%02d-01', $year, $month);

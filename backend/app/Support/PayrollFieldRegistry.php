@@ -81,6 +81,7 @@ final class PayrollFieldRegistry
             $row(['field_label' => 'Education Allowance', 'field_key' => 'education_allowance', 'field_group' => 'earnings', 'field_type' => 'number', 'include_in_total_earnings' => true]),
             // Separate statutory/accounting classifications; never fold into Other Allowance.
             $row(['field_label' => 'Telephone Allowance', 'field_key' => 'telephone_allowance', 'field_group' => 'earnings', 'field_type' => 'number', 'include_in_total_earnings' => true]),
+            $row(['field_label' => 'Encashment', 'field_key' => 'encashment', 'field_group' => 'earnings', 'field_type' => 'number', 'include_in_total_earnings' => true]),
             $row(['field_label' => 'DA Arrears', 'field_key' => 'da_arrears', 'field_group' => 'earnings', 'field_type' => 'number', 'include_in_total_earnings' => true]),
             $row(['field_label' => 'Transport Arrears', 'field_key' => 'transport_arrears', 'field_group' => 'earnings', 'field_type' => 'number', 'include_in_total_earnings' => true]),
             $row(['field_label' => 'Gross Arrears', 'field_key' => 'gross_arrears', 'field_group' => 'earnings', 'field_type' => 'number', 'include_in_total_earnings' => true]),
@@ -124,6 +125,9 @@ final class PayrollFieldRegistry
 
         return $key !== '' ? $key : 'field';
     }
+
+    /** System components which deliberately store employee-specific values in the dynamic-value table. */
+    public const MASTER_VALUE_SYSTEM_KEYS = ['sp_pay', 'education_allowance', 'telephone_allowance', 'encashment'];
 
     /**
      * Resolve earning amounts for CPF basis from master calculation context.

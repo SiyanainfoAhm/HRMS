@@ -9,6 +9,8 @@ $fox = rows($dir.'/September Salary 2026 - Foxpro.xlsx');
 $input = rows($dir.'/Salary Data as on 15.10.2026.xlsx', 'Employee Payroll');
 $export = json_decode(file_get_contents($dir.'/.phase2-export.json'), true, 512, JSON_THROW_ON_ERROR);
 $foxByCpf = keyed($fox, 'cpfno');
+$foxByCode = keyed($fox, 'code');
+$confirmedIdentityCodes = ['082' => '377', '083' => '378', '084' => '379'];
 $detailCheck = ['cpf_column_total'=>array_sum(array_map(fn($r)=>n($r['cpf']??0),$fox)),'gpf_fp_column_total'=>array_sum(array_map(fn($r)=>n($r['fp']??0),$fox)),'da_column_total'=>array_sum(array_map(fn($r)=>n($r['da']??0),$fox)),'da_pay_column_total'=>array_sum(array_map(fn($r)=>n($r['da pay']??0),$fox))];
 $exportByName = [];
 foreach ($export['governmentMonthly'] as $m) {
@@ -20,12 +22,14 @@ $map = [
 $component=[]; foreach($map as [$label,$fk,$ik,$ck]) $component[$label]=['fox'=>0.0,'cirt'=>0.0];
 $employees=[]; $unmatched=[]; $matched=0;
 foreach($input as $i){
-  $cpf=norm($i['cpf no']??''); $f=$cpf!==''?($foxByCpf[$cpf]??null):null; $m=$exportByName[normName($i['name']??'')]??null;
+  $employeeCode=trim((string)($i['employee code']??'')); $cpf=norm($i['cpf no']??''); $f=$cpf!==''?($foxByCpf[$cpf]??null):null;
+  if (!$f && isset($confirmedIdentityCodes[$employeeCode])) $f=$foxByCode[norm($confirmedIdentityCodes[$employeeCode])]??null;
+  $m=$exportByName[normName($i['name']??'')]??null;
   if(!$f){ $unmatched[]=['Employee Code'=>$i['employee code']??'','Name'=>$i['name']??'','CPF No'=>$i['cpf no']??'','Review'=>'No CPF-confirmed FoxPro identity']; continue; }
   if(!$m) throw new RuntimeException('Missing saved/exported row for '.($i['employee code']??''));
   $matched++;
   $row=['Employee Code'=>$i['employee code']??'','Employee'=>$i['name']??'','CPF'=>$i['cpf no']??''];
-  foreach($map as [$label,$fk,$ik,$ck]){ $fv=n($f[$fk]??0);$cv=n($m[$ck]??0);$component[$label]['fox']+=$fv;$component[$label]['cirt']+=$cv;$row[$label.' Difference']=round($cv-$fv,2); }
+  foreach($map as [$label,$fk,$ik,$ck]){ $fv=n($f[$fk]??0);$cv=n($m[$ck]??0);$component[$label]['fox']+=$fv;$component[$label]['cirt']+=$cv;$row[$label.' FoxPro']=$fv;$row[$label.' CIRT']=$cv;$row[$label.' Difference']=round($cv-$fv,2); }
   $row['Absolute Difference']=round(abs($row['Gross Difference'])+abs($row['Total Deductions Difference'])+abs($row['Net Salary Difference']),2);
   $employees[]=$row;
 }
@@ -35,7 +39,7 @@ $allCirt = []; foreach($map as [$label,,,$ck]) $allCirt[$label] = array_sum(arra
 $allCirt['Education Allowance'] = array_sum(array_map(fn($m)=>n($m['education_allowance_paid']??0), $export['governmentMonthly']));
 $allCirt['Special Pay'] = array_sum(array_map(fn($m)=>n($m['sp_pay_paid']??0), $export['governmentMonthly']));
 $allCirt['Encashment'] = array_sum(array_map(fn($m)=>n($m['encashment_paid']??0), $export['governmentMonthly']));
-$allCirt['GPF'] = 0;
+$allCirt['GPF'] = array_sum(array_map(fn($m)=>n(($m['custom_deductions']['gpf'] ?? 0)), $export['governmentMonthly']));
 $allCirt['Telephone'] = 0;
 $foxExtract = ['Basic'=>4266110,'DA'=>2559666,'HRA'=>1008487,'Transport'=>536400,'Medical'=>249000,'Education Allowance'=>33750,'Special Pay'=>8000,'Telephone'=>600,'Arrears'=>22636,'Encashment'=>869,'Gross'=>8685518,'Total Deductions'=>2702034,'Net Salary'=>5983484,'CPF'=>995062,'DA CPF'=>0,'GPF'=>41666,'VPF'=>386700,'Income Tax'=>448000,'Professional Tax'=>16600,'LIC'=>92742,'Rent'=>15690,'Electricity'=>23480,'Water'=>5439,'Mess'=>11335,'Credit Society'=>596090,'Post Office'=>37000,'Welfare'=>5600,'Loan Recovery'=>26500];
 $extractComponents=[]; foreach($foxExtract as $label=>$foxAmount){$cirt=$allCirt[$label]??0;$extractComponents[]=['Component'=>$label,'FoxPro Extract'=>$foxAmount,'CIRT Whole Payroll'=>$cirt,'Difference'=>round($cirt-$foxAmount,2),'Classification'=>in_array($label,['CPF','DA CPF'],true)?'Policy / configuration review':(in_array($label,['Electricity','Rent','Transport'],true)?'Source-to-setting mapping review':'Reconcile to detailed source')];}

@@ -139,9 +139,9 @@ class PayrollFieldController extends Controller
 
     public function destroy(Request $request, string $id): JsonResponse
     {
-        $this->service->deleteField($request->user()->company_id, $id);
+        $result = $this->service->deleteField($request->user()->company_id, $id);
 
-        return response()->json(['ok' => true]);
+        return response()->json(['ok' => true, ...$result]);
     }
 
     public function calculationSettings(Request $request): JsonResponse

@@ -251,6 +251,18 @@ final class PayrollDynamicFieldsTest extends TestCase
         $this->assertStringContainsString('Percentage and formula fields require a dedicated payroll rule', $source);
     }
 
+    public function test_custom_field_lifecycle_preserves_assigned_component_history(): void
+    {
+        $servicePath = dirname(__DIR__, 2).'/app/Services/PayrollFieldService.php';
+        $source = file_get_contents($servicePath);
+
+        $this->assertIsString($source);
+        $this->assertStringContainsString('Cannot change field classification after values exist', $source);
+        $this->assertStringContainsString("if (\$this->fieldHasValues(\$field)) {\n            \$field->update(['is_active' => false]);", $source);
+        $this->assertStringContainsString("'archived' => true", $source);
+        $this->assertStringNotContainsString("HrmsPayrollFieldValue::query()->where('field_definition_id', \$field->id)->delete()", $source);
+    }
+
     public function test_dyn_001_payroll_field_apis_exist(): void
     {
         $routes = file_get_contents(dirname(__DIR__, 2).'/routes/api.php');

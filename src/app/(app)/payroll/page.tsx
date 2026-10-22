@@ -1076,6 +1076,13 @@ function PayrollPageContent() {
     isLocked?: boolean;
     payrollComplete?: boolean;
     missingPayslipCount?: number;
+    prePayrollValidation?: {
+      canCalculate: boolean;
+      blockingErrorCount: number;
+      warningCount: number;
+      blockingErrors: { employee: string; code: string; message: string }[];
+      warnings: { employee: string; code: string; message: string }[];
+    };
     arrearWarnings?: string[];
     arrearPeriods?: {
       from?: string | null;
@@ -3395,7 +3402,8 @@ function PayrollPageContent() {
             showGenerate={!preview?.alreadyRun || preview?.payrollComplete === false}
             generateDisabled={
               (!!preview?.alreadyRun && preview?.payrollComplete !== false) ||
-              (editableRows.length > 0 && filteredEditableRows.length === 0)
+              (editableRows.length > 0 && filteredEditableRows.length === 0) ||
+              preview?.prePayrollValidation?.canCalculate === false
             }
             generateLabel={
               preview?.alreadyRun && preview?.payrollComplete === false
@@ -3553,6 +3561,16 @@ function PayrollPageContent() {
             }
           >
               {runError && <p className="text-sm text-red-600">{runError}</p>}
+              {preview?.prePayrollValidation && !preview.alreadyRun && (
+                <div className={`rounded-md px-3 py-2 text-sm ${preview.prePayrollValidation.canCalculate ? "bg-emerald-50 text-emerald-900" : "bg-red-50 text-red-900"}`}>
+                  {preview.prePayrollValidation.canCalculate
+                    ? `Pre-payroll validation passed for ${previewMeta.total || editableRows.length} employees.`
+                    : `Pre-payroll validation blocked: ${preview.prePayrollValidation.blockingErrorCount} error(s), ${preview.prePayrollValidation.warningCount} warning(s).`}
+                  {!preview.prePayrollValidation.canCalculate && preview.prePayrollValidation.blockingErrors.slice(0, 3).map((issue) => (
+                    <div key={`${issue.employee}-${issue.code}`}>{issue.employee}: {issue.message}</div>
+                  ))}
+                </div>
+              )}
               {preview?.alreadyRun && (
               <div className="flex flex-wrap items-center gap-2 text-sm">
                 <span className={`rounded-lg px-2.5 py-1 ${auditMode ? "bg-violet-50 text-violet-950" : "bg-amber-50 text-amber-900"}`}>

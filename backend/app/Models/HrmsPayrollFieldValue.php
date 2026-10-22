@@ -24,6 +24,10 @@ class HrmsPayrollFieldValue extends Model
         'field_definition_id',
         'field_key',
         'field_value',
+        'effective_from',
+        'effective_to',
+        'recurrence',
+        'source_reference',
     ];
 
     protected function casts(): array
@@ -31,6 +35,8 @@ class HrmsPayrollFieldValue extends Model
         return [
             'created_at' => 'datetime',
             'updated_at' => 'datetime',
+            'effective_from' => 'date',
+            'effective_to' => 'date',
         ];
     }
 

@@ -226,6 +226,11 @@ class PayrollFieldService
         if ($newType !== $field->field_type && $this->fieldHasValues($field)) {
             throw ValidationException::withMessages(['field_type' => ['Cannot change field type after values exist.']]);
         }
+        if ($newGroup !== $field->field_group && $this->fieldHasValues($field)) {
+            throw ValidationException::withMessages([
+                'field_group' => ['Cannot change field classification after values exist. Deactivate the field and create a new component instead.'],
+            ]);
+        }
 
         $field->update([
             'field_label' => $data['field_label'] ?? $data['fieldLabel'] ?? $field->field_label,
@@ -256,7 +261,14 @@ class PayrollFieldService
         return $this->formatField($field->refresh());
     }
 
-    public function deleteField(string $companyId, string $id): void
+    /**
+     * Delete only a field that has never been assigned. Assigned fields are
+     * archived (deactivated) so existing master rows and saved payroll
+     * snapshots retain their component identity.
+     *
+     * @return array{deleted: bool, archived: bool, field: array<string, mixed>}
+     */
+    public function deleteField(string $companyId, string $id): array
     {
         $field = HrmsPayrollFieldDefinition::query()->where('company_id', $companyId)->findOrFail($id);
 
@@ -264,6 +276,16 @@ class PayrollFieldService
             throw ValidationException::withMessages([
                 'field' => ['System payroll fields cannot be deleted. Deactivate instead if you want to hide them.'],
             ]);
+        }
+
+        if ($this->fieldHasValues($field)) {
+            $field->update(['is_active' => false]);
+
+            return [
+                'deleted' => false,
+                'archived' => true,
+                'field' => $this->formatField($field->refresh()),
+            ];
         }
 
         $settings = $this->ensureCalculationSettings($companyId);
@@ -280,11 +302,13 @@ class PayrollFieldService
             $settings->update(['cpf_basis_field_keys' => $remaining]);
         }
 
-        if (Schema::hasTable('cirt_payroll_field_values')) {
-            HrmsPayrollFieldValue::query()->where('field_definition_id', $field->id)->delete();
-        }
-
         $field->delete();
+
+        return [
+            'deleted' => true,
+            'archived' => false,
+            'field' => $this->formatField($field),
+        ];
     }
 
     /** @param array<string, mixed> $data */
@@ -501,17 +525,28 @@ class PayrollFieldService
      * @param  list<string>  $masterIds
      * @return array<string, array<string, string>>
      */
-    public function getCustomFieldValuesForMasters(string $companyId, array $masterIds): array
+    public function getCustomFieldValuesForMasters(string $companyId, array $masterIds, ?string $asOfDate = null): array
     {
         if (! Schema::hasTable('cirt_payroll_field_values') || $masterIds === []) {
             return [];
         }
 
         $out = [];
-        foreach (HrmsPayrollFieldValue::query()
+        $query = HrmsPayrollFieldValue::query()
             ->where('company_id', $companyId)
-            ->whereIn('payroll_master_id', $masterIds)
-            ->get(['payroll_master_id', 'field_key', 'field_value']) as $row) {
+            ->whereIn('payroll_master_id', $masterIds);
+        if ($asOfDate !== null && Schema::hasColumn('cirt_payroll_field_values', 'recurrence')) {
+            $query->where(function ($q) use ($asOfDate): void {
+                $q->where(function ($q) use ($asOfDate): void {
+                    $q->where('recurrence', 'recurring')
+                        ->where(fn ($q) => $q->whereNull('effective_from')->orWhereDate('effective_from', '<=', $asOfDate))
+                        ->where(fn ($q) => $q->whereNull('effective_to')->orWhereDate('effective_to', '>=', $asOfDate));
+                })->orWhere(function ($q) use ($asOfDate): void {
+                    $q->where('recurrence', 'one_time')->whereDate('effective_from', '<=', $asOfDate)->whereDate('effective_to', '>=', $asOfDate);
+                });
+            });
+        }
+        foreach ($query->get(['payroll_master_id', 'field_key', 'field_value']) as $row) {
             $mid = (string) $row->payroll_master_id;
             $out[$mid] ??= [];
             $out[$mid][(string) $row->field_key] = (string) ($row->field_value ?? '');
@@ -534,7 +569,10 @@ class PayrollFieldService
         $customFields = HrmsPayrollFieldDefinition::query()
             ->where('company_id', $companyId)
             ->where('is_active', true)
-            ->where('is_system', false)
+            ->where(function ($query): void {
+                $query->where('is_system', false)
+                    ->orWhereIn('field_key', PayrollFieldRegistry::MASTER_VALUE_SYSTEM_KEYS);
+            })
             ->get()
             ->keyBy('field_key');
 
@@ -544,7 +582,18 @@ class PayrollFieldService
             if (! $def) {
                 continue;
             }
-            $val = is_scalar($raw) || $raw === null ? (string) ($raw ?? '') : json_encode($raw);
+            $metadata = is_array($raw) ? $raw : [];
+            $value = is_array($raw) ? ($raw['value'] ?? null) : $raw;
+            $val = is_scalar($value) || $value === null ? (string) ($value ?? '') : json_encode($value);
+            $recurrence = (string) ($metadata['recurrence'] ?? 'recurring');
+            if (! in_array($recurrence, ['recurring', 'one_time'], true)) {
+                throw ValidationException::withMessages([$fieldKey => ['Recurrence must be recurring or one_time.']]);
+            }
+            $effectiveFrom = $metadata['effective_from'] ?? $metadata['effectiveFrom'] ?? null;
+            $effectiveTo = $metadata['effective_to'] ?? $metadata['effectiveTo'] ?? null;
+            if ($recurrence === 'one_time' && (! $effectiveFrom || ! $effectiveTo || strtotime((string) $effectiveFrom) === false || strtotime((string) $effectiveTo) === false || $effectiveFrom > $effectiveTo)) {
+                throw ValidationException::withMessages([$fieldKey => ['One-time values require a valid effective_from and effective_to date range.']]);
+            }
 
             HrmsPayrollFieldValue::updateOrCreate(
                 [
@@ -556,6 +605,10 @@ class PayrollFieldService
                     'employee_id' => $employeeId,
                     'field_key' => $fieldKey,
                     'field_value' => $val,
+                    'effective_from' => $effectiveFrom,
+                    'effective_to' => $effectiveTo,
+                    'recurrence' => $recurrence,
+                    'source_reference' => $metadata['source_reference'] ?? $metadata['sourceReference'] ?? null,
                 ],
             );
         }
@@ -568,7 +621,10 @@ class PayrollFieldService
         $fields = HrmsPayrollFieldDefinition::query()
             ->where('company_id', $companyId)
             ->where('is_active', true)
-            ->where('is_system', false)
+            ->where(function ($query): void {
+                $query->where('is_system', false)
+                    ->orWhereIn('field_key', PayrollFieldRegistry::MASTER_VALUE_SYSTEM_KEYS);
+            })
             ->where('show_in_payroll_master', true)
             ->get();
 
@@ -609,7 +665,10 @@ class PayrollFieldService
         return HrmsPayrollFieldDefinition::query()
             ->where('company_id', $companyId)
             ->where('is_active', true)
-            ->where('is_system', false)
+            ->where(function ($query): void {
+                $query->where('is_system', false)
+                    ->orWhereIn('field_key', PayrollFieldRegistry::MASTER_VALUE_SYSTEM_KEYS);
+            })
             ->where('show_in_payroll_master', true)
             ->orderBy('display_order')
             ->orderBy('field_label')
@@ -643,7 +702,10 @@ class PayrollFieldService
         return HrmsPayrollFieldDefinition::query()
             ->where('company_id', $companyId)
             ->where('is_active', true)
-            ->where('is_system', false)
+            ->where(function ($query): void {
+                $query->where('is_system', false)
+                    ->orWhereIn('field_key', PayrollFieldRegistry::MASTER_VALUE_SYSTEM_KEYS);
+            })
             ->where('show_in_payroll_master', true)
             ->orderBy('display_order')
             ->orderBy('field_label')
@@ -660,7 +722,10 @@ class PayrollFieldService
         $fields = HrmsPayrollFieldDefinition::query()
             ->where('company_id', $companyId)
             ->where('is_active', true)
-            ->where('is_system', false)
+            ->where(function ($query): void {
+                $query->where('is_system', false)
+                    ->orWhere('field_key', 'telephone_allowance');
+            })
             ->where('field_group', 'earnings')
             ->where('include_in_total_earnings', true)
             ->get();
@@ -715,7 +780,10 @@ class PayrollFieldService
         $fields = HrmsPayrollFieldDefinition::query()
             ->where('company_id', $companyId)
             ->where('is_active', true)
-            ->where('is_system', false)
+            ->where(function ($query): void {
+                $query->where('is_system', false)
+                    ->orWhere('field_key', 'telephone_allowance');
+            })
             ->where('field_group', 'earnings')
             ->get();
 
