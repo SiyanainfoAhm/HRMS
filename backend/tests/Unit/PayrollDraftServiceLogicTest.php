@@ -21,6 +21,32 @@ final class PayrollDraftServiceLogicTest extends TestCase
         $this->assertSame(12.5, $method->invoke($service, '12.5'));
     }
 
+    public function test_partial_snapshot_merge_preserves_unrelated_values_and_explicit_zero(): void
+    {
+        $service = new PayrollDraftService;
+        $ref = new ReflectionClass($service);
+        $method = $ref->getMethod('mergeSnapshot');
+        $method->setAccessible(true);
+        $merged = $method->invoke($service, [
+            'governmentMonthly' => ['nightAllowancePaid' => 11800, 'customDeductions' => ['mess' => 25]],
+        ], [
+            'governmentMonthly' => ['customDeductions' => ['mess' => 0, 'creditSociety' => 50]],
+        ]);
+        $this->assertSame(11800, $merged['governmentMonthly']['nightAllowancePaid']);
+        $this->assertSame(0, $merged['governmentMonthly']['customDeductions']['mess']);
+        $this->assertSame(50, $merged['governmentMonthly']['customDeductions']['creditSociety']);
+    }
+
+    public function test_snapshot_diff_records_previous_and_new_values(): void
+    {
+        $service = new PayrollDraftService;
+        $ref = new ReflectionClass($service);
+        $method = $ref->getMethod('diffSnapshot');
+        $method->setAccessible(true);
+        $changes = $method->invoke($service, ['nightAllowance' => 100], ['nightAllowance' => 0]);
+        $this->assertSame(['previous' => 100, 'new' => 0], $changes['nightAllowance']);
+    }
+
     public function test_save_path_fills_total_earnings_and_arrears_from_payload(): void
     {
         $source = file_get_contents(dirname(__DIR__, 2).'/app/Services/PayrollDraftService.php');

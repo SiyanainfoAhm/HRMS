@@ -3245,6 +3245,7 @@ function PayrollPageContent() {
           divisionName: previewDivisionName || undefined,
           departmentName: previewDepartmentName || undefined,
           designationName: previewDesignationName || undefined,
+          payrollFields: payrollConfig?.fields ?? [],
           filename:
             kind === "summary"
               ? payrollExtractWorkbookFilename(runMonth, runYear)

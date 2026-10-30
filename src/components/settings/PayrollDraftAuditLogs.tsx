@@ -11,6 +11,7 @@ type AuditLog = {
   employeeCount: number;
   performedBy: string;
   performedAt: string | null;
+  employees?: Array<{ employeeCode?: string | null; employeeUserId?: string; reason?: string; changes?: Record<string, { previous: unknown; new: unknown }> }>;
 };
 
 export function PayrollDraftAuditLogs() {
@@ -37,7 +38,7 @@ export function PayrollDraftAuditLogs() {
     <div className="card space-y-3">
       <div>
         <h2 className="text-lg font-semibold text-slate-900">Payroll Draft Audit Logs</h2>
-        <p className="mt-1 text-sm text-slate-600">History of deleted or reset Run Payroll drafts.</p>
+        <p className="mt-1 text-sm text-slate-600">History of Run Payroll draft edits, resets, actors, and timestamps.</p>
       </div>
       {loading ? <AppPageLoader variant="inline" message="Loading audit logs..." submessage="" /> : null}
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
@@ -51,7 +52,15 @@ export function PayrollDraftAuditLogs() {
             <tbody>
               {logs.map((log) => (
                 <tr key={log.id} className="border-b border-slate-100">
-                  <td className="px-2 py-2 font-medium capitalize">{log.action}</td>
+                  <td className="px-2 py-2 font-medium capitalize">
+                    {log.action.replaceAll("_", " ")}
+                    {log.employees?.flatMap((employee, employeeIndex) => Object.entries(employee.changes ?? {}).map(([field, change]) => (
+                      <div key={`${employee.employeeUserId ?? employeeIndex}-${field}`} className="mt-1 text-xs font-normal text-slate-600">
+                        {employee.employeeCode ?? employee.employeeUserId}: {field} {String(change.previous ?? "—")} → {String(change.new ?? "—")}
+                        {employee.reason ? ` (${employee.reason})` : ""}
+                      </div>
+                    )))}
+                  </td>
                   <td className="px-2 py-2">{String(log.payrollMonth).padStart(2, "0")}/{log.payrollYear}</td>
                   <td className="px-2 py-2 tabular-nums">{log.employeeCount}</td>
                   <td className="px-2 py-2">{log.performedBy}</td>

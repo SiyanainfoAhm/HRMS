@@ -5,6 +5,7 @@ import {
   buildPayrollExcelRow,
   collectDynamicPayrollExcelColumns,
   payrollExcelAmountColumnIndices,
+  type DynamicPayrollExcelColumn,
   type GovernmentMonthlyRow,
 } from "@/lib/payrollExcelExport";
 import type { GovernmentMonthlyComputed } from "@/lib/governmentPayroll";
@@ -50,6 +51,20 @@ const MONTH_NAMES = [
 ];
 
 export type PayrollWorkbookStatus = "Calculated Preview" | "Draft" | "Unsaved Preview" | "Finalized";
+export type PayrollWorkbookField = {
+  fieldKey?: string;
+  field_key?: string;
+  fieldLabel?: string;
+  field_label?: string;
+  fieldGroup?: "earnings" | "deductions" | "statutory" | string;
+  field_group?: "earnings" | "deductions" | "statutory" | string;
+  fieldType?: string;
+  field_type?: string;
+  isActive?: boolean;
+  is_active?: boolean;
+  showInRunPayroll?: boolean;
+  show_in_run_payroll?: boolean;
+};
 
 /** Header lines for the active Run Payroll org filters. Omitted when that filter is "all". */
 export function payrollOrgFilterHeaderLines(opts: {
@@ -650,12 +665,30 @@ export function buildEmployeeDetailSheet(
     divisionName?: string | null;
     departmentName?: string | null;
     designationName?: string | null;
+    payrollFields?: PayrollWorkbookField[];
   },
 ): XLSX.WorkSheet {
   const govRows = rows
     .map((r) => governmentMonthlyToDbShape(r.governmentMonthly as Record<string, unknown> | null))
     .filter((g): g is GovernmentMonthlyRow => g != null) as unknown as Array<Record<string, unknown>>;
-  const dynamicCols = collectDynamicPayrollExcelColumns(govRows);
+  const exportableFields = opts.payrollFields?.filter((f) =>
+    (f.isActive ?? f.is_active ?? true) &&
+    (f.showInRunPayroll ?? f.show_in_run_payroll ?? true) &&
+    (f.fieldType ?? f.field_type ?? "number") === "number" &&
+    ["earnings", "deductions", "statutory"].includes(String(f.fieldGroup ?? f.field_group ?? "")),
+  );
+  const fieldLabelByKey = exportableFields
+    ? new Map(exportableFields.map((f) => [String(f.fieldKey ?? f.field_key ?? ""), String(f.fieldLabel ?? f.field_label ?? "")]))
+    : undefined;
+  const fieldGroupByKey = exportableFields
+    ? new Map(exportableFields.map((f) => [String(f.fieldKey ?? f.field_key ?? ""), String(f.fieldGroup ?? f.field_group ?? "") as "earnings" | "deductions" | "statutory"]))
+    : undefined;
+  const dynamicCols: DynamicPayrollExcelColumn[] = collectDynamicPayrollExcelColumns(
+    govRows,
+    fieldLabelByKey,
+    exportableFields ? new Set(fieldLabelByKey?.keys()) : undefined,
+    fieldGroupByKey,
+  );
   const headers = buildPayrollExcelHeaders(dynamicCols);
   const amountCols = new Set(payrollExcelAmountColumnIndices(headers));
 
@@ -848,6 +881,7 @@ export function buildPayrollRunWorkbook(
     divisionName?: string | null;
     departmentName?: string | null;
     designationName?: string | null;
+    payrollFields?: PayrollWorkbookField[];
   },
 ): XLSX.WorkBook {
   const includeDetail = opts.includeDetail !== false;
@@ -877,6 +911,7 @@ export function downloadPayrollRunWorkbook(
     divisionName?: string | null;
     departmentName?: string | null;
     designationName?: string | null;
+    payrollFields?: PayrollWorkbookField[];
   },
 ): void {
   const wb = buildPayrollRunWorkbook(rows, opts);

@@ -355,14 +355,35 @@ export async function GET(request: NextRequest) {
     field_key?: string;
     fieldLabel?: string;
     field_label?: string;
+    fieldGroup?: string;
+    field_group?: string;
+    fieldType?: string;
+    field_type?: string;
+    isActive?: boolean;
+    is_active?: boolean;
+    showInRunPayroll?: boolean;
+    show_in_run_payroll?: boolean;
   }>;
+  const exportablePayrollFields = payrollFields.filter((f) =>
+    (f.isActive ?? f.is_active ?? true) &&
+    (f.showInRunPayroll ?? f.show_in_run_payroll ?? true) &&
+    (f.fieldType ?? f.field_type ?? "number") === "number" &&
+    ["earnings", "deductions", "statutory"].includes(String(f.fieldGroup ?? f.field_group ?? "")),
+  );
   const fieldLabelByKey = new Map(
-    payrollFields.map((f) => [
+    exportablePayrollFields.map((f) => [
       String(f.fieldKey ?? f.field_key ?? ""),
       String(f.fieldLabel ?? f.field_label ?? ""),
     ]),
   );
-  const dynamicCols = collectDynamicPayrollExcelColumns(govList, fieldLabelByKey);
+  const exportableKeys = new Set(fieldLabelByKey.keys());
+  const fieldGroupByKey = new Map(
+    exportablePayrollFields.map((f) => [
+      String(f.fieldKey ?? f.field_key ?? ""),
+      String(f.fieldGroup ?? f.field_group ?? "") as "earnings" | "deductions" | "statutory",
+    ]),
+  );
+  const dynamicCols = collectDynamicPayrollExcelColumns(govList, fieldLabelByKey, exportableKeys, fieldGroupByKey);
   const excelHeaders = buildPayrollExcelHeaders(dynamicCols);
 
   const periodStart = String(payload.period?.periodStart ?? payload.period?.period_start ?? "");

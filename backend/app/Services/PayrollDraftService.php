@@ -163,16 +163,24 @@ class PayrollDraftService
                     ->lockForUpdate()
                     ->first();
 
+                // Draft rows are snapshots, but older/partial clients may send only
+                // edited fields. Merge objects recursively and keep explicit zeroes;
+                // a missing/null field must never erase a previously saved amount.
+                $beforePayload = is_array($existing?->row_payload) ? $existing->row_payload : [];
+                $payload = $existing
+                    ? $this->mergeSnapshot($beforePayload, $payload)
+                    : $payload;
+
                 $attrs = [
-                    'employee_code' => $row['employeeCode'] ?? $row['employee_code'] ?? ($payload['employeeCode'] ?? $payload['employee_code'] ?? null),
-                    'payroll_master_id' => $row['payrollMasterId'] ?? $row['payroll_master_id'] ?? ($payload['payrollMasterId'] ?? $payload['payroll_master_id'] ?? null),
-                    'pay_days' => $this->num($row['payDays'] ?? $row['pay_days'] ?? ($payload['payDays'] ?? $payload['pay_days'] ?? null)),
-                    'gross_pay' => $this->num($row['grossPay'] ?? $row['gross_pay'] ?? ($payload['grossPay'] ?? $payload['gross_pay'] ?? null)),
-                    'total_earnings' => $this->num($row['totalEarnings'] ?? $row['total_earnings'] ?? null),
-                    'total_deductions' => $this->num($row['totalDeductions'] ?? $row['total_deductions'] ?? ($payload['deductions'] ?? null)),
-                    'total_arrears' => $this->num($row['totalArrears'] ?? $row['total_arrears'] ?? null),
-                    'net_pay' => $this->num($row['netPay'] ?? $row['net_pay'] ?? ($payload['netPay'] ?? $payload['net_pay'] ?? null)),
-                    'remarks' => is_string($remarks) ? $remarks : null,
+                    'employee_code' => $row['employeeCode'] ?? $row['employee_code'] ?? ($payload['employeeCode'] ?? $payload['employee_code'] ?? $existing?->employee_code),
+                    'payroll_master_id' => $row['payrollMasterId'] ?? $row['payroll_master_id'] ?? ($payload['payrollMasterId'] ?? $payload['payroll_master_id'] ?? $existing?->payroll_master_id),
+                    'pay_days' => $this->num($row['payDays'] ?? $row['pay_days'] ?? ($payload['payDays'] ?? $payload['pay_days'] ?? $existing?->pay_days)),
+                    'gross_pay' => $this->num($row['grossPay'] ?? $row['gross_pay'] ?? ($payload['grossPay'] ?? $payload['gross_pay'] ?? $existing?->gross_pay)),
+                    'total_earnings' => $this->num($row['totalEarnings'] ?? $row['total_earnings'] ?? data_get($payload, 'governmentMonthly.totalEarnings') ?? $existing?->total_earnings),
+                    'total_deductions' => $this->num($row['totalDeductions'] ?? $row['total_deductions'] ?? ($payload['deductions'] ?? data_get($payload, 'governmentMonthly.totalDeductions') ?? $existing?->total_deductions)),
+                    'total_arrears' => $this->num($row['totalArrears'] ?? $row['total_arrears'] ?? $existing?->total_arrears),
+                    'net_pay' => $this->num($row['netPay'] ?? $row['net_pay'] ?? ($payload['netPay'] ?? data_get($payload, 'governmentMonthly.netSalary') ?? $existing?->net_pay)),
+                    'remarks' => is_string($remarks) ? $remarks : $existing?->remarks,
                     'row_payload' => $payload,
                     'version' => $existing ? ((int) $existing->version + 1) : 1,
                 ];
@@ -199,7 +207,26 @@ class PayrollDraftService
                 }
 
                 if ($existing) {
+                    $changes = $this->diffSnapshot($beforePayload, $payload);
                     $existing->update($attrs);
+                    if ($changes !== []) {
+                        HrmsPayrollDraftAudit::create([
+                            'id' => (string) Str::uuid(),
+                            'company_id' => $companyId,
+                            'payroll_draft_id' => $draft->id,
+                            'payroll_year' => $year,
+                            'payroll_month' => $month,
+                            'action' => 'employee_updated',
+                            'employee_count' => 1,
+                            'employee_snapshot' => [[
+                                'employeeUserId' => $employeeUserId,
+                                'employeeCode' => $attrs['employee_code'],
+                                'changes' => $changes,
+                                'reason' => $row['reason'] ?? $row['changeReason'] ?? 'Payroll draft edit',
+                            ]],
+                            'performed_by' => $userId,
+                        ]);
+                    }
                 } else {
                     HrmsPayrollDraftEmployee::create([
                         'id' => (string) Str::uuid(),
@@ -394,6 +421,35 @@ class PayrollDraftService
         }
 
         return round((float) $v, 2);
+    }
+
+    private function mergeSnapshot(array $saved, array $incoming): array
+    {
+        foreach ($incoming as $key => $value) {
+            if ($value === null) continue;
+            if (is_array($value) && ! array_is_list($value) && is_array($saved[$key] ?? null) && ! array_is_list($saved[$key])) {
+                $saved[$key] = $this->mergeSnapshot($saved[$key], $value);
+            } else {
+                $saved[$key] = $value;
+            }
+        }
+        return $saved;
+    }
+
+    private function diffSnapshot(array $before, array $after, string $path = ''): array
+    {
+        $changes = [];
+        foreach (array_unique([...array_keys($before), ...array_keys($after)]) as $key) {
+            $name = $path === '' ? (string) $key : $path.'.'.$key;
+            $old = $before[$key] ?? null;
+            $new = $after[$key] ?? null;
+            if (is_array($old) && is_array($new) && ! array_is_list($old) && ! array_is_list($new)) {
+                $changes += $this->diffSnapshot($old, $new, $name);
+            } elseif ($old !== $new) {
+                $changes[$name] = ['previous' => $old, 'new' => $new];
+            }
+        }
+        return $changes;
     }
 
     /** @return array<string, mixed> */

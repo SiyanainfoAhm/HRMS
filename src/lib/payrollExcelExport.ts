@@ -177,7 +177,7 @@ export type GovernmentMonthlyRow = {
 };
 
 /** Dynamic columns appended after fixed headers (admin-configured earning/deduction fields). */
-export type DynamicPayrollExcelColumn = { key: string; label: string };
+export type DynamicPayrollExcelColumn = { key: string; label: string; group?: "earnings" | "deductions" | "statutory" };
 
 function parseCustomBag(raw: unknown): Record<string, number> {
   if (raw == null || raw === "") return {};
@@ -211,6 +211,14 @@ function titleFromFieldKey(key: string): string {
 // classification in every payroll export. Keeping them out of the generic
 // dynamic tail prevents a second GPF/Telephone column.
 const CANONICAL_CUSTOM_EXPORT_KEYS = new Set(["telephone_allowance", "gpf"]);
+const FIXED_PAYROLL_EXPORT_KEYS = new Set([
+  "gross_basic", "basic", "sp_pay", "da", "transport", "hra", "medical",
+  "extra_work_allowance", "night_allowance", "uniform_allowance", "education_allowance",
+  "telephone_allowance", "encashment", "da_arrears", "transport_arrears", "gross_arrears",
+  "income_tax", "professional_tax", "lic", "cpf", "da_cpf", "gpf", "vpf", "post_office",
+  "credit_society", "electricity", "water", "mess", "loan_recovery", "welfare", "hpl", "eol",
+  "quarter_rent", "other_deduction",
+]);
 
 function customAmount(raw: unknown, key: string): number {
   return n(parseCustomBag(raw)[key]);
@@ -220,21 +228,37 @@ function customAmount(raw: unknown, key: string): number {
 export function collectDynamicPayrollExcelColumns(
   govRows: Array<Record<string, unknown>>,
   fieldLabelByKey?: Map<string, string>,
+  configuredKeys?: Set<string>,
+  fieldGroupByKey?: Map<string, "earnings" | "deductions" | "statutory">,
 ): DynamicPayrollExcelColumn[] {
   const seen = new Set<string>();
   const cols: DynamicPayrollExcelColumn[] = [];
+  if (configuredKeys && fieldGroupByKey) {
+    for (const key of configuredKeys) {
+      if (FIXED_PAYROLL_EXPORT_KEYS.has(key) || seen.has(key)) continue;
+      const group = fieldGroupByKey.get(key);
+      if (!group) continue;
+      seen.add(key);
+      cols.push({ key: `dyn_${key}`, label: fieldLabelByKey?.get(key) ?? titleFromFieldKey(key), group });
+    }
+  }
   for (const g of govRows) {
     for (const bag of [
-      parseCustomBag(g.customEarnings ?? g.custom_earnings),
-      parseCustomBag(g.customDeductions ?? g.custom_deductions),
+      { values: parseCustomBag(g.customEarnings ?? g.custom_earnings), group: "earnings" as const },
+      { values: parseCustomBag(g.customDeductions ?? g.custom_deductions), group: "deductions" as const },
     ]) {
-      for (const key of Object.keys(bag)) {
+      for (const key of Object.keys(bag.values)) {
         if (CANONICAL_CUSTOM_EXPORT_KEYS.has(key)) continue;
+        if (FIXED_PAYROLL_EXPORT_KEYS.has(key)) continue;
+        if (configuredKeys && !configuredKeys.has(key)) continue;
+        const configuredGroup = fieldGroupByKey?.get(key);
+        if (configuredGroup && (bag.group === "earnings" ? configuredGroup !== "earnings" : configuredGroup === "earnings")) continue;
         if (seen.has(key)) continue;
         seen.add(key);
         cols.push({
           key: `dyn_${key}`,
           label: fieldLabelByKey?.get(key) ?? titleFromFieldKey(key),
+          ...(configuredGroup ? { group: configuredGroup } : {}),
         });
       }
     }
@@ -253,10 +277,14 @@ function dynamicValuesFromGov(
   if (!gov || dynamicCols.length === 0) return {};
   const earnings = parseCustomBag(gov.custom_earnings);
   const deductions = parseCustomBag(gov.custom_deductions);
-  const merged = { ...earnings, ...deductions };
   const out: Record<string, number | string> = {};
   for (const col of dynamicCols) {
     const fieldKey = col.key.replace(/^dyn_/, "");
+    const merged = col.group === "earnings"
+      ? earnings
+      : col.group === "deductions" || col.group === "statutory"
+        ? deductions
+        : { ...earnings, ...deductions };
     out[col.label] = merged[fieldKey] ?? 0;
   }
   return out;

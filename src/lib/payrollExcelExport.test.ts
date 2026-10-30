@@ -2,7 +2,9 @@
  * Run with: npx --yes tsx src/lib/payrollExcelExport.test.ts
  * Verifies that every stored government payroll component reaches its workbook column.
  */
-import { buildPayrollExcelRow, PAYROLL_EXCEL_HEADER } from "./payrollExcelExport";
+import { buildPayrollExcelRow, buildPayrollExcelHeaders, collectDynamicPayrollExcelColumns, PAYROLL_EXCEL_HEADER } from "./payrollExcelExport";
+import { buildEmployeeDetailSheet } from "./payrollRunWorkbook";
+import * as XLSX from "xlsx-js-style";
 
 const stored = {
   pay_level: 9, basic_paid: 100, da_paid: 101, hra_paid: 102, medical_paid: 103,
@@ -28,6 +30,61 @@ const row = buildPayrollExcelRow({
   payroll_mode: "government", employee_user_id: "employee-1", bank_account_number: "00123",
   gross_pay: 117, net_pay: -17, pay_days: 29, days_in_month: 31, deductions: 134,
 }, "Employee One", { kind: "row", row: stored });
+
+const dynamicColumns = collectDynamicPayrollExcelColumns([
+  { custom_earnings: { new_allowance: 42, inactive_component: 999 } },
+], new Map([["new_allowance", "New Allowance"], ["inactive_component", "Inactive"]]), new Set(["new_allowance"]));
+if (JSON.stringify(buildPayrollExcelHeaders(dynamicColumns).slice(-1)) !== JSON.stringify(["New Allowance"])) {
+  throw new Error("Configured active dynamic component must be included and inactive fields excluded.");
+}
+const dynamicRow = buildPayrollExcelRow({ payroll_mode: "government", employee_user_id: "employee-2" }, "Employee Two", {
+  kind: "row",
+  row: { custom_earnings: { new_allowance: 42 } },
+}, dynamicColumns);
+if (dynamicRow["New Allowance"] !== 42) {
+  throw new Error("Dynamic component values must align with the configured heading.");
+}
+
+const detailSheet = buildEmployeeDetailSheet([{
+  employeeUserId: "employee-3",
+  employeeName: "Employee Three",
+  payrollMode: "government",
+  grossPay: 142,
+  deductions: 7,
+  netPay: 135,
+  governmentMonthly: {
+    totalEarnings: 142,
+    totalDeductions: 7,
+    netSalary: 135,
+    customEarnings: { new_allowance: 42, inactive_component: 999 },
+    customDeductions: { union_dues: 7 },
+  },
+}], {
+  month: 10,
+  year: 2026,
+  status: "Draft",
+  payrollFields: [
+    { fieldKey: "new_allowance", fieldLabel: "New Allowance", fieldGroup: "earnings", isActive: true, showInRunPayroll: true },
+    { fieldKey: "union_dues", fieldLabel: "Union Dues", fieldGroup: "deductions", isActive: true, showInRunPayroll: true },
+    { fieldKey: "configured_zero", fieldLabel: "Configured Zero", fieldGroup: "earnings", fieldType: "number", isActive: true, showInRunPayroll: true },
+    { fieldKey: "text_statutory", fieldLabel: "PAN", fieldGroup: "statutory", fieldType: "text", isActive: true, showInRunPayroll: true },
+    { fieldKey: "inactive_component", fieldLabel: "Inactive Component", fieldGroup: "earnings", isActive: false, showInRunPayroll: true },
+  ],
+});
+const sheetHeaders = XLSX.utils.sheet_to_json<string[]>(detailSheet, { header: 1 })[3];
+for (const [heading, expectedValue] of [["New Allowance", 42], ["Union Dues", 7]] as const) {
+  const column = sheetHeaders.indexOf(heading);
+  if (column < 0) throw new Error(`Detailed workbook is missing configured component heading: ${heading}`);
+  const value = detailSheet[XLSX.utils.encode_cell({ r: 4, c: column })]?.v;
+  if (value !== expectedValue) throw new Error(`${heading}: expected ${expectedValue}, received ${String(value)}`);
+  const total = detailSheet[XLSX.utils.encode_cell({ r: 5, c: column })]?.v;
+  if (total !== expectedValue) throw new Error(`${heading} total: expected ${expectedValue}, received ${String(total)}`);
+}
+if (!sheetHeaders.includes("Configured Zero")) throw new Error("Configured active numeric fields must appear even when no employee has a saved value.");
+const zeroColumn = sheetHeaders.indexOf("Configured Zero");
+if (detailSheet[XLSX.utils.encode_cell({ r: 4, c: zeroColumn })]?.v !== 0) throw new Error("An unset configured component should export as zero.");
+if (sheetHeaders.includes("Inactive Component")) throw new Error("Inactive payroll fields must not appear in the detailed workbook.");
+if (sheetHeaders.includes("PAN")) throw new Error("Text statutory fields must not be exported as numeric payroll components.");
 
 const expected: Record<string, string | number> = {
   AccountNumber: "00123", EmployeeName: "Employee One", PayLevel: 9, PayDays: 29,
