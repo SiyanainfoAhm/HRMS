@@ -6,7 +6,9 @@
     "dev": "next dev --webpack",
     "build": "next build --webpack",
     "start": "next start",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test": "node scripts/run-ts-tests.mjs",
+    "test:php": "php backend/vendor/bin/phpunit --configuration backend/phpunit.xml"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
