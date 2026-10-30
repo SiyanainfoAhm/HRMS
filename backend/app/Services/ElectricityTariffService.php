@@ -114,6 +114,10 @@ class ElectricityTariffService
         ?float $manualAmount = null,
     ): array {
         $units = max(0, $units);
+        // Mirrors electricityTariffCalculation.ts: the stored mode is only a
+        // hint. Master's manual_fixed amount applies while no units are recorded;
+        // positive consumption is always billed from the tariff.
+        $mode = ($mode === 'manual_fixed' && $units <= 0) ? 'manual_fixed' : 'unit_based';
         if (! $applicable) {
             return $this->emptyBill($units, $mode, $tariff['id'] ?? null, $manualOverride, $manualAmount);
         }

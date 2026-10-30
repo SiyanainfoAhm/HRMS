@@ -178,8 +178,12 @@ export type CalculateElectricityBillInput = {
  */
 export function calculateElectricityBill(input: CalculateElectricityBillInput): ElectricityBillBreakdown {
   const applicable = input.applicable !== false;
-  const mode = input.mode === "manual_fixed" ? "manual_fixed" : "unit_based";
   const units = Math.max(0, Number(input.units) || 0);
+  // Billing mode is derived from the inputs, never trusted as stored state.
+  // Master's `manual_fixed` supplies a flat charge only while no consumption is
+  // recorded; any positive unit count is billed from the tariff. Otherwise a
+  // Master default (e.g. 49) would override units whenever the mode is re-seeded.
+  const mode = input.mode === "manual_fixed" && !(units > 0) ? "manual_fixed" : "unit_based";
   const manualOverride = Boolean(input.manualOverride);
   const manualRaw = input.manualAmount;
   const manualAmount =
