@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\HrmsPayrollDraft;
+use App\Exceptions\PayrollConcurrencyException;
 use App\Models\HrmsPayrollDraftEmployee;
 use App\Models\HrmsPayrollDraftAudit;
 use App\Models\HrmsPayslip;
@@ -103,12 +104,11 @@ class PayrollDraftService
                 ->lockForUpdate()
                 ->first();
 
-            if ($draft && $expectedVersion !== null && (int) $draft->version !== (int) $expectedVersion) {
-                throw ValidationException::withMessages([
-                    'version' => [
-                        'Draft was updated by another session (version conflict). Reload and try again.',
-                    ],
-                ]);
+            if ($draft && $expectedVersion === null) {
+                throw new PayrollConcurrencyException((int) $draft->version, 'draft', (string) $draft->id);
+            }
+            if ($draft && (int) $draft->version !== (int) $expectedVersion) {
+                throw new PayrollConcurrencyException((int) $draft->version, 'draft', (string) $draft->id);
             }
 
             if (! $draft) {
@@ -258,7 +258,7 @@ class PayrollDraftService
     /**
      * Discard draft (soft status) or delete for reset.
      */
-    public function resetDraft(string $companyId, int $year, int $month, string $userId): array
+    public function resetDraft(string $companyId, int $year, int $month, string $userId, ?int $expectedVersion = null): array
     {
         $this->assertPeriod($year, $month);
 
@@ -268,18 +268,22 @@ class PayrollDraftService
             ]);
         }
 
-        $draft = HrmsPayrollDraft::query()
-            ->where('company_id', $companyId)
-            ->where('payroll_year', $year)
-            ->where('payroll_month', $month)
-            ->where('status', HrmsPayrollDraft::STATUS_DRAFT)
-            ->first();
+        return DB::transaction(function () use ($companyId, $year, $month, $userId, $expectedVersion) {
+            $draft = HrmsPayrollDraft::query()
+                ->where('company_id', $companyId)
+                ->where('payroll_year', $year)
+                ->where('payroll_month', $month)
+                ->where('status', HrmsPayrollDraft::STATUS_DRAFT)
+                ->lockForUpdate()
+                ->first();
 
-        if (! $draft) {
-            return ['deleted' => false, 'message' => 'No draft to reset.'];
-        }
+            if (! $draft) {
+                return ['deleted' => false, 'message' => 'No draft to reset.'];
+            }
+            if ($expectedVersion === null || (int) $draft->version !== $expectedVersion) {
+                throw new PayrollConcurrencyException((int) $draft->version, 'draft', (string) $draft->id);
+            }
 
-        DB::transaction(function () use ($draft, $companyId, $year, $month, $userId) {
             $employees = $draft->employees()
                 ->orderBy('employee_code')
                 ->get(['employee_user_id', 'employee_code']);
@@ -304,9 +308,9 @@ class PayrollDraftService
                 'updated_by' => $userId,
                 'version' => (int) $draft->version + 1,
             ]);
-        });
 
-        return ['deleted' => true, 'message' => 'Draft discarded.'];
+            return ['deleted' => true, 'message' => 'Draft discarded.'];
+        });
     }
 
     /** @return list<array<string, mixed>> */

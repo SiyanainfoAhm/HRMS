@@ -72,7 +72,8 @@ type Props = {
   draftSaving?: boolean;
   saveDraftDisabled?: boolean;
   onSaveDraft?: () => void;
-  onResetDraft?: () => void;
+  onResetUnsavedEdits?: () => void;
+  onDiscardDraft?: () => void;
   onDownloadPreviewExcel?: () => void;
   onExportMonthlySummary?: () => void;
   onDownloadBankLetter?: (format: BankLetterFormat) => void;
@@ -80,7 +81,6 @@ type Props = {
   employeePayrollExportSlot?: ReactNode;
   bankLetterLoading?: boolean;
   exportDisabled?: boolean;
-  resetDisabled?: boolean;
   children?: ReactNode;
 };
 
@@ -115,14 +115,14 @@ export function PayrollPreviewToolbar({
   draftSaving,
   saveDraftDisabled,
   onSaveDraft,
-  onResetDraft,
+  onResetUnsavedEdits,
+  onDiscardDraft,
   onDownloadPreviewExcel,
   onExportMonthlySummary,
   onDownloadBankLetter,
   employeePayrollExportSlot,
   bankLetterLoading,
   exportDisabled,
-  resetDisabled,
   children,
 }: Props) {
   const [bankLetterOpen, setBankLetterOpen] = useState(false);
@@ -168,7 +168,7 @@ export function PayrollPreviewToolbar({
     <div className="shrink-0 border-b border-brand-border bg-white px-3 py-2">
       <div className="flex flex-col gap-2">
         <div className="flex flex-wrap items-end gap-2">
-          <SelectField label="Month" value={runMonth} onChange={onMonthChange} options={monthOptions} className="w-28" />
+          <SelectField label="Month" value={runMonth} onChange={onMonthChange} options={monthOptions} className="w-28" disabled={running} />
           <div>
             <label className="label-field mb-1 text-[11px]">Year</label>
             <input
@@ -176,6 +176,7 @@ export function PayrollPreviewToolbar({
               min={2020}
               max={2030}
               value={runYear}
+              disabled={running}
               onChange={(e) => onYearChange(e.target.value)}
               className="input-field w-24"
             />
@@ -284,13 +285,24 @@ export function PayrollPreviewToolbar({
               </div>
             ) : null}
             {employeePayrollExportSlot}
-            {onResetDraft ? (
+            {onResetUnsavedEdits ? (
               <Button
                 type="button"
                 size="sm"
                 variant="outline"
-                disabled={running || draftSaving || resetDisabled}
-                onClick={onResetDraft}
+                disabled={running || draftSaving}
+                onClick={onResetUnsavedEdits}
+              >
+                Discard Unsaved Edits
+              </Button>
+            ) : null}
+            {onDiscardDraft ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={running || draftSaving}
+                onClick={onDiscardDraft}
               >
                 Reset to Calculation
               </Button>

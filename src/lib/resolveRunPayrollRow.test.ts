@@ -7,6 +7,10 @@ import {
   resolveRunPayrollRow,
   type RunPayrollRowLike,
 } from "./resolveRunPayrollRow";
+import {
+  DEFAULT_APRIL_2026_ELECTRICITY_TARIFF,
+  calculateElectricityBill,
+} from "./electricityTariffCalculation";
 
 function assert(cond: unknown, msg: string): asserts cond {
   if (!cond) throw new Error(msg);
@@ -54,6 +58,7 @@ function stubApiRow(uid: string): RunPayrollRowLike {
         other: 0,
         quarterRent: 0,
       },
+      electricityApplicable: true,
       cpfConfig: {
         cpfPercentage: 12,
         cpfBasisFieldKeys: ["gross_basic", "da", "hra", "medical", "transport"],
@@ -145,8 +150,140 @@ function testDirtyCacheWins() {
     alreadyRun: false,
     draftDirty: true,
     cached,
+    cachedPeriodKey: "2026-07",
   });
   assertEq(Number(resolved.grossPay), 255110, "dirty cache");
+}
+
+function testPriorPeriodCacheCannotHydrateNewMonth() {
+  const base = stubApiRow("u-period");
+  base.payDays = 31;
+  const novemberCache: RunPayrollRowLike = {
+    ...base,
+    govRecalc: { ...base.govRecalc!, eolDays: 1, hplDays: 2, leaveRemarks: "November test", eolReferenceMonth: 11, eolReferenceYear: 2026, hplReferenceMonth: 10, hplReferenceYear: 2026 },
+  };
+  const december = resolveRunPayrollRow(base, {
+    denom: 31,
+    runYear: 2026,
+    runMonth: 12,
+    payrollConfig: null,
+    alreadyRun: false,
+    draftDirty: false,
+    cached: novemberCache,
+    cachedPeriodKey: "2026-11",
+  });
+  const leave = december.govRecalc!;
+  assertEq(leave.eolDays, 0, "fresh December EOL");
+  assertEq(leave.hplDays, 0, "fresh December HPL");
+  assertEq(leave.leaveRemarks, "", "fresh December remarks");
+  assertEq(leave.eolReferenceMonth, 12, "fresh December EOL reference month");
+  assertEq(leave.eolReferenceYear, 2026, "fresh December EOL reference year");
+  assertEq(leave.hplReferenceMonth, 12, "fresh December HPL reference month");
+  assertEq(leave.hplReferenceYear, 2026, "fresh December HPL reference year");
+  assertEq(december.payDays, 31, "December payable days without other adjustments");
+  assertEq(december.unpaidLeaveDays, 0, "December has no inherited unpaid leave days");
+  assertEq((december.governmentMonthly as { deductions: { eol: number; hpl: number } }).deductions.eol, 0, "no inherited EOL salary adjustment");
+  assertEq((december.governmentMonthly as { deductions: { eol: number; hpl: number } }).deductions.hpl, 0, "no inherited HPL salary adjustment");
+  const novemberAgain = resolveRunPayrollRow(base, {
+    denom: 30,
+    runYear: 2026,
+    runMonth: 11,
+    payrollConfig: null,
+    alreadyRun: false,
+    draftDirty: false,
+    cached: novemberCache,
+    cachedPeriodKey: "2026-11",
+  });
+  assertEq(novemberAgain.govRecalc?.eolDays, 1, "switching back retains November EOL");
+  assertEq(novemberAgain.govRecalc?.leaveRemarks, "November test", "switching back retains November remarks");
+}
+
+function testGeneratedRunKeepsItsSavedLeaveReferences() {
+  const row = stubApiRow("u-generated");
+  row.govRecalc = { ...row.govRecalc!, eolDays: 1, hplDays: 2, leaveRemarks: "Saved run", eolReferenceMonth: 11, eolReferenceYear: 2026, hplReferenceMonth: 10, hplReferenceYear: 2026 };
+  row.governmentMonthly = { basicPaid: 50000, totalEarnings: 100000, totalDeductions: 0, netSalary: 100000, deductions: { eol: 1200, hpl: 500 } };
+  const resolved = resolveRunPayrollRow(row, {
+    denom: 31,
+    runYear: 2026,
+    runMonth: 12,
+    payrollConfig: null,
+    alreadyRun: true,
+    draftDirty: false,
+  });
+  assertEq(resolved.govRecalc?.eolReferenceMonth, 11, "generated EOL reference is preserved");
+  assertEq(resolved.govRecalc?.hplReferenceMonth, 10, "generated HPL reference is preserved");
+  assertEq(resolved.govRecalc?.leaveRemarks, "Saved run", "generated remarks are preserved");
+}
+
+function testDraftElectricityUnitsRecalculateInsteadOfRestoringStaleBill() {
+  const base = stubApiRow("u-electricity");
+  const tariff = {
+    ...DEFAULT_APRIL_2026_ELECTRICITY_TARIFF,
+    slabs: DEFAULT_APRIL_2026_ELECTRICITY_TARIFF.slabs.map((slab) => ({
+      ...slab,
+      fuelChargePerUnit: 0.5,
+    })),
+  };
+  const electricityTotals = new Map<number, number[]>();
+  for (const units of [0, 10, 11, 10, 301]) {
+    const expected = calculateElectricityBill({
+      units,
+      tariff,
+      applicable: true,
+      mode: "unit_based",
+    }).total;
+    const draftStored = {
+      employeeUserId: "u-electricity",
+      rowPayload: {
+        employeeUserId: "u-electricity",
+        payrollMode: "government",
+        // Deliberately stale values that must not survive draft hydration.
+        governmentMonthly: {
+          totalEarnings: 999999,
+          totalDeductions: 1,
+          netSalary: 999998,
+          deductions: { electricity: 1 },
+        },
+        govRecalc: {
+          ...base.govRecalc,
+          deductionDefaults: {
+            ...base.govRecalc!.deductionDefaults,
+            electricity: 777,
+          },
+          // Reproduce a typical draft with an unrelated frozen deduction.
+          // It must not replace the electricity result calculated from units.
+          deductionPaidOverrides: { cpf: 1234 },
+          electricityUnitsConsumed: units,
+          // A stale saved context must not override fresh Payroll Master
+          // applicability or the current preview tariff.
+          electricityApplicable: false,
+          electricityTariff: { slabs: [], sthirAakar: 0 },
+          electricityMode: "unit_based",
+          electricityManualOverride: false,
+        },
+      },
+    };
+    const resolved = resolveRunPayrollRow(base, {
+      denom: 30,
+      runYear: 2026,
+      runMonth: 7,
+      payrollConfig: { electricityTariff: tariff },
+      alreadyRun: false,
+      draftDirty: false,
+      draftStored,
+    });
+    const gm = resolved.governmentMonthly as {
+      deductions: { electricity: number };
+      totalEarnings: number;
+      totalDeductions: number;
+      netSalary: number;
+    };
+    assertEq(gm.deductions.electricity, expected, `draft electricity at ${units} units`);
+    assertEq(gm.netSalary, Math.round(gm.totalEarnings - gm.totalDeductions), `draft net at ${units} units`);
+    electricityTotals.set(units, [...(electricityTotals.get(units) ?? []), gm.deductions.electricity]);
+  }
+  assert(electricityTotals.get(11)![0] !== electricityTotals.get(10)![0], "11 units changes the deduction");
+  assertEq(electricityTotals.get(10)![1], electricityTotals.get(10)![0], "changing back to 10 restores the deduction");
 }
 
 function testManyEmployeesResolveWithoutPageBias() {
@@ -175,6 +312,7 @@ function testManyEmployeesResolveWithoutPageBias() {
         alreadyRun: false,
         draftDirty: false,
         cached: map.get(r.employeeUserId),
+      cachedPeriodKey: "2026-07",
       }),
     );
   }
@@ -191,6 +329,9 @@ const tests = [
   testResolveComputesGovernmentMonthly,
   testDraftOverlayKeepsExplicitZero,
   testDirtyCacheWins,
+  testPriorPeriodCacheCannotHydrateNewMonth,
+  testGeneratedRunKeepsItsSavedLeaveReferences,
+  testDraftElectricityUnitsRecalculateInsteadOfRestoringStaleBill,
   testManyEmployeesResolveWithoutPageBias,
 ];
 

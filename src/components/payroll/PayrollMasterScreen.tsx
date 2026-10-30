@@ -113,6 +113,7 @@ import {
 
 export type PayrollMasterRecord = {
   id: string;
+  revision?: string;
   employeeCode?: string | null;
   name?: string | null;
   email?: string | null;
@@ -1555,7 +1556,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     setAutosaveStatus("saving");
     setAutosaveHint(null);
     try {
-      const payload = { ...formToPayload(form, payrollFieldDefs), autosave: true };
+      const payload = { ...formToPayload(form, payrollFieldDefs), revision: editing.revision, autosave: true };
       const res = await fetch(`/api/payroll/master/${editing.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -1564,8 +1565,15 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
       });
       const data = await res.json();
       if (!res.ok) {
+        if (res.status === 409) {
+          const message = data?.message || data?.error || "Payroll was updated in another tab or session. Reload the latest values before saving.";
+          showToast("error", message);
+          if (window.confirm(`${message}\n\nOK: Reload latest values (discard unsaved edits).\nCancel: Review Changes (keep this form and its unsaved edits).`)) window.location.reload();
+          return;
+        }
         throw new Error(data?.message || data?.error || "Autosave failed");
       }
+      if (data?.master?.revision) setEditing((current) => current ? { ...current, ...data.master } : current);
       setAutosaveBaseline(snapshot);
       setAutosaveStatus("saved");
     } catch (e: unknown) {
@@ -1780,6 +1788,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
       const historyData = await historyRes.json();
       const arrearData = await arrearRes.json();
       if (!masterRes.ok) throw new Error(masterData?.error || "Failed to load employee");
+      setEditing(masterData.master ?? row);
       const loadedForm = formFromRecord(masterData.master ?? row);
       setForm(loadedForm);
       setEditBaseline(loadedForm);
@@ -2065,7 +2074,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
 
     setFormSaving(true);
     try {
-      const payload = formToPayload(form, payrollFieldDefs);
+      const payload = { ...formToPayload(form, payrollFieldDefs), ...(editing ? { revision: editing.revision } : {}) };
       if (process.env.NODE_ENV === "development") {
         console.info("[PayrollMaster] update payload", { id: editing?.id, daPercent: payload.daPercent });
       }
@@ -2077,6 +2086,12 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
       });
       const data = await res.json();
       if (!res.ok) {
+        if (res.status === 409) {
+          const message = data?.message || data?.error || "Payroll was updated in another tab or session. Reload the latest values before saving.";
+          showToast("error", message);
+          if (window.confirm(`${message}\n\nOK: Reload latest values (discard unsaved edits).\nCancel: Review Changes (keep this form and its unsaved edits).`)) window.location.reload();
+          return;
+        }
         const msg = data?.message || data?.error || "Save failed";
         if (data?.code === "employee_code_conflict" && data?.conflict) {
           const conflict = data.conflict as {

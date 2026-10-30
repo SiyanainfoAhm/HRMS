@@ -1,4 +1,5 @@
 import * as XLSX from "xlsx-js-style";
+import { calendarDaysInMonth, equivalentPayableDays } from "@/lib/payrollLeaveDays";
 import {
   buildPayrollExcelHeaders,
   buildPayrollExcelRow,
@@ -594,7 +595,15 @@ function governmentMonthlyToDbShape(
     std_licence_fee_amount: d.stdLicenceFee,
     electricity_amount: d.electricity,
     electricity_units_consumed: gmNum(gm, "electricityUnitsConsumed", "electricity_units_consumed"),
-    electricity_unit_rate: gmNum(gm, "electricityUnitRate", "electricity_unit_rate"),
+    days_in_month: gmNum(gm, "daysInMonth", "days_in_month"),
+    eol_days: gmNum(gm, "eolDays", "eol_days"),
+    hpl_days: gmNum(gm, "hplDays", "hpl_days"),
+    eol_reference_month: gmNum(gm, "eolReferenceMonth", "eol_reference_month"),
+    eol_reference_year: gmNum(gm, "eolReferenceYear", "eol_reference_year"),
+    hpl_reference_month: gmNum(gm, "hplReferenceMonth", "hpl_reference_month"),
+    hpl_reference_year: gmNum(gm, "hplReferenceYear", "hpl_reference_year"),
+    eol_reference_days_in_month: calendarDaysInMonth(gmNum(gm, "eolReferenceYear", "eol_reference_year"), gmNum(gm, "eolReferenceMonth", "eol_reference_month")) || undefined,
+    hpl_reference_days_in_month: calendarDaysInMonth(gmNum(gm, "hplReferenceYear", "hpl_reference_year"), gmNum(gm, "hplReferenceMonth", "hpl_reference_month")) || undefined,
     night_hours: gmNum(gm, "nightHours", "night_hours"),
     night_allowance_rate: gmNum(gm, "nightAllowanceRate", "night_allowance_rate"),
     night_allowance_amount: gmNum(gm, "nightAllowanceAmount", "night_allowance_amount"),
@@ -708,6 +717,7 @@ export function buildEmployeeDetailSheet(
       gross_pay: r.grossPay ?? null,
       net_pay: r.netPay ?? null,
       pay_days: r.payDays ?? null,
+      days_in_month: new Date(opts.year, opts.month, 0).getDate(),
       deductions: r.deductions ?? null,
       incentive: r.incentive ?? null,
       pr_bonus: r.prBonus ?? null,
@@ -721,6 +731,13 @@ export function buildEmployeeDetailSheet(
       dynamicCols,
       { division: r.division, department: r.department, designation: r.designation },
     ) as Record<string, string | number>;
+    const calendarDays = Number(gm?.days_in_month ?? payslip.days_in_month ?? 0);
+    const eolDays = Number(gm?.eol_days ?? 0);
+    const hplDays = Number(gm?.hpl_days ?? 0);
+    rowObj.CalendarDays = calendarDays;
+    rowObj.EOLDays = eolDays;
+    rowObj.HPLDays = hplDays;
+    rowObj.EquivalentPayableDays = equivalentPayableDays(calendarDays, eolDays, hplDays);
 
     const excelRow = dataStart + idx;
     const alt = idx % 2 === 1;

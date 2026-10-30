@@ -2,6 +2,7 @@ import { validateEmailField } from "@/lib/employeeValidators";
 
 /** Live login email validation (while typing). */
 export function validateLoginEmail(value: string): string | null {
+  if (value.trim().toLowerCase() === "admin@cirt") return null;
   return validateEmailField(value);
 }
 

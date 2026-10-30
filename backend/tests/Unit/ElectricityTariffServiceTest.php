@@ -84,6 +84,25 @@ final class ElectricityTariffServiceTest extends TestCase
         $this->assertGreaterThan(0, $bill['total']);
     }
 
+    public function test_units_change_and_dynamic_fuel_charge_change_the_authoritative_deduction(): void
+    {
+        $tariff = $this->april2026Tariff();
+        foreach ($tariff['slabs'] as &$slab) {
+            $slab['fuel_charge_per_unit'] = 0.5;
+        }
+        unset($slab);
+
+        $zero = $this->service->calculateBill(0, $tariff, true, 'unit_based');
+        $ten = $this->service->calculateBill(10, $tariff, true, 'unit_based');
+        $crossing = $this->service->calculateBill(101, $tariff, true, 'unit_based');
+
+        $this->assertSame(0.0, (float) $zero['consumptionCharge']);
+        $this->assertEqualsWithDelta(5.0, $ten['fuelCharge'], 0.001);
+        $this->assertGreaterThan($zero['total'], $ten['total']);
+        $this->assertGreaterThan($ten['total'], $crossing['total']);
+        $this->assertEqualsWithDelta(50.5, $crossing['fuelCharge'], 0.001);
+    }
+
     public function test_not_applicable_is_zero(): void
     {
         $bill = $this->service->calculateBill(350, $this->april2026Tariff(), false, 'unit_based');

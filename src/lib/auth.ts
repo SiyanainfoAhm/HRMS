@@ -3,10 +3,15 @@ import type { AppRole } from "@/lib/roles";
 import { normalizeRole } from "@/lib/roles";
 
 const COOKIE_NAME = "hrms_session";
-const DEFAULT_SECRET = "hrms-dev-secret-change-in-production";
+const DEFAULT_DEV_SECRET = "hrms-dev-session-secret-only";
 
 function getSecret(): string {
-  return process.env.AUTH_SECRET || DEFAULT_SECRET;
+  const configured = process.env.AUTH_SECRET?.trim();
+  if (configured) return configured;
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("AUTH_SECRET must be configured before serving authenticated requests.");
+  }
+  return DEFAULT_DEV_SECRET;
 }
 
 export type SessionUser = {

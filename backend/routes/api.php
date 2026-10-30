@@ -25,9 +25,9 @@ Route::prefix('v1')->group(function () {
 
     // ── Auth (public) ───────────────────────────────────────────
     Route::prefix('auth')->group(function () {
-        Route::post('login', [AuthController::class, 'login'])->middleware('throttle:login');
-        Route::post('signup', [AuthController::class, 'signup'])->middleware('throttle:login');
-        Route::post('google', [AuthController::class, 'google'])->middleware('throttle:login');
+        Route::post('login', [AuthController::class, 'login'])->middleware(['throttle:login', \App\Http\Middleware\RecordActivityLog::class]);
+        Route::post('signup', [AuthController::class, 'signup'])->middleware(['throttle:login', \App\Http\Middleware\RecordActivityLog::class]);
+        Route::post('google', [AuthController::class, 'google'])->middleware(['throttle:login', \App\Http\Middleware\RecordActivityLog::class]);
     });
 
     // ── Authenticated routes ────────────────────────────────────
@@ -63,7 +63,7 @@ Route::prefix('v1')->group(function () {
         Route::get('settings/roles', [RoleController::class, 'index']);
 
         // ── Managerial / admin routes ───────────────────────────
-        Route::middleware('managerial')->group(function () {
+        Route::middleware(['managerial', \App\Http\Middleware\RecordActivityLog::class])->group(function () {
 
             // Users (admin+)
             Route::get('users', [UserController::class, 'index']);
@@ -142,6 +142,11 @@ Route::prefix('v1')->group(function () {
             Route::post('settings/quarter-types/{id}/activate', [QuarterTypeController::class, 'activate']);
 
             // Payroll
+            Route::get('activity-logs', [\App\Http\Controllers\Api\V1\ActivityLogController::class, 'index']);
+            Route::get('activity-logs/{id}', [\App\Http\Controllers\Api\V1\ActivityLogController::class, 'show']);
+            Route::post('payroll/edit-lock/acquire', [\App\Http\Controllers\Api\V1\PayrollEditLockController::class, 'acquire']);
+            Route::post('payroll/edit-lock/heartbeat', [\App\Http\Controllers\Api\V1\PayrollEditLockController::class, 'heartbeat']);
+            Route::post('payroll/edit-lock/release', [\App\Http\Controllers\Api\V1\PayrollEditLockController::class, 'release']);
             Route::get('payroll/periods', [PayrollController::class, 'periods']);
             Route::post('payroll/periods', [PayrollController::class, 'storePeriod']);
             Route::put('payroll/periods/{id}', [PayrollController::class, 'updatePeriod']);
@@ -166,17 +171,19 @@ Route::prefix('v1')->group(function () {
             Route::get('payroll/run', [PayrollController::class, 'runPreview']);
             Route::get('payroll/reference-salary', [PayrollController::class, 'referenceSalary']);
             Route::get('payroll/arrears/debug-unpaid', [PayrollController::class, 'debugUnpaidArrears']);
-            Route::post('payroll/run', [PayrollController::class, 'run']);
-            Route::post('payroll/run/audit', [PayrollController::class, 'auditGenerated']);
-            Route::put('payroll/monthly/{id}/audit', [PayrollController::class, 'auditGeneratedOne']);
-            Route::patch('payroll/monthly/{id}/audit', [PayrollController::class, 'auditGeneratedOne']);
+            Route::post('payroll/run', [PayrollController::class, 'run'])->middleware('payroll.edit-lock');
+            Route::post('payroll/run/audit', [PayrollController::class, 'auditGenerated'])->middleware('payroll.edit-lock');
+            Route::put('payroll/monthly/{id}/audit', [PayrollController::class, 'auditGeneratedOne'])->middleware('payroll.edit-lock:monthly');
+            Route::patch('payroll/monthly/{id}/audit', [PayrollController::class, 'auditGeneratedOne'])->middleware('payroll.edit-lock:monthly');
             Route::get('payroll/monthly/{id}/audits', [PayrollController::class, 'auditHistory']);
-            Route::post('payroll/payslips', [PayrollController::class, 'storePayslips']);
+            Route::get('payroll/periods/{periodId}/revisions', [PayrollController::class, 'runRevisions']);
+            Route::get('payroll/revisions/{revisionId}', [PayrollController::class, 'runRevision']);
+            Route::post('payroll/payslips', [PayrollController::class, 'storePayslips'])->middleware('payroll.edit-lock:period_id');
             Route::get('payroll/export', [PayrollController::class, 'export']);
             Route::get('payroll/drafts', [PayrollDraftController::class, 'show']);
             Route::get('payroll/drafts/audits', [PayrollDraftController::class, 'auditLogs']);
-            Route::post('payroll/drafts', [PayrollDraftController::class, 'store']);
-            Route::delete('payroll/drafts', [PayrollDraftController::class, 'destroy']);
+            Route::post('payroll/drafts', [PayrollDraftController::class, 'store'])->middleware('payroll.edit-lock');
+            Route::delete('payroll/drafts', [PayrollDraftController::class, 'destroy'])->middleware('payroll.edit-lock');
             Route::post('payroll/bank-letter', [PayrollBankLetterController::class, 'store']);
 
             // Payslips (admin view for employee)

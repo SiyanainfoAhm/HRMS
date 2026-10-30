@@ -9,7 +9,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { email, password } = body;
     if (!email || typeof email !== "string" || !password || typeof password !== "string") {
-      return NextResponse.json({ error: "Email and password required" }, { status: 400 });
+      return NextResponse.json({ error: "Email or login ID and password required" }, { status: 400 });
     }
 
     const apiRes = await fetch(`${getApiBaseUrl()}/auth/login`, {

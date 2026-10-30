@@ -60,6 +60,7 @@ class PayrollDraftController extends Controller
         $data = $request->validate([
             'year' => ['required', 'integer', 'min:2000', 'max:2100'],
             'month' => ['required', 'integer', 'min:1', 'max:12'],
+            'version' => ['nullable', 'integer', 'min:1'],
         ]);
 
         $result = $this->service->resetDraft(
@@ -67,6 +68,7 @@ class PayrollDraftController extends Controller
             (int) $data['year'],
             (int) $data['month'],
             (string) $request->user()->id,
+            isset($data['version']) ? (int) $data['version'] : null,
         );
 
         return response()->json($result);

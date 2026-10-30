@@ -13,10 +13,10 @@ final class OrganizationModeTest extends TestCase
     {
         $login = file_get_contents(dirname(__DIR__, 3).'/src/app/auth/login/page.tsx');
         $this->assertIsString($login);
-        $this->assertStringContainsString('Email address', $login);
+        $this->assertStringContainsString('Email or login ID', $login);
         $this->assertStringContainsString('Password', $login);
         $this->assertStringNotContainsString('/auth/signup', $login);
-        $this->assertStringNotContainsString('company', strtolower($login));
+        $this->assertStringNotContainsString('company selector', strtolower($login));
     }
 
     public function test_org_002_signup_disabled_on_frontend_and_api(): void

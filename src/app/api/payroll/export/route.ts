@@ -377,7 +377,7 @@ export async function GET(request: NextRequest) {
     const uid = String(p.employee_user_id ?? p.employeeUserId ?? "");
     const slip = payslipForExcel(p);
     const mode = slip.payroll_mode;
-    const govRow = mode === "government" ? govByUser.get(uid) : null;
+    const govRow = govByUser.get(uid) ?? null;
     return buildPayrollExcelRow(
       slip,
       userById.get(uid)?.name ?? "",

@@ -9,7 +9,9 @@ enum UserRole: string
 
     public static function fromStored(?string $value): self
     {
-        return $value === self::Employee->value ? self::Employee : self::Admin;
+        return in_array(strtolower(trim((string) $value)), ['admin', 'super_admin', 'payroll_admin', 'hr', 'manager'], true)
+            ? self::Admin
+            : self::Employee;
     }
 
     public function isAdmin(): bool

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import type { PayrollFieldDefinition } from "@/lib/payrollFieldTypes";
 import { cn } from "@/lib/cn";
 import { DaysNumberInput } from "@/components/ui/DaysNumberInput";
@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/Button";
 import type { ElectricityBillBreakdown } from "@/lib/electricityTariffCalculation";
 import { PayrollComponentScroller, type PayrollScrollerHandle } from "./PayrollComponentScroller";
 import { PayrollEmployeeCardHeader } from "./PayrollEmployeeCardHeader";
+import { calendarDaysInMonth, equivalentPayableDays, leaveSalaryAdjustment } from "@/lib/payrollLeaveDays";
 import {
   GOV_PREVIEW_DEDUCTION_FIELDS,
   GOV_PREVIEW_EARNING_FIELDS,
@@ -33,6 +34,8 @@ function leaveMetaFromRow(row: GovernmentRunPreviewRow) {
     hplReferenceYear?: number;
     eolReferenceWarning?: string;
     hplReferenceWarning?: string;
+    hplDeductionManualOverride?: boolean;
+    eolDeductionManualOverride?: boolean;
     electricityUnitsConsumed?: number;
     nightHours?: number;
     nightAllowanceRate?: number;
@@ -51,6 +54,8 @@ function leaveMetaFromRow(row: GovernmentRunPreviewRow) {
     hplReferenceYear?: number;
     eolReferenceWarning?: string;
     hplReferenceWarning?: string;
+    hplDeductionManualOverride?: boolean;
+    eolDeductionManualOverride?: boolean;
     electricityUnitsConsumed?: number;
     nightHours?: number;
     nightAllowanceRate?: number;
@@ -68,6 +73,8 @@ function leaveMetaFromRow(row: GovernmentRunPreviewRow) {
     hplReferenceYear: gr?.hplReferenceYear ?? gm?.hplReferenceYear,
     eolReferenceWarning: gr?.eolReferenceWarning ?? gm?.eolReferenceWarning,
     hplReferenceWarning: gr?.hplReferenceWarning ?? gm?.hplReferenceWarning,
+    hplDeductionManualOverride: gr?.hplDeductionManualOverride ?? false,
+    eolDeductionManualOverride: gr?.eolDeductionManualOverride ?? false,
     electricityUnitsConsumed: gr?.electricityUnitsConsumed ?? gm?.electricityUnitsConsumed ?? 0,
     nightHours: gr?.nightHours ?? gm?.nightHours ?? 0,
     nightAllowanceRate: gr?.nightAllowanceRate ?? gm?.nightAllowanceRate ?? 0,
@@ -567,7 +574,7 @@ function GovernmentEmployeeDetail({
             <div className="grid grid-cols-2 gap-x-3 gap-y-2">
               <SummaryStat label="Gr. basic" value={fmtIn(gb)} />
               <div>
-                <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Days</p>
+                <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Pay days</p>
                 {readOnly ? (
                   <p className="text-[13px] tabular-nums text-slate-800">{row.payDays}</p>
                 ) : (
@@ -610,6 +617,32 @@ function GovernmentEmployeeDetail({
                   />
                 )}
               </div>
+              <SummaryStat label="Calendar days" value={String(daysInMonth)} />
+              <SummaryStat
+                label="Pay days after leave"
+                value={fmtIn(equivalentPayableDays(daysInMonth, leave.eolDays, leave.hplDays))}
+              />
+              <SummaryStat
+                label="EOL salary adjustment (₹)"
+                value={fmtIn(leave.eolDeductionManualOverride
+                  ? d(row.governmentMonthly, "eol")
+                  : leaveSalaryAdjustment(
+                      Number(row.governmentMonthly?.eolBasisAmount ?? 0),
+                      leave.eolDays,
+                      calendarDaysInMonth(leave.eolReferenceYear ?? runYear, leave.eolReferenceMonth ?? runMonth) || daysInMonth,
+                    ))}
+              />
+              <SummaryStat
+                label="HPL salary adjustment (₹)"
+                value={fmtIn(leave.hplDeductionManualOverride
+                  ? d(row.governmentMonthly, "hpl")
+                  : leaveSalaryAdjustment(
+                      Number(row.governmentMonthly?.hplBasisAmount ?? 0),
+                      leave.hplDays,
+                      calendarDaysInMonth(leave.hplReferenceYear ?? runYear, leave.hplReferenceMonth ?? runMonth) || daysInMonth,
+                      0.5,
+                    ))}
+              />
               <div className="col-span-2 rounded border border-slate-100 bg-slate-50/80 p-2">
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-600">EOL reference</p>
                 {readOnly ? (
@@ -895,18 +928,10 @@ export function GovernmentRunPreviewTable({
   preserveSavedFields = false,
   onUpdate,
 }: Props) {
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!rows.length) {
-      setSelectedId(null);
-      return;
-    }
-    setSelectedId((prev) => {
-      if (prev && rows.some((r) => r.employeeUserId === prev)) return prev;
-      return rows[0].employeeUserId;
-    });
-  }, [rows]);
+  const [requestedSelectedId, setSelectedId] = useState<string | null>(null);
+  const selectedId = rows.some((row) => row.employeeUserId === requestedSelectedId)
+    ? requestedSelectedId
+    : rows[0]?.employeeUserId ?? null;
 
   const selected = rows.find((r) => r.employeeUserId === selectedId);
 

@@ -10,6 +10,7 @@ import {
 import type { PayrollFieldDefinition } from "@/lib/payrollFieldTypes";
 import type { GovernmentLeavePayslipDisplay } from "@/lib/leaveBalancesCompute";
 import { resolvePayslipDepartment, resolvePayslipDesignation } from "@/lib/payslipUserFields";
+import { calendarDaysInMonth, equivalentPayableDays, leaveSalaryAdjustment } from "@/lib/payrollLeaveDays";
 
 export type GovernmentPayslipPrintCompany = {
   name?: string | null;
@@ -87,6 +88,24 @@ export const GovernmentPayslipPrint = forwardRef<HTMLDivElement, GovernmentPaysl
     const dim = Number(gov.days_in_month ?? 0) || 0;
     const paidDays = Number(gov.paid_days ?? slip.payDays ?? 0) || 0;
     const netRounded = Math.round(Number(slip.netPay ?? gov.net_salary ?? 0));
+    const eolDays = Number(gov.eol_days ?? 0) || 0;
+    const hplDays = Number(gov.hpl_days ?? 0) || 0;
+    const periodYear = Number(slip.periodStart.slice(0, 4));
+    const periodMonth = Number(slip.periodStart.slice(5, 7));
+    const eolReferenceDays = calendarDaysInMonth(
+      Number(gov.eol_reference_year ?? periodYear),
+      Number(gov.eol_reference_month ?? periodMonth),
+    ) || dim;
+    const hplReferenceDays = calendarDaysInMonth(
+      Number(gov.hpl_reference_year ?? periodYear),
+      Number(gov.hpl_reference_month ?? periodMonth),
+    ) || dim;
+    const eolAdjustment = Number(gov.eol_amount) || leaveSalaryAdjustment(
+      Number(gov.eol_basis_amount ?? 0), eolDays, eolReferenceDays,
+    );
+    const hplAdjustment = Number(gov.hpl_amount) || leaveSalaryAdjustment(
+      Number(gov.hpl_basis_amount ?? 0), hplDays, hplReferenceDays, 0.5,
+    );
 
     return (
       <div
@@ -181,28 +200,34 @@ export const GovernmentPayslipPrint = forwardRef<HTMLDivElement, GovernmentPaysl
                     <span className="text-slate-600">Salary date:</span> {fmtSalaryDate(slip.generatedAt)}
                   </div>
                   <div>
-                    <span className="text-slate-600">Total working days:</span> {dim > 0 ? dim : "—"}
+                    <span className="text-slate-600">Calendar days:</span> {dim > 0 ? dim : "—"}
                   </div>
                   <div>
-                    <span className="text-slate-600">Paid days:</span> {paidDays}
+                    <span className="text-slate-600">Calendar pay days:</span> {paidDays}
+                  </div>
+                  <div>
+                    <span className="text-slate-600">EOL days:</span> {eolDays}
+                  </div>
+                  <div>
+                    <span className="text-slate-600">HPL days:</span> {hplDays}
+                  </div>
+                  <div>
+                    <span className="text-slate-600">Pay days after leave:</span>{" "}
+                    {equivalentPayableDays(
+                      dim,
+                      eolDays,
+                      hplDays,
+                    )}
+                  </div>
+                  <div>
+                    <span className="text-slate-600">EOL salary adjustment:</span> {n(eolAdjustment)}
+                  </div>
+                  <div>
+                    <span className="text-slate-600">HPL salary adjustment:</span> {n(hplAdjustment)}
                   </div>
                   <div>
                     <span className="text-slate-600">Unpaid leave days:</span> {slip.unpaidLeaves ?? 0}
                   </div>
-                  {Number((gov as { hpl_days?: number }).hpl_days ?? 0) > 0 ? (
-                    <div>
-                      <span className="text-slate-600">HPL (this month):</span>{" "}
-                      {Number((gov as { hpl_days?: number }).hpl_days)} day
-                      {Number((gov as { hpl_days?: number }).hpl_days) === 1 ? "" : "s"}
-                    </div>
-                  ) : null}
-                  {Number((gov as { eol_days?: number }).eol_days ?? 0) > 0 ? (
-                    <div>
-                      <span className="text-slate-600">EOL (this month):</span>{" "}
-                      {Number((gov as { eol_days?: number }).eol_days)} day
-                      {Number((gov as { eol_days?: number }).eol_days) === 1 ? "" : "s"}
-                    </div>
-                  ) : null}
                 </div>
               </td>
               <td className={cellClass}>

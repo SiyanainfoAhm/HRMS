@@ -1,4 +1,5 @@
 import type { GovernmentMonthlyComputed } from "@/lib/governmentPayroll";
+import { calendarDaysInMonth, equivalentPayableDays, leaveSalaryAdjustment } from "@/lib/payrollLeaveDays";
 
 /** Run Payroll Excel export — no duplicate PT/Professional Tax or TakeHome/Net Pay columns. */
 export const PAYROLL_EXCEL_HEADER = [
@@ -42,7 +43,6 @@ export const PAYROLL_EXCEL_HEADER = [
   "StdLicenceFee",
   "Electricity",
   "ElectricityUnits",
-  "ElectricityUnitRate",
   "Water",
   "Mess",
   "BankRecovery",
@@ -70,6 +70,12 @@ export const PAYROLL_EXCEL_HEADER = [
   "QuarterRent",
   "QuarterRentDeduction",
   "NetPay",
+  "CalendarDays",
+  "EOLDays",
+  "HPLDays",
+  "EquivalentPayableDays",
+  "EOLSalaryAdjustment",
+  "HPLSalaryAdjustment",
 ] as const;
 
 export type PayrollExcelHeader = (typeof PAYROLL_EXCEL_HEADER)[number];
@@ -82,6 +88,7 @@ type PayslipExcelInput = {
   gross_pay?: number | null;
   net_pay?: number | null;
   pay_days?: number | null;
+  days_in_month?: number | null;
   basic?: number | null;
   hra?: number | null;
   medical?: number | null;
@@ -132,7 +139,17 @@ export type GovernmentMonthlyRow = {
   std_licence_fee_amount?: number | null;
   electricity_amount?: number | null;
   electricity_units_consumed?: number | null;
-  electricity_unit_rate?: number | null;
+  days_in_month?: number | null;
+  eol_days?: number | null;
+  hpl_days?: number | null;
+  eol_basis_amount?: number | null;
+  hpl_basis_amount?: number | null;
+  eol_reference_month?: number | null;
+  eol_reference_year?: number | null;
+  hpl_reference_month?: number | null;
+  hpl_reference_year?: number | null;
+  eol_reference_days_in_month?: number | null;
+  hpl_reference_days_in_month?: number | null;
   night_hours?: number | null;
   night_allowance_rate?: number | null;
   night_allowance_amount?: number | null;
@@ -316,7 +333,12 @@ function govFromComputed(
     StdLicenceFee: d.stdLicenceFee,
     Electricity: d.electricity,
     ElectricityUnits: c.electricityUnitsConsumed ?? 0,
-    ElectricityUnitRate: c.electricityUnitRate ?? 0,
+    CalendarDays: 0,
+    EOLDays: c.eolDays ?? 0,
+    HPLDays: c.hplDays ?? 0,
+    EquivalentPayableDays: 0,
+    EOLSalaryAdjustment: leaveSalaryAdjustment(c.eolBasisAmount ?? 0, c.eolDays ?? 0, calendarDaysInMonth(c.eolReferenceYear ?? 0, c.eolReferenceMonth ?? 0) || 30),
+    HPLSalaryAdjustment: leaveSalaryAdjustment(c.hplBasisAmount ?? 0, c.hplDays ?? 0, calendarDaysInMonth(c.hplReferenceYear ?? 0, c.hplReferenceMonth ?? 0) || 30, 0.5),
     Water: d.water,
     Mess: d.mess,
     BankRecovery: d.loanRecovery,
@@ -388,7 +410,12 @@ function govFromDbRow(
     StdLicenceFee: n(r.std_licence_fee_amount),
     Electricity: n(r.electricity_amount),
     ElectricityUnits: n(r.electricity_units_consumed),
-    ElectricityUnitRate: n(r.electricity_unit_rate),
+    CalendarDays: n(r.days_in_month),
+    EOLDays: n(r.eol_days),
+    HPLDays: n(r.hpl_days),
+    EquivalentPayableDays: equivalentPayableDays(n(r.days_in_month), n(r.eol_days), n(r.hpl_days)),
+    EOLSalaryAdjustment: n(r.eol_amount) || leaveSalaryAdjustment(n(r.eol_basis_amount), n(r.eol_days), n(r.eol_reference_days_in_month) || calendarDaysInMonth(n(r.eol_reference_year), n(r.eol_reference_month)) || n(r.days_in_month)),
+    HPLSalaryAdjustment: n(r.hpl_amount) || leaveSalaryAdjustment(n(r.hpl_basis_amount), n(r.hpl_days), n(r.hpl_reference_days_in_month) || calendarDaysInMonth(n(r.hpl_reference_year), n(r.hpl_reference_month)) || n(r.days_in_month), 0.5),
     Water: n(r.water_amount),
     Mess: n(r.mess_amount),
     BankRecovery: n(r.loan_recovery_amount ?? r.horticulture_amount),
@@ -479,7 +506,12 @@ export function buildPayrollExcelRow(
     StdLicenceFee: 0,
     Electricity: 0,
     ElectricityUnits: 0,
-    ElectricityUnitRate: 0,
+    CalendarDays: n(p.days_in_month),
+    EOLDays: 0,
+    HPLDays: 0,
+    EquivalentPayableDays: n(p.days_in_month),
+    EOLSalaryAdjustment: 0,
+    HPLSalaryAdjustment: 0,
     Water: 0,
     Mess: 0,
     BankRecovery: 0,
@@ -512,9 +544,25 @@ export function buildPayrollExcelRow(
 
   if (mode === "government" && gov) {
     const g = gov.kind === "computed" ? govFromComputed(gov.comp, gov.payLevel) : govFromDbRow(gov.row);
+    const calendarDays = gov.kind === "row"
+      ? (n(gov.row.days_in_month) || n(p.days_in_month))
+      : n(p.days_in_month);
+    const eolDays = gov.kind === "row" ? n(gov.row.eol_days) : n(gov.comp.eolDays);
+    const hplDays = gov.kind === "row" ? n(gov.row.hpl_days) : n(gov.comp.hplDays);
+    const payDaysAfterLeave = equivalentPayableDays(calendarDays, eolDays, hplDays);
     body = {
       ...g,
-      PayDays: n(p.pay_days),
+      CalendarDays: calendarDays,
+      EOLDays: eolDays,
+      HPLDays: hplDays,
+      EquivalentPayableDays: payDaysAfterLeave,
+      EOLSalaryAdjustment: gov.kind === "row"
+        ? (n(gov.row.eol_amount) || leaveSalaryAdjustment(n(gov.row.eol_basis_amount), n(gov.row.eol_days), n(gov.row.eol_reference_days_in_month) || calendarDaysInMonth(n(gov.row.eol_reference_year), n(gov.row.eol_reference_month)) || n(gov.row.days_in_month) || n(p.days_in_month)))
+        : leaveSalaryAdjustment(gov.comp.eolBasisAmount ?? 0, gov.comp.eolDays ?? 0, calendarDaysInMonth(gov.comp.eolReferenceYear ?? 0, gov.comp.eolReferenceMonth ?? 0) || n(p.days_in_month) || 30),
+      HPLSalaryAdjustment: gov.kind === "row"
+        ? (n(gov.row.hpl_amount) || leaveSalaryAdjustment(n(gov.row.hpl_basis_amount), n(gov.row.hpl_days), n(gov.row.hpl_reference_days_in_month) || calendarDaysInMonth(n(gov.row.hpl_reference_year), n(gov.row.hpl_reference_month)) || n(gov.row.days_in_month) || n(p.days_in_month), 0.5))
+        : leaveSalaryAdjustment(gov.comp.hplBasisAmount ?? 0, gov.comp.hplDays ?? 0, calendarDaysInMonth(gov.comp.hplReferenceYear ?? 0, gov.comp.hplReferenceMonth ?? 0) || n(p.days_in_month) || 30, 0.5),
+      PayDays: payDaysAfterLeave,
       CTC: n(p.ctc),
       Incentive: n(p.incentive),
       PRBonus: n(p.pr_bonus),
@@ -529,6 +577,23 @@ export function buildPayrollExcelRow(
     };
   } else {
     body = basePrivate;
+  }
+
+  // If this employee has a saved monthly row with leave details, use the
+  // leave-adjusted day count for every payroll mode. Keep stored days when no
+  // monthly leave data exists.
+  if (gov && mode !== "government") {
+    const calendarDays = gov.kind === "row"
+      ? (n(gov.row.days_in_month) || n(p.days_in_month))
+      : n(p.days_in_month);
+    const eolDays = gov.kind === "row" ? n(gov.row.eol_days) : n(gov.comp.eolDays);
+    const hplDays = gov.kind === "row" ? n(gov.row.hpl_days) : n(gov.comp.hplDays);
+    const payDaysAfterLeave = equivalentPayableDays(calendarDays, eolDays, hplDays);
+    body.PayDays = payDaysAfterLeave;
+    body.CalendarDays = calendarDays;
+    body.EOLDays = eolDays;
+    body.HPLDays = hplDays;
+    body.EquivalentPayableDays = payDaysAfterLeave;
   }
 
   const govRow = gov?.kind === "row" ? gov.row : null;
@@ -556,15 +621,15 @@ function quarterExportFromGov(gov: GovernmentMonthlyRow | null | undefined): Qua
   });
 }
 
-/** Columns that must not appear in Run Payroll export (duplicate / deprecated labels). */
-export const PAYROLL_EXCEL_REMOVED_COLUMNS = ["PayrollMode", "PT", "TakeHome"] as const;
+/** Columns that must not appear in Run Payroll export (duplicate / deprecated display labels). */
+export const PAYROLL_EXCEL_REMOVED_COLUMNS = ["PayrollMode", "PT", "TakeHome", "ElectricityUnitRate"] as const;
 
 /** 0-based indices for monetary values; counts, rates, and identifiers remain plain numbers. */
 export function payrollExcelAmountColumnIndices(headers: readonly string[]): number[] {
   const nonMonetary = new Set([
     "AccountNumber", "EmployeeName", "EmployeeCode", "Division", "Department", "Designation",
     "PayLevel", "PayDays", "NightHours", "NightAllowanceRate", "NightAllowanceCeiling",
-    "NightAllowanceEligible", "ElectricityUnits", "ElectricityUnitRate", "Remarks",
+    "NightAllowanceEligible", "ElectricityUnits", "CalendarDays", "EOLDays", "HPLDays", "EquivalentPayableDays", "Remarks",
     "QuarterAssigned", "QuarterName", "QuarterType",
   ]);
   return headers.flatMap((header, index) => (nonMonetary.has(header) ? [] : [index]));

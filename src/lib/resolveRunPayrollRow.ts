@@ -5,7 +5,6 @@
 import { applyAutoArrearsToGovernmentMonthly } from "@/lib/payrollArrearCalc";
 import {
   runGovernmentPayrollCompute,
-  defaultGovRecalcReferencePeriod,
   type GovRecalcPayload,
 } from "@/lib/govRunPayrollCompute";
 import {
@@ -18,10 +17,11 @@ import {
   SHEET_DEDUCTION_KEYS,
   SHEET_EARNING_KEYS,
   applyDeductionPaidOverridesToGm,
-  mergeDeductionDefaultsWithPaidOverrides,
 } from "@/lib/runPayrollSheetEdit";
 import type { PayrollFieldDefinition } from "@/lib/payrollFieldTypes";
 import { hasOwn } from "@/lib/effectivePayrollValue";
+import type { ElectricityTariffConfig } from "@/lib/electricityTariffCalculation";
+import { freshPayrollLeaveDefaults, payrollPeriodKey } from "@/lib/payrollPeriodIsolation";
 
 export type RunPayrollRowLike = Record<string, unknown> & {
   employeeUserId: string;
@@ -45,6 +45,7 @@ export type ResolveRunPayrollRowContext = {
   /** Keep local sheet edits (audit mode) instead of reloading API values. */
   preserveEdits?: boolean;
   cached?: RunPayrollRowLike | null;
+  cachedPeriodKey?: string | null;
   draftStored?: DraftEmployeeApiRow | Record<string, unknown> | null;
 };
 
@@ -93,11 +94,10 @@ function computeGovernmentRow(
   };
 
   if (r.payrollMode === "government" && r.govRecalc) {
-    const refDefaults = defaultGovRecalcReferencePeriod(runYear, runMonth);
+    const refDefaults = freshPayrollLeaveDefaults(runYear, runMonth);
     const gm0 = r.governmentMonthly as Record<string, unknown> | null | undefined;
     base.govRecalc = {
       ...r.govRecalc,
-      ...refDefaults,
       hplDays: r.govRecalc.hplDays ?? Number(gm0?.hplDays ?? 0),
       eolDays: r.govRecalc.eolDays ?? Number(gm0?.eolDays ?? 0),
       leaveRemarks:
@@ -204,7 +204,10 @@ function applyFrozenSheetOverridesToComputed(
   if (hasDeductionFreeze) {
     gm = applyDeductionPaidOverridesToGm(
       gm,
-      mergeDeductionDefaultsWithPaidOverrides(gr.deductionDefaults, null),
+      // `gm` is already a fresh full calculation. Reapply only explicitly
+      // frozen monthly values; merging every master default here would replace
+      // derived values such as tariff-based electricity after a units edit.
+      null,
       {
         ...paidDed,
         ...(gr.cpfManualOverride && hasOwn(gr.deductionDefaults, "cpf")
@@ -243,6 +246,24 @@ export function hasUsableGovernmentMonthly(gm: unknown): boolean {
   return false;
 }
 
+/** A saved units input must be recalculated, not treated as a frozen bill. */
+function draftContainsElectricityUnits(draft: DraftEmployeeApiRow): boolean {
+  const payload = (draft.rowPayload ?? draft.row_payload) as Record<string, unknown> | null | undefined;
+  if (!payload || typeof payload !== "object") return false;
+  const gr = (payload.govRecalc ?? payload.gov_recalc) as Record<string, unknown> | null | undefined;
+  const gm = (payload.governmentMonthly ?? payload.government_monthly) as Record<string, unknown> | null | undefined;
+  return Boolean(
+    (gr && (
+      Object.prototype.hasOwnProperty.call(gr, "electricityUnitsConsumed") ||
+      Object.prototype.hasOwnProperty.call(gr, "electricity_units_consumed")
+    )) ||
+      (gm && (
+        Object.prototype.hasOwnProperty.call(gm, "electricityUnitsConsumed") ||
+        Object.prototype.hasOwnProperty.call(gm, "electricity_units_consumed")
+      )),
+  );
+}
+
 /**
  * Canonical resolve priority:
  * 1. Unsaved edit cache when dirty
@@ -254,14 +275,42 @@ export function resolveRunPayrollRow(
   ctx: ResolveRunPayrollRowContext,
 ): RunPayrollRowLike {
   const uid = String(r.employeeUserId ?? "");
+  const selectedPeriodKey = payrollPeriodKey(ctx.runYear, ctx.runMonth);
+  const cachedForSelectedPeriod = ctx.cached && ctx.cachedPeriodKey === selectedPeriodKey ? ctx.cached : null;
   const preserveEdits = Boolean(ctx.preserveEdits || (!ctx.alreadyRun && ctx.draftDirty));
-  if (preserveEdits && ctx.cached && String(ctx.cached.employeeUserId) === uid) {
-    return ctx.cached;
+  if (preserveEdits && cachedForSelectedPeriod && String(cachedForSelectedPeriod.employeeUserId) === uid) {
+    return cachedForSelectedPeriod;
   }
 
   const draftEmp = !ctx.alreadyRun ? normalizeDraftEmployeeApiRow(ctx.draftStored, uid) : null;
   if (draftEmp) {
     const overlaid = deserializePayrollDraftEmployee(draftEmp, r as Record<string, unknown>) as RunPayrollRowLike;
+    // Electricity units are an input, while the deduction is a derived value.
+    // A draft can contain an older browser-calculated bill, so recompute rows
+    // that explicitly saved units with the tariff returned for this preview.
+    if (
+      overlaid.payrollMode === "government" &&
+      overlaid.govRecalc &&
+      draftContainsElectricityUnits(draftEmp)
+    ) {
+      const configuredTariff = (ctx.payrollConfig as { electricityTariff?: ElectricityTariffConfig | null } | null)?.electricityTariff;
+      const masterRecalc = r.govRecalc;
+      const freshRow = {
+        ...overlaid,
+        // Rebuild the derived monthly snapshot from current master/config and
+        // saved monthly inputs; the draft's cached totals may predate its tariff.
+        governmentMonthly: null,
+        govRecalc: {
+          ...overlaid.govRecalc,
+          // Monthly drafts own consumption, while tariff and applicability are
+          // rehydrated from the current period/master response.
+          electricityTariff: configuredTariff ?? masterRecalc?.electricityTariff ?? null,
+          electricityApplicable: masterRecalc?.electricityApplicable ?? overlaid.govRecalc.electricityApplicable,
+          electricityMode: masterRecalc?.electricityMode ?? overlaid.govRecalc.electricityMode,
+        },
+      };
+      return computeGovernmentRow(freshRow, ctx.denom, ctx.runYear, ctx.runMonth, ctx.payrollConfig);
+    }
     if (
       overlaid.payrollMode === "government" &&
       !hasUsableGovernmentMonthly(overlaid.governmentMonthly) &&
@@ -272,8 +321,8 @@ export function resolveRunPayrollRow(
     return overlaid;
   }
 
-  if (!ctx.alreadyRun && ctx.cached && String(ctx.cached.employeeUserId) === uid) {
-    return ctx.cached;
+  if (!ctx.alreadyRun && cachedForSelectedPeriod && String(cachedForSelectedPeriod.employeeUserId) === uid) {
+    return cachedForSelectedPeriod;
   }
 
   return computeGovernmentRow(r, ctx.denom, ctx.runYear, ctx.runMonth, ctx.payrollConfig);

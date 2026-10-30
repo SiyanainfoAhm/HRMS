@@ -16,12 +16,25 @@ return Application::configure(basePath: dirname(__DIR__))
             'hrms.session' => \App\Http\Middleware\ValidateHrmsSession::class,
             'cirt.company' => \App\Http\Middleware\EnsureCirtCompanyContext::class,
             'managerial' => \App\Http\Middleware\EnsureManagerial::class,
+            'payroll.edit-lock' => \App\Http\Middleware\RequirePayrollEditLock::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {
         $exceptions->render(function (\Throwable $e, \Illuminate\Http\Request $request) {
             if (! $request->is('api/*') && ! $request->expectsJson()) {
                 return null;
+            }
+
+            if ($e instanceof \App\Exceptions\PayrollConcurrencyException) {
+                return response()->json([
+                    'error' => $e->getMessage(),
+                    'message' => $e->getMessage(),
+                    'code' => 'PAYROLL_REVISION_CONFLICT',
+                    'resource' => $e->resource,
+                    'resourceId' => $e->resourceId,
+                    'currentRevision' => $e->currentRevision,
+                    'options' => ['reload', 'review_changes'],
+                ], 409);
             }
 
             $raw = $e->getMessage();

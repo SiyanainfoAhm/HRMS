@@ -364,6 +364,8 @@ class PayrollAmendmentService
         if (! is_array($gm)) {
             $gm = [];
         }
+        $govRecalc = $row['govRecalc'] ?? $row['gov_recalc'] ?? [];
+        if (! is_array($govRecalc)) $govRecalc = [];
         $ded = is_array($gm['deductions'] ?? null) ? $gm['deductions'] : [];
         $daysInMonth = (int) ($existing->days_in_month ?? 30);
         $payDays = (int) round(self::amount(
@@ -435,7 +437,12 @@ class PayrollAmendmentService
             'hpl_days' => max(0, (int) ($gm['hplDays'] ?? $gm['hpl_days'] ?? $existing->hpl_days ?? 0)),
             'eol_amount' => $num($ded['eol'] ?? $existing->eol_amount),
             'eol_days' => max(0, (int) ($gm['eolDays'] ?? $gm['eol_days'] ?? $existing->eol_days ?? 0)),
-            'leave_remarks' => $this->optionalString($gm['leaveRemarks'] ?? $gm['leave_remarks'] ?? $existing->leave_remarks),
+            'leave_remarks' => $this->optionalString(
+                $gm['leaveRemarks'] ?? $gm['leave_remarks']
+                    ?? $row['leaveRemarks'] ?? $row['leave_remarks']
+                    ?? $govRecalc['leaveRemarks'] ?? $govRecalc['leave_remarks']
+                    ?? $existing->leave_remarks,
+            ),
             'eol_reference_month' => $this->optionalInt($gm['eolReferenceMonth'] ?? $gm['eol_reference_month'] ?? $existing->eol_reference_month),
             'eol_reference_year' => $this->optionalInt($gm['eolReferenceYear'] ?? $gm['eol_reference_year'] ?? $existing->eol_reference_year),
             'hpl_reference_month' => $this->optionalInt($gm['hplReferenceMonth'] ?? $gm['hpl_reference_month'] ?? $existing->hpl_reference_month),

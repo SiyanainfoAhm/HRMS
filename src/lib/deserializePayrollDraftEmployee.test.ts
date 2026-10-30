@@ -238,6 +238,39 @@ function testEmployeeUserIdMatching() {
   assertEq(String(wrong.employeeUserId), "abc-123", "matched uid");
 }
 
+function testDraftRestoresPeriodSpecificLeaveAndDeductions() {
+  const row = deserializePayrollDraftEmployee({
+    employeeUserId: "user-period",
+    rowPayload: {
+      govRecalc: {
+        eolDays: 2,
+        hplDays: 1,
+        leaveRemarks: "December draft",
+        eolReferenceMonth: 10,
+        eolReferenceYear: 2026,
+        hplReferenceMonth: 9,
+        hplReferenceYear: 2026,
+        deductionPaidOverrides: { mess: 120, creditSociety: 300, loanRecovery: 50 },
+      },
+      incentive: 100,
+      prBonus: 200,
+      reimbursement: 150,
+    },
+  }, null);
+  const leave = row.govRecalc as Record<string, unknown>;
+  assertEq(leave.eolDays, 2, "draft EOL");
+  assertEq(leave.hplDays, 1, "draft HPL");
+  assertEq(leave.leaveRemarks, "December draft", "draft remarks");
+  assertEq(leave.eolReferenceMonth, 10, "explicit draft EOL reference remains selected");
+  assertEq(leave.hplReferenceMonth, 9, "explicit draft HPL reference remains selected");
+  assertEq((leave.deductionPaidOverrides as Record<string, number>).mess, 120, "monthly Mess override restored");
+  assertEq((leave.deductionPaidOverrides as Record<string, number>).creditSociety, 300, "monthly Credit Society override restored");
+  assertEq((leave.deductionPaidOverrides as Record<string, number>).loanRecovery, 50, "monthly Bank Recovery override restored");
+  assertEq(row.incentive, 100, "one-time incentive restored");
+  assertEq(row.prBonus, 200, "one-time PR bonus restored");
+  assertEq(row.reimbursement, 150, "one-time reimbursement restored");
+}
+
 function testHeaderTotalsEqualHydratedRows() {
   const rows = [
     deserializePayrollDraftEmployee(
@@ -401,6 +434,7 @@ const tests = [
   testStaleDraftZeroDoesNotWipeMasterWater,
   testMissingFallsBackToCalculated,
   testEmployeeUserIdMatching,
+  testDraftRestoresPeriodSpecificLeaveAndDeductions,
   testHeaderTotalsEqualHydratedRows,
   testFirstDefinedDoesNotTreatZeroAsMissing,
   testPreviewExportShapeUsesHydratedGm,

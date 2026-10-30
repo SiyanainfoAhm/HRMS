@@ -23,6 +23,7 @@ final class PayrollExcelExportColumnsTest extends TestCase
         $this->assertStringContainsString('"TakeHome"', $source);
         $this->assertStringContainsString('"ProfessionalTax"', $source);
         $this->assertStringContainsString('"NetPay"', $source);
+        $this->assertStringContainsString('"ElectricityUnitRate"', $source);
 
         preg_match('/export const PAYROLL_EXCEL_HEADER = \[([\s\S]*?)\] as const;/', $source, $m);
         $this->assertNotEmpty($m[1] ?? null);
@@ -30,7 +31,12 @@ final class PayrollExcelExportColumnsTest extends TestCase
         $this->assertStringNotContainsString('"PayrollMode"', $headerBlock);
         $this->assertStringNotContainsString('"PT"', $headerBlock);
         $this->assertStringNotContainsString('"TakeHome"', $headerBlock);
+        $this->assertStringNotContainsString('"ElectricityUnitRate"', $headerBlock);
         $this->assertStringContainsString('"ProfessionalTax"', $headerBlock);
         $this->assertStringContainsString('"NetPay"', $headerBlock);
+        $this->assertStringContainsString('"CalendarDays"', $headerBlock);
+        $this->assertStringContainsString('"EOLDays"', $headerBlock);
+        $this->assertStringContainsString('"HPLDays"', $headerBlock);
+        $this->assertStringContainsString('"EquivalentPayableDays"', $headerBlock);
     }
 }

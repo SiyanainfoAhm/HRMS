@@ -15,10 +15,7 @@ class AuthService
 
     public function login(string $email, string $password): array
     {
-        $user = HrmsUser::query()
-            ->whereRaw('LOWER(email) = ?', [mb_strtolower(trim($email))])
-            ->first();
-
+        $user = $this->findUserForLogin($email);
         if (! $user) {
             throw ValidationException::withMessages([
                 'email' => ['Invalid email or password.'],
@@ -50,6 +47,20 @@ class AuthService
             'token' => $token->plainTextToken,
             'token_type' => 'Bearer',
         ];
+    }
+
+    public function findUserForLogin(string $email): ?HrmsUser
+    {
+        $identifier = mb_strtolower(trim($email));
+        $user = HrmsUser::query()->whereRaw('LOWER(email) = ?', [$identifier])->first();
+        if (! $user && $identifier === 'admin@cirt') {
+            // CIRT's short administrator login is an alias for the existing
+            // organization admin account; it must never create another user.
+            $user = HrmsUser::query()->whereRaw('LOWER(email) = ?', ['admin@cirtindia.com'])->first();
+            if ($user && ! $user->hasManagerialRole()) $user = null;
+        }
+
+        return $user;
     }
 
     public function googleLogin(string $idToken, string $mode = 'login'): array
@@ -91,7 +102,7 @@ class AuthService
                 'password_hash' => null,
                 'auth_provider' => AuthProvider::Google->value,
                 'name' => $name ?: null,
-                'role' => 'admin',
+                'role' => 'employee',
                 'auth_session_version' => 0,
                 'employment_status' => 'current',
             ]);

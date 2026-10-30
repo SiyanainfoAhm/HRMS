@@ -79,18 +79,19 @@ import {
   resolveRunPayrollRow,
   type RunPayrollRowLike,
 } from "@/lib/resolveRunPayrollRow";
+import { payrollPeriodKey, payrollRowCacheKey } from "@/lib/payrollPeriodIsolation";
 import {
   applyGovernmentSheetMonetaryEdit,
   applyDeductionPaidOverridesToGm,
   clearMonetaryOverridesFromGovRecalc,
   isGovernmentSheetMonetaryField,
-  mergeDeductionDefaultsWithPaidOverrides,
   recalculateGovernmentSheetTotals,
   SHEET_DEDUCTION_KEYS,
   SHEET_EARNING_KEYS,
 } from "@/lib/runPayrollSheetEdit";
 import { hasOwn } from "@/lib/effectivePayrollValue";
 import { isAdminRole } from "@/lib/roles";
+import { usePayrollEditLease } from "@/lib/usePayrollEditLease";
 import {
   canShowAuditGeneratedAction,
   diffPayrollAuditSnapshots,
@@ -127,6 +128,7 @@ type MasterGridRow = {
   employeeUserId: string;
   employeeName: string | null;
   employeeEmail: string;
+  revision?: string;
   /** `private`: monthly gross salary. `government`: gross basic (pay level). */
   payrollMode: "private" | "government";
   governmentPayLevel: number | null;
@@ -179,6 +181,13 @@ type MasterGridRow = {
   govEffectiveCpf: number;
   govNetSalary: number;
 };
+
+const PAYROLL_REVISION_CONFLICT = "Payroll was updated in another tab or session. Reload the latest values before saving.";
+function offerPayrollConflictReload(): void {
+  if (window.confirm(`${PAYROLL_REVISION_CONFLICT}\n\nOK: Reload latest values (discard unsaved edits).\nCancel: Review Changes (keep this screen and its unsaved edits).`)) {
+    window.location.reload();
+  }
+}
 
 /** Deduction/earning keys for Run Payroll sheet are defined in runPayrollSheetEdit.ts */
 
@@ -350,8 +359,11 @@ function applyFrozenSheetOverridesToComputed(
   }
   if (hasDeductionFreeze) {
     return applyDeductionPaidOverridesToGm(
+      // The computed row already contains its current master defaults. Only
+      // explicit sheet overrides belong here, otherwise a draft's unrelated
+      // CPF/other override can overwrite recalculated electricity.
       gm,
-      mergeDeductionDefaultsWithPaidOverrides(gr.deductionDefaults, null),
+      null,
       {
         ...paidDed,
         ...(gr.cpfManualOverride && hasOwn(gr.deductionDefaults, "cpf")
@@ -787,6 +799,7 @@ function buildMasterGridRow(
       employeeUserId: apiRow.employeeUserId,
       employeeName: apiRow.employeeName,
       employeeEmail: apiRow.employeeEmail,
+      revision: typeof m.revision === "string" ? m.revision : undefined,
       payrollMode: "government",
       governmentPayLevel,
       gross: grossBasic,
@@ -861,6 +874,7 @@ function buildMasterGridRow(
     employeeUserId: apiRow.employeeUserId,
     employeeName: apiRow.employeeName,
     employeeEmail: apiRow.employeeEmail,
+      revision: typeof m.revision === "string" ? m.revision : undefined,
     payrollMode: "private",
     governmentPayLevel: null,
     gross,
@@ -953,6 +967,9 @@ function PayrollPageContent() {
 
   const [runMonth, setRunMonth] = useState(() => String(new Date().getMonth() + 1).padStart(2, "0"));
   const [runYear, setRunYear] = useState(() => String(new Date().getFullYear()));
+  const activePeriodKeyRef = useRef(payrollPeriodKey(runYear, runMonth));
+  const payrollLease = usePayrollEditLease(runYear, runMonth, canManage);
+  const [leaseRefreshNonce, setLeaseRefreshNonce] = useState(0);
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
   const [previewSearch, setPreviewSearch] = useState("");
@@ -961,6 +978,7 @@ function PayrollPageContent() {
   const [previewPerPage, setPreviewPerPage] = useState(DEFAULT_PAGE_SIZE);
   const [previewMeta, setPreviewMeta] = useState<PaginationMeta>(emptyPaginationMeta());
   const runRowEditsRef = useRef<Map<string, Record<string, unknown>>>(new Map());
+  const auditDirectFieldsRef = useRef<Map<string, Set<string>>>(new Map());
   /** Canonical full-period payroll rows keyed by employee_user_id (not page/filter). */
   const resolvedPayrollByUserIdRef = useRef<Map<string, RunPayrollRowLike>>(new Map());
   const draftPayloadByUserRef = useRef<Map<string, Record<string, unknown>>>(new Map());
@@ -970,6 +988,8 @@ function PayrollPageContent() {
     updatedAt: string | null;
     employeeCount: number;
   } | null>(null);
+  const [draftLoadedPeriodKey, setDraftLoadedPeriodKey] = useState("");
+  const [draftLoadError, setDraftLoadError] = useState<string | null>(null);
   const [draftDirty, setDraftDirty] = useState(false);
   const draftDirtyRef = useRef(false);
   /** Bumps when draft payloads load so editable rows re-hydrate after preview. */
@@ -1071,6 +1091,8 @@ function PayrollPageContent() {
   }, [tab, canManage]);
 
   const [preview, setPreview] = useState<{
+    year: number;
+    month: number;
     periodName: string;
     periodStart: string;
     periodEnd: string;
@@ -1080,6 +1102,7 @@ function PayrollPageContent() {
     effectiveRunDay: number;
     alreadyRun: boolean;
     existingPeriodId: string | null;
+    revision?: number;
     isLocked?: boolean;
     payrollComplete?: boolean;
     missingPayslipCount?: number;
@@ -1252,7 +1275,10 @@ function PayrollPageContent() {
   );
 
   const previewTotals = useMemo(() => {
-    const allResolved = Array.from(resolvedPayrollByUserIdRef.current.values());
+    const currentPeriodPrefix = `${payrollPeriodKey(runYear, runMonth)}:`;
+    const allResolved = Array.from(resolvedPayrollByUserIdRef.current.entries())
+      .filter(([key]) => key.startsWith(currentPeriodPrefix))
+      .map(([, row]) => row);
     const source =
       allResolved.length > 0
         ? allResolved
@@ -1266,7 +1292,7 @@ function PayrollPageContent() {
     };
     // resolvedRevision forces recompute when the canonical map is refreshed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filteredEditableRows, previewMeta.total, resolvedRevision]);
+  }, [filteredEditableRows, previewMeta.total, resolvedRevision, runYear, runMonth]);
 
   // Salary slips tab (admin/HR view employee payslips)
   const [employees, setEmployees] = useState<{ id: string; name: string | null; email: string }[]>([]);
@@ -1341,20 +1367,24 @@ function PayrollPageContent() {
   }, [previewDepartmentFilter, runDepartmentFilterOptions]);
 
   useEffect(() => {
+    if (draftLoadedPeriodKey !== payrollPeriodKey(runYear, runMonth)) return;
     const denom = preview?.daysInMonth ?? preview?.workingDaysInFullMonth;
-    if (preview?.rows?.length && denom) {
+    const previewMatchesSelectedPeriod = Number(preview?.year) === Number(runYear) && Number(preview?.month) === Number(runMonth);
+    if (previewMatchesSelectedPeriod && preview?.rows?.length && denom) {
       const runY = parseInt(runYear, 10);
       const runM = parseInt(runMonth, 10);
       const alreadyRun = Boolean(preview.alreadyRun);
+      const periodKey = payrollPeriodKey(runY, runM);
       // Use ref — putting auditDirty in deps re-runs this effect on first Days edit and
       // restores stale rows before runRowEditsRef is synced (Days snap back / look locked).
       const preserveEdits = auditMode && auditDirtyRef.current;
       setEditableRows(
         preview.rows.map((r: any) => {
           const uid = String(r.employeeUserId ?? "");
+          const cacheKey = payrollRowCacheKey(periodKey, uid);
           const cached =
-            (runRowEditsRef.current.get(uid) as RunPayrollRowLike | undefined) ??
-            resolvedPayrollByUserIdRef.current.get(uid);
+            (runRowEditsRef.current.get(cacheKey) as RunPayrollRowLike | undefined) ??
+            resolvedPayrollByUserIdRef.current.get(cacheKey);
           const resolved = resolveRunPayrollRow(r as RunPayrollRowLike, {
             denom,
             runYear: runY,
@@ -1364,22 +1394,24 @@ function PayrollPageContent() {
             draftDirty: draftDirtyRef.current,
             preserveEdits,
             cached: cached ?? null,
-            draftStored: draftPayloadByUserRef.current.get(uid) ?? null,
+            cachedPeriodKey: periodKey,
+            draftStored: draftPayloadByUserRef.current.get(cacheKey) ?? null,
           });
-          resolvedPayrollByUserIdRef.current.set(uid, resolved);
+          resolvedPayrollByUserIdRef.current.set(cacheKey, resolved);
           if (!alreadyRun || auditMode) {
-            runRowEditsRef.current.set(uid, resolved);
+            runRowEditsRef.current.set(cacheKey, resolved);
           }
           return resolved as typeof r;
         }),
       );
       setResolvedRevision((n) => n + 1);
-    } else if (!preview?.rows?.length) {
-      // Keep canonical map; only clear the visible page when API returns empty.
+    } else {
       setEditableRows([]);
     }
   }, [
     preview?.rows,
+    preview?.year,
+    preview?.month,
     preview?.daysInMonth,
     preview?.workingDaysInFullMonth,
     preview?.alreadyRun,
@@ -1388,6 +1420,7 @@ function PayrollPageContent() {
     runMonth,
     draftRevision,
     auditMode,
+    draftLoadedPeriodKey,
   ]);
 
   // Config loads after the first preview response on some visits. Re-total a
@@ -1410,24 +1443,26 @@ function PayrollPageContent() {
         const netPay = Number(gm.netSalary ?? 0);
         const next = { ...row, governmentMonthly: gm, grossPay, deductions, netPay };
         const uid = String(next.employeeUserId ?? "");
+        const cacheKey = payrollRowCacheKey(payrollPeriodKey(runYear, runMonth), uid);
         if (uid) {
-          resolvedPayrollByUserIdRef.current.set(uid, next as RunPayrollRowLike);
-          runRowEditsRef.current.set(uid, next as RunPayrollRowLike);
+          resolvedPayrollByUserIdRef.current.set(cacheKey, next as RunPayrollRowLike);
+          runRowEditsRef.current.set(cacheKey, next as RunPayrollRowLike);
         }
         return next;
       }),
     );
     setResolvedRevision((n) => n + 1);
-  }, [payrollConfig, preview?.alreadyRun, draftMeta]);
+  }, [payrollConfig, preview?.alreadyRun, draftMeta, runYear, runMonth]);
 
   useEffect(() => {
     for (const row of editableRows) {
       const uid = String(row.employeeUserId ?? "");
       if (!uid) continue;
-      runRowEditsRef.current.set(uid, row);
-      resolvedPayrollByUserIdRef.current.set(uid, row as RunPayrollRowLike);
+      const cacheKey = payrollRowCacheKey(payrollPeriodKey(runYear, runMonth), uid);
+      runRowEditsRef.current.set(cacheKey, row);
+      resolvedPayrollByUserIdRef.current.set(cacheKey, row as RunPayrollRowLike);
     }
-  }, [editableRows]);
+  }, [editableRows, runYear, runMonth]);
 
   useEffect(() => {
     if (tab !== "slips" || !canManage) return;
@@ -1532,6 +1567,12 @@ function PayrollPageContent() {
     field: string,
     value: number | string
   ) {
+    const editPeriodKey = payrollPeriodKey(runYear, runMonth);
+    if (preview?.alreadyRun && auditMode) {
+      const fields = auditDirectFieldsRef.current.get(employeeUserId) ?? new Set<string>();
+      fields.add(field);
+      auditDirectFieldsRef.current.set(employeeUserId, fields);
+    }
     if (!preview?.alreadyRun) {
       draftDirtyRef.current = true;
       setDraftDirty(true);
@@ -1546,8 +1587,9 @@ function PayrollPageContent() {
       prev.map((row) => {
         if (row.employeeUserId !== employeeUserId) return row;
         const commitEdit = (next: typeof row) => {
-          runRowEditsRef.current.set(employeeUserId, next);
-          resolvedPayrollByUserIdRef.current.set(employeeUserId, next as RunPayrollRowLike);
+          const cacheKey = payrollRowCacheKey(payrollPeriodKey(runYear, runMonth), employeeUserId);
+          runRowEditsRef.current.set(cacheKey, next);
+          resolvedPayrollByUserIdRef.current.set(cacheKey, next as RunPayrollRowLike);
           return next;
         };
 
@@ -1649,12 +1691,14 @@ function PayrollPageContent() {
               return recompute(grNext, row.payDays, undefined, row, { clearMonetaryOverrides: true });
             }
             void hydrateEolReferenceSalary(employeeUserId, clearMonetaryOverridesFromGovRecalc(grNext), runY, runM).then((grHydrated) => {
+              if (activePeriodKeyRef.current !== editPeriodKey) return;
               setEditableRows((prev) =>
                 prev.map((r) => {
                   if (r.employeeUserId !== employeeUserId || !r.govRecalc) return r;
                   const next = recompute(grHydrated, r.payDays, undefined, r, { clearMonetaryOverrides: true });
-                  runRowEditsRef.current.set(employeeUserId, next);
-                  resolvedPayrollByUserIdRef.current.set(employeeUserId, next as RunPayrollRowLike);
+                  const cacheKey = payrollRowCacheKey(payrollPeriodKey(runYear, runMonth), employeeUserId);
+                  runRowEditsRef.current.set(cacheKey, next);
+                  resolvedPayrollByUserIdRef.current.set(cacheKey, next as RunPayrollRowLike);
                   return next;
                 }),
               );
@@ -1683,12 +1727,14 @@ function PayrollPageContent() {
               return recompute(grNext, row.payDays, undefined, row, { clearMonetaryOverrides: true });
             }
             void hydrateHplReferenceSalary(employeeUserId, clearMonetaryOverridesFromGovRecalc(grNext), runY, runM).then((grHydrated) => {
+              if (activePeriodKeyRef.current !== editPeriodKey) return;
               setEditableRows((prev) =>
                 prev.map((r) => {
                   if (r.employeeUserId !== employeeUserId || !r.govRecalc) return r;
                   const next = recompute(grHydrated, r.payDays, undefined, r, { clearMonetaryOverrides: true });
-                  runRowEditsRef.current.set(employeeUserId, next);
-                  resolvedPayrollByUserIdRef.current.set(employeeUserId, next as RunPayrollRowLike);
+                  const cacheKey = payrollRowCacheKey(payrollPeriodKey(runYear, runMonth), employeeUserId);
+                  runRowEditsRef.current.set(cacheKey, next);
+                  resolvedPayrollByUserIdRef.current.set(cacheKey, next as RunPayrollRowLike);
                   return next;
                 }),
               );
@@ -1932,8 +1978,68 @@ function PayrollPageContent() {
     0
   ).getDate();
   const runDay = String(daysInSelectedMonth);
+  const selectedRunPeriodKey = payrollPeriodKey(runYear, runMonth);
+  const draftHydrationLoading = canManage && tab === "run" && draftLoadedPeriodKey !== selectedRunPeriodKey;
+
+  function switchRunPeriod(nextMonth: string, nextYear: string) {
+    if (nextMonth === runMonth && nextYear === runYear) return;
+    if (running || draftSaving || auditSaving) return;
+    if (draftDirty && !window.confirm("You have unsaved changes. Switch month anyway?")) return;
+    if (auditDirty && !window.confirm("You have unsaved audit edits. Switch month anyway?")) return;
+
+    // Clear current-period UI/cache state in the selector event itself. This
+    // prevents old preview rows from hydrating during the effects transition.
+    activePeriodKeyRef.current = payrollPeriodKey(nextYear, nextMonth);
+    runRowEditsRef.current.clear();
+    resolvedPayrollByUserIdRef.current.clear();
+    draftPayloadByUserRef.current.clear();
+    auditDirectFieldsRef.current.clear();
+    draftDirtyRef.current = false;
+    auditDirtyRef.current = false;
+    setPreview(null);
+    setEditableRows([]);
+    setPreviewMeta(emptyPaginationMeta(previewPerPage));
+    setPreviewLoading(true);
+    setDraftMeta(null);
+    setDraftDirty(false);
+    setDraftLoadedPeriodKey("");
+    setDraftLoadError(null);
+    setDraftRevision((revision) => revision + 1);
+    setResolvedRevision((revision) => revision + 1);
+    setPreviewPage(1);
+    setRunError(null);
+    exitAuditMode();
+    setRunMonth(nextMonth);
+    setRunYear(nextYear);
+  }
+
+  async function takeOverAndRefreshPayroll() {
+    if (running || draftSaving || auditSaving) return;
+    const hasUnsavedEdits = draftDirtyRef.current || auditDirtyRef.current || runRowEditsRef.current.size > 0;
+    if (hasUnsavedEdits && !window.confirm("Taking over will reload the latest saved payroll values and discard unsaved edits in this tab. Continue?")) return;
+
+    const didAcquire = await payrollLease.acquire(true);
+    if (!didAcquire) return;
+
+    runRowEditsRef.current.clear();
+    resolvedPayrollByUserIdRef.current.clear();
+    draftPayloadByUserRef.current.clear();
+    auditDirectFieldsRef.current.clear();
+    draftDirtyRef.current = false;
+    auditDirtyRef.current = false;
+    setDraftDirty(false);
+    setAuditDirty(false);
+    setDraftMeta(null);
+    setDraftLoadedPeriodKey("");
+    setDraftLoadError(null);
+    setPreview(null);
+    setPreviewLoading(true);
+    exitAuditMode();
+    setLeaseRefreshNonce((value) => value + 1);
+  }
 
   useEffect(() => {
+    activePeriodKeyRef.current = payrollPeriodKey(runYear, runMonth);
     runRowEditsRef.current.clear();
     resolvedPayrollByUserIdRef.current.clear();
     draftPayloadByUserRef.current.clear();
@@ -1946,19 +2052,25 @@ function PayrollPageContent() {
   useEffect(() => {
     if (!canManage || tab !== "run") return;
     let cancelled = false;
+    const requestedPeriodKey = payrollPeriodKey(runYear, runMonth);
     (async () => {
       try {
         const res = await fetch(
           `/api/payroll/drafts?year=${encodeURIComponent(runYear)}&month=${encodeURIComponent(String(parseInt(runMonth, 10)))}`,
         );
         const data = await res.json();
-        if (cancelled || !res.ok) return;
+        if (cancelled || activePeriodKeyRef.current !== requestedPeriodKey) return;
+        if (!res.ok) {
+          setDraftLoadError(data?.message || data?.error || "Could not verify saved payroll draft for this period.");
+          return;
+        }
         const map = new Map<string, Record<string, unknown>>();
+        const periodKey = requestedPeriodKey;
         for (const emp of (data.employees ?? []) as DraftEmployeeApiRow[]) {
           const uid = String(emp.employeeUserId ?? emp.employee_user_id ?? "");
           const payload = (emp.rowPayload ?? emp.row_payload ?? null) as Record<string, unknown> | null;
           if (!uid || !payload) continue;
-          map.set(uid, {
+          map.set(payrollRowCacheKey(periodKey, uid), {
             employeeUserId: uid,
             employeeCode: emp.employeeCode ?? emp.employee_code ?? null,
             payrollMasterId: emp.payrollMasterId ?? emp.payroll_master_id ?? null,
@@ -1989,15 +2101,17 @@ function PayrollPageContent() {
         } else {
           setDraftMeta(null);
         }
+        setDraftLoadError(null);
+        setDraftLoadedPeriodKey(periodKey);
         setDraftRevision((n) => n + 1);
       } catch {
-        /* ignore draft load errors; preview still works */
+        if (!cancelled) setDraftLoadError("Could not verify saved payroll draft for this period. Retry after reloading.");
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [canManage, tab, runYear, runMonth]);
+  }, [canManage, tab, runYear, runMonth, leaseRefreshNonce]);
 
   useEffect(() => {
     draftDirtyRef.current = draftDirty;
@@ -2037,13 +2151,16 @@ function PayrollPageContent() {
           `/api/payroll/run?year=${runYear}&month=${runMonth}&runDay=${runDay}&${qs}`,
         );
         const data = await res.json();
-        if (!cancelled && res.ok) {
+        const selectedPeriod = payrollPeriodKey(runYear, runMonth);
+        const responseMatchesPeriod = Number(data.preview?.year) === Number(runYear) && Number(data.preview?.month) === Number(runMonth);
+        if (!cancelled && activePeriodKeyRef.current === selectedPeriod && res.ok && responseMatchesPeriod) {
           setPreview(data.preview ?? null);
           setPreviewMeta((data.preview?.meta as PaginationMeta) ?? emptyPaginationMeta(previewPerPage));
           setPayrollConfig(data.payrollConfig ?? data.preview?.payrollConfig ?? null);
         }
-        else if (!cancelled) {
+        else if (!cancelled && activePeriodKeyRef.current === selectedPeriod) {
           setPreview(null);
+          setEditableRows([]);
           setPreviewMeta(emptyPaginationMeta(previewPerPage));
           setPayrollConfig(null);
         }
@@ -2067,6 +2184,7 @@ function PayrollPageContent() {
     previewDivisionName,
     previewDepartmentName,
     previewDesignationName,
+    leaseRefreshNonce,
   ]);
 
   useEffect(() => {
@@ -2330,6 +2448,7 @@ function PayrollPageContent() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             employeeUserId,
+            revision: row.revision,
             payrollMode: "government",
             grossBasic: row.gross,
             daPercent: row.daPercent,
@@ -2375,6 +2494,7 @@ function PayrollPageContent() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           employeeUserId,
+          revision: row.revision,
           grossSalary: row.gross,
           basic: row.basic,
           hra: row.hra,
@@ -2554,9 +2674,11 @@ function PayrollPageContent() {
   function mergeRunRowWithEditsAndDraft(r: (typeof editableRows)[number]): (typeof editableRows)[number] {
     const uid = String(r.employeeUserId ?? "");
     const denom = preview?.daysInMonth ?? preview?.workingDaysInFullMonth ?? 30;
+    const periodKey = payrollPeriodKey(runYear, runMonth);
+    const cacheKey = payrollRowCacheKey(periodKey, uid);
     const cached =
-      (runRowEditsRef.current.get(uid) as RunPayrollRowLike | undefined) ??
-      resolvedPayrollByUserIdRef.current.get(uid);
+      (runRowEditsRef.current.get(cacheKey) as RunPayrollRowLike | undefined) ??
+      resolvedPayrollByUserIdRef.current.get(cacheKey);
     const resolved = resolveRunPayrollRow(r as RunPayrollRowLike, {
       denom,
       runYear: parseInt(runYear, 10),
@@ -2565,9 +2687,10 @@ function PayrollPageContent() {
       alreadyRun: Boolean(preview?.alreadyRun),
       draftDirty: draftDirtyRef.current,
       cached: cached ?? null,
-      draftStored: draftPayloadByUserRef.current.get(uid) ?? null,
+      cachedPeriodKey: periodKey,
+      draftStored: draftPayloadByUserRef.current.get(cacheKey) ?? null,
     });
-    resolvedPayrollByUserIdRef.current.set(uid, resolved);
+    resolvedPayrollByUserIdRef.current.set(cacheKey, resolved);
     return resolved as (typeof editableRows)[number];
   }
 
@@ -2584,7 +2707,11 @@ function PayrollPageContent() {
   async function collectRunRowsForExport(options?: {
     applyUiFilters?: boolean;
   }): Promise<typeof editableRows> {
+    if (draftHydrationLoading || draftLoadError) {
+      throw new Error(draftLoadError || "Waiting for this payroll period's saved draft to load.");
+    }
     const applyUiFilters = Boolean(options?.applyUiFilters);
+    const requestedPeriodKey = payrollPeriodKey(runYear, runMonth);
     const params = new URLSearchParams({
       year: runYear,
       month: runMonth,
@@ -2603,6 +2730,12 @@ function PayrollPageContent() {
     if (!previewRes.ok) {
       throw new Error(previewData?.error || "Failed to load payroll rows");
     }
+    if (activePeriodKeyRef.current !== requestedPeriodKey) {
+      throw new Error("Payroll period changed while its rows were loading. Retry the action in the selected period.");
+    }
+    if (Number(previewData.preview?.year) !== Number(runYear) || Number(previewData.preview?.month) !== Number(runMonth)) {
+      throw new Error("The payroll server returned rows for a different period. Reload before continuing.");
+    }
     const allRows = (previewData.preview?.rows ?? []) as typeof editableRows;
     const denom =
       previewData.preview?.daysInMonth ??
@@ -2613,11 +2746,13 @@ function PayrollPageContent() {
     const runY = parseInt(runYear, 10);
     const runM = parseInt(runMonth, 10);
     const alreadyRun = Boolean(previewData.preview?.alreadyRun ?? preview?.alreadyRun);
+    const periodKey = payrollPeriodKey(runY, runM);
     const resolved = allRows.map((r) => {
       const uid = String(r.employeeUserId ?? "");
+      const cacheKey = payrollRowCacheKey(periodKey, uid);
       const cached =
-        (runRowEditsRef.current.get(uid) as RunPayrollRowLike | undefined) ??
-        resolvedPayrollByUserIdRef.current.get(uid);
+        (runRowEditsRef.current.get(cacheKey) as RunPayrollRowLike | undefined) ??
+        resolvedPayrollByUserIdRef.current.get(cacheKey);
       const row = resolveRunPayrollRow(r as RunPayrollRowLike, {
         denom,
         runYear: runY,
@@ -2627,9 +2762,10 @@ function PayrollPageContent() {
         draftDirty: draftDirtyRef.current,
         preserveEdits: auditMode && auditDirtyRef.current,
         cached: cached ?? null,
-        draftStored: draftPayloadByUserRef.current.get(uid) ?? null,
+        cachedPeriodKey: periodKey,
+        draftStored: draftPayloadByUserRef.current.get(cacheKey) ?? null,
       });
-      resolvedPayrollByUserIdRef.current.set(uid, row);
+      resolvedPayrollByUserIdRef.current.set(cacheKey, row);
       return row as (typeof editableRows)[number];
     });
     setResolvedRevision((n) => n + 1);
@@ -2681,6 +2817,10 @@ function PayrollPageContent() {
   }
 
   async function savePayrollDraft(): Promise<boolean> {
+    if (draftHydrationLoading || draftLoadError) {
+      showToast("error", draftLoadError || "Wait for the selected period's saved draft to load.");
+      return false;
+    }
     if (preview?.alreadyRun) {
       showToast("error", "Finalized payroll cannot be saved as a draft.");
       return false;
@@ -2724,6 +2864,8 @@ function PayrollPageContent() {
           year: parseInt(runYear, 10),
           month: parseInt(runMonth, 10),
           version: draftMeta?.version ?? undefined,
+          clientId: payrollLease.clientId,
+          leaseToken: payrollLease.leaseToken,
           replaceAllEmployees: true,
           employees,
         }),
@@ -2782,6 +2924,7 @@ function PayrollPageContent() {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to save draft";
       showToast("error", msg);
+      if (msg === PAYROLL_REVISION_CONFLICT) offerPayrollConflictReload();
       return false;
     } finally {
       setDraftSaving(false);
@@ -2793,8 +2936,8 @@ function PayrollPageContent() {
     const hasDraft = Boolean(draftMeta);
     const ok = window.confirm(
       hasDraft
-        ? "Discard the saved draft and recalculate from Payroll Master? This cannot be undone."
-        : "Discard unsaved edits and recalculate from Payroll Master?",
+        ? "Reset to calculation from Payroll Master? The saved draft will be discarded. This cannot be undone."
+        : "Reset to calculation from Payroll Master? Unsaved edits will be discarded.",
     );
     if (!ok) return;
     setDraftSaving(true);
@@ -2802,7 +2945,11 @@ function PayrollPageContent() {
       if (hasDraft) {
         const res = await fetch(
           `/api/payroll/drafts?year=${encodeURIComponent(runYear)}&month=${encodeURIComponent(String(parseInt(runMonth, 10)))}`,
-          { method: "DELETE" },
+          {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ version: draftMeta?.version, clientId: payrollLease.clientId, leaseToken: payrollLease.leaseToken }),
+          },
         );
         const data = await res.json();
         if (!res.ok) throw new Error(data?.error || data?.message || "Failed to reset draft");
@@ -2840,6 +2987,19 @@ function PayrollPageContent() {
     }
   }
 
+  function discardUnsavedPayrollEdits() {
+    if (!draftDirty) return;
+    if (!window.confirm("Discard unsaved screen edits and reload the last saved draft or current payroll preview?")) return;
+    runRowEditsRef.current.clear();
+    resolvedPayrollByUserIdRef.current.clear();
+    if (!draftMeta) draftPayloadByUserRef.current.clear();
+    draftDirtyRef.current = false;
+    setDraftDirty(false);
+    setDraftRevision((n) => n + 1);
+    setResolvedRevision((n) => n + 1);
+    showToast("success", draftMeta ? "Reloaded the last saved draft." : "Reloaded the current payroll preview.");
+  }
+
   function exitAuditMode() {
     setAuditMode(false);
     auditDirtyRef.current = false;
@@ -2847,6 +3007,7 @@ function PayrollPageContent() {
     setAuditReasonOpen(false);
     setAuditReason("");
     originalAuditByUserRef.current.clear();
+    auditDirectFieldsRef.current.clear();
   }
 
   async function enterAuditMode() {
@@ -2889,8 +3050,11 @@ function PayrollPageContent() {
       changes: ReturnType<typeof diffPayrollAuditSnapshots>;
     }> = [];
     const seen = new Set<string>();
+    const currentPeriodPrefix = `${payrollPeriodKey(runYear, runMonth)}:`;
     const source = [
-      ...Array.from(resolvedPayrollByUserIdRef.current.values()),
+      ...Array.from(resolvedPayrollByUserIdRef.current.entries())
+        .filter(([key]) => key.startsWith(currentPeriodPrefix))
+        .map(([, row]) => row),
       ...editableRows,
     ];
     for (const row of source) {
@@ -2953,12 +3117,14 @@ function PayrollPageContent() {
         grossArrear: r.grossArrear,
         cpfArrear: r.cpfArrear,
         netArrear: r.netArrear,
+        leaveRemarks: (r.govRecalc as Record<string, unknown> | undefined)?.leaveRemarks,
         governmentMonthly: r.governmentMonthly,
+        directEditedFields: Array.from(auditDirectFieldsRef.current.get(String(r.employeeUserId ?? "")) ?? []),
       }));
       const res = await fetch("/api/payroll/run/audit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reason, rows: rowsPayload }),
+        body: JSON.stringify({ reason, year: Number(runYear), month: Number(runMonth), revision: Number(preview?.revision ?? 0), clientId: payrollLease.clientId, leaseToken: payrollLease.leaseToken, rows: rowsPayload }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -2973,8 +3139,10 @@ function PayrollPageContent() {
       auditDirtyRef.current = false;
       setAuditDirty(false);
       originalAuditByUserRef.current.clear();
+      auditDirectFieldsRef.current.clear();
       runRowEditsRef.current.clear();
       resolvedPayrollByUserIdRef.current.clear();
+      exitAuditMode();
       const refreshRes = await fetch(
         `/api/payroll/run?year=${runYear}&month=${runMonth}&runDay=${runDay}&all=1`,
       );
@@ -2989,10 +3157,15 @@ function PayrollPageContent() {
           snap.set(uid, snapshotGeneratedPayrollRow(row));
         }
         originalAuditByUserRef.current = snap;
+      } else {
+        setPreview(null);
+        showToast("error", "Payroll amendment was saved, but the refreshed payroll state could not be loaded.");
       }
       setResolvedRevision((n) => n + 1);
     } catch (err: unknown) {
-      showToast("error", err instanceof Error ? err.message : "Failed to update generated payroll");
+      const message = err instanceof Error ? err.message : "Failed to update generated payroll";
+      showToast("error", message);
+      if (message === PAYROLL_REVISION_CONFLICT) offerPayrollConflictReload();
     } finally {
       setAuditSaving(false);
     }
@@ -3219,6 +3392,10 @@ function PayrollPageContent() {
 
   async function handleRunPayroll(e: FormEvent) {
     e.preventDefault();
+    if (draftHydrationLoading || draftLoadError) {
+      showToast("error", draftLoadError || "Wait for the selected period's saved draft to load before generating payroll.");
+      return;
+    }
     if (auditMode) {
       openUpdateGeneratedModal();
       return;
@@ -3322,13 +3499,19 @@ function PayrollPageContent() {
                 year: parseInt(runYear, 10),
                 month: parseInt(runMonth, 10),
                 runDay: parseInt(runDay, 10),
+                clientId: payrollLease.clientId,
+                leaseToken: payrollLease.leaseToken,
                 completeMissingPayslips: true,
+                revision: Number(preview?.revision ?? 0),
                 rows: rowsPayload,
               }
             : {
                 year: parseInt(runYear, 10),
                 month: parseInt(runMonth, 10),
                 runDay: parseInt(runDay, 10),
+                revision: Number(preview?.revision ?? 0),
+                clientId: payrollLease.clientId,
+                leaseToken: payrollLease.leaseToken,
                 rows: rowsPayload,
               },
         ),
@@ -3361,10 +3544,14 @@ function PayrollPageContent() {
       if (refreshRes.ok && refreshData.preview) {
         setPreview(refreshData.preview);
         setPayrollConfig(refreshData.payrollConfig ?? null);
+      } else {
+        setPreview(null);
+        showToast("error", "Payroll was generated, but the saved run could not be reloaded. Refresh this page.");
       }
     } catch (e: any) {
       setRunError(e?.message || "Failed to run payroll");
       showToast("error", e?.message || "Failed to run payroll");
+      if (e?.message === PAYROLL_REVISION_CONFLICT) offerPayrollConflictReload();
     } finally {
       setRunning(false);
     }
@@ -3394,21 +3581,17 @@ function PayrollPageContent() {
             runMonth={runMonth}
             runYear={runYear}
             onMonthChange={(v) => {
-              if (draftDirty && !window.confirm("You have unsaved changes. Switch month anyway?")) return;
-              if (auditDirty && !window.confirm("You have unsaved audit edits. Switch month anyway?")) return;
-              exitAuditMode();
-              setRunMonth(v);
+              switchRunPeriod(v, runYear);
             }}
             onYearChange={(v) => {
-              if (draftDirty && !window.confirm("You have unsaved changes. Switch year anyway?")) return;
-              if (auditDirty && !window.confirm("You have unsaved audit edits. Switch year anyway?")) return;
-              exitAuditMode();
-              setRunYear(v);
+              switchRunPeriod(runMonth, v);
             }}
             periodName={preview?.periodName}
-            running={running || auditSaving}
+            running={running || draftSaving || auditSaving}
             showGenerate={!preview?.alreadyRun || preview?.payrollComplete === false}
             generateDisabled={
+              previewLoading || draftHydrationLoading || Boolean(draftLoadError) ||
+              !payrollLease.ready || !payrollLease.acquired ||
               (!!preview?.alreadyRun && preview?.payrollComplete !== false) ||
               (editableRows.length > 0 && filteredEditableRows.length === 0) ||
               preview?.prePayrollValidation?.canCalculate === false
@@ -3458,13 +3641,15 @@ function PayrollPageContent() {
                         disabled={running || auditSaving}
                         onClick={() => {
                           if (auditDirty && !window.confirm("Discard unsaved audit edits?")) return;
+                          const auditPeriodKey = payrollPeriodKey(runYear, runMonth);
                           exitAuditMode();
                           void (async () => {
                             const refreshRes = await fetch(
                               `/api/payroll/run?year=${runYear}&month=${runMonth}&runDay=${runDay}`,
                             );
                             const refreshData = await refreshRes.json();
-                            if (refreshRes.ok && refreshData.preview) {
+                            const responseMatchesPeriod = Number(refreshData.preview?.year) === Number(runYear) && Number(refreshData.preview?.month) === Number(runMonth);
+                            if (activePeriodKeyRef.current === auditPeriodKey && refreshRes.ok && refreshData.preview && responseMatchesPeriod) {
                               runRowEditsRef.current.clear();
                               resolvedPayrollByUserIdRef.current.clear();
                               setPreview(refreshData.preview);
@@ -3541,15 +3726,15 @@ function PayrollPageContent() {
                     : `${previewMeta.total || editableRows.length} employees • Calculated`
             }
             draftSaving={draftSaving}
-            saveDraftDisabled={!draftDirty || !!preview?.alreadyRun || editableRows.length === 0}
+            saveDraftDisabled={previewLoading || draftHydrationLoading || Boolean(draftLoadError) || !draftDirty || !!preview?.alreadyRun || editableRows.length === 0 || !payrollLease.ready || !payrollLease.acquired}
             onSaveDraft={preview?.alreadyRun ? undefined : () => void savePayrollDraft()}
-            onResetDraft={preview?.alreadyRun ? undefined : () => void resetPayrollDraft()}
-            resetDisabled={!!preview?.alreadyRun || (!draftDirty && !draftMeta)}
+            onResetUnsavedEdits={preview?.alreadyRun || !draftDirty || !payrollLease.acquired ? undefined : discardUnsavedPayrollEdits}
+            onDiscardDraft={preview?.alreadyRun || !draftMeta || !payrollLease.acquired ? undefined : () => void resetPayrollDraft()}
             onDownloadPreviewExcel={() => void downloadRunExcel("detail")}
             onExportMonthlySummary={() => void downloadRunExcel("summary")}
             onDownloadBankLetter={(format) => void downloadBankLetter(format)}
             bankLetterLoading={bankLetterLoading}
-            exportDisabled={editableRows.length === 0 && !draftMeta && !preview?.alreadyRun}
+            exportDisabled={previewLoading || draftHydrationLoading || Boolean(draftLoadError) || (editableRows.length === 0 && !draftMeta && !preview?.alreadyRun)}
             employeePayrollExportSlot={
               canManage ? (
                 <EmployeePayrollExportButton
@@ -3568,6 +3753,14 @@ function PayrollPageContent() {
               ) : undefined
             }
           >
+              {canManage && (!payrollLease.ready || !payrollLease.acquired) && (
+                <div role="status" className="mb-2 flex flex-wrap items-center gap-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+                  <span>{!payrollLease.ready ? "Securing payroll editing session…" : payrollLease.message || "This payroll period is read-only in this tab."}</span>
+                  {payrollLease.ready && <Button size="sm" variant="outline" onClick={() => void takeOverAndRefreshPayroll()}>Take over &amp; refresh</Button>}
+                </div>
+              )}
+              {draftHydrationLoading && <p role="status" className="text-sm text-slate-600">Loading saved data for {selectedRunPeriodKey}…</p>}
+              {draftLoadError && <p role="alert" className="text-sm text-red-700">{draftLoadError}</p>}
               {runError && <p className="text-sm text-red-600">{runError}</p>}
               {preview?.prePayrollValidation && !preview.alreadyRun && (
                 <div className={`rounded-md px-3 py-2 text-sm ${preview.prePayrollValidation.canCalculate ? "bg-emerald-50 text-emerald-900" : "bg-red-50 text-red-900"}`}>
@@ -3616,7 +3809,7 @@ function PayrollPageContent() {
                     effectiveRunDay={
                       preview.effectiveRunDay ?? preview.workingDaysThroughRunDay ?? preview.daysInMonth
                     }
-                      readOnly={(!auditMode && !!preview?.alreadyRun) || running || auditSaving}
+                      readOnly={(!auditMode && !!preview?.alreadyRun) || running || auditSaving || previewLoading || draftHydrationLoading || !payrollLease.acquired}
                       customEarningFields={runPayrollCustomEarningFields}
                       customDeductionFields={runPayrollCustomDeductionFields}
                       payrollFieldDefs={payrollConfig?.fields ?? []}
@@ -3630,7 +3823,7 @@ function PayrollPageContent() {
                     effectiveRunDay={
                       preview.effectiveRunDay ?? preview.workingDaysThroughRunDay ?? preview.daysInMonth
                     }
-                    readOnly={(!auditMode && !!preview?.alreadyRun) || running || auditSaving}
+                    readOnly={(!auditMode && !!preview?.alreadyRun) || running || auditSaving || previewLoading || draftHydrationLoading || !payrollLease.acquired}
                     pfLabel={previewHasGovernment ? "CPF" : "PF"}
                     onUpdate={updateEditableRow}
                   />

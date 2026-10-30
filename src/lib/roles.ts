@@ -4,7 +4,10 @@ export type AppRole = "admin" | "employee";
 export const APP_ROLES: AppRole[] = ["admin", "employee"];
 
 export function normalizeRole(role: string | null | undefined): AppRole {
-  return role === "employee" ? "employee" : "admin";
+  const normalized = role?.trim().toLowerCase();
+  return normalized && ["admin", "super_admin", "payroll_admin", "hr", "manager"].includes(normalized)
+    ? "admin"
+    : "employee";
 }
 
 export function isAdminRole(role: string | null | undefined): boolean {

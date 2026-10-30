@@ -39,14 +39,25 @@ class PayrollPreflightValidationService
                         $add('error', 'INVALID_MASTER_COMPONENT', "Missing or invalid {$key} in the active payroll master.");
                     }
                 }
-                if ((bool) ($gov['hasQuarter'] ?? false) && (float) ($gov['hraPercent'] ?? 0) > 0) {
-                    $add('error', 'HRA_QUARTER_CONFLICT', 'Residential-quarter employee has HRA eligibility/rate above zero.');
+                // HRA percentage is the employee's entitlement in Payroll Master, not
+                // necessarily the amount payable for this run.  Quarter occupancy
+                // suppresses payable HRA, while retaining that master entitlement for
+                // when the quarter is released.  Only reject a calculated payable HRA.
+                if ((bool) ($gov['hasQuarter'] ?? false)) {
+                    $payableHra = $gov['hraPaid']
+                        ?? $gov['hra_paid']
+                        ?? $gov['hraActual']
+                        ?? $gov['hra_actual']
+                        ?? 0;
+                    if (is_numeric($payableHra) && (float) $payableHra > 0) {
+                        $add('error', 'HRA_QUARTER_CONFLICT', 'Residential-quarter employee has payable HRA above zero.');
+                    }
                 }
                 $electricityApplicable = (bool) ($gov['electricityApplicable'] ?? false);
                 $mode = (string) ($gov['electricityMode'] ?? 'unit_based');
                 if ($electricityApplicable && $mode === 'unit_based') {
-                    if (!is_numeric($gov['electricityUnitsConsumed'] ?? null) || (float) $gov['electricityUnitsConsumed'] <= 0) {
-                        $add('error', 'ELECTRICITY_UNITS_REQUIRED', 'Electricity billing is unit-based but consumption units are missing.');
+                    if (!is_numeric($gov['electricityUnitsConsumed'] ?? null) || (float) $gov['electricityUnitsConsumed'] < 0) {
+                        $add('error', 'ELECTRICITY_UNITS_INVALID', 'Electricity billing units must be a non-negative number.');
                     }
                     if (!$tariff || empty($tariff['effectiveFrom']) || (string) $tariff['effectiveFrom'] > $periodEnd || empty($tariff['slabs'])) {
                         $add('error', 'ELECTRICITY_TARIFF_REQUIRED', 'Electricity billing is unit-based but no active effective tariff is available.');
@@ -87,7 +98,7 @@ class PayrollPreflightValidationService
             'canCalculate' => $errors === [],
             'blockingErrorCount' => count($errors), 'warningCount' => count($warnings),
             'blockingErrors' => $errors, 'warnings' => $warnings, 'employees' => $employeeResults,
-            'policyStatus' => ['cpf' => 'uses_saved_configuration', 'transport' => 'uses_saved_master_or_slab_value', 'hra' => 'quarter-eligibility-checked'],
+            'policyStatus' => ['cpf' => 'uses_saved_configuration', 'transport' => 'uses_saved_master_or_slab_value', 'hra' => 'effective-payable-amount-checked'],
         ];
     }
 

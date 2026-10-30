@@ -348,6 +348,14 @@ export function deserializePayrollDraftEmployee(
     ...(calcGovRecalc ?? {}),
     ...govRecalcFromDraft,
   };
+  // Units are a draft input, but tariff/applicability are current payroll
+  // context. Do not let an old draft's metadata override the selected-period
+  // preview (or pin a stale tariff ahead of the current PayrollConfig).
+  if (calcGovRecalc && Object.prototype.hasOwnProperty.call(calcGovRecalc, "electricityApplicable")) {
+    govRecalc.electricityApplicable = calcGovRecalc.electricityApplicable;
+  }
+  delete govRecalc.electricityTariff;
+  delete govRecalc.electricity_tariff;
   {
     const earn = normalizeDynamicFieldBag(
       (govRecalc.customEarnings ?? govRecalc.custom_earnings) as Record<string, unknown>,

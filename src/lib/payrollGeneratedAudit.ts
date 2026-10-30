@@ -133,7 +133,12 @@ export function snapshotGeneratedPayrollRow(row: Record<string, unknown>): Payro
     totalEarnings: amount(gm.totalEarnings ?? row.grossPay),
     totalDeductions: amount(gm.totalDeductions ?? row.deductions),
     netSalary: amount(gm.netSalary ?? row.netPay),
-    leaveRemarks: typeof gm.leaveRemarks === "string" ? gm.leaveRemarks : null,
+    leaveRemarks:
+      typeof gm.leaveRemarks === "string"
+        ? gm.leaveRemarks
+        : typeof asRecord(row.govRecalc).leaveRemarks === "string"
+          ? (asRecord(row.govRecalc).leaveRemarks as string)
+          : null,
   };
 }
 

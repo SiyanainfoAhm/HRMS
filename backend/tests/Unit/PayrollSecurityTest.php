@@ -53,7 +53,8 @@ final class PayrollSecurityTest extends TestCase
         $this->assertIsString($routes);
         $this->assertStringContainsString('EnsureManagerial', $bootstrap);
         $this->assertStringContainsString("'managerial'", $bootstrap);
-        $this->assertStringContainsString("middleware('managerial')", $routes);
+        $this->assertStringContainsString("Route::middleware(['auth:sanctum', 'hrms.session', 'cirt.company'])", $routes);
+        $this->assertStringContainsString("middleware(['managerial'", $routes);
     }
 
     public function test_login_rate_limiter_is_configured(): void
@@ -64,6 +65,18 @@ final class PayrollSecurityTest extends TestCase
         $this->assertIsString($routes);
         $this->assertStringContainsString("RateLimiter::for('login'", $provider);
         $this->assertStringContainsString("throttle:login", $routes);
+    }
+
+    public function test_admin_short_login_resolves_only_to_existing_manager_account(): void
+    {
+        $service = file_get_contents(dirname(__DIR__, 2).'/app/Services/AuthService.php');
+        $request = file_get_contents(dirname(__DIR__, 2).'/app/Http/Requests/Auth/LoginRequest.php');
+        $this->assertIsString($service);
+        $this->assertIsString($request);
+        $this->assertStringContainsString("\$identifier === 'admin@cirt'", $service);
+        $this->assertStringContainsString("['admin@cirtindia.com']", $service);
+        $this->assertStringContainsString('! $user->hasManagerialRole()', $service);
+        $this->assertStringContainsString("\$identifier !== 'admin@cirt'", $request);
     }
 
     public function test_import_response_does_not_include_plaintext_password_key(): void

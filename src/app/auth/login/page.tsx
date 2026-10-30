@@ -126,12 +126,12 @@ function LoginForm() {
           <motion.form variants={staggerItem} onSubmit={handleSubmit} className="card space-y-5 shadow-card" noValidate>
             <div>
               <label htmlFor="email" className="label-field">
-                Email address
+                Email or login ID
               </label>
               <input
                 id="email"
-                type="email"
-                autoComplete="email"
+                type="text"
+                autoComplete="username"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 onBlur={() => setEmailTouched(true)}
@@ -139,7 +139,7 @@ function LoginForm() {
                 aria-describedby={emailError ? "email-error" : undefined}
                 disabled={loading}
                 className={`input-field ${emailError ? "!border-red-400 focus:!border-red-500 focus:!ring-red-500/30" : ""}`}
-                placeholder="you@cirtpune.org"
+                placeholder="admin@cirt or you@cirtpune.org"
               />
               {emailError && (
                 <p id="email-error" className="mt-1 text-xs text-red-600" role="alert">

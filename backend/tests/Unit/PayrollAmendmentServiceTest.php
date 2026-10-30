@@ -154,4 +154,24 @@ final class PayrollAmendmentServiceTest extends TestCase
         $this->assertStringContainsString("\$gov->total_earnings", $controller);
         $this->assertStringContainsString("\$gov->water_amount", $controller);
     }
+
+    public function test_run_revision_snapshots_are_canonical_and_readable_by_version(): void
+    {
+        $service = new \App\Services\PayrollRunRevisionService;
+        $this->assertSame(
+            $service::checksum([['id' => 'a', 'amount' => 1]], [['id' => 's', 'name' => 'N']]),
+            $service::checksum([['amount' => 1, 'id' => 'a']], [['name' => 'N', 'id' => 's']]),
+        );
+        $controller = file_get_contents(dirname(__DIR__, 2).'/app/Http/Controllers/Api/V1/PayrollController.php');
+        $routes = file_get_contents(dirname(__DIR__, 2).'/routes/api.php');
+        $migration = file_get_contents(dirname(__DIR__, 2).'/database/migrations/2026_10_27_120000_create_cirt_payroll_run_revisions.php');
+        $this->assertIsString($controller);
+        $this->assertIsString($routes);
+        $this->assertIsString($migration);
+        $this->assertStringContainsString('PayrollRunRevisionService', $controller);
+        $this->assertStringContainsString('payroll/periods/{periodId}/revisions', $routes);
+        $this->assertStringContainsString('payroll/revisions/{revisionId}', $routes);
+        $this->assertStringContainsString('created_by', $migration);
+        $this->assertStringContainsString('snapshot_sha256', $migration);
+    }
 }

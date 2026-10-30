@@ -10,6 +10,7 @@ use App\Models\HrmsDesignation;
 use App\Models\HrmsDivision;
 use App\Models\HrmsEmployee;
 use App\Models\HrmsPayrollMaster;
+use App\Exceptions\PayrollConcurrencyException;
 use App\Models\HrmsPayrollMasterHistory;
 use App\Models\HrmsQuarter;
 use App\Models\HrmsUser;
@@ -383,6 +384,7 @@ final class PayrollMasterService
 
     public function update(HrmsPayrollMaster $master, array $payload, string $companyId, bool $autosave = false): HrmsPayrollMaster
     {
+        $expectedRevision = is_string($payload['revision'] ?? null) ? $payload['revision'] : null;
         return $this->createOrUpdatePayrollMasterRevision(
             $payload,
             $companyId,
@@ -391,6 +393,8 @@ final class PayrollMasterService
             $autosave,
             ! $autosave,
             $autosave,
+            $expectedRevision,
+            true,
         );
     }
 
@@ -405,8 +409,10 @@ final class PayrollMasterService
         bool $salaryPending = false,
         bool $provisionUser = true,
         bool $autosave = false,
+        ?string $expectedRevision = null,
+        bool $requireExpectedRevision = false,
     ): HrmsPayrollMaster {
-        return DB::transaction(function () use ($payload, $companyId, $createdBy, $existingMaster, $salaryPending, $provisionUser, $autosave) {
+        return DB::transaction(function () use ($payload, $companyId, $createdBy, $existingMaster, $salaryPending, $provisionUser, $autosave, $expectedRevision, $requireExpectedRevision) {
             if ($existingMaster) {
                 if ($existingMaster->company_id && $existingMaster->company_id !== $companyId) {
                     abort(403, 'Forbidden');
@@ -415,6 +421,10 @@ final class PayrollMasterService
                     ->where('id', $existingMaster->id)
                     ->lockForUpdate()
                     ->firstOrFail();
+                $currentRevision = self::revisionToken($existingMaster);
+                if ($requireExpectedRevision && ($expectedRevision === null || ! hash_equals($currentRevision, $expectedRevision))) {
+                    throw new PayrollConcurrencyException($currentRevision, 'payroll_master', (string) $existingMaster->id);
+                }
             } else {
                 $userId = $payload['employee_user_id'] ?? $payload['employeeUserId'] ?? $payload['user_id'] ?? $payload['userId'] ?? null;
                 if ($userId) {
@@ -538,6 +548,13 @@ final class PayrollMasterService
 
             return $existingMaster;
         });
+    }
+
+    public static function revisionToken(HrmsPayrollMaster $master): string
+    {
+        $attributes = $master->getAttributes();
+        ksort($attributes);
+        return hash('sha256', json_encode($attributes, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
     }
 
     public function recalculate(HrmsPayrollMaster $master): HrmsPayrollMaster
@@ -1772,6 +1789,7 @@ final class PayrollMasterService
             'rowType' => $rowType ?? ($this->isCurrentMaster($m) ? 'CURRENT' : 'HISTORY'),
             'archivedAt' => null,
             'updatedAt' => $m->updated_at?->toIso8601String(),
+            'revision' => self::revisionToken($m),
             'payrollMode' => $m->payroll_mode ?? 'government',
             ...$this->quarterService->quarterMetaForMaster($m, (string) $m->company_id),
             'quarterAssigned' => (bool) ($m->has_quarter ?? false),

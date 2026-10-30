@@ -26,14 +26,50 @@ class PayrollPreflightValidationServiceTest extends TestCase
         $this->assertSame(0, $result['blockingErrorCount']);
     }
 
-    public function test_unit_based_electricity_without_units_or_tariff_blocks_employee(): void
+    public function test_unit_based_electricity_without_tariff_blocks_employee_but_zero_units_are_allowed(): void
     {
         $row = $this->validRow();
         $row['govRecalc']['electricityApplicable'] = true;
         $row['govRecalc']['electricityUnitsConsumed'] = 0;
         $result = (new PayrollPreflightValidationService)->validate([$row], [], null, '2026-10-31');
         $this->assertFalse($result['canCalculate']);
-        $this->assertSame(['ELECTRICITY_UNITS_REQUIRED', 'ELECTRICITY_TARIFF_REQUIRED'], array_column($result['blockingErrors'], 'code'));
+        $this->assertSame(['ELECTRICITY_TARIFF_REQUIRED'], array_column($result['blockingErrors'], 'code'));
+    }
+
+    public function test_quarter_resident_can_keep_hra_entitlement_when_payable_hra_is_zero(): void
+    {
+        $row = $this->validRow();
+        $row['govRecalc']['hasQuarter'] = true;
+        $row['govRecalc']['hraPercent'] = 30; // Payroll Master entitlement.
+        $row['govRecalc']['hraPaid'] = 0; // Effective payable HRA for this run.
+
+        $result = (new PayrollPreflightValidationService)->validate([$row], [], null, '2026-10-31');
+
+        $this->assertTrue($result['canCalculate']);
+        $this->assertSame([], $result['blockingErrors']);
+    }
+
+    public function test_quarter_resident_with_non_zero_payable_hra_is_blocked(): void
+    {
+        $row = $this->validRow();
+        $row['govRecalc']['hasQuarter'] = true;
+        $row['govRecalc']['hraPercent'] = 30;
+        $row['govRecalc']['hraPaid'] = 15000;
+
+        $result = (new PayrollPreflightValidationService)->validate([$row], [], null, '2026-10-31');
+
+        $this->assertFalse($result['canCalculate']);
+        $this->assertSame(['HRA_QUARTER_CONFLICT'], array_column($result['blockingErrors'], 'code'));
+    }
+
+    public function test_non_quarter_employee_with_normal_hra_passes(): void
+    {
+        $row = $this->validRow();
+        $row['govRecalc']['hraPaid'] = 15000;
+
+        $result = (new PayrollPreflightValidationService)->validate([$row], [], null, '2026-10-31');
+
+        $this->assertTrue($result['canCalculate']);
     }
 
     public function test_cpf_policy_and_component_duplication_are_not_silently_accepted(): void

@@ -306,6 +306,7 @@ class PayrollController extends Controller
             'hra_percent' => ['nullable', 'numeric'],
             'medical_fixed' => ['nullable', 'numeric'],
             'transport_da_percent' => ['nullable', 'numeric'],
+            'revision' => ['nullable', 'string', 'size:64'],
             'update_bank_only' => ['nullable', 'boolean'],
             'bank_name' => ['nullable', 'string'],
             'bank_account_holder_name' => ['nullable', 'string'],
@@ -357,6 +358,11 @@ class PayrollController extends Controller
             (string) $user->company_id,
             (string) $user->id,
             $existing,
+            false,
+            true,
+            false,
+            isset($data['revision']) ? (string) $data['revision'] : null,
+            $existing !== null,
         );
 
         return response()->json(['master' => $master->refresh()], $existing ? 200 : 201);
@@ -587,6 +593,11 @@ class PayrollController extends Controller
                     'grossBasic' => $grossBasic,
                     'daPercent' => $daPercent,
                     'hraPercent' => $hraPercent,
+                    // Keep the effective payable amount alongside the retained
+                    // master entitlement so preflight validates the same rule as
+                    // the payroll calculator.
+                    'hraActual' => $quarterMeta['hasQuarter'] ? 0.0 : round($grossBasic * $hraPercent / 100),
+                    'hraPaid' => $quarterMeta['hasQuarter'] ? 0.0 : round($grossBasic * $hraPercent / 100),
                     'medicalFixed' => $medicalFixed,
                     'payLevel' => $payLevel,
                     'hplDays' => 0,
@@ -743,6 +754,7 @@ class PayrollController extends Controller
                 'preview' => array_merge($previewBase, [
                     'alreadyRun' => false,
                     'existingPeriodId' => $existingPeriod?->id,
+                    'revision' => $existingPeriod ? app(\App\Services\PayrollRunRevisionService::class)->currentRevision((string) $user->company_id, (string) $existingPeriod->id) : 0,
                     'isLocked' => (bool) ($existingPeriod?->is_locked ?? false),
                     'payrollComplete' => true,
                     'missingPayslipCount' => 0,
@@ -844,6 +856,7 @@ class PayrollController extends Controller
                 'periodName' => $existingPeriod->period_name ?? $periodNameDefault,
                 'alreadyRun' => true,
                 'existingPeriodId' => $existingPeriod->id,
+                'revision' => app(\App\Services\PayrollRunRevisionService::class)->currentRevision((string) $user->company_id, (string) $existingPeriod->id),
                 'isLocked' => (bool) ($existingPeriod->is_locked ?? false),
                 'payrollComplete' => $missingPayslipCount === 0,
                 'missingPayslipCount' => $missingPayslipCount,
@@ -884,6 +897,11 @@ class PayrollController extends Controller
             return response()->json(['error' => 'year, month, and runDay are required'], 422);
         }
 
+        // The route write-lease middleware keeps a transaction open. Serialize
+        // same-period operations across distinct admin accounts as a final
+        // guard against concurrent generate attempts.
+        DB::select('SELECT pg_advisory_xact_lock(hashtext(?))', [sprintf('%s|payroll-run|%04d-%02d', (string) $user->company_id, $year, $month)]);
+
         if ($completeMissing) {
             if (! is_array($rows) || $rows === []) {
                 return response()->json(['error' => 'rows are required (pending employee payroll data)'], 422);
@@ -899,6 +917,12 @@ class PayrollController extends Controller
                     'error' => 'No payroll period found for this month. Run full payroll first.',
                 ], 400);
             }
+
+            app(\App\Services\PayrollRunRevisionService::class)->assertExpectedRevision(
+                (string) $user->company_id,
+                (string) $existingPeriod->id,
+                isset($body['revision']) ? (int) $body['revision'] : null,
+            );
 
             if (! HrmsGovernmentMonthlyPayroll::query()
                 ->where('company_id', $user->company_id)
@@ -939,6 +963,11 @@ class PayrollController extends Controller
             ->first();
 
         if ($existingPeriod) {
+            app(\App\Services\PayrollRunRevisionService::class)->assertExpectedRevision(
+                (string) $user->company_id,
+                (string) $existingPeriod->id,
+                isset($body['revision']) ? (int) $body['revision'] : null,
+            );
             $hasSlips = HrmsPayslip::where('payroll_period_id', $existingPeriod->id)->exists();
             $hasMonthly = HrmsGovernmentMonthlyPayroll::where('payroll_period_id', $existingPeriod->id)
                 ->where('company_id', $user->company_id)
@@ -993,6 +1022,17 @@ class PayrollController extends Controller
             return response()->json(['error' => 'rows must be an array of generated payroll records.'], 422);
         }
 
+        $periodIds = collect($rows)->map(function ($row) use ($user) {
+            $id = is_array($row) ? (string) ($row['monthlyPayrollId'] ?? $row['monthly_payroll_id'] ?? '') : '';
+            return $id === '' ? null : HrmsGovernmentMonthlyPayroll::query()->where('company_id', $user->company_id)->whereKey($id)->value('payroll_period_id');
+        })->filter()->unique()->values();
+        if ($periodIds->count() !== 1) return response()->json(['error' => 'All amended rows must belong to one payroll period.'], 422);
+        app(\App\Services\PayrollRunRevisionService::class)->assertExpectedRevision(
+            (string) $user->company_id,
+            (string) $periodIds->first(),
+            $request->has('revision') ? (int) $request->input('revision') : null,
+        );
+
         try {
             $result = $this->amendmentService->amendGeneratedRows($user, $reason, array_values($rows));
         } catch (InvalidArgumentException $e) {
@@ -1001,6 +1041,13 @@ class PayrollController extends Controller
             $locked = str_contains(strtolower($e->getMessage()), 'locked');
 
             return response()->json(['error' => $e->getMessage(), 'code' => $locked ? 'PAYROLL_PERIOD_LOCKED' : 'AMENDMENT_FAILED'], $locked ? 409 : 400);
+        }
+
+        $firstMonthlyId = (string) ($rows[0]['monthlyPayrollId'] ?? $rows[0]['monthly_payroll_id'] ?? '');
+        $period = HrmsGovernmentMonthlyPayroll::query()->where('id', $firstMonthlyId)
+            ->where('company_id', $user->company_id)->first()?->payrollPeriod;
+        if ($period) {
+            app(\App\Services\PayrollRunRevisionService::class)->capture($period, (string) $user->id, 'amended', (string) $reason);
         }
 
         return response()->json([
@@ -1030,6 +1077,14 @@ class PayrollController extends Controller
         $row['monthly_payroll_id'] = $id;
         $row['monthlyPayrollId'] = $id;
 
+        $monthlyForRevision = HrmsGovernmentMonthlyPayroll::query()->where('company_id', $user->company_id)->whereKey($id)->first();
+        if (! $monthlyForRevision || ! $monthlyForRevision->payroll_period_id) return response()->json(['error' => 'Generated payroll row not found.'], 404);
+        app(\App\Services\PayrollRunRevisionService::class)->assertExpectedRevision(
+            (string) $user->company_id,
+            (string) $monthlyForRevision->payroll_period_id,
+            $request->has('revision') ? (int) $request->input('revision') : null,
+        );
+
         try {
             $result = $this->amendmentService->amendGeneratedRows($user, $reason, [$row]);
         } catch (InvalidArgumentException $e) {
@@ -1038,6 +1093,12 @@ class PayrollController extends Controller
             $locked = str_contains(strtolower($e->getMessage()), 'locked');
 
             return response()->json(['error' => $e->getMessage(), 'code' => $locked ? 'PAYROLL_PERIOD_LOCKED' : 'AMENDMENT_FAILED'], $locked ? 409 : 400);
+        }
+
+        $period = HrmsGovernmentMonthlyPayroll::query()->where('id', $id)
+            ->where('company_id', $user->company_id)->first()?->payrollPeriod;
+        if ($period) {
+            app(\App\Services\PayrollRunRevisionService::class)->capture($period, (string) $user->id, 'amended', (string) $reason);
         }
 
         return response()->json([
@@ -1068,6 +1129,26 @@ class PayrollController extends Controller
         ]);
     }
 
+    public function runRevisions(Request $request, string $periodId): JsonResponse
+    {
+        $user = $request->user();
+        if ($denied = $this->assertPayrollAdmin($user)) return $denied;
+        $period = HrmsPayrollPeriod::query()->where('id', $periodId)->where('company_id', $user->company_id)->first();
+        if (! $period) return response()->json(['error' => 'Payroll period not found.'], 404);
+
+        return response()->json(['revisions' => app(\App\Services\PayrollRunRevisionService::class)->list((string) $user->company_id, (string) $period->id)]);
+    }
+
+    public function runRevision(Request $request, string $revisionId): JsonResponse
+    {
+        $user = $request->user();
+        if ($denied = $this->assertPayrollAdmin($user)) return $denied;
+        $revision = app(\App\Services\PayrollRunRevisionService::class)->get((string) $user->company_id, $revisionId);
+        if (! $revision) return response()->json(['error' => 'Payroll revision not found.'], 404);
+
+        return response()->json(['revision' => $revision]);
+    }
+
     private function assertPayrollAdmin(HrmsUser $user): ?JsonResponse
     {
         $role = $user->role;
@@ -1088,9 +1169,116 @@ class PayrollController extends Controller
     }
 
     /**
+     * Recalculate amounts whose rules must not be trusted to a submitted preview.
+     * This is deliberately used only for a new payroll run; historical generated
+     * rows retain their saved monthly snapshot.
+     *
+     * @param array<string, mixed> $monthly
+     * @return array<string, mixed>
+     */
+    private function applyAuthoritativeGovernmentPayrollAmounts(
+        array $monthly,
+        HrmsPayrollMaster $master,
+        string $companyId,
+        string $periodEnd,
+    ): array {
+        $num = static fn (mixed $value): float => is_numeric($value) ? (float) $value : 0.0;
+        $deductions = is_array($monthly['deductions'] ?? null) ? $monthly['deductions'] : [];
+        $units = max(0, $num($monthly['electricityUnitsConsumed'] ?? $monthly['electricity_units_consumed'] ?? 0));
+        $requestedMode = (string) ($monthly['electricityMode'] ?? $monthly['electricity_mode'] ?? '');
+        // A units edit explicitly changes this run to tariff billing. Otherwise
+        // retain the employee's configured fixed/unit billing mode.
+        $mode = $requestedMode === 'unit_based'
+            ? 'unit_based'
+            : (string) ($master->electricity_mode ?? 'manual_fixed');
+        $applicable = (bool) ($master->electricity_applicable ?? true);
+        $tariff = $this->electricityTariffForDate($companyId, $periodEnd);
+        $fixedAmount = $this->masterNumeric($master, 'electricity', 'electricity_default');
+        $bill = $this->electricityTariffService->calculateBill(
+            $units,
+            $tariff,
+            $applicable,
+            $mode,
+            // Do not accept a per-unit rate from the browser. Tariff data (or
+            // the configured fixed master amount) is the only authority here.
+            0,
+            $fixedAmount,
+        );
+
+        $previousElectricity = $num($deductions['electricity'] ?? 0);
+        $deductions['electricity'] = $bill['total'];
+        $previousDeductions = $num($monthly['totalDeductions'] ?? $monthly['total_deductions'] ?? 0);
+        $totalDeductions = round(max(0, $previousDeductions - $previousElectricity + $bill['total']), 0);
+
+        $monthly = array_merge($monthly, [
+            'deductions' => $deductions,
+            'electricityUnitsConsumed' => $units,
+            'electricityTariffId' => $bill['tariffId'],
+            'electricitySthirAakar' => $bill['sthirAakar'],
+            'electricityConsumptionCharge' => $bill['consumptionCharge'],
+            'electricityVahanAakar' => $bill['vahanAakar'],
+            'electricityFuelCharge' => $bill['fuelCharge'],
+            'electricityDuty' => $bill['dutyAmount'],
+            'electricityTotal' => $bill['total'],
+            'electricityApplicable' => $applicable,
+            'electricityMode' => $mode,
+            'electricityManualOverride' => false,
+            'totalDeductions' => $totalDeductions,
+        ]);
+
+        // Payroll Master HRA is an entitlement. A quarter only suppresses the
+        // payable HRA for this period; do not mutate the underlying entitlement.
+        if ((bool) ($master->has_quarter ?? false) || $master->quarter_id) {
+            $previousHra = $num($monthly['hraPaid'] ?? $monthly['hra_paid'] ?? 0);
+            $totalEarnings = round(max(0, $num($monthly['totalEarnings'] ?? $monthly['total_earnings'] ?? 0) - $previousHra), 0);
+            $monthly['hraActual'] = 0.0;
+            $monthly['hraPaid'] = 0.0;
+            $monthly['totalEarnings'] = $totalEarnings;
+        }
+
+        $totalEarnings = $num($monthly['totalEarnings'] ?? $monthly['total_earnings'] ?? 0);
+        $monthly['netSalary'] = round($totalEarnings - $totalDeductions, 0);
+
+        return $monthly;
+    }
+
+    /**
      * @param  list<array<string, mixed>>  $rows
      */
     private function executePayrollRun(
+        HrmsUser $user,
+        HrmsPayrollPeriod $period,
+        array $rows,
+        int $year,
+        int $month,
+        int $runDay,
+        bool $completeMissing,
+    ): JsonResponse {
+        return DB::transaction(function () use ($user, $period, $rows, $year, $month, $runDay, $completeMissing): JsonResponse {
+            $lockedPeriod = HrmsPayrollPeriod::query()
+                ->where('company_id', $user->company_id)
+                ->whereKey($period->id)
+                ->lockForUpdate()
+                ->first();
+            if (! $lockedPeriod) return response()->json(['error' => 'Payroll period no longer exists.'], 404);
+
+            if (! $completeMissing && (
+                HrmsPayslip::query()->where('payroll_period_id', $lockedPeriod->id)->exists()
+                || HrmsGovernmentMonthlyPayroll::query()->where('company_id', $user->company_id)->where('payroll_period_id', $lockedPeriod->id)->exists()
+            )) {
+                return response()->json([
+                    'error' => 'Payroll has already been generated for this calendar month. Use Audit Generated Payroll to amend existing records.',
+                    'code' => 'PAYROLL_ALREADY_GENERATED',
+                    'existingPeriodId' => $lockedPeriod->id,
+                ], 409);
+            }
+
+            return $this->executePayrollRunInTransaction($user, $lockedPeriod, $rows, $year, $month, $runDay, $completeMissing);
+        });
+    }
+
+    /** All payslips, monthly snapshots, arrear settlement, and draft finalization run under the caller transaction. */
+    private function executePayrollRunInTransaction(
         HrmsUser $user,
         HrmsPayrollPeriod $period,
         array $rows,
@@ -1240,6 +1428,22 @@ class PayrollController extends Controller
             $bank = $this->bankDetailsForPayslip($master, $empUser);
 
             if ($payrollMode === 'government' && is_array($gm)) {
+                // The browser may recalculate a preview, but tariff charges are always
+                // recalculated from the effective server-side tariff immediately before
+                // a new payroll is persisted.  Generated historical rows are excluded:
+                // they remain an immutable snapshot when completing a missing payslip.
+                if (! $completeMissing && $master) {
+                    $gm = $this->applyAuthoritativeGovernmentPayrollAmounts(
+                        $gm,
+                        $master,
+                        $companyId,
+                        $periodEnd,
+                    );
+                    $row['grossPay'] = (float) ($gm['totalEarnings'] ?? 0);
+                    $row['deductions'] = (float) ($gm['totalDeductions'] ?? 0);
+                    $row['netPay'] = (float) ($gm['netSalary'] ?? 0);
+                    $row['takeHome'] = (float) ($gm['netSalary'] ?? 0);
+                }
                 $ded = is_array($gm['deductions'] ?? null) ? $gm['deductions'] : [];
                 $pfEmpGov = (float) ($row['pf_employee'] ?? $row['pfEmployee'] ?? 0);
                 if ($completeMissing || $pfEmpGov <= 0) {
@@ -1262,9 +1466,7 @@ class PayrollController extends Controller
                     'allowances' => 0,
                     'deductions' => (float) ($gm['totalDeductions'] ?? $gm['total_deductions'] ?? $row['deductions'] ?? 0),
                     'gross_pay' => (float) ($gm['totalEarnings'] ?? $gm['total_earnings'] ?? $row['grossPay'] ?? $row['gross_pay'] ?? 0),
-                    'net_pay' => $completeMissing
-                        ? (float) ($gm['netSalary'] ?? $gm['net_salary'] ?? 0)
-                        : (float) ($row['takeHome'] ?? $row['take_home'] ?? $gm['netSalary'] ?? $gm['net_salary'] ?? $row['netPay'] ?? 0),
+                    'net_pay' => (float) ($gm['netSalary'] ?? $gm['net_salary'] ?? $row['takeHome'] ?? $row['take_home'] ?? $row['netPay'] ?? 0),
                     'pay_days' => $payDays,
                     'ctc' => (float) ($row['ctc'] ?? 0),
                     'pf_employee' => $pfEmpGov,
@@ -1381,6 +1583,13 @@ class PayrollController extends Controller
             $month,
             (string) $period->id,
             (string) $user->id,
+        );
+
+        app(\App\Services\PayrollRunRevisionService::class)->capture(
+            $period,
+            (string) $user->id,
+            $completeMissing ? 'complete_missing' : 'generated',
+            $completeMissing ? 'Completed missing payslips from saved payroll snapshots.' : 'Payroll generated.',
         );
 
         return response()->json([
@@ -1692,6 +1901,7 @@ class PayrollController extends Controller
             'preview' => array_merge($previewBase, [
                 'alreadyRun' => true,
                 'existingPeriodId' => $period->id,
+                'revision' => app(\App\Services\PayrollRunRevisionService::class)->currentRevision($companyId, (string) $period->id),
                 'isLocked' => (bool) $period->is_locked,
                 // The set being checked is precisely the generated monthly set.
                 'payrollComplete' => $missingPayslipCount === 0,
