@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createUuid } from "@/lib/createUuid";
 
 type LeaseState = { ready: boolean; acquired: boolean; message: string; leaseToken: string | null; clientId: string; acquire: (takeover?: boolean) => Promise<boolean> };
 
@@ -9,7 +10,7 @@ export function usePayrollEditLease(year: string, month: string, enabled: boolea
     if (typeof window === "undefined") return "";
     // sessionStorage can be cloned when a tab is duplicated; a fresh ID per
     // mounted tab keeps the server lease truly tab specific.
-    return crypto.randomUUID();
+    return createUuid();
   }, []);
   const [ready, setReady] = useState(false);
   const [acquired, setAcquired] = useState(false);
