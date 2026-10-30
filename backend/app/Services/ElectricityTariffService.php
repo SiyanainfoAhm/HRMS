@@ -227,7 +227,7 @@ class ElectricityTariffService
                 'vahan_aakar_per_unit' => $data['vahan_aakar_per_unit'] ?? null,
                 'fuel_charge' => $data['fuel_charge'] ?? null,
                 'duty_percentage' => $data['duty_percentage'] ?? null,
-                'is_active' => array_key_exists('is_active', $data) ? $data['is_active'] : null,
+                'is_active' => $data['is_active'] ?? null,
             ], static fn ($v) => $v !== null));
             $tariff->save();
             if (isset($data['slabs'])) {
@@ -433,14 +433,27 @@ class ElectricityTariffService
             }
         }
 
-        $sthir = (float) ($payload['sthir_aakar'] ?? $payload['sthirAakar'] ?? 0);
-        $vahan = (float) ($payload['vahan_aakar_per_unit'] ?? $payload['vahanAakarPerUnit'] ?? 0);
-        $fuel = (float) ($payload['fuel_charge'] ?? $payload['fuelCharge'] ?? 0);
-        $duty = (float) ($payload['duty_percentage'] ?? $payload['dutyPercentage'] ?? 0);
+        // On a partial update a field that was not sent stays null (= leave unchanged).
+        // Coercing it to 0 / true zeroed the charges and re-activated a deactivated
+        // tariff whenever only the slabs (or only the flag) were edited.
+        $pick = static function (array $keys) use ($payload, $partial): ?float {
+            foreach ($keys as $key) {
+                if (array_key_exists($key, $payload) && $payload[$key] !== null && $payload[$key] !== '') return (float) $payload[$key];
+            }
 
-        if ($sthir < 0 || $vahan < 0 || $fuel < 0 || $duty < 0) {
-            throw ValidationException::withMessages(['tariff' => 'Charges and duty percentage must be >= 0.']);
+            return $partial ? null : 0.0;
+        };
+        $sthir = $pick(['sthir_aakar', 'sthirAakar']);
+        $vahan = $pick(['vahan_aakar_per_unit', 'vahanAakarPerUnit']);
+        $fuel = $pick(['fuel_charge', 'fuelCharge']);
+        $duty = $pick(['duty_percentage', 'dutyPercentage']);
+
+        foreach ([$sthir, $vahan, $fuel, $duty] as $charge) {
+            if ($charge !== null && $charge < 0) {
+                throw ValidationException::withMessages(['tariff' => 'Charges and duty percentage must be >= 0.']);
+            }
         }
+        $activeRaw = $payload['is_active'] ?? $payload['isActive'] ?? null;
 
         $data = [
             'effective_from' => $effectiveFrom ? substr((string) $effectiveFrom, 0, 10) : null,
@@ -448,7 +461,7 @@ class ElectricityTariffService
             'vahan_aakar_per_unit' => $vahan,
             'fuel_charge' => $fuel,
             'duty_percentage' => $duty,
-            'is_active' => filter_var($payload['is_active'] ?? $payload['isActive'] ?? true, FILTER_VALIDATE_BOOLEAN),
+            'is_active' => $activeRaw === null ? ($partial ? null : true) : filter_var($activeRaw, FILTER_VALIDATE_BOOLEAN),
         ];
 
         if (is_array($slabsRaw)) {

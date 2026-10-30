@@ -335,6 +335,21 @@ class PayrollFieldService
                 'cpf_basis_field_keys' => ['Select at least one earning field for PF/CPF calculation.'],
             ]);
         }
+        if ($mode !== 'fixed_amount' && is_array($basis) && (array_key_exists('cpf_basis_field_keys', $data) || array_key_exists('cpfBasisFieldKeys', $data))) {
+            // Reject here what payroll would reject later: a basis key that is neither a
+            // standard component nor an active field of this company.
+            $allowed = array_merge(
+                \App\Support\PayrollFieldRegistry::DEFAULT_CPF_BASIS_KEYS,
+                \App\Support\PayrollFieldRegistry::EXTRA_CPF_BASIS_KEYS,
+                HrmsPayrollFieldDefinition::query()->where('company_id', $companyId)->where('is_active', true)->pluck('field_key')->all(),
+            );
+            $unknown = array_values(array_diff(array_map('strval', $basis), $allowed));
+            if ($unknown !== []) {
+                throw ValidationException::withMessages([
+                    'cpf_basis_field_keys' => ['Unknown or inactive CPF basis field(s): '.implode(', ', $unknown).'. Choose active earning fields only.'],
+                ]);
+            }
+        }
         if ($elecRate < 0) {
             throw ValidationException::withMessages(['electricity_unit_rate' => ['Electricity unit rate must be ≥ 0.']]);
         }

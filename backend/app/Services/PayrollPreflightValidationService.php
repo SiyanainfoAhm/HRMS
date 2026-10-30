@@ -16,11 +16,15 @@ class PayrollPreflightValidationService
         $errors = [];
         $warnings = [];
         $employeeResults = [];
-        $knownCpfKeys = array_merge(PayrollFieldRegistry::DEFAULT_CPF_BASIS_KEYS, [
-            'sp_pay', 'telephone_allowance', 'education_allowance', 'encashment', 'gpf',
-            'extra_work_allowance', 'night_allowance', 'uniform_allowance', 'da_arrears',
-            'transport_arrears', 'gross_arrears', 'net_arrears',
-        ]);
+        $knownCpfKeys = array_merge(PayrollFieldRegistry::DEFAULT_CPF_BASIS_KEYS, PayrollFieldRegistry::EXTRA_CPF_BASIS_KEYS);
+
+        // Company-defined earning components are legitimate CPF basis keys too; the
+        // fixed list alone rejected a basis the Settings screen had accepted.
+        foreach ((array) ($payrollConfig['fields'] ?? []) as $field) {
+            if (is_array($field) && is_string($field['fieldKey'] ?? null) && ($field['isActive'] ?? true)) {
+                $knownCpfKeys[] = $field['fieldKey'];
+            }
+        }
 
         foreach ($rows as $row) {
             $employeeErrors = [];

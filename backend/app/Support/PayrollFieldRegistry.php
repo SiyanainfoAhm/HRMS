@@ -19,6 +19,13 @@ final class PayrollFieldRegistry
         'transport',
     ];
 
+    /** Other standard components payroll accepts as a CPF basis (shared by Settings validation and preflight). */
+    public const EXTRA_CPF_BASIS_KEYS = [
+        'sp_pay', 'telephone_allowance', 'education_allowance', 'encashment', 'gpf',
+        'extra_work_allowance', 'night_allowance', 'uniform_allowance', 'da_arrears',
+        'transport_arrears', 'gross_arrears', 'net_arrears',
+    ];
+
     /** Employee-level CPF override (DB/API may store 0 instead of boolean false). */
     public static function isCpfEmployeeCustomMode(mixed $value): bool
     {
