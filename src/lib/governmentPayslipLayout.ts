@@ -137,7 +137,10 @@ export function governmentPayslipEarningPairs(
     ["Education Allowance", gnum(gov, "education_allowance_paid")],
     ["DA Arrears", gnum(gov, "da_arrears_paid")],
     ["Transport Arrears", gnum(gov, "transport_arrears_paid")],
-    ["Arrears", gnum(gov, "gross_arrear")],
+    // Gross arrear already contains the DA and transport arrear lines above; show
+    // only the remainder so the printed lines add up to Gross (same rule as the
+    // sheet totals: totalArrearsPaid in payrollArrearCalc.ts).
+    ["Arrears", Math.max(0, gnum(gov, "gross_arrear") - gnum(gov, "da_arrears_paid") - gnum(gov, "transport_arrears_paid"))],
     ["Encashment", gnum(gov, "encashment_paid")],
     ["Encashment DA", gnum(gov, "encashment_da_paid")],
   ];
@@ -170,6 +173,18 @@ export function governmentPayslipDeductionPairs(
     base.push(["Quarter Rent", quarterRent]);
   }
   base.push(["Other", gnum(gov, "other_deduction_amount")]);
+  // Lines that count toward Total Deductions must also be printed. These are
+  // shown only when present so a normal slip keeps its familiar layout.
+  for (const [label, key] of [
+    ["PF Loan", "pf_loan_amount"],
+    ["Std. Licence Fee", "std_licence_fee_amount"],
+    ["Vehicle Charge", "veh_charge_amount"],
+    ["HPL", "hpl_amount"],
+    ["EOL", "eol_amount"],
+  ] as const) {
+    const amount = gnum(gov, key);
+    if (amount > 0) base.push([label, amount]);
+  }
   return [...base, ...customSnapshotPairs(gov, "custom_deductions", fieldMetas)];
 }
 

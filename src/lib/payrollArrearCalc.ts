@@ -33,8 +33,8 @@ export function calculateMonthDaArrear(
   const transportArrear = newTrpt - oldTrpt;
 
   const grossArrear = daArrear + transportArrear;
-  const cpfArrear = grossArrear * cpfRate;
-  const netArrear = grossArrear - cpfArrear;
+  const cpfArrear = Math.round(grossArrear * cpfRate * 100) / 100;
+  const netArrear = Math.round((grossArrear - cpfArrear) * 100) / 100;
 
   return {
     basic,
@@ -54,7 +54,25 @@ export function calculateMonthDaArrear(
   };
 }
 
-/** Merge backend-computed arrear totals into a government monthly compute snapshot. */
+function r2(n: number): number {
+  return Math.round((Number.isFinite(n) ? n : 0) * 100) / 100;
+}
+
+/** A present number (including an entered 0); undefined for null/blank/NaN. */
+function presentNumber(v: unknown): number | undefined {
+  if (v === null || v === undefined || v === "") return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+/**
+ * Merge arrear totals into a government monthly compute snapshot.
+ *
+ * Idempotent: whatever arrear the snapshot already carries (DA/TR lines fed back
+ * through the compute engine, gross-only arrear, CPF arrear) is removed before
+ * the given arrear is added, so recomputing a row never counts arrears twice.
+ * An entered 0 is a value, not "missing".
+ */
 export function applyAutoArrearsToGovernmentMonthly<T extends Record<string, unknown>>(
   comp: T,
   arrear: {
@@ -65,24 +83,44 @@ export function applyAutoArrearsToGovernmentMonthly<T extends Record<string, unk
     netArrear?: number;
   } | null | undefined,
 ): T & { grossArrear: number; cpfArrear: number; netArrear: number } {
-  const daA = Number(arrear?.daArrear) || 0;
-  const trA = Number(arrear?.transportArrear) || 0;
-  const cpfA = Number(arrear?.cpfArrear) || 0;
-  const grossA = Number(arrear?.grossArrear) || daA + trA;
-  const netA = Number(arrear?.netArrear) || grossA - cpfA;
+  const daA = presentNumber(arrear?.daArrear) ?? 0;
+  const trA = presentNumber(arrear?.transportArrear) ?? 0;
+  const cpfA = presentNumber(arrear?.cpfArrear) ?? 0;
+  const grossA = presentNumber(arrear?.grossArrear) ?? r2(daA + trA);
+  const netA = presentNumber(arrear?.netArrear) ?? r2(grossA - cpfA);
 
-  if (Math.abs(grossA) < 0.001) {
+  // Arrear already inside the snapshot totals.
+  const daIn = presentNumber(comp.daArrearsPaid) ?? 0;
+  const trIn = presentNumber(comp.transportArrearsPaid) ?? 0;
+  const grossIn = presentNumber(comp.grossArrear) ?? 0;
+  const cpfIn = presentNumber(comp.cpfArrear) ?? 0;
+  const suppIn = Math.max(0, r2(grossIn - (daIn + trIn)));
+  const baseEarnings = r2((presentNumber(comp.totalEarnings) ?? 0) - daIn - trIn - suppIn);
+  const baseDeductions = r2((presentNumber(comp.totalDeductions) ?? 0) - cpfIn);
+
+  if (Math.abs(grossA) < 0.001 && Math.abs(cpfA) < 0.001 && daA === 0 && trA === 0) {
+    const netSalary = r2(baseEarnings - baseDeductions);
     return {
       ...comp,
+      daArrearsPaid: 0,
+      daArrearsActual: 0,
+      transportArrearsPaid: 0,
+      transportArrearsActual: 0,
       grossArrear: 0,
       cpfArrear: 0,
       netArrear: 0,
+      totalEarnings: baseEarnings,
+      totalDeductions: baseDeductions,
+      netSalary,
     };
   }
 
-  const totalEarnings = Number(comp.totalEarnings) + grossA;
-  const totalDeductions = Number(comp.totalDeductions) + cpfA;
-  const netSalary = Number(comp.netSalary) + netA;
+  // DA and transport arrears are their own earning lines; a gross arrear larger
+  // than their sum is the remainder recorded only as gross.
+  const supplemental = Math.max(0, r2(grossA - (daA + trA)));
+  const totalEarnings = r2(baseEarnings + daA + trA + supplemental);
+  const totalDeductions = r2(baseDeductions + cpfA);
+  const netSalary = r2(totalEarnings - totalDeductions);
 
   return {
     ...comp,
@@ -97,4 +135,17 @@ export function applyAutoArrearsToGovernmentMonthly<T extends Record<string, unk
     totalDeductions,
     netSalary,
   };
+}
+
+/**
+ * Total arrears paid in a month. Gross arrear is the aggregate that already
+ * contains DA + transport arrear, so only the part not covered by those two
+ * lines is added (same rule as the sheet totals and the PHP PayrollTotals).
+ */
+export function totalArrearsPaid(daArrear: unknown, transportArrear: unknown, grossArrear: unknown): number {
+  const nonNegative = (v: unknown) => Math.max(0, r2(presentNumber(v) ?? 0));
+  const da = nonNegative(daArrear);
+  const tr = nonNegative(transportArrear);
+  const gross = nonNegative(grossArrear);
+  return r2(da + tr + Math.max(0, r2(gross - (da + tr))));
 }

@@ -51,9 +51,11 @@ export function referenceSalaryHplBasisTotal(salary: EolHplReferenceSalary): num
 }
 
 export function computeEolHplDeductions(input: EolHplDeductionInput): EolHplDeductionResult {
-  const eolDays = Math.max(0, Math.floor(Number(input.eolDays) || 0));
-  const hplDays = Math.max(0, Math.floor(Number(input.hplDays) || 0));
-  const dim = Math.max(1, Math.floor(input.daysInReferenceMonth));
+  const dim = Math.max(1, Math.floor(Number(input.daysInReferenceMonth) || 1));
+  // Leave cannot exceed the days of the month it is charged against; otherwise the
+  // deduction would be larger than that month's salary.
+  const eolDays = Math.min(dim, Math.max(0, Math.floor(Number(input.eolDays) || 0)));
+  const hplDays = Math.min(dim, Math.max(0, Math.floor(Number(input.hplDays) || 0)));
   const eolBasisTotal = referenceSalaryBasisTotal(input.referenceSalary);
   const hplBasisTotal = referenceSalaryHplBasisTotal(input.referenceSalary);
   const dailyEolBasis = dim > 0 ? eolBasisTotal / dim : 0;

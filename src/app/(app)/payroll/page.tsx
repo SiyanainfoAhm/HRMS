@@ -43,7 +43,7 @@ import {
   referenceSalaryFromGovRecalc,
 } from "@/lib/hplEolDeductions";
 import { customRunFieldsForPreview, type PayrollConfig, type PayrollFieldDefinition } from "@/lib/payrollFieldTypes";
-import { applyAutoArrearsToGovernmentMonthly } from "@/lib/payrollArrearCalc";
+import { applyAutoArrearsToGovernmentMonthly, totalArrearsPaid } from "@/lib/payrollArrearCalc";
 import {
   GovernmentRunPreviewTable,
   type GovernmentPreviewMonthly,
@@ -84,7 +84,8 @@ import { markPayrollDraftFieldEdited, rowsForPayrollDraftSave } from "@/lib/payr
 import {
   applyGovernmentSheetMonetaryEdit,
   applyDeductionPaidOverridesToGm,
-  clearMonetaryOverridesFromGovRecalc,
+  applyFrozenSheetOverridesToComputed,
+  clearDayDependentOverridesFromGovRecalc,
   clearNightAllowanceOverride,
   isGovernmentSheetMonetaryField,
   recalculateGovernmentSheetTotals,
@@ -326,68 +327,6 @@ function governmentRowFromCompute<T extends {
     esicEmployer: 0,
     takeHome: Math.round(netSalary),
   };
-}
-
-/** After full payroll compute, restore any frozen/manual sheet component values. */
-function applyFrozenSheetOverridesToComputed(
-  gr: GovRecalcPayload,
-  comp: Record<string, unknown>,
-  payrollFieldDefs?: PayrollFieldDefinition[],
-): Record<string, unknown> {
-  const eo = gr.earningPaidOverrides ?? {};
-  const paidDed = gr.deductionPaidOverrides ?? {};
-  const hasEarningFreeze = SHEET_EARNING_KEYS.some((k) => hasOwn(eo, k));
-  const hasDeductionFreeze =
-    Object.keys(paidDed).length > 0 ||
-    Boolean(
-      gr.cpfManualOverride ||
-        gr.hplDeductionManualOverride ||
-        gr.eolDeductionManualOverride ||
-        gr.electricityManualOverride ||
-        gr.quarterRentManualOverride,
-    );
-  if (!hasEarningFreeze && !hasDeductionFreeze) {
-    return comp;
-  }
-
-  let gm: Record<string, unknown> = { ...comp };
-  if (hasEarningFreeze) {
-    for (const key of SHEET_EARNING_KEYS) {
-      if (hasOwn(eo, key)) {
-        const v = Number((eo as Record<string, number>)[key]);
-        if (Number.isFinite(v)) gm[key] = Math.max(0, Math.round(v));
-      }
-    }
-  }
-  if (hasDeductionFreeze) {
-    return applyDeductionPaidOverridesToGm(
-      // The computed row already contains its current master defaults. Only
-      // explicit sheet overrides belong here, otherwise a draft's unrelated
-      // CPF/other override can overwrite recalculated electricity.
-      gm,
-      null,
-      {
-        ...paidDed,
-        ...(gr.cpfManualOverride && hasOwn(gr.deductionDefaults, "cpf")
-          ? { cpf: gr.deductionDefaults.cpf }
-          : {}),
-        ...(gr.hplDeductionManualOverride && hasOwn(gr.deductionDefaults, "hpl")
-          ? { hpl: gr.deductionDefaults.hpl }
-          : {}),
-        ...(gr.eolDeductionManualOverride && hasOwn(gr.deductionDefaults, "eol")
-          ? { eol: gr.deductionDefaults.eol }
-          : {}),
-        ...(gr.electricityManualOverride && hasOwn(gr.deductionDefaults, "electricity")
-          ? { electricity: gr.deductionDefaults.electricity }
-          : {}),
-        ...(gr.quarterRentManualOverride && hasOwn(gr.deductionDefaults, "quarterRent")
-          ? { quarterRent: gr.deductionDefaults.quarterRent }
-          : {}),
-      },
-      payrollFieldDefs,
-    );
-  }
-  return recalculateGovernmentSheetTotals(gm, payrollFieldDefs);
 }
 
 function applyGovernmentPayrollRowCompute(
@@ -1655,7 +1594,7 @@ function PayrollPageContent() {
             }
             // Calculation drivers: wipe monthly monetary overrides, then full calc.
             const grForCalc = opts?.clearMonetaryOverrides
-              ? clearMonetaryOverridesFromGovRecalc(gr)
+              ? clearDayDependentOverridesFromGovRecalc(gr)
               : gr;
             const grReady = ensureReferenceSalariesForRecompute(grForCalc, runY, runM);
             const currentArrear = arrear ?? arrearSnapshotFromRow(incentiveBase);
@@ -1697,7 +1636,7 @@ function PayrollPageContent() {
             if (isSamePayrollReferencePeriod(refMonth, refYear, runM, runY)) {
               return recompute(grNext, row.payDays, undefined, row, { clearMonetaryOverrides: true });
             }
-            void hydrateEolReferenceSalary(employeeUserId, clearMonetaryOverridesFromGovRecalc(grNext), runY, runM).then((grHydrated) => {
+            void hydrateEolReferenceSalary(employeeUserId, clearDayDependentOverridesFromGovRecalc(grNext), runY, runM).then((grHydrated) => {
               if (activePeriodKeyRef.current !== editPeriodKey) return;
               setEditableRows((prev) =>
                 prev.map((r) => {
@@ -1733,7 +1672,7 @@ function PayrollPageContent() {
             if (isSamePayrollReferencePeriod(refMonth, refYear, runM, runY)) {
               return recompute(grNext, row.payDays, undefined, row, { clearMonetaryOverrides: true });
             }
-            void hydrateHplReferenceSalary(employeeUserId, clearMonetaryOverridesFromGovRecalc(grNext), runY, runM).then((grHydrated) => {
+            void hydrateHplReferenceSalary(employeeUserId, clearDayDependentOverridesFromGovRecalc(grNext), runY, runM).then((grHydrated) => {
               if (activePeriodKeyRef.current !== editPeriodKey) return;
               setEditableRows((prev) =>
                 prev.map((r) => {
@@ -2873,7 +2812,7 @@ function PayrollPageContent() {
           grossPay: r.grossPay,
           totalEarnings,
           totalDeductions: r.deductions,
-          totalArrears: Math.round(daArr + trArr + grossArr),
+          totalArrears: totalArrearsPaid(daArr, trArr, grossArr),
           netPay: r.netPay,
           remarks: r.govRecalc?.leaveRemarks ?? null,
           ...("changedFields" in r ? { changedFields: r.changedFields } : {}),

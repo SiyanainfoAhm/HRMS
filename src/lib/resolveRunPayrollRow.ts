@@ -17,7 +17,7 @@ import {
   recalculateGovernmentSheetTotals,
   SHEET_DEDUCTION_KEYS,
   SHEET_EARNING_KEYS,
-  applyDeductionPaidOverridesToGm,
+  applyFrozenSheetOverridesToComputed,
 } from "@/lib/runPayrollSheetEdit";
 import type { PayrollFieldDefinition } from "@/lib/payrollFieldTypes";
 import { hasOwn } from "@/lib/effectivePayrollValue";
@@ -134,16 +134,28 @@ function computeGovernmentRow(
       governmentMonthly: (base.governmentMonthly as Record<string, unknown> | null) ?? null,
     });
     const withArrear = applyAutoArrearsToGovernmentMonthly(comp, arrearSnapshotFromRow(r));
-    const frozen = applyFrozenSheetOverridesToComputed(
+    const fieldDefs = (payrollConfig as { fields?: PayrollFieldDefinition[] } | null | undefined)?.fields;
+    const frozenSheet = applyFrozenSheetOverridesToComputed(
       gr,
       withArrear as unknown as Record<string, unknown>,
-      (payrollConfig as { fields?: PayrollFieldDefinition[] } | null | undefined)?.fields,
+      fieldDefs,
+    );
+    // Incentive / PR bonus / reimbursement are payable lines: they belong inside
+    // Gross and Net exactly as on the Run Payroll screen, not added on afterwards.
+    const frozen = recalculateGovernmentSheetTotals(
+      {
+        ...frozenSheet,
+        incentive: Number(r.incentive) || 0,
+        prBonus: Number(r.prBonus) || 0,
+        reimbursement: Number(r.reimbursement) || 0,
+      },
+      fieldDefs,
     );
     base.governmentMonthly = frozen;
     base.grossMonthly = gr.grossBasic;
-    base.grossPay = Number(frozen.totalEarnings ?? withArrear.totalEarnings) || 0;
-    base.deductions = Number(frozen.totalDeductions ?? withArrear.totalDeductions) || 0;
-    base.netPay = Number(frozen.netSalary ?? withArrear.netSalary) || 0;
+    base.grossPay = Number(frozen.totalEarnings) || 0;
+    base.deductions = Number(frozen.totalDeductions) || 0;
+    base.netPay = Number(frozen.netSalary) || 0;
     base.payDays = capped;
     base.unpaidLeaveDays = unpaidDays;
     base.arrearLineIds = Array.isArray(r.arrearLineIds)
@@ -162,76 +174,10 @@ function computeGovernmentRow(
     base.tds = ded.incomeTax;
     base.profTax = ded.pt;
     base.pfEmployee = Math.round(ded.cpf + ded.daCpf + ded.vpf);
-    base.takeHome =
-      Math.round(Number(frozen.netSalary ?? withArrear.netSalary) || 0) +
-      Math.round(Number(r.incentive) || 0) +
-      Math.round(Number(r.prBonus) || 0) +
-      Math.round(Number(r.reimbursement) || 0);
+    base.takeHome = Number(frozen.netSalary) || 0;
   }
 
   return base;
-}
-
-function applyFrozenSheetOverridesToComputed(
-  gr: GovRecalcPayload,
-  comp: Record<string, unknown>,
-  payrollFieldDefs?: PayrollFieldDefinition[],
-): Record<string, unknown> {
-  const eo = gr.earningPaidOverrides ?? {};
-  const paidDed = gr.deductionPaidOverrides ?? {};
-  const hasEarningFreeze = SHEET_EARNING_KEYS.some((k) => hasOwn(eo, k));
-  const hasDeductionFreeze =
-    Object.keys(paidDed).length > 0 ||
-    Boolean(
-      gr.cpfManualOverride ||
-        gr.hplDeductionManualOverride ||
-        gr.eolDeductionManualOverride ||
-        gr.electricityManualOverride ||
-        gr.quarterRentManualOverride,
-    );
-  if (!hasEarningFreeze && !hasDeductionFreeze) {
-    return comp;
-  }
-
-  let gm: Record<string, unknown> = { ...comp };
-  if (hasEarningFreeze) {
-    for (const key of SHEET_EARNING_KEYS) {
-      if (hasOwn(eo, key)) {
-        const v = Number((eo as Record<string, number>)[key]);
-        if (Number.isFinite(v)) gm[key] = Math.max(0, Math.round(v));
-      }
-    }
-  }
-  if (hasDeductionFreeze) {
-    gm = applyDeductionPaidOverridesToGm(
-      gm,
-      // `gm` is already a fresh full calculation. Reapply only explicitly
-      // frozen monthly values; merging every master default here would replace
-      // derived values such as tariff-based electricity after a units edit.
-      null,
-      {
-        ...paidDed,
-        ...(gr.cpfManualOverride && hasOwn(gr.deductionDefaults, "cpf")
-          ? { cpf: gr.deductionDefaults.cpf }
-          : {}),
-        ...(gr.hplDeductionManualOverride && hasOwn(gr.deductionDefaults, "hpl")
-          ? { hpl: gr.deductionDefaults.hpl }
-          : {}),
-        ...(gr.eolDeductionManualOverride && hasOwn(gr.deductionDefaults, "eol")
-          ? { eol: gr.deductionDefaults.eol }
-          : {}),
-        ...(gr.electricityManualOverride && hasOwn(gr.deductionDefaults, "electricity")
-          ? { electricity: gr.deductionDefaults.electricity }
-          : {}),
-        ...(gr.quarterRentManualOverride && hasOwn(gr.deductionDefaults, "quarterRent")
-          ? { quarterRent: gr.deductionDefaults.quarterRent }
-          : {}),
-      },
-      payrollFieldDefs,
-    );
-    return gm;
-  }
-  return recalculateGovernmentSheetTotals(gm, payrollFieldDefs);
 }
 
 /** True when governmentMonthly looks like a real computed snapshot (not empty/missing). */
@@ -337,7 +283,8 @@ function overlayAuthoritativeQuarterContext(
     grossPay,
     deductions,
     netPay,
-    takeHome: netPay + Number(saved.incentive ?? 0) + Number(saved.prBonus ?? 0) + Number(saved.reimbursement ?? 0),
+    // Net already contains the named side-panel payments (sheet totals).
+    takeHome: netPay,
   };
 }
 

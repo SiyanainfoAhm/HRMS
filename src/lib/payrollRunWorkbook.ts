@@ -1,5 +1,6 @@
 import * as XLSX from "xlsx-js-style";
 import { calendarDaysInMonth, equivalentPayableDays } from "@/lib/payrollLeaveDays";
+import { totalArrearsPaid } from "@/lib/payrollArrearCalc";
 import {
   buildPayrollExcelHeaders,
   buildPayrollExcelRow,
@@ -276,10 +277,11 @@ export function aggregatePayrollSummary(rows: PayrollRunExportRow[]) {
       totalEarnings += gmNum(gm, "totalEarnings", "total_earnings");
       totalDeductions += gmNum(gm, "totalDeductions", "total_deductions");
       totalNet += gmNum(gm, "netSalary", "net_salary") || num(r.netPay);
-      totalArrears +=
-        gmNum(gm, "daArrearsPaid", "da_arrears_paid") +
-        gmNum(gm, "transportArrearsPaid", "transport_arrears_paid") +
-        gmNum(gm, "grossArrear", "gross_arrear");
+      totalArrears += totalArrearsPaid(
+        gmNum(gm, "daArrearsPaid", "da_arrears_paid"),
+        gmNum(gm, "transportArrearsPaid", "transport_arrears_paid"),
+        gmNum(gm, "grossArrear", "gross_arrear"),
+      );
     } else {
       totalEarnings += num(r.grossPay);
       totalDeductions += num(r.deductions);
