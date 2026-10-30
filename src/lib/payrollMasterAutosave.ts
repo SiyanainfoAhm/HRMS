@@ -150,3 +150,113 @@ export function hasMeaningfulAddDraft(form: MasterFormLike, empty: MasterFormLik
     return String(form[key] ?? "").trim() !== String(empty[key] ?? "").trim();
   });
 }
+
+// ---------------------------------------------------------------------------
+// Save conflicts (HTTP 409): keep what the user typed, merge what others changed.
+// ---------------------------------------------------------------------------
+
+export type MergeReport = {
+  /** Field values to save: the user's typed values plus other sessions' changes to fields the user did not touch. */
+  merged: Record<string, unknown>;
+  /** Fields the user changed (kept exactly as typed). */
+  keptMine: string[];
+  /** Fields only another session changed (taken from the server). */
+  takenFromTheirs: string[];
+  /** Fields both changed to different values (the user's value is kept). */
+  conflicts: string[];
+};
+
+const sameValue = (a: unknown, b: unknown) => JSON.stringify(a ?? "") === JSON.stringify(b ?? "");
+
+/**
+ * Three-way merge of Payroll Master form values.
+ *  base   = the values the form was loaded/last saved with
+ *  mine   = what the user has now
+ *  theirs = the latest values on the server
+ * A field the user changed always keeps the user's value.
+ */
+export function mergeMasterForms(
+  base: Record<string, unknown>,
+  mine: Record<string, unknown>,
+  theirs: Record<string, unknown>,
+): MergeReport {
+  const merged: Record<string, unknown> = { ...theirs, ...mine };
+  const keptMine: string[] = [];
+  const takenFromTheirs: string[] = [];
+  const conflicts: string[] = [];
+  for (const key of new Set([...Object.keys(base), ...Object.keys(mine), ...Object.keys(theirs)])) {
+    if (key === "password" || key === "confirmPassword") {
+      merged[key] = mine[key] ?? "";
+      continue;
+    }
+    const mineChanged = !sameValue(base[key], mine[key]);
+    const theirsChanged = !sameValue(base[key], theirs[key]);
+    if (mineChanged) {
+      merged[key] = mine[key];
+      keptMine.push(key);
+      if (theirsChanged && !sameValue(mine[key], theirs[key])) conflicts.push(key);
+    } else if (theirsChanged) {
+      merged[key] = theirs[key];
+      takenFromTheirs.push(key);
+    } else {
+      merged[key] = mine[key] ?? theirs[key];
+    }
+  }
+  return { merged, keptMine, takenFromTheirs, conflicts };
+}
+
+export type SaveAttempt = { status: number; body: Record<string, unknown> };
+
+export type ConflictSaveResult<F> =
+  | { ok: true; form: F; base: F; revision: string | undefined; body: Record<string, unknown>; report: MergeReport | null }
+  | { ok: false; form: F; base: F; revision: string | undefined; error: string; status: number; body: Record<string, unknown> };
+
+/**
+ * PUT with the current revision; on a 409 fetch the latest server values, merge them
+ * with the user's typed values and retry. The form handed in is never discarded:
+ * on persistent failure the caller still holds the user's values.
+ */
+export async function saveWithConflictRetry<F extends Record<string, unknown>>(opts: {
+  mine: F;
+  base: F;
+  revision: string | undefined;
+  send: (form: F, revision: string | undefined) => Promise<SaveAttempt>;
+  fetchLatest: () => Promise<{ form: F; revision: string | undefined }>;
+  maxRetries?: number;
+}): Promise<ConflictSaveResult<F>> {
+  let mine = opts.mine;
+  let base = opts.base;
+  let revision = opts.revision;
+  let report: MergeReport | null = null;
+  const retries = opts.maxRetries ?? 2;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const res = await opts.send(mine, revision);
+    if (res.status >= 200 && res.status < 300) {
+      const serverRevision = (res.body?.master as { revision?: string } | undefined)?.revision;
+      return { ok: true, form: mine, base: mine, revision: serverRevision ?? revision, body: res.body, report };
+    }
+    if (res.status !== 409 || attempt === retries) {
+      const error = String(res.body?.message ?? res.body?.error ?? "Save failed");
+      return { ok: false, form: mine, base, revision, error, status: res.status, body: res.body };
+    }
+    const latest = await opts.fetchLatest();
+    report = mergeMasterForms(base, mine, latest.form);
+    mine = report.merged as F;
+    base = latest.form;
+    revision = latest.revision;
+  }
+  return { ok: false, form: mine, base, revision, error: "Save failed", status: 409, body: {} };
+}
+
+/** Apply only the fields taken from the server onto the form as it is NOW (keeps keystrokes typed during the request). */
+export function applyServerFields<F extends Record<string, unknown>>(
+  current: F,
+  snapshotSent: F,
+  report: MergeReport,
+): F {
+  const next: Record<string, unknown> = { ...current };
+  for (const key of report.takenFromTheirs) {
+    if (sameValue(current[key], snapshotSent[key])) next[key] = report.merged[key];
+  }
+  return next as F;
+}
