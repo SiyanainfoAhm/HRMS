@@ -9,6 +9,7 @@ import {
 } from "@/lib/govRunPayrollCompute";
 import {
   deserializePayrollDraftEmployee,
+  keysToCamelDeep,
   normalizeDraftEmployeeApiRow,
   type DraftEmployeeApiRow,
 } from "@/lib/deserializePayrollDraftEmployee";
@@ -264,6 +265,19 @@ function draftContainsElectricityUnits(draft: DraftEmployeeApiRow): boolean {
   );
 }
 
+function savedDraftElectricityMode(draft: DraftEmployeeApiRow): "unit_based" | "manual_fixed" | undefined {
+  const rawPayload = (draft.rowPayload ?? draft.row_payload) as Record<string, unknown> | null | undefined;
+  if (!rawPayload || typeof rawPayload !== "object") return undefined;
+  const payload = keysToCamelDeep(rawPayload) as Record<string, unknown>;
+  const gm = (payload.governmentMonthly ?? payload.government_monthly ?? {}) as Record<string, unknown>;
+  const gr = (payload.govRecalc ?? payload.gov_recalc ?? {}) as Record<string, unknown>;
+  const bill = (gm.electricityBill ?? gm.electricity_bill ?? gr.electricityBill ?? gr.electricity_bill ?? {}) as Record<string, unknown>;
+  // The saved monthly bill owns its calculation mode; Master mode only seeds a
+  // new draft and must not turn a unit-based month into a fixed deduction.
+  const mode = bill.mode ?? gm.electricityMode ?? gr.electricityMode;
+  return mode === "unit_based" || mode === "manual_fixed" ? mode : undefined;
+}
+
 function overlayAuthoritativeQuarterContext(
   saved: RunPayrollRowLike,
   calculated: RunPayrollRowLike,
@@ -387,6 +401,7 @@ export function resolveRunPayrollRow(
         && savedElectricityAmount === 0
         && overlaid.govRecalc.electricityManualOverride !== true
         && (masterRecalc?.electricityApplicable ?? overlaid.govRecalc.electricityApplicable) !== false;
+      const savedMode = savedDraftElectricityMode(draftEmp);
       const freshRow = {
         ...overlaid,
         // Rebuild the derived monthly snapshot from current master/config and
@@ -398,7 +413,7 @@ export function resolveRunPayrollRow(
           // rehydrated from the current period/master response.
           electricityTariff: configuredTariff ?? masterRecalc?.electricityTariff ?? null,
           electricityApplicable: masterRecalc?.electricityApplicable ?? overlaid.govRecalc.electricityApplicable,
-          electricityMode: inferUnitBased ? "unit_based" : masterRecalc?.electricityMode ?? overlaid.govRecalc.electricityMode,
+          electricityMode: inferUnitBased ? "unit_based" : savedMode ?? overlaid.govRecalc.electricityMode ?? masterRecalc?.electricityMode,
         },
       };
       return computeGovernmentRow(freshRow, ctx.denom, ctx.runYear, ctx.runMonth, ctx.payrollConfig);

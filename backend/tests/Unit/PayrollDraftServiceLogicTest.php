@@ -4,13 +4,85 @@ namespace Tests\Unit;
 
 use App\Services\PayrollDraftService;
 use App\Services\PayrollCalculationService;
+use App\Services\ElectricityTariffService;
 use App\Services\QuarterService;
 use App\Services\QuarterTypeService;
+use App\Models\HrmsElectricityTariff;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 
 final class PayrollDraftServiceLogicTest extends TestCase
 {
+    public function test_change_from_40_to_80_units_recalculates_prior_49_bill_and_preserves_other_components(): void
+    {
+        $tariff = [
+            'id' => 'fixture-tariff', 'effectiveFrom' => '2026-10-01', 'sthirAakar' => 0,
+            'vahanAakarPerUnit' => 0, 'fuelCharge' => 0, 'dutyPercentage' => 0,
+            'slabs' => [['fromUnit' => 1, 'toUnit' => 1000, 'ratePerUnit' => 1.225, 'fuelChargePerUnit' => 0, 'sortOrder' => 1]],
+        ];
+        $tariffModel = $this->createMock(HrmsElectricityTariff::class);
+        $calculator = new ElectricityTariffService;
+        $tariffs = $this->createMock(ElectricityTariffService::class);
+        $tariffs->method('resolveForDate')->willReturn($tariffModel);
+        $tariffs->method('formatTariff')->willReturn($tariff);
+        $tariffs->method('calculateBill')->willReturnCallback(
+            fn (float $units, ?array $configured, bool $applicable, string $mode, float $legacy, float $fixed, bool $override, ?float $manual) =>
+                $calculator->calculateBill($units, $configured, $applicable, $mode, $legacy, $fixed, $override, $manual),
+        );
+        $service = new PayrollDraftService(null, null, $tariffs);
+        $payload = [
+            'grossPay' => 100000,
+            'governmentMonthly' => [
+                'basicPaid' => 100000,
+                'electricityUnitsConsumed' => 80,
+                'electricityTariffId' => 'fixture-tariff',
+                'electricityTotal' => 49,
+                'totalEarnings' => 100000,
+                'deductions' => ['electricity' => 49, 'mess' => 650, 'creditSociety' => 11750, 'quarterRent' => 400],
+            ],
+            'govRecalc' => [
+                'electricityUnitsConsumed' => 80,
+                'electricityMode' => 'unit_based',
+                'electricityApplicable' => true,
+                'electricityManualOverride' => false,
+                'electricityTariff' => $tariff,
+                'deductionDefaults' => ['electricity' => 49],
+            ],
+        ];
+
+        $updated = $service->reconcileDraftElectricity($payload, 'fixture-company', 2026, 10, ['electricityUnitsConsumed']);
+        $gm = $updated['governmentMonthly'];
+        $this->assertSame(98.0, (float) $gm['deductions']['electricity'], 'the old calculated ₹49 must not be treated as a manual override');
+        $this->assertSame(650, $gm['deductions']['mess']);
+        $this->assertSame(11750, $gm['deductions']['creditSociety']);
+        $this->assertSame(400, $gm['deductions']['quarterRent']);
+        $this->assertSame(12898.0, $gm['totalDeductions']);
+        $this->assertSame(87102.0, $gm['netSalary']);
+        $this->assertFalse($updated['govRecalc']['electricityManualOverride']);
+
+        $conflictingSnapshot = $payload;
+        $conflictingSnapshot['governmentMonthly']['electricityTariffId'] = 'fixture-tariff';
+        $conflictingSnapshot['governmentMonthly']['electricityTotal'] = 49;
+        $conflictingSnapshot['governmentMonthly']['electricityBill'] = [
+            'units' => 80, 'mode' => 'unit_based', 'tariffId' => 'fixture-tariff', 'total' => 98, 'manualOverride' => false,
+        ];
+        $conflictingSnapshot['govRecalc']['deductionPaidOverrides'] = ['electricity' => 49, 'mess' => 650];
+        $conflictFixed = $service->reconcileDraftElectricity($conflictingSnapshot, 'fixture-company', 2026, 10, ['govDeduction_mess']);
+        $this->assertSame(98.0, (float) $conflictFixed['governmentMonthly']['deductions']['electricity'], 'conflicting unit bill and deduction are reconciled from tariff on unrelated save');
+        $this->assertSame(98.0, (float) $conflictFixed['governmentMonthly']['electricityBill']['total']);
+        $this->assertArrayNotHasKey('electricity', $conflictFixed['govRecalc']['deductionPaidOverrides'], 'unapproved cached electricity is removed from the override map');
+
+        $approvedManualOverride = $payload;
+        $approvedManualOverride['governmentMonthly']['electricityUnitsConsumed'] = 80;
+        $approvedManualOverride['govRecalc']['electricityManualOverride'] = true;
+        $approvedManualOverride['govRecalc']['deductionPaidOverrides'] = ['electricity' => 49];
+        $approvedManualOverride['govRecalc']['electricityTariff']['sthirAakar'] = 1; // simulate in-place tariff configuration change
+        $manual = $service->reconcileDraftElectricity($approvedManualOverride, 'fixture-company', 2026, 10, ['govDeduction_mess']);
+        $this->assertSame(49.0, (float) $manual['governmentMonthly']['deductions']['electricity']);
+        $this->assertTrue($manual['govRecalc']['electricityManualOverride']);
+        $this->assertTrue($manual['governmentMonthly']['electricityBill']['manualOverride']);
+    }
+
     public function test_authoritative_quarter_reconciliation_preserves_unrelated_draft_components(): void
     {
         $service = new PayrollDraftService(new QuarterService(new QuarterTypeService), new PayrollCalculationService);

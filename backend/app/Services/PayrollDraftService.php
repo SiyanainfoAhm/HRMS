@@ -587,6 +587,9 @@ class PayrollDraftService
         $deductions = is_array($gm[$dedKey] ?? null) ? $gm[$dedKey] : [];
         $paidOverrides = is_array($gr['deductionPaidOverrides'] ?? $gr['deduction_paid_overrides'] ?? null)
             ? ($gr['deductionPaidOverrides'] ?? $gr['deduction_paid_overrides']) : [];
+        $bill = is_array($gm['electricityBill'] ?? $gm['electricity_bill'] ?? null)
+            ? ($gm['electricityBill'] ?? $gm['electricity_bill'])
+            : (is_array($gr['electricityBill'] ?? $gr['electricity_bill'] ?? null) ? ($gr['electricityBill'] ?? $gr['electricity_bill']) : []);
 
         $amount = $deductions['electricity'] ?? $gm['electricityTotal'] ?? $gm['electricity_total'] ?? null;
         // Null/blank legacy bill fields are missing; numeric 0 is a valid saved amount.
@@ -602,9 +605,9 @@ class PayrollDraftService
             throw ValidationException::withMessages(['employees' => ['An edited Electricity amount must contain a non-negative numeric value.']]);
         }
 
-        $mode = (string) ($gm['electricityMode'] ?? $gm['electricity_mode'] ?? $gr['electricityMode'] ?? $gr['electricity_mode'] ?? $master?->electricity_mode ?? 'manual_fixed');
+        $mode = (string) ($bill['mode'] ?? $gm['electricityMode'] ?? $gm['electricity_mode'] ?? $gr['electricityMode'] ?? $gr['electricity_mode'] ?? $master?->electricity_mode ?? 'manual_fixed');
         $applicable = (bool) ($gm['electricityApplicable'] ?? $gm['electricity_applicable'] ?? $gr['electricityApplicable'] ?? $gr['electricity_applicable'] ?? $master?->electricity_applicable ?? true);
-        $manualOverride = (bool) ($gr['electricityManualOverride'] ?? $gr['electricity_manual_override'] ?? $gm['electricityManualOverride'] ?? $gm['electricity_manual_override'] ?? false);
+        $manualOverride = (bool) ($gr['electricityManualOverride'] ?? $gr['electricity_manual_override'] ?? $gm['electricityManualOverride'] ?? $gm['electricity_manual_override'] ?? $bill['manualOverride'] ?? false);
         if ($unitsEdited) {
             // Entering units explicitly opts this month into tariff billing.
             $mode = 'unit_based';
@@ -621,6 +624,17 @@ class PayrollDraftService
             // unit-based bill that must be derived from the effective tariff.
             $mode = 'unit_based';
         }
+        $staleElectricityOverride = $mode === 'unit_based' && ! $manualOverride
+            && array_key_exists('electricity', $paidOverrides);
+        if ($mode === 'unit_based' && ! $manualOverride) {
+            // An old calculated value in the override map is only a cache unless
+            // the explicit manual flag/bill marker approves it.
+            unset($paidOverrides['electricity']);
+        }
+        $electricityTotalConflict = $mode === 'unit_based' && is_numeric($amount)
+            && ((is_numeric($bill['total'] ?? null) && (float) $amount !== (float) $bill['total'])
+                || (is_numeric($gm['electricityTotal'] ?? $gm['electricity_total'] ?? null)
+                    && (float) $amount !== (float) ($gm['electricityTotal'] ?? $gm['electricity_total'])));
 
         $periodEnd = Carbon::create($year, $month, 1)->endOfMonth()->toDateString();
         $tariffService = $this->electricityTariffService ?? app(ElectricityTariffService::class);
@@ -634,12 +648,13 @@ class PayrollDraftService
             || $this->electricityTariffFingerprint($savedTariffSnapshot) !== $this->electricityTariffFingerprint($tariff)
         );
         $needsRecalculation = $this->draftElectricityNeedsRecalculation(
-            $unitsEdited, $amountExists, $amount, $units, $manualOverride, $mode, $tariffChanged,
+            $unitsEdited, $amountExists, $amount, $units, $manualOverride, $mode,
+            $tariffChanged || $electricityTotalConflict || $staleElectricityOverride,
         );
         if (! $needsRecalculation && ! $amountEdited) return $payload;
 
         if ($units === null) $units = 0.0;
-        $manualAmount = $amountEdited ? (float) $amount : ($paidOverrides['electricity'] ?? $amount);
+        $manualAmount = $amountEdited ? (float) $amount : ($paidOverrides['electricity'] ?? $bill['manualAmount'] ?? $amount);
         if ($this->requiresElectricityTariff($applicable, $mode, $units, $tariff, $manualOverride)) {
             throw ValidationException::withMessages(['electricity' => ["No active electricity tariff is effective for {$year}-{$month}; draft was not saved."]]);
         }

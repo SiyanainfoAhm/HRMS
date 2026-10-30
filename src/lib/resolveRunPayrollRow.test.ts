@@ -11,6 +11,7 @@ import {
   DEFAULT_APRIL_2026_ELECTRICITY_TARIFF,
   calculateElectricityBill,
 } from "./electricityTariffCalculation";
+import { buildPayrollExcelRow } from "./payrollExcelExport";
 
 function assert(cond: unknown, msg: string): asserts cond {
   if (!cond) throw new Error(msg);
@@ -244,7 +245,7 @@ function testDraftElectricityUnitsRecalculateInsteadOfRestoringStaleBill() {
     })),
   };
   const electricityTotals = new Map<number, number[]>();
-  for (const units of [0, 10, 11, 10, 301]) {
+  for (const units of [0, 10, 11, 10, 40, 80, 301]) {
     const expected = calculateElectricityBill({
       units,
       tariff,
@@ -263,7 +264,7 @@ function testDraftElectricityUnitsRecalculateInsteadOfRestoringStaleBill() {
           netSalary: 999998,
           // Missing bill at 11 units models the live defect; other rows carry
           // a stale cached amount that must be replaced by the effective tariff.
-          deductions: units === 11 ? {} : { electricity: units === 10 ? 0 : 1 },
+          deductions: units === 11 ? {} : { electricity: units === 10 ? 0 : units === 40 || units === 80 ? 49 : 1 },
         },
         govRecalc: {
           ...base.govRecalc,
@@ -305,6 +306,9 @@ function testDraftElectricityUnitsRecalculateInsteadOfRestoringStaleBill() {
   }
   assert(electricityTotals.get(11)![0] !== electricityTotals.get(10)![0], "11 units changes the deduction");
   assertEq(electricityTotals.get(10)![1], electricityTotals.get(10)![0], "changing back to 10 restores the deduction");
+  assertEq(electricityTotals.get(40)![0], calculateElectricityBill({ units: 40, tariff, applicable: true, mode: "unit_based" }).total, "40 units uses tariff result despite prior ₹49 value");
+  assertEq(electricityTotals.get(80)![0], calculateElectricityBill({ units: 80, tariff, applicable: true, mode: "unit_based" }).total, "80 units replaces prior calculated ₹49 value");
+  assert(electricityTotals.get(80)![0] !== 49, "nonzero previous calculated bill is not treated as manual override");
 
   const intentionalZero = resolveRunPayrollRow(base, {
     denom: 30,
@@ -330,6 +334,107 @@ function testDraftElectricityUnitsRecalculateInsteadOfRestoringStaleBill() {
     },
   });
   assertEq((intentionalZero.governmentMonthly as { deductions: { electricity: number } }).deductions.electricity, 0, "intentional zero electricity override survives tariff recalculation");
+}
+
+function testSavedUnitBillOutranksMasterManualFixedDefaultAcrossReloadAndExport() {
+  const tariff = {
+    id: "tariff-2026-10-fixture",
+    effectiveFrom: "2026-10-01",
+    sthirAakar: 130,
+    vahanAakarPerUnit: 0,
+    fuelCharge: 100.7,
+    dutyPercentage: 16,
+    slabs: [{ fromUnit: 0, toUnit: 100, ratePerUnit: 4.77625, sortOrder: 1 }],
+  };
+  const expectedBill = calculateElectricityBill({ units: 80, tariff, applicable: true, mode: "unit_based" });
+  assertEq(expectedBill.subtotal, 612.8, "fixture tariff subtotal");
+  assertEq(expectedBill.dutyAmount, 98.05, "fixture tariff duty rounds to paisa");
+  assertEq(expectedBill.totalExact, 710.85, "fixture tariff exact total");
+  assertEq(expectedBill.total, 711, "configured tariff rounds final deduction to ₹711");
+
+  const masterRow = stubApiRow("subhash");
+  masterRow.govRecalc = {
+    ...masterRow.govRecalc!,
+    electricityUnitsConsumed: 0,
+    electricityMode: "manual_fixed",
+    deductionDefaults: { ...masterRow.govRecalc!.deductionDefaults, electricity: 49 },
+  };
+  const savedDraft = {
+    employeeUserId: "subhash",
+    rowPayload: {
+      employeeUserId: "subhash",
+      payrollMode: "government",
+      quarterContextVersion: 1,
+      governmentMonthly: {
+        electricityUnitsConsumed: 80,
+        electricityMode: "unit_based",
+        electricityTariffId: tariff.id,
+        electricityBill: expectedBill,
+        electricityTotal: 711,
+        hasQuarter: true,
+        quarterRent: 400,
+        totalEarnings: 100000,
+        totalDeductions: 13361,
+        netSalary: 86639,
+        deductions: { electricity: 49, mess: 650, creditSociety: 11750, quarterRent: 400 },
+      },
+      govRecalc: {
+        ...masterRow.govRecalc,
+        hasQuarter: true,
+        quarterRent: 400,
+        electricityUnitsConsumed: 80,
+        electricityMode: "unit_based",
+        electricityManualOverride: false,
+        electricityTariff: tariff,
+        // Simulate a stale, unapproved cached value from an older draft.
+        deductionPaidOverrides: { electricity: 49, mess: 650, creditSociety: 11750, quarterRent: 400 },
+      },
+    },
+  };
+  const config = { electricityTariff: tariff };
+  const firstLoad = resolveRunPayrollRow(masterRow, {
+    denom: 30, runYear: 2026, runMonth: 10, payrollConfig: config,
+    alreadyRun: false, draftDirty: false, draftStored: savedDraft,
+  });
+  const gm = firstLoad.governmentMonthly as Record<string, unknown>;
+  const ded = gm.deductions as Record<string, number>;
+  assertEq(ded.electricity, 711, "saved unit-based October bill beats Master fixed ₹49");
+  assertEq((gm.electricityBill as { total: number }).total, 711, "display breakdown and deduction agree");
+  assertEq(Number(gm.totalDeductions), Object.values(ded).reduce((sum, value) => sum + Number(value || 0), 0), "deduction total includes Electricity once");
+  assertEq(Number(gm.netSalary), Number(gm.totalEarnings) - Number(gm.totalDeductions), "net salary matches total deductions");
+  assertEq(ded.mess, 650, "Mess preserved");
+  assertEq(ded.creditSociety, 11750, "Credit Society preserved");
+  assertEq(ded.quarterRent, 400, "Quarter Rent preserved");
+
+  const excelRow = buildPayrollExcelRow({
+    payroll_mode: "government", employee_user_id: "subhash", gross_pay: Number(gm.totalEarnings),
+    deductions: Number(gm.totalDeductions), net_pay: Number(gm.netSalary),
+  }, "Subhash Duryodhan Katkar", { kind: "row", row: {
+    electricity_amount: ded.electricity,
+    electricity_units_consumed: Number(gm.electricityUnitsConsumed),
+    total_deductions: Number(gm.totalDeductions),
+    net_salary: Number(gm.netSalary),
+  } });
+  assertEq(excelRow.Electricity, 711, "Excel uses saved/reconciled bill amount");
+  assertEq(excelRow.ElectricityUnits, 80, "Excel uses saved units");
+
+  const otherEmployee = stubApiRow("other");
+  otherEmployee.govRecalc = { ...otherEmployee.govRecalc!, electricityMode: "manual_fixed", deductionDefaults: { ...otherEmployee.govRecalc!.deductionDefaults, electricity: 49 } };
+  const switchedEmployee = resolveRunPayrollRow(otherEmployee, {
+    denom: 30, runYear: 2026, runMonth: 10, payrollConfig: config,
+    alreadyRun: false, draftDirty: false,
+  });
+  assertEq((switchedEmployee.govRecalc as { electricityMode: string }).electricityMode, "manual_fixed", "switching employees does not leak draft mode");
+  const switchedMonth = resolveRunPayrollRow(masterRow, {
+    denom: 30, runYear: 2026, runMonth: 11, payrollConfig: config,
+    alreadyRun: false, draftDirty: false,
+  });
+  assertEq((switchedMonth.govRecalc as { electricityMode: string }).electricityMode, "manual_fixed", "switching months uses that month's Master seed absent a draft");
+  const repeatedLoad = resolveRunPayrollRow(masterRow, {
+    denom: 30, runYear: 2026, runMonth: 10, payrollConfig: config,
+    alreadyRun: false, draftDirty: false, draftStored: savedDraft,
+  });
+  assertEq((repeatedLoad.governmentMonthly as { deductions: { electricity: number } }).deductions.electricity, 711, "repeated reload remains stable");
 }
 
 function testManyEmployeesResolveWithoutPageBias() {
@@ -460,6 +565,7 @@ const tests = [
   testPriorPeriodCacheCannotHydrateNewMonth,
   testGeneratedRunKeepsItsSavedLeaveReferences,
   testDraftElectricityUnitsRecalculateInsteadOfRestoringStaleBill,
+  testSavedUnitBillOutranksMasterManualFixedDefaultAcrossReloadAndExport,
   testDraftQuarterContextOverridesStaleQuarterHraAndRent,
   testManyEmployeesResolveWithoutPageBias,
 ];

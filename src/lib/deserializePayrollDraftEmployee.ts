@@ -224,6 +224,18 @@ export function deserializePayrollDraftEmployee(
   const savedDed = asRecord(gm.deductions);
   const calcGovRecalc = asRecord(calc.govRecalc);
   const govRecalcFromDraft = govRecalcFromPayload ? definedEntries(govRecalcFromPayload) : {};
+  const savedElectricityBill = asRecord(gm.electricityBill) ?? asRecord(govRecalcFromDraft.electricityBill);
+  const electricityManualOverride =
+    govRecalcFromDraft.electricityManualOverride === true || savedElectricityBill?.manualOverride === true;
+  const savedElectricityMode = firstDefined(
+    govRecalcFromDraft.electricityMode,
+    gm.electricityMode,
+    savedElectricityBill?.mode,
+  );
+  const savedElectricityUnits = numOrUndef(
+    govRecalcFromDraft.electricityUnitsConsumed ?? gm.electricityUnitsConsumed ?? savedElectricityBill?.units,
+  );
+  const savedUnitBasedElectricity = savedElectricityMode === "unit_based" && (savedElectricityUnits ?? 0) > 0;
   const draftPaidOverrides = asRecord(
     (govRecalcFromDraft as Record<string, unknown>).deductionPaidOverrides,
   );
@@ -234,6 +246,9 @@ export function deserializePayrollDraftEmployee(
   const paidOverrides: Record<string, number> = {};
   if (draftPaidOverrides && Object.keys(draftPaidOverrides).length > 0) {
     for (const [k, v] of Object.entries(draftPaidOverrides)) {
+      // A stale nonzero cache is not evidence of operator approval. Electricity
+      // overrides require the explicit saved flag (or bill-level marker).
+      if (k === "electricity" && !electricityManualOverride) continue;
       const n = numOrUndef(v);
       if (n !== undefined) paidOverrides[k] = n;
     }
@@ -244,8 +259,7 @@ export function deserializePayrollDraftEmployee(
           calcGovRecalc?.cpfManualOverride,
       ),
       electricity: Boolean(
-        (govRecalcFromDraft as Record<string, unknown>).electricityManualOverride ??
-          calcGovRecalc?.electricityManualOverride,
+        electricityManualOverride,
       ),
       quarterRent: Boolean(
         (govRecalcFromDraft as Record<string, unknown>).quarterRentManualOverride ??
@@ -281,7 +295,7 @@ export function deserializePayrollDraftEmployee(
 
   const effectiveDed: Record<string, number> = {};
   const hasMasterDedContext = Object.keys(masterDedDefaults).length > 0;
-  const hasPaidOverrideMap = Boolean(draftPaidOverrides && Object.keys(draftPaidOverrides).length > 0);
+  const hasPaidOverrideMap = Object.keys(paidOverrides).length > 0;
 
   if (hasPaidOverrideMap) {
     // New drafts: Master baseline + only explicit monthly paid overrides.
@@ -316,6 +330,14 @@ export function deserializePayrollDraftEmployee(
       const n = numOrUndef(v);
       if (n !== undefined) effectiveDed[k] = n;
     }
+  }
+  if (savedUnitBasedElectricity && !electricityManualOverride && savedDed) {
+    const savedAmount = firstDefined(
+      numOrUndef(savedElectricityBill?.total),
+      numOrUndef(gm.electricityTotal),
+      numOrUndef(savedDed.electricity),
+    );
+    if (savedAmount !== undefined) effectiveDed.electricity = savedAmount;
   }
 
   const governmentMonthly: Record<string, unknown> = {
@@ -393,6 +415,14 @@ export function deserializePayrollDraftEmployee(
     ...masterDedDefaults,
     ...paidOverrides,
   };
+  if (savedUnitBasedElectricity && !electricityManualOverride && savedDed) {
+    const savedAmount = firstDefined(
+      numOrUndef(savedElectricityBill?.total),
+      numOrUndef(gm.electricityTotal),
+      numOrUndef(savedDed.electricity),
+    );
+    if (savedAmount !== undefined) dedDefaults.electricity = savedAmount;
+  }
   const earningOverrides: Record<string, unknown> = {
     ...(asRecord(calcGovRecalc?.earningPaidOverrides) ?? {}),
     ...(asRecord(govRecalc.earningPaidOverrides) ?? {}),
