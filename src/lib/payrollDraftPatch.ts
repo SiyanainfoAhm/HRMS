@@ -80,3 +80,43 @@ export function rowsForPayrollDraftSave<T extends PayrollDraftRowForSave>(
     return changedFields?.size ? [{ ...row, changedFields: [...changedFields] }] : [];
   });
 }
+
+/**
+ * True when the screen holds edits that are not in the saved draft. Derived from the
+ * edit masks themselves (what a save would send), not from a React flag that can drift.
+ */
+export function hasUnsavedDraftEdits(
+  changedByRow: Map<string, Set<string>>,
+  editedRowKeys: Set<string>,
+  dirtyFlag: boolean,
+): boolean {
+  for (const fields of changedByRow.values()) if (fields.size > 0) return true;
+  return dirtyFlag || editedRowKeys.size > 0;
+}
+
+export type GenerateGate = { proceed: true } | { proceed: false; message: string };
+
+/**
+ * Generate payroll must never run on, or throw away, edits that are only in the
+ * browser. With unsaved edits it asks, saves the draft (merge-and-retry), and then
+ * re-checks: anything typed while the save was running blocks Generate with a clear
+ * message instead of slipping past the check.
+ */
+export async function ensureDraftSavedBeforeGenerate(opts: {
+  hasUnsaved: () => boolean;
+  confirmSave: () => boolean;
+  save: () => Promise<boolean>;
+}): Promise<GenerateGate> {
+  if (!opts.hasUnsaved()) return { proceed: true };
+  if (!opts.confirmSave()) {
+    return { proceed: false, message: "Generate cancelled. Your edits are still on screen and unsaved; use Save Draft first." };
+  }
+  const saved = await opts.save();
+  if (!saved) {
+    return { proceed: false, message: "The draft could not be saved, so payroll was not generated. Your edits are still on screen; fix the problem shown and press Save Draft." };
+  }
+  if (opts.hasUnsaved()) {
+    return { proceed: false, message: "You changed values while the draft was saving. Press Save Draft once more, then Generate." };
+  }
+  return { proceed: true };
+}

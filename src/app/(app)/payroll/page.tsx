@@ -80,7 +80,14 @@ import {
   type RunPayrollRowLike,
 } from "@/lib/resolveRunPayrollRow";
 import { payrollPeriodKey, payrollRowCacheKey } from "@/lib/payrollPeriodIsolation";
-import { clearSavedPayrollDraftMasks, markPayrollDraftFieldEdited, rowsForPayrollDraftSave, snapshotPayrollDraftMasks } from "@/lib/payrollDraftPatch";
+import {
+  clearSavedPayrollDraftMasks,
+  ensureDraftSavedBeforeGenerate,
+  hasUnsavedDraftEdits,
+  markPayrollDraftFieldEdited,
+  rowsForPayrollDraftSave,
+  snapshotPayrollDraftMasks,
+} from "@/lib/payrollDraftPatch";
 import {
   draftStoredMapFromEmployees,
   saveDraftWithConflictRetry,
@@ -193,7 +200,9 @@ type MasterGridRow = {
 };
 
 const PAYROLL_REVISION_CONFLICT = "Payroll was updated in another tab or session. Reload the latest values before saving.";
-function offerPayrollConflictReload(): void {
+function offerPayrollConflictReload(hasUnsavedEdits = false): void {
+  // Reloading throws away whatever is only on screen, so with unsaved edits do not offer it.
+  if (hasUnsavedEdits) return;
   if (window.confirm(`${PAYROLL_REVISION_CONFLICT}\n\nOK: Reload latest values (discard unsaved edits).\nCancel: Review Changes (keep this screen and its unsaved edits).`)) {
     window.location.reload();
   }
@@ -2908,6 +2917,7 @@ function PayrollPageContent() {
         updatedAt: data.draft.updatedAt ?? null,
         employeeCount: Number(data.draft.employeeCount ?? map.size),
       });
+      draftDirtyRef.current = stillDirtyRows.size > 0; // keep the ref in step so the Generate re-check is exact
       setDraftDirty(stillDirtyRows.size > 0);
       setDraftRevision((n) => n + 1);
       if (outcome.conflicts.length > 0) {
@@ -3168,7 +3178,10 @@ function PayrollPageContent() {
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Failed to update generated payroll";
       showToast("error", message);
-      if (message === PAYROLL_REVISION_CONFLICT) offerPayrollConflictReload();
+      if (message === PAYROLL_REVISION_CONFLICT) {
+        if (auditDirtyRef.current) showToast("error", "Your amendment edits are still on screen and unsaved. Copy them down or press Save again after the page state is refreshed; nothing was reloaded.");
+        offerPayrollConflictReload(auditDirtyRef.current);
+      }
     } finally {
       setAuditSaving(false);
     }
@@ -3408,13 +3421,20 @@ function PayrollPageContent() {
       showToast("error", "Payroll has already been generated for this month. Use Audit Generated Payroll.");
       return;
     }
-    if (draftDirty) {
-      const ok = window.confirm(
-        "You have unsaved draft changes. Save Draft before Generate so finalized values stay auditable.\n\nClick OK to save draft first, or Cancel to abort.",
-      );
-      if (!ok) return;
-      const saved = await savePayrollDraft();
-      if (!saved) return;
+    // Unsaved edits are detected from the edit masks (not just the dirty flag) and are
+    // saved first with the merge-and-retry save; Generate never proceeds past edits that
+    // exist only in this browser.
+    const gate = await ensureDraftSavedBeforeGenerate({
+      hasUnsaved: () => hasUnsavedDraftEdits(changedDraftFieldsRef.current, editedRunRowKeysRef.current, draftDirtyRef.current),
+      confirmSave: () =>
+        window.confirm(
+          "You have unsaved draft changes. They will be saved to the draft first so finalized values stay auditable.\n\nOK: save the draft and continue. Cancel: stop here (your edits stay on screen).",
+        ),
+      save: () => savePayrollDraft(),
+    });
+    if (!gate.proceed) {
+      showToast("error", gate.message);
+      return;
     }
     const sourceLabel = draftMeta
       ? "saved draft values"
@@ -3555,7 +3575,11 @@ function PayrollPageContent() {
     } catch (e: any) {
       setRunError(e?.message || "Failed to run payroll");
       showToast("error", e?.message || "Failed to run payroll");
-      if (e?.message === PAYROLL_REVISION_CONFLICT) offerPayrollConflictReload();
+      if (e?.message === PAYROLL_REVISION_CONFLICT) {
+        const unsaved = hasUnsavedDraftEdits(changedDraftFieldsRef.current, editedRunRowKeysRef.current, draftDirtyRef.current);
+        if (unsaved) showToast("error", "Payroll changed in another session. Your edits are still on screen and unsaved; press Save Draft, then Generate again. Nothing was reloaded.");
+        offerPayrollConflictReload(unsaved);
+      }
     } finally {
       setRunning(false);
     }
