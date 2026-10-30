@@ -89,6 +89,8 @@ import {
   snapshotPayrollDraftMasks,
 } from "@/lib/payrollDraftPatch";
 import {
+  chooseLatestDraftForGenerate,
+  describeExternalChanges,
   draftStoredMapFromEmployees,
   saveDraftWithConflictRetry,
   storedRowsByEmployee,
@@ -3424,6 +3426,14 @@ function PayrollPageContent() {
     // Unsaved edits are detected from the edit masks (not just the dirty flag) and are
     // saved first with the merge-and-retry save; Generate never proceeds past edits that
     // exist only in this browser.
+    // What the screen showed and what the user edited, captured before the save clears the marks.
+    const periodKeyForGenerate = payrollPeriodKey(runYear, runMonth);
+    const shownBeforeGenerate = storedRowsByEmployee(draftPayloadByUserRef.current);
+    const userEditedBeforeGenerate = new Map<string, Set<string>>();
+    for (const [rowKey, fields] of changedDraftFieldsRef.current) {
+      const uid = rowKey.startsWith(`${periodKeyForGenerate}:`) ? rowKey.slice(periodKeyForGenerate.length + 1) : rowKey;
+      userEditedBeforeGenerate.set(uid, new Set(fields));
+    }
     const gate = await ensureDraftSavedBeforeGenerate({
       hasUnsaved: () => hasUnsavedDraftEdits(changedDraftFieldsRef.current, editedRunRowKeysRef.current, draftDirtyRef.current),
       confirmSave: () =>
@@ -3435,6 +3445,56 @@ function PayrollPageContent() {
     if (!gate.proceed) {
       showToast("error", gate.message);
       return;
+    }
+    // Generate from the LATEST saved draft (the user's typed fields are already saved in it
+    // and win). If another session changed values the user did not edit, say so first.
+    if (draftMeta || draftPayloadByUserRef.current.size > 0) {
+      try {
+        const source = await chooseLatestDraftForGenerate({
+          shown: shownBeforeGenerate,
+          userEdited: userEditedBeforeGenerate,
+          fetchLatest: async () => {
+            const latestRes = await fetch(
+              `/api/payroll/drafts?year=${encodeURIComponent(runYear)}&month=${encodeURIComponent(String(parseInt(runMonth, 10)))}`,
+              { cache: "no-store" },
+            );
+            const latest = await latestRes.json();
+            if (!latestRes.ok) throw new Error(latest?.message || latest?.error || "Could not load the latest saved draft");
+            const stored = draftStoredMapFromEmployees(periodKeyForGenerate, (latest.employees ?? []) as DraftEmployeeApi[]);
+            return {
+              rows: storedRowsByEmployee(stored),
+              stored,
+              draft: latest.draft as { id?: string; version?: number; updatedAt?: string | null; employeeCount?: number } | null,
+            };
+          },
+          confirmChanges: (changes) => {
+            const nameOf = (uid: string) =>
+              String((editableRows.find((r) => r.employeeUserId === uid) as { employeeName?: string | null } | undefined)?.employeeName ?? uid);
+            return window.confirm(
+              `Another session changed saved draft values you did not edit:\n\n${describeExternalChanges(changes, nameOf)}\n\nOK: generate using the latest saved draft (your own edits are included). Cancel: stop; nothing is generated.`,
+            );
+          },
+        });
+        if (!source.proceed) {
+          showToast("error", source.message);
+          return;
+        }
+        // Generate from exactly what the server holds now.
+        draftPayloadByUserRef.current = source.latest.stored;
+        editedRunRowKeysRef.current.clear();
+        resolvedPayrollByUserIdRef.current.clear();
+        if (source.latest.draft?.id) {
+          setDraftMeta({
+            id: String(source.latest.draft.id),
+            version: Number(source.latest.draft.version ?? 1),
+            updatedAt: source.latest.draft.updatedAt ?? null,
+            employeeCount: Number(source.latest.draft.employeeCount ?? source.latest.stored.size),
+          });
+        }
+      } catch (err) {
+        showToast("error", err instanceof Error ? err.message : "Could not load the latest saved draft; payroll was not generated.");
+        return;
+      }
     }
     const sourceLabel = draftMeta
       ? "saved draft values"

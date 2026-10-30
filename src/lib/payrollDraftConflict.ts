@@ -168,3 +168,101 @@ export function storedRowsByEmployee(stored: Map<string, Record<string, unknown>
   }
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// Generate: use the latest saved draft, and say what another session changed.
+// ---------------------------------------------------------------------------
+
+export type ExternalDraftChange = { employeeUserId: string; field: string; before: unknown; after: unknown };
+
+const DERIVED_BY: Record<string, string[]> = {
+  // Editing these moves other stored figures with them; those are not "another session" changes.
+  electricityUnitsConsumed: ["govDeduction_electricity"],
+  daArrear: ["govEarning_daArrearsPaid", "grossArrear", "cpfArrear", "netArrear"],
+  transportArrear: ["govEarning_transportArrearsPaid", "grossArrear", "cpfArrear", "netArrear"],
+  grossArrear: ["cpfArrear", "netArrear"],
+};
+
+/** Every editable field token present in a stored row. */
+export function draftTokensOf(payload: Record<string, unknown> | null | undefined): string[] {
+  const p = asRec(payload);
+  const gm = asRec(p.governmentMonthly);
+  const out = new Set<string>([
+    "payDays", "incentive", "prBonus", "reimbursement", "tds", "daArrear", "transportArrear", "grossArrear", "cpfArrear",
+    "netArrear", "electricityUnitsConsumed", "nightHours", "nightAllowanceRate", "hplDays", "eolDays", "leaveRemarks",
+  ]);
+  for (const k of Object.keys(asRec(gm.deductions))) out.add(`govDeduction_${k}`);
+  for (const k of Object.keys(gm)) if (/Paid$/.test(k)) out.add(`govEarning_${k}`);
+  for (const k of Object.keys(asRec(gm.customEarnings))) out.add(`govCustom_${k}`);
+  for (const k of Object.keys(asRec(gm.customDeductions))) out.add(`govCustomDeduction_${k}`);
+  return [...out];
+}
+
+/**
+ * Fields whose saved value differs between what the screen showed and the latest
+ * draft, excluding anything the user edited (their values are already in the latest
+ * draft, so they win) and the figures derived from those edits.
+ */
+export function externalDraftChanges(
+  shown: Map<string, Rec>,
+  latest: Map<string, Rec>,
+  userEdited: Map<string, Set<string>>,
+): ExternalDraftChange[] {
+  const out: ExternalDraftChange[] = [];
+  for (const [uid, latestRow] of latest) {
+    const shownRow = shown.get(uid);
+    if (!shownRow) continue; // a row the screen never had cannot be "changed" for it
+    const edited = new Set(userEdited.get(uid) ?? []);
+    for (const token of [...edited]) for (const d of DERIVED_BY[token] ?? []) edited.add(d);
+    const tokens = new Set([...draftTokensOf(shownRow), ...draftTokensOf(latestRow)]);
+    for (const token of tokens) {
+      if (edited.has(token)) continue;
+      const before = draftFieldValue(shownRow, token);
+      const after = draftFieldValue(latestRow, token);
+      if (!same(before, after)) out.push({ employeeUserId: uid, field: token, before, after });
+    }
+  }
+  return out;
+}
+
+export type GenerateSource<T> =
+  | { proceed: true; latest: T; changes: ExternalDraftChange[] }
+  | { proceed: false; message: string; changes: ExternalDraftChange[] };
+
+/**
+ * After the pre-Generate save: re-fetch the latest draft, and if another session
+ * changed values the user did not edit, list them and ask. Cancel blocks Generate.
+ * With nothing changed there is no extra prompt.
+ */
+export async function chooseLatestDraftForGenerate<T extends { rows: Map<string, Rec> }>(opts: {
+  shown: Map<string, Rec>;
+  userEdited: Map<string, Set<string>>;
+  fetchLatest: () => Promise<T>;
+  confirmChanges: (changes: ExternalDraftChange[]) => boolean;
+}): Promise<GenerateSource<T>> {
+  const latest = await opts.fetchLatest();
+  const changes = externalDraftChanges(opts.shown, latest.rows, opts.userEdited);
+  if (changes.length > 0 && !opts.confirmChanges(changes)) {
+    return { proceed: false, changes, message: "Generate cancelled because another session changed saved values. Nothing was generated; review the screen and try again." };
+  }
+  return { proceed: true, latest, changes };
+}
+
+/** "Name: Water 314 → 350" lines for the confirmation, capped. */
+export function describeExternalChanges(
+  changes: ExternalDraftChange[],
+  nameOf: (uid: string) => string,
+  max = 8,
+): string {
+  const label = (t: string) =>
+    t
+      .replace(/^gov(Deduction|Earning|CustomDeduction|Custom)_/, "")
+      .replace(/Paid$/, "")
+      .replace(/([a-z])([A-Z])/g, "$1 $2")
+      .replace(/^./, (c) => c.toUpperCase());
+  const lines = changes
+    .slice(0, max)
+    .map((c) => `• ${nameOf(c.employeeUserId)}: ${label(c.field)} ${JSON.stringify(c.before ?? "—")} → ${JSON.stringify(c.after ?? "—")}`);
+  if (changes.length > max) lines.push(`…and ${changes.length - max} more`);
+  return lines.join("\n");
+}
