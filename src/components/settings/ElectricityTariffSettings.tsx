@@ -99,6 +99,18 @@ export function ElectricityTariffSettings() {
     setFormOpen(true);
   }
 
+  /** A tariff whose effective date has arrived is history: it is versioned, never edited. */
+  function isInForce(t: ElectricityTariffRecord): boolean {
+    const todayIst = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
+    return Boolean(t.effectiveFrom) && String(t.effectiveFrom).slice(0, 10) <= todayIst;
+  }
+
+  function openNewVersion(t: ElectricityTariffRecord) {
+    openEdit(t);
+    setEditing(null);
+    setForm((f) => ({ ...f, effectiveFrom: "" }));
+  }
+
   function openEdit(t: ElectricityTariffRecord) {
     setEditing(t);
     setForm({
@@ -160,7 +172,9 @@ export function ElectricityTariffSettings() {
       );
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || data.message || data.errors?.slabs?.[0] || "Save failed");
+        throw new Error(
+          data.error || data.errors?.tariff?.[0] || data.errors?.effectiveFrom?.[0] || data.errors?.slabs?.[0] || data.message || "Save failed",
+        );
       }
       setFormOpen(false);
       await load();
@@ -239,10 +253,16 @@ export function ElectricityTariffSettings() {
                     <Badge tone={t.isActive ? "success" : "neutral"}>{t.isActive ? "Active" : "Inactive"}</Badge>
                   </td>
                   <td className="px-2 py-2 text-right">
-                    <Button type="button" size="sm" variant="outline" className="mr-1" onClick={() => openEdit(t)}>
-                      Edit
-                    </Button>
-                    {t.isActive ? (
+                    {isInForce(t) ? (
+                      <Button type="button" size="sm" variant="outline" className="mr-1" onClick={() => openNewVersion(t)}>
+                        New version
+                      </Button>
+                    ) : (
+                      <Button type="button" size="sm" variant="outline" className="mr-1" onClick={() => openEdit(t)}>
+                        Edit
+                      </Button>
+                    )}
+                    {t.isActive && !isInForce(t) ? (
                       <Button type="button" size="sm" variant="outline" onClick={() => setDeactivateTarget(t)}>
                         Deactivate
                       </Button>

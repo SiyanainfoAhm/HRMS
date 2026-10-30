@@ -190,6 +190,7 @@ class ElectricityTariffService
     {
         $data = $this->validatedPayload($payload);
         $this->assertUniqueEffectiveFrom($companyId, $data['effective_from'], null);
+        $this->assertEffectiveDateIsSafe($companyId, $data['effective_from']);
 
         return DB::transaction(function () use ($companyId, $data, $createdBy) {
             $tariff = HrmsElectricityTariff::create([
@@ -216,7 +217,9 @@ class ElectricityTariffService
     public function update(HrmsElectricityTariff $tariff, array $payload): array
     {
         $data = $this->validatedPayload($payload, true);
+        $this->assertEditable($tariff);
         if (isset($data['effective_from'])) {
+            $this->assertEffectiveDateIsSafe((string) $tariff->company_id, $data['effective_from']);
             $this->assertUniqueEffectiveFrom((string) $tariff->company_id, $data['effective_from'], (string) $tariff->id);
         }
 
@@ -240,6 +243,7 @@ class ElectricityTariffService
 
     public function deactivate(HrmsElectricityTariff $tariff): array
     {
+        $this->assertEditable($tariff);
         $tariff->update(['is_active' => false]);
 
         return $this->formatTariff($tariff->fresh('slabs'));
@@ -494,6 +498,62 @@ class ElectricityTariffService
                 'sort_order' => $slab['sort_order'],
             ]);
         }
+    }
+
+    /** Today in the business timezone (effective dates are calendar dates in India). */
+    private function today(): string
+    {
+        return \Illuminate\Support\Carbon::now('Asia/Kolkata')->toDateString();
+    }
+
+    /**
+     * A tariff that is already in force (effective date today or earlier) is part of
+     * history: months are billed from it, drafts reconcile against it and generated
+     * payroll snapshots reference it. It is never edited or deactivated in place;
+     * create a new tariff with a new effective date instead.
+     */
+    private function assertEditable(HrmsElectricityTariff $tariff): void
+    {
+        $from = $tariff->effective_from?->format('Y-m-d');
+        if ($from !== null && $from <= $this->today()) {
+            throw ValidationException::withMessages([
+                'tariff' => 'This tariff is already in force (effective '.$from.') and cannot be edited or deactivated, because that would change billing for months already drafted or finalized. Create a new tariff with a new effective date instead.',
+            ]);
+        }
+    }
+
+    /**
+     * A new tariff must start after every month that already has a draft or a
+     * generated payroll, otherwise it would silently re-bill those months. The very
+     * first tariff of a company is exempt.
+     */
+    private function assertEffectiveDateIsSafe(string $companyId, string $effectiveFrom): void
+    {
+        $locked = $this->lastLockedMonthEnd($companyId);
+        if ($locked !== null && $effectiveFrom <= $locked) {
+            throw ValidationException::withMessages([
+                'effectiveFrom' => "Effective date must be after {$locked}: payroll for that month is drafted or already generated, and a tariff starting on or before it would change those amounts. Choose a later date.",
+            ]);
+        }
+    }
+
+    private function lastLockedMonthEnd(string $companyId): ?string
+    {
+        if (! HrmsElectricityTariff::query()->where('company_id', $companyId)->exists()) {
+            return null;
+        }
+        $ends = [];
+        $draft = DB::table('cirt_payroll_drafts')->where('company_id', $companyId)->where('status', 'draft')
+            ->orderByDesc('payroll_year')->orderByDesc('payroll_month')->first(['payroll_year', 'payroll_month']);
+        if ($draft) {
+            $ends[] = \Illuminate\Support\Carbon::create((int) $draft->payroll_year, (int) $draft->payroll_month, 1)->endOfMonth()->toDateString();
+        }
+        $period = DB::table('cirt_payroll_periods')->where('company_id', $companyId)->orderByDesc('period_start')->value('period_start');
+        if ($period) {
+            $ends[] = \Illuminate\Support\Carbon::parse($period)->endOfMonth()->toDateString();
+        }
+
+        return $ends === [] ? null : max($ends);
     }
 
     private function assertUniqueEffectiveFrom(string $companyId, string $effectiveFrom, ?string $exceptId): void
