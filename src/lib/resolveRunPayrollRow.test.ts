@@ -261,7 +261,9 @@ function testDraftElectricityUnitsRecalculateInsteadOfRestoringStaleBill() {
           totalEarnings: 999999,
           totalDeductions: 1,
           netSalary: 999998,
-          deductions: { electricity: 1 },
+          // Missing bill at 11 units models the live defect; other rows carry
+          // a stale cached amount that must be replaced by the effective tariff.
+          deductions: units === 11 ? {} : { electricity: units === 10 ? 0 : 1 },
         },
         govRecalc: {
           ...base.govRecalc,
@@ -277,7 +279,7 @@ function testDraftElectricityUnitsRecalculateInsteadOfRestoringStaleBill() {
           // applicability or the current preview tariff.
           electricityApplicable: false,
           electricityTariff: { slabs: [], sthirAakar: 0 },
-          electricityMode: "unit_based",
+          electricityMode: units === 10 ? "manual_fixed" : "unit_based",
           electricityManualOverride: false,
         },
       },
@@ -303,6 +305,31 @@ function testDraftElectricityUnitsRecalculateInsteadOfRestoringStaleBill() {
   }
   assert(electricityTotals.get(11)![0] !== electricityTotals.get(10)![0], "11 units changes the deduction");
   assertEq(electricityTotals.get(10)![1], electricityTotals.get(10)![0], "changing back to 10 restores the deduction");
+
+  const intentionalZero = resolveRunPayrollRow(base, {
+    denom: 30,
+    runYear: 2026,
+    runMonth: 7,
+    payrollConfig: { electricityTariff: tariff },
+    alreadyRun: false,
+    draftDirty: false,
+    draftStored: {
+      employeeUserId: "u-electricity",
+      rowPayload: {
+        ...base,
+        governmentMonthly: { deductions: { electricity: 0 } },
+        govRecalc: {
+          ...base.govRecalc!,
+          electricityUnitsConsumed: 10,
+          electricityMode: "unit_based",
+          electricityManualOverride: true,
+          deductionDefaults: { ...base.govRecalc!.deductionDefaults, electricity: 0 },
+          deductionPaidOverrides: { electricity: 0 },
+        },
+      },
+    },
+  });
+  assertEq((intentionalZero.governmentMonthly as { deductions: { electricity: number } }).deductions.electricity, 0, "intentional zero electricity override survives tariff recalculation");
 }
 
 function testManyEmployeesResolveWithoutPageBias() {

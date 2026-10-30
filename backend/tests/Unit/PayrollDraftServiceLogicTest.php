@@ -99,6 +99,8 @@ final class PayrollDraftServiceLogicTest extends TestCase
                 'totalEarnings' => 100000,
                 'totalDeductions' => 12750,
                 'netSalary' => 87250,
+                'electricityUnitsConsumed' => 48,
+                'electricityMode' => 'unit_based',
                 'deductions' => ['mess' => 1000, 'creditSociety' => 11750, 'electricity' => 900, 'quarterRent' => 500, 'cpf' => 600],
             ],
             'govRecalc' => ['deductionPaidOverrides' => ['mess' => 1000, 'creditSociety' => 11750, 'electricity' => 900, 'quarterRent' => 500, 'cpf' => 600]],
@@ -110,12 +112,16 @@ final class PayrollDraftServiceLogicTest extends TestCase
             'totalEarnings' => 100000,
             'totalDeductions' => 11750,
             'netSalary' => 88250,
+            'electricityUnitsConsumed' => 0,
+            'electricityMode' => 'manual_fixed',
             'deductions' => ['mess' => 0, 'creditSociety' => 0, 'electricity' => 0, 'quarterRent' => 0, 'cpf' => 0],
         ], 'govRecalc' => ['deductionPaidOverrides' => ['mess' => 0, 'creditSociety' => 0, 'electricity' => 0, 'quarterRent' => 0, 'cpf' => 0]]];
         $patched = $totals->invoke($service, $method->invoke($service, $before, $incoming, ['govDeduction_mess']), []);
         $this->assertSame(0, $patched['governmentMonthly']['deductions']['mess'], 'intentional zero is a value');
         $this->assertSame(11750, $patched['governmentMonthly']['deductions']['creditSociety']);
         $this->assertSame(900, $patched['governmentMonthly']['deductions']['electricity']);
+        $this->assertSame(48, $patched['governmentMonthly']['electricityUnitsConsumed'], 'unrelated Mess edit preserves previously saved Electricity Units');
+        $this->assertSame('unit_based', $patched['governmentMonthly']['electricityMode']);
         $this->assertSame(500, $patched['governmentMonthly']['deductions']['quarterRent']);
         $this->assertSame(600, $patched['governmentMonthly']['deductions']['cpf']);
         $this->assertSame(11750, $patched['govRecalc']['deductionPaidOverrides']['creditSociety']);

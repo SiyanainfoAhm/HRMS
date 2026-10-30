@@ -5,7 +5,7 @@ function assert(value: unknown, message: string): asserts value {
 }
 
 const rows = [
-  { employeeUserId: "jangam", rowPayload: { governmentMonthly: { deductions: { mess: 650, creditSociety: 11750 } } } },
+  { employeeUserId: "jangam", rowPayload: { governmentMonthly: { electricityUnitsConsumed: 48, deductions: { electricity: 900, mess: 650, creditSociety: 11750 } } } },
   { employeeUserId: "employee-2", rowPayload: { governmentMonthly: { deductions: { mess: 300, creditSociety: 500 } } } },
 ];
 const changes = new Map<string, Set<string>>();
@@ -16,6 +16,8 @@ const messPatch = rowsForPayrollDraftSave(rows, true, changes, key);
 assert(messPatch.length === 1 && messPatch[0].employeeUserId === "jangam", "only edited employee is sent");
 assert(messPatch[0].changedFields?.[0] === "govDeduction_mess", "operator field token is sent");
 assert(messPatch[0].rowPayload.governmentMonthly.deductions.mess === 650, "field patch retains explicit current value");
+assert(messPatch[0].rowPayload.governmentMonthly.electricityUnitsConsumed === 48, "unrelated patch carries the saved electricity units snapshot");
+assert(messPatch[0].rowPayload.governmentMonthly.deductions.electricity === 900, "unrelated patch carries the saved electricity amount snapshot");
 
 markPayrollDraftFieldEdited(changes, key("jangam"), "govDeduction_creditSociety");
 const sequentialPatch = rowsForPayrollDraftSave(rows, true, changes, key);

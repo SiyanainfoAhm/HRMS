@@ -375,6 +375,18 @@ export function resolveRunPayrollRow(
     ) {
       const configuredTariff = (ctx.payrollConfig as { electricityTariff?: ElectricityTariffConfig | null } | null)?.electricityTariff;
       const masterRecalc = r.govRecalc;
+      const savedMonthly = (overlaid.governmentMonthly ?? {}) as Record<string, unknown>;
+      const savedElectricityDeductions = (savedMonthly.deductions ?? {}) as Record<string, unknown>;
+      const savedElectricityAmount = Number(
+        savedElectricityDeductions.electricity ?? savedMonthly.electricityTotal ?? savedMonthly.electricity_total ?? 0,
+      );
+      const savedUnits = Number(
+        overlaid.govRecalc.electricityUnitsConsumed ?? savedMonthly.electricityUnitsConsumed ?? 0,
+      );
+      const inferUnitBased = savedUnits > 0
+        && savedElectricityAmount === 0
+        && overlaid.govRecalc.electricityManualOverride !== true
+        && (masterRecalc?.electricityApplicable ?? overlaid.govRecalc.electricityApplicable) !== false;
       const freshRow = {
         ...overlaid,
         // Rebuild the derived monthly snapshot from current master/config and
@@ -386,7 +398,7 @@ export function resolveRunPayrollRow(
           // rehydrated from the current period/master response.
           electricityTariff: configuredTariff ?? masterRecalc?.electricityTariff ?? null,
           electricityApplicable: masterRecalc?.electricityApplicable ?? overlaid.govRecalc.electricityApplicable,
-          electricityMode: masterRecalc?.electricityMode ?? overlaid.govRecalc.electricityMode,
+          electricityMode: inferUnitBased ? "unit_based" : masterRecalc?.electricityMode ?? overlaid.govRecalc.electricityMode,
         },
       };
       return computeGovernmentRow(freshRow, ctx.denom, ctx.runYear, ctx.runMonth, ctx.payrollConfig);

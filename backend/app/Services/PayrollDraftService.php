@@ -25,6 +25,7 @@ class PayrollDraftService
     public function __construct(
         private readonly ?QuarterService $quarterService = null,
         private readonly ?PayrollCalculationService $payrollCalculationService = null,
+        private readonly ?ElectricityTariffService $electricityTariffService = null,
     ) {}
     /**
      * @return array{
@@ -67,6 +68,7 @@ class PayrollDraftService
                     $meta = ($this->quarterService ?? app(QuarterService::class))->quarterMetaForEmployeePeriod($companyId, (string) $row->employee_user_id, $year, $month);
                     $master = $this->resolvePayrollMasterForPeriod($companyId, (string) $row->employee_user_id, $year, $month);
                     $row->row_payload = $this->applyAuthoritativeQuarterValues($row->row_payload, $meta, $year, $month, $quarterPayrollFieldDefinitions, $master);
+                    $row->row_payload = $this->reconcileDraftElectricity($row->row_payload, $companyId, $year, $month, [], $master, $quarterPayrollFieldDefinitions);
                     $row->gross_pay = $row->row_payload['grossPay'] ?? $row->gross_pay;
                     $gm = $row->row_payload['governmentMonthly'] ?? [];
                     $row->total_earnings = $gm['totalEarnings'] ?? $row->total_earnings;
@@ -216,8 +218,9 @@ class PayrollDraftService
                 } else {
                     $payload = $existing ? $this->mergeSnapshot($beforePayload, $payload) : $payload;
                 }
-                $quarterMeta = ($this->quarterService ?? app(QuarterService::class))->quarterMetaForEmployeePeriod($companyId, $employeeUserId, $year, $month);
                 $master = $this->resolvePayrollMasterForPeriod($companyId, $employeeUserId, $year, $month);
+                $payload = $this->reconcileDraftElectricity($payload, $companyId, $year, $month, $changedFields, $master, $payrollFieldDefinitions);
+                $quarterMeta = ($this->quarterService ?? app(QuarterService::class))->quarterMetaForEmployeePeriod($companyId, $employeeUserId, $year, $month);
                 $payload = $this->applyAuthoritativeQuarterValues($payload, $quarterMeta, $year, $month, $payrollFieldDefinitions, $master);
 
                 $attrs = [
@@ -556,6 +559,179 @@ class PayrollDraftService
         $payload['netPay'] = $net;
         $payload['takeHome'] = $net;
         return $payload;
+    }
+
+    /**
+     * Reconcile a saved Electricity bill only when its inputs require it. Unit
+     * edits, missing bill snapshots, and changed effective tariffs are the
+     * documented recalculation triggers. Explicit amount edits (including 0)
+     * remain manual overrides; unrelated component saves preserve the bill.
+     *
+     * @param list<string> $changedFields
+     */
+    public function reconcileDraftElectricity(
+        array $payload,
+        string $companyId,
+        int $year,
+        int $month,
+        array $changedFields = [],
+        ?HrmsPayrollMaster $master = null,
+        array $fieldDefinitions = [],
+    ): array {
+        $gmKey = is_array($payload['governmentMonthly'] ?? null) ? 'governmentMonthly' : 'government_monthly';
+        $gm = $payload[$gmKey] ?? null;
+        if (! is_array($gm)) return $payload;
+        $grKey = is_array($payload['govRecalc'] ?? null) ? 'govRecalc' : 'gov_recalc';
+        $gr = is_array($payload[$grKey] ?? null) ? $payload[$grKey] : [];
+        $dedKey = is_array($gm['deductions'] ?? null) ? 'deductions' : 'deductions';
+        $deductions = is_array($gm[$dedKey] ?? null) ? $gm[$dedKey] : [];
+        $paidOverrides = is_array($gr['deductionPaidOverrides'] ?? $gr['deduction_paid_overrides'] ?? null)
+            ? ($gr['deductionPaidOverrides'] ?? $gr['deduction_paid_overrides']) : [];
+
+        $amount = $deductions['electricity'] ?? $gm['electricityTotal'] ?? $gm['electricity_total'] ?? null;
+        // Null/blank legacy bill fields are missing; numeric 0 is a valid saved amount.
+        $amountExists = is_numeric($amount) && (float) $amount >= 0;
+        $unitsRaw = $gm['electricityUnitsConsumed'] ?? $gm['electricity_units_consumed']
+            ?? $gr['electricityUnitsConsumed'] ?? $gr['electricity_units_consumed'] ?? null;
+        $units = is_numeric($unitsRaw) ? max(0, (float) $unitsRaw) : null;
+        $unitsEdited = in_array('electricityUnitsConsumed', $changedFields, true)
+            || in_array('electricity_units_consumed', $changedFields, true);
+        $amountEdited = in_array('govDeduction_electricity', $changedFields, true)
+            || in_array('govDeduction_electricity_amount', $changedFields, true);
+        if ($amountEdited && (! is_numeric($amount) || (float) $amount < 0)) {
+            throw ValidationException::withMessages(['employees' => ['An edited Electricity amount must contain a non-negative numeric value.']]);
+        }
+
+        $mode = (string) ($gm['electricityMode'] ?? $gm['electricity_mode'] ?? $gr['electricityMode'] ?? $gr['electricity_mode'] ?? $master?->electricity_mode ?? 'manual_fixed');
+        $applicable = (bool) ($gm['electricityApplicable'] ?? $gm['electricity_applicable'] ?? $gr['electricityApplicable'] ?? $gr['electricity_applicable'] ?? $master?->electricity_applicable ?? true);
+        $manualOverride = (bool) ($gr['electricityManualOverride'] ?? $gr['electricity_manual_override'] ?? $gm['electricityManualOverride'] ?? $gm['electricity_manual_override'] ?? false);
+        if ($unitsEdited) {
+            // Entering units explicitly opts this month into tariff billing.
+            $mode = 'unit_based';
+            $manualOverride = false;
+            unset($paidOverrides['electricity']);
+        } elseif ($amountEdited) {
+            $manualOverride = true;
+            $paidOverrides['electricity'] = (float) $amount;
+        }
+        if (! $unitsEdited && ! $manualOverride && $applicable && ($units ?? 0) > 0
+            && (! $amountExists || (float) $amount === 0.0)) {
+            // Legacy rows can have units and a zero stub but still say manual_fixed.
+            // In the absence of an explicit approved override, units make this a
+            // unit-based bill that must be derived from the effective tariff.
+            $mode = 'unit_based';
+        }
+
+        $periodEnd = Carbon::create($year, $month, 1)->endOfMonth()->toDateString();
+        $tariffService = $this->electricityTariffService ?? app(ElectricityTariffService::class);
+        $tariffModel = $tariffService->resolveForDate($companyId, $periodEnd);
+        $tariff = $tariffModel ? $tariffService->formatTariff($tariffModel) : null;
+        $savedTariffId = $gm['electricityTariffId'] ?? $gm['electricity_tariff_id'] ?? null;
+        $savedTariffSnapshot = $gr['electricityTariff'] ?? $gr['electricity_tariff'] ?? null;
+        $tariffChanged = $mode === 'unit_based' && $applicable && (
+            (string) ($savedTariffId ?? '') !== (string) ($tariff['id'] ?? '')
+            || ! is_array($savedTariffSnapshot)
+            || $this->electricityTariffFingerprint($savedTariffSnapshot) !== $this->electricityTariffFingerprint($tariff)
+        );
+        $needsRecalculation = $this->draftElectricityNeedsRecalculation(
+            $unitsEdited, $amountExists, $amount, $units, $manualOverride, $mode, $tariffChanged,
+        );
+        if (! $needsRecalculation && ! $amountEdited) return $payload;
+
+        if ($units === null) $units = 0.0;
+        $manualAmount = $amountEdited ? (float) $amount : ($paidOverrides['electricity'] ?? $amount);
+        if ($this->requiresElectricityTariff($applicable, $mode, $units, $tariff, $manualOverride)) {
+            throw ValidationException::withMessages(['electricity' => ["No active electricity tariff is effective for {$year}-{$month}; draft was not saved."]]);
+        }
+        $bill = $tariffService->calculateBill(
+            $units,
+            $tariff,
+            $applicable,
+            $mode === 'unit_based' ? 'unit_based' : 'manual_fixed',
+            (float) ($gm['electricityUnitRate'] ?? $gm['electricity_unit_rate'] ?? 0),
+            (float) ($master?->electricity ?? $master?->electricity_default ?? 0),
+            $manualOverride,
+            $manualOverride && is_numeric($manualAmount) ? (float) $manualAmount : null,
+        );
+
+        $deductions['electricity'] = $bill['total'];
+        $gm = array_merge($gm, [
+            'electricityUnitsConsumed' => $units,
+            'electricityTariffId' => $bill['tariffId'],
+            'electricitySthirAakar' => $bill['sthirAakar'],
+            'electricityConsumptionCharge' => $bill['consumptionCharge'],
+            'electricityVahanAakar' => $bill['vahanAakar'],
+            'electricityFuelCharge' => $bill['fuelCharge'],
+            'electricityDuty' => $bill['dutyAmount'],
+            'electricityTotal' => $bill['total'],
+            'electricityBill' => $bill,
+            'electricityApplicable' => $applicable,
+            'electricityMode' => $mode,
+            'deductions' => $deductions,
+        ]);
+        $gr = array_merge($gr, [
+            'electricityUnitsConsumed' => $units,
+            'electricityTariff' => $tariff,
+            'electricityApplicable' => $applicable,
+            'electricityMode' => $mode,
+            'electricityManualOverride' => $manualOverride,
+            'deductionDefaults' => array_merge(is_array($gr['deductionDefaults'] ?? null) ? $gr['deductionDefaults'] : [], ['electricity' => $bill['total']]),
+            'deductionPaidOverrides' => $paidOverrides,
+        ]);
+        $payload[$gmKey] = $gm;
+        $payload[$grKey] = $gr;
+        $payload = $this->recalculateDraftTotals($payload, $fieldDefinitions);
+        return $payload;
+    }
+
+    /** Zero with positive unit-based consumption is uncalculated unless an explicit manual override says otherwise. */
+    public function draftElectricityNeedsRecalculation(
+        bool $unitsEdited,
+        bool $amountExists,
+        mixed $amount,
+        ?float $units,
+        bool $manualOverride,
+        string $mode,
+        bool $tariffChanged,
+    ): bool {
+        $uncalculatedZero = $mode === 'unit_based'
+            && ! $manualOverride
+            && ($units ?? 0) > 0
+            && is_numeric($amount)
+            && (float) $amount === 0.0;
+
+        return $unitsEdited || ! $amountExists || $tariffChanged || $uncalculatedZero;
+    }
+
+    /** Positive applicable unit billing cannot be saved without a tariff unless amount is explicitly overridden. */
+    public function requiresElectricityTariff(bool $applicable, string $mode, float $units, ?array $tariff, bool $manualOverride): bool
+    {
+        return $applicable && $mode === 'unit_based' && $units > 0 && $tariff === null && ! $manualOverride;
+    }
+
+    /** @param array<string, mixed>|null $tariff */
+    private function electricityTariffFingerprint(?array $tariff): string
+    {
+        if ($tariff === null) return 'none';
+        $slabs = is_array($tariff['slabs'] ?? null) ? $tariff['slabs'] : [];
+        $normalizedSlabs = array_map(static fn (array $slab): array => [
+            'from' => (int) ($slab['fromUnit'] ?? $slab['from_unit'] ?? 0),
+            'to' => ($slab['toUnit'] ?? $slab['to_unit'] ?? null) === null ? null : (int) ($slab['toUnit'] ?? $slab['to_unit']),
+            'rate' => (float) ($slab['ratePerUnit'] ?? $slab['rate_per_unit'] ?? 0),
+            'fuel' => (float) ($slab['fuelChargePerUnit'] ?? $slab['fuel_charge_per_unit'] ?? 0),
+            'order' => (int) ($slab['sortOrder'] ?? $slab['sort_order'] ?? 0),
+        ], $slabs);
+        usort($normalizedSlabs, static fn (array $a, array $b): int => $a['order'] <=> $b['order']);
+        $inputs = [
+            'id' => (string) ($tariff['id'] ?? ''),
+            'effectiveFrom' => (string) ($tariff['effectiveFrom'] ?? $tariff['effective_from'] ?? ''),
+            'sthirAakar' => (float) ($tariff['sthirAakar'] ?? $tariff['sthir_aakar'] ?? 0),
+            'vahanAakarPerUnit' => (float) ($tariff['vahanAakarPerUnit'] ?? $tariff['vahan_aakar_per_unit'] ?? 0),
+            'fuelCharge' => (float) ($tariff['fuelCharge'] ?? $tariff['fuel_charge'] ?? 0),
+            'dutyPercentage' => (float) ($tariff['dutyPercentage'] ?? $tariff['duty_percentage'] ?? 0),
+            'slabs' => $normalizedSlabs,
+        ];
+        return hash('sha256', json_encode($inputs, JSON_THROW_ON_ERROR));
     }
 
     /**
