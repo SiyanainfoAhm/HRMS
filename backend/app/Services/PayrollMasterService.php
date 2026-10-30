@@ -606,12 +606,12 @@ final class PayrollMasterService
         foreach ($employees as $emp) {
             $found++;
             $user = $emp->user;
-            if ($this->findExistingMaster($companyId, [
+            // Any stable-key hit (even an ambiguous one) means a master already exists: never create another.
+            if ($this->matchExistingMasters($companyId, [
                 'employee_code' => $emp->employee_code ?? $user?->employee_code,
                 'email' => $emp->email ?? $user?->email,
-                'employee_id' => $emp->id,
                 'user_id' => $emp->user_id,
-            ])) {
+            ])['masters'] !== []) {
                 $skipped++;
 
                 continue;
@@ -760,8 +760,9 @@ final class PayrollMasterService
 
         $saveRows = array_values(array_filter(
             $plan['rows'],
-            fn (array $item) => ($item['errors'] ?? []) === [],
+            fn (array $item) => ($item['errors'] ?? []) === [] && ($item['action'] ?? '') !== 'ambiguous',
         ));
+        $summary['skipped_rows'] = count($plan['rows']) - count($saveRows);
 
         try {
             DB::transaction(function () use ($saveRows, $companyId, $createdBy, &$summary, &$generatedPasswordAccounts) {
@@ -924,14 +925,24 @@ final class PayrollMasterService
             $row = $repair['row'];
             // Resolve the matching master FIRST: defaults and quarter resolution depend
             // on it (the quarter step previously saw the previous row's master).
-            $existing = $this->findExistingMaster($companyId, $row);
+            $match = $this->matchExistingMasters($companyId, $row);
+            $ambiguous = count($match['masters']) > 1;
+            $existing = count($match['masters']) === 1 ? array_values($match['masters'])[0] : null;
+            $matchedBy = $existing ? ($match['via'][(string) $existing->id] ?? []) : [];
             $rowWarnings = $this->applyImportRowDefaults($row, $existing, $companyId);
             $rowWarnings = array_merge($rowWarnings, $this->resolveQuarterFieldsForImportRow($row, $companyId, $existing));
             if (! empty($row['status'])) {
                 $row['status'] = mb_strtolower(trim((string) $row['status']));
             }
-            $action = $existing ? 'update' : 'insert';
-            $rowErrors = $this->validateImportRow($row, $companyId, $existing, $uniquenessIndex);
+            $action = $ambiguous ? 'ambiguous' : ($existing ? 'update' : 'insert');
+            $rowErrors = $ambiguous ? [] : $this->validateImportRow($row, $companyId, $existing, $uniquenessIndex);
+            if ($ambiguous) {
+                $parts = [];
+                foreach ($match['masters'] as $id => $m) {
+                    $parts[] = trim((string) ($m->employee_code ?? '')).' ('.implode('/', $match['via'][$id]).')';
+                }
+                $rowWarnings[] = $this->importIssue('match', 'Ambiguous: this row matches more than one existing employee ['.implode(', ', $parts).']. It will be skipped; fix the code/email/CPF no./UAN so they point to one employee.', 'warning');
+            }
             if ($columnError !== null && ! $repair['fixed']) {
                 array_unshift($rowErrors, $this->importIssue('columns', $columnError['message']));
             }
@@ -949,6 +960,7 @@ final class PayrollMasterService
                 'valid' => $rowErrors === [],
                 'action' => $action,
                 'existing' => $existing,
+                'matched_by' => $matchedBy,
                 'generated_password' => $generatedPassword,
             ];
         }
@@ -1672,7 +1684,7 @@ final class PayrollMasterService
         $basic = (float) ($m->gross_basic_pay ?? $m->gross_basic ?? $m->gross_salary ?? 0);
         $percent = (float) ($m->da_percent ?? PayrollCalculationService::DEFAULT_DA_PERCENT);
 
-        return round($basic * $percent / 100);
+        return floor($basic * $percent / 100 * 100 + 0.5) / 100;
     }
 
     private function roundHraAmount(HrmsPayrollMaster $m): float
@@ -1680,7 +1692,7 @@ final class PayrollMasterService
         $basic = (float) ($m->gross_basic_pay ?? $m->gross_basic ?? $m->gross_salary ?? 0);
         $percent = (float) ($m->hra_percent ?? PayrollCalculationService::DEFAULT_HRA_PERCENT);
 
-        return round($basic * $percent / 100);
+        return floor($basic * $percent / 100 * 100 + 0.5) / 100;
     }
 
     /** @param  array<string, mixed>  $payload */
@@ -3575,57 +3587,53 @@ final class PayrollMasterService
     }
 
     /** @param  array<string, mixed>  $criteria */
-    private function findExistingMaster(?string $companyId, array $criteria): ?HrmsPayrollMaster
+    /** Stable identity keys, in the fixed order they are tried. Never the person's name. */
+    public const IMPORT_MATCH_KEYS = ['user_id', 'employee_code', 'email', 'cpf_no', 'uan'];
+
+    /**
+     * Every current master a row's stable keys point to.
+     *
+     * @return array{masters: array<string, HrmsPayrollMaster>, via: array<string, list<string>>}
+     *         masters keyed by id; via = master id => the keys that matched it
+     */
+    public function matchExistingMasters(?string $companyId, array $criteria): array
     {
-        $q = HrmsPayrollMaster::query();
-        $this->scopeCurrentMaster($q);
-        if ($companyId) {
-            $q->where('company_id', $companyId);
+        $masters = [];
+        $via = [];
+        foreach (self::IMPORT_MATCH_KEYS as $key) {
+            $value = $criteria[$key] ?? ($key === 'user_id' ? ($criteria['employee_user_id'] ?? null) : null);
+            if (! is_string($value) && ! is_numeric($value)) continue;
+            $value = trim((string) $value);
+            if ($value === '') continue;
+
+            $q = HrmsPayrollMaster::query();
+            $this->scopeCurrentMaster($q);
+            if ($companyId) $q->where('company_id', $companyId);
+            match ($key) {
+                'user_id' => $q->where(fn ($w) => $w->where('user_id', $value)->orWhere('employee_user_id', $value)),
+                'employee_code' => $q->whereRaw('LOWER(TRIM(employee_code)) = ?', [mb_strtolower($value)]),
+                'email' => $q->whereRaw('LOWER(TRIM(email)) = ?', [mb_strtolower($value)]),
+                'cpf_no' => $q->whereRaw('TRIM(cpf_no) = ?', [$value]),
+                'uan' => $q->whereRaw('TRIM(uan) = ?', [$value]),
+            };
+            foreach ($q->get() as $found) {
+                $masters[(string) $found->id] = $found;
+                $via[(string) $found->id][] = $key;
+            }
         }
 
-        if (! empty($criteria['employee_code'])) {
-            $found = (clone $q)->where('employee_code', $criteria['employee_code'])->first();
-            if ($found) {
-                return $found;
-            }
-        }
-        if (! empty($criteria['cpf_no'])) {
-            $found = (clone $q)->where('cpf_no', $criteria['cpf_no'])->first();
-            if ($found) {
-                return $found;
-            }
-        }
-        if (! empty($criteria['uan'])) {
-            $found = (clone $q)->where('uan', $criteria['uan'])->first();
-            if ($found) {
-                return $found;
-            }
-        }
-        if (! empty($criteria['email'])) {
-            $found = (clone $q)->whereRaw('LOWER(email) = ?', [mb_strtolower($criteria['email'])])->first();
-            if ($found) {
-                return $found;
-            }
-        }
-        if (! empty($criteria['employee_id'])) {
-            $found = (clone $q)->where('employee_id', $criteria['employee_id'])->first();
-            if ($found) {
-                return $found;
-            }
-        }
-        if (! empty($criteria['user_id'])) {
-            $found = (clone $q)->where(function ($w) use ($criteria) {
-                $w->where('user_id', $criteria['user_id'])
-                    ->orWhere('employee_user_id', $criteria['user_id']);
-            })->first();
-            if ($found) {
-                return $found;
-            }
-        }
-        // Deliberately no name + pay level fallback: two different employees can share
-        // both, and matching on them made an "Add" or an import row silently overwrite
-        // someone else's master. Identity is code, CPF no., UAN, email, employee or user id.
-        return null;
+        return ['masters' => $masters, 'via' => $via];
+    }
+
+    /**
+     * The single master a manual Add resolves to, or null (also null when the keys
+     * disagree, so an ambiguous Add creates nothing over the wrong person).
+     */
+    private function findExistingMaster(?string $companyId, array $criteria): ?HrmsPayrollMaster
+    {
+        $match = $this->matchExistingMasters($companyId, $criteria);
+
+        return count($match['masters']) === 1 ? array_values($match['masters'])[0] : null;
     }
 
     /** @return list<list<mixed>> */
@@ -3853,6 +3861,9 @@ final class PayrollMasterService
         /** @var array<string, array<string, list<int>>> $occurrences */
         $occurrences = [];
         foreach ($planRows as $index => $item) {
+            if (($item['action'] ?? '') === 'ambiguous') {
+                continue; // skipped rows never reach the database, so they cannot collide
+            }
             foreach ($fields as $field => $normalize) {
                 $key = $normalize($item['data'][$field] ?? '');
                 if ($key === '') {
@@ -3935,9 +3946,18 @@ final class PayrollMasterService
         $summary['error_count'] = 0;
         $summary['insert_rows'] = 0;
         $summary['update_rows'] = 0;
+        $summary['ambiguous_rows'] = 0;
 
         foreach ($planRows as $item) {
             $summary['error_count'] += count($item['errors'] ?? []);
+            // Will-update / will-create / ambiguous are reported for every row, valid or not.
+            if ($item['action'] === 'ambiguous') {
+                $summary['ambiguous_rows']++;
+            } elseif ($item['action'] === 'update') {
+                $summary['update_rows']++;
+            } else {
+                $summary['insert_rows']++;
+            }
             if (! $item['valid']) {
                 $summary['invalid_rows']++;
 
@@ -3946,11 +3966,6 @@ final class PayrollMasterService
             $summary['valid_rows']++;
             if (($item['warnings'] ?? []) !== []) {
                 $summary['warning_rows']++;
-            }
-            if ($item['action'] === 'update') {
-                $summary['update_rows']++;
-            } else {
-                $summary['insert_rows']++;
             }
         }
 
@@ -4057,6 +4072,8 @@ final class PayrollMasterService
             'status' => $item['data']['status'] ?? 'active',
             'remarks' => $item['data']['remarks'] ?? null,
             'action' => $item['action'],
+            'actionLabel' => ['update' => 'Will update', 'insert' => 'Will create', 'ambiguous' => 'Ambiguous (skipped)'][$item['action']] ?? $item['action'],
+            'matchedBy' => $item['matched_by'] ?? [],
             'valid' => $item['valid'],
             'errors' => $item['errors'],
             'warnings' => $item['warnings'] ?? [],

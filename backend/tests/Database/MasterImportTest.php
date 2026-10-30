@@ -86,4 +86,43 @@ final class MasterImportTest extends DatabaseTestCase
         ]);
         $this->assertNull($found);
     }
+
+    public function test_preview_lists_will_update_will_create_and_ambiguous(): void
+    {
+        $svc = app(PayrollMasterService::class);
+        $masters = HrmsPayrollMaster::query()->whereNull('effective_to')->where('status', 'active')
+            ->whereNotNull('email')->where('email', '<>', '')->whereNotNull('employee_code')->orderBy('employee_code')->limit(2)->get();
+        if ($masters->count() < 2) $this->markTestSkipped('Need two payroll masters.');
+        [$a, $b] = [$masters[0], $masters[1]];
+        $company = (string) $a->company_id;
+
+        $keys = $this->requiredKeys($svc);
+        foreach (['employee_code', 'email', 'name', 'pay_level'] as $k) if (! in_array($k, $keys, true)) $keys[] = $k;
+        $row = function (array $over) use ($keys, $a) {
+            return array_map(fn (string $k) => $over[$k] ?? $this->valueFor($k, $a), $keys);
+        };
+        $file = $this->csv($keys, [
+            // 1: same CODE as A, different name  -> update A (matched by code, not name)
+            $row(['employee_code' => $a->employee_code, 'email' => 'someone.else@example.com', 'name' => 'Totally Different Name']),
+            // 2: A's name + level but no stable key matches -> create, never an update of A
+            $row(['employee_code' => 'NEW-'.uniqid(), 'email' => 'brand.new.'.uniqid().'@example.com', 'name' => $a->name]),
+            // 3: A's code with B's email -> ambiguous
+            $row(['employee_code' => $a->employee_code, 'email' => $b->email, 'name' => 'Mixed Keys']),
+        ]);
+
+        $preview = $svc->previewImportFile($file, $company);
+        $actions = array_column($preview['rows'], 'action');
+        $this->assertSame(['update', 'insert', 'ambiguous'], $actions);
+        $this->assertSame(['Will update', 'Will create', 'Ambiguous (skipped)'], array_column($preview['rows'], 'actionLabel'));
+        $this->assertSame(['employee_code'], $preview['rows'][0]['matchedBy']);
+        $this->assertSame(1, $preview['summary']['update_rows'] ?? null);
+        $this->assertSame(1, $preview['summary']['ambiguous_rows'] ?? null);
+        $this->assertSame([], $preview['rows'][2]['errors'], 'ambiguous rows are skipped, not errors');
+
+        $find = new \ReflectionMethod($svc, 'matchExistingMasters');
+        $this->assertSame([], $find->invoke($svc, $company, ['name' => $a->name, 'pay_level' => $a->pay_level])['masters'], 'never by name');
+        $order = $find->invoke($svc, $company, ['user_id' => $a->employee_user_id, 'employee_code' => $a->employee_code, 'email' => $a->email]);
+        $this->assertSame([(string) $a->id], array_keys($order['masters']));
+        $this->assertSame(['user_id', 'employee_code', 'email'], $order['via'][(string) $a->id], 'keys tried in the fixed order');
+    }
 }
