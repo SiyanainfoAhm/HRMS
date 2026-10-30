@@ -504,3 +504,14 @@ export function clearMonetaryOverridesFromGovRecalc(gr: GovRecalcPayload): GovRe
     nightAllowanceManualOverride: false,
   };
 }
+
+/** Clear only Night Allowance's manual value when its hours or rate are edited. */
+export function clearNightAllowanceOverride(gr: GovRecalcPayload): GovRecalcPayload {
+  const earningPaidOverrides = { ...(gr.earningPaidOverrides ?? {}) };
+  delete earningPaidOverrides.nightAllowancePaid;
+  return {
+    ...gr,
+    nightAllowanceManualOverride: false,
+    earningPaidOverrides: Object.keys(earningPaidOverrides).length ? earningPaidOverrides : undefined,
+  };
+}

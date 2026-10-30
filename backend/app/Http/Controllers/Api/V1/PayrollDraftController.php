@@ -38,6 +38,8 @@ class PayrollDraftController extends Controller
             'replace_all_employees' => ['nullable', 'boolean'],
             'replaceAllEmployees' => ['nullable', 'boolean'],
             'employees' => ['required', 'array', 'min:1'],
+            'employees.*.changedFields' => ['sometimes', 'array', 'max:100'],
+            'employees.*.changedFields.*' => ['string', 'max:160'],
         ]);
 
         $replaceAll = (bool) ($data['replace_all_employees'] ?? $data['replaceAllEmployees'] ?? true);

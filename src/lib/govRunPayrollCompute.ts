@@ -70,6 +70,10 @@ export type GovRecalcPayload = {
   customDeductions?: Record<string, number>;
   cpfConfig?: CpfCalculationConfig;
   hasQuarter?: boolean;
+  quarterId?: string | null;
+  quarterName?: string | null;
+  quarterType?: string | null;
+  quarterTypeId?: string | null;
   quarterRent?: number;
   transportSettings?: import("./transportAllowanceSettings").TransportAllowanceSettings;
 };

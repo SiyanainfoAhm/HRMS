@@ -3,6 +3,7 @@
  */
 import {
   applyGovernmentSheetMonetaryEdit,
+  clearNightAllowanceOverride,
   isGovernmentSheetMonetaryField,
   recalculateGovernmentSheetTotals,
   sumSheetDeductions,
@@ -296,5 +297,25 @@ assert(
   "TEST override presence for basic",
 );
 assertEq(row.govRecalc?.earningPaidOverrides?.basicPaid, 20000, "frozen basic override");
+
+const nightOnlyRecalc = clearNightAllowanceOverride({
+  grossBasic: 50000,
+  daPercent: 53,
+  hraPercent: 30,
+  medicalFixed: 3000,
+  payLevel: 10,
+  deductionDefaults: { ...emptyDed },
+  earningPaidOverrides: { nightAllowancePaid: 900, extraWorkAllowancePaid: 1500, uniformAllowancePaid: 250 },
+  deductionPaidOverrides: { mess: 700, creditSociety: 11750, electricity: 850, quarterRent: 500 },
+  nightAllowanceManualOverride: true,
+});
+assertEq(nightOnlyRecalc.nightAllowanceManualOverride, false, "night calculation clears its manual flag");
+assert(!Object.prototype.hasOwnProperty.call(nightOnlyRecalc.earningPaidOverrides ?? {}, "nightAllowancePaid"), "night amount freeze is removed for recalculation");
+assertEq(nightOnlyRecalc.earningPaidOverrides?.extraWorkAllowancePaid, 1500, "overtime remains frozen");
+assertEq(nightOnlyRecalc.earningPaidOverrides?.uniformAllowancePaid, 250, "other allowance remains frozen");
+assertEq(nightOnlyRecalc.deductionPaidOverrides?.mess, 700, "Mess remains frozen");
+assertEq(nightOnlyRecalc.deductionPaidOverrides?.creditSociety, 11750, "Credit Society remains frozen");
+assertEq(nightOnlyRecalc.deductionPaidOverrides?.electricity, 850, "Electricity remains frozen");
+assertEq(nightOnlyRecalc.deductionPaidOverrides?.quarterRent, 500, "Quarter Rent remains frozen");
 
 console.log("runPayrollSheetEdit.test.ts: all tests passed");

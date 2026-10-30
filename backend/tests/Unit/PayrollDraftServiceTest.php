@@ -33,4 +33,17 @@ final class PayrollDraftServiceTest extends TestCase
         $this->assertStringContainsString('cirt_payroll_draft_employees', $source);
         $this->assertStringContainsString('row_payload', $source);
     }
+
+    public function test_existing_draft_writes_require_masks_and_never_replace_employee_membership(): void
+    {
+        $source = file_get_contents(dirname(__DIR__, 2).'/app/Services/PayrollDraftService.php');
+        $controller = file_get_contents(dirname(__DIR__, 2).'/app/Http/Controllers/Api/V1/PayrollDraftController.php');
+        $this->assertIsString($source);
+        $this->assertIsString($controller);
+        $this->assertStringContainsString('Existing drafts accept field-level patches only', $source);
+        $this->assertStringContainsString('explicit changedFields only', $source);
+        $this->assertStringContainsString('! $isExistingDraft && $replaceAllEmployees', $source);
+        $this->assertStringContainsString("'employees.*.changedFields'", $controller);
+        $this->assertStringContainsString('applyChangedFields($beforePayload, $payload, $changedFields)', $source);
+    }
 }

@@ -1001,15 +1001,6 @@ final class PayrollMasterService
         }
         $userIds = $masters->map(fn (HrmsPayrollMaster $m) => $m->user_id ?? $m->employee_user_id)->filter()->unique()->values()->all();
         $usersById = $userIds === [] ? collect() : HrmsUser::whereIn('id', $userIds)->get()->keyBy('id');
-        $quarterIds = $masters->pluck('quarter_id')->filter()->unique()->values()->all();
-        $quartersById = $quarterIds === []
-            ? collect()
-            : HrmsQuarter::query()
-                ->with('quarterType')
-                ->when($companyId, fn ($query) => $query->where('company_id', $companyId))
-                ->whereIn('id', $quarterIds)
-                ->get()
-                ->keyBy('id');
         $customByMaster = $companyId
             ? $this->fieldService->getCustomFieldValuesForMasters($companyId, $masters->pluck('id')->all())
             : [];
@@ -1018,16 +1009,17 @@ final class PayrollMasterService
             $row = $master->getAttributes();
             $userId = $master->user_id ?? $master->employee_user_id;
             $user = $userId ? $usersById->get($userId) : null;
-            $quarter = $master->quarter_id ? $quartersById->get($master->quarter_id) : null;
+            $quarterMeta = $this->quarterService->quarterMetaForMaster($master, (string) $master->company_id);
             $row['employee_code'] = $master->employee_code;
             $row['name'] = $master->name;
             $row['email'] = $master->email;
             $row['user_role'] = $user ? UserRole::fromStored(is_string($user->role) ? $user->role : null)->value : UserRole::Employee->value;
-            $row['quarterAssigned'] = (bool) ($master->has_quarter ?? false);
-            $row['quarterName'] = $quarter?->quarter_name ?? $master->quarter_name ?? '';
-            $row['quarterType'] = $quarter?->quarterType?->name ?? $quarter?->quarter_type ?? $master->quarter_type ?? '';
-            $row['quarterRent'] = (float) ($master->quarter_rent ?? $quarter?->monthly_rent ?? 0);
-            $row['hasQuarter'] = (bool) ($master->has_quarter ?? false);
+            $row['quarterAssigned'] = (bool) $quarterMeta['hasQuarter'];
+            $row['quarterId'] = $quarterMeta['quarterId'];
+            $row['quarterName'] = $quarterMeta['quarterName'] ?? '';
+            $row['quarterType'] = $quarterMeta['quarterType'] ?? '';
+            $row['quarterRent'] = (float) $quarterMeta['quarterRent'];
+            $row['hasQuarter'] = (bool) $quarterMeta['hasQuarter'];
             $row['customFieldValues'] = $customByMaster[$master->id] ?? [];
 
             return $row;
@@ -1792,7 +1784,6 @@ final class PayrollMasterService
             'revision' => self::revisionToken($m),
             'payrollMode' => $m->payroll_mode ?? 'government',
             ...$this->quarterService->quarterMetaForMaster($m, (string) $m->company_id),
-            'quarterAssigned' => (bool) ($m->has_quarter ?? false),
         ];
     }
 

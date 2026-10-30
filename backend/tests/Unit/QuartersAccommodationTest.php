@@ -68,4 +68,43 @@ final class QuartersAccommodationTest extends TestCase
         $this->assertStringContainsString('settings/quarters', $routes);
         $this->assertFileExists(dirname(__DIR__, 2).'/app/Services/QuarterService.php');
     }
+
+    public function test_active_assignment_table_drives_period_resolution_and_master_sync(): void
+    {
+        $source = file_get_contents(dirname(__DIR__, 2).'/app/Services/QuarterService.php');
+        $this->assertIsString($source);
+        $this->assertStringContainsString("protected \$table = 'cirt_quarter_assignments'", file_get_contents(dirname(__DIR__, 2).'/app/Models/HrmsQuarterAssignment.php'));
+        $this->assertStringContainsString('quarterMetaForEmployeePeriod', $source);
+        $this->assertStringContainsString('Multiple quarter assignments are active', $source);
+        $this->assertStringContainsString('syncCurrentPayrollMasterQuarter', $source);
+        $this->assertStringContainsString("'has_quarter' => \$assigned", $source);
+        $this->assertStringContainsString("'hraEligible' => false", $source);
+    }
+
+    public function test_preview_uses_period_assignment_and_generated_rows_use_saved_quarter_snapshot(): void
+    {
+        $source = file_get_contents(dirname(__DIR__, 2).'/app/Http/Controllers/Api/V1/PayrollController.php');
+        $this->assertIsString($source);
+        $this->assertStringContainsString('quarterMetaForEmployeePeriod(', $source);
+        $this->assertStringContainsString('Generated payroll is a historical snapshot', $source);
+        $this->assertStringContainsString("'quarterId' => \$gov->quarter_id", $source);
+        $this->assertStringContainsString("'quarterRent' => (float) (\$gov->quarter_rent_amount ?? 0)", $source);
+    }
+
+    public function test_master_display_and_repair_script_are_authoritative_and_dry_run_by_default(): void
+    {
+        $masterSource = file_get_contents(dirname(__DIR__, 2).'/app/Services/PayrollMasterService.php');
+        $script = file_get_contents(dirname(__DIR__, 2).'/scripts/repair-cirt-quarter-payroll-sync.php');
+        $migration = file_get_contents(dirname(__DIR__, 2).'/database/migrations/2026_10_30_120000_add_unique_open_quarter_assignment_indexes.php');
+        $this->assertIsString($masterSource);
+        $this->assertIsString($script);
+        $this->assertIsString($migration);
+        $this->assertStringContainsString("...\$this->quarterService->quarterMetaForMaster", $masterSource);
+        $this->assertStringContainsString("if (! \$apply)", $script);
+        $this->assertStringContainsString("already has generated payroll records", $script);
+        $this->assertStringContainsString('Multiple active quarters overlap', $script);
+        $this->assertStringContainsString('DB::transaction', $script);
+        $this->assertStringContainsString('COUNT(*) > 1', $migration);
+        $this->assertStringContainsString('cirt_quarter_assignment_one_open_per_employee', $migration);
+    }
 }

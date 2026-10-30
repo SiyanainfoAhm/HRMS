@@ -8,12 +8,24 @@ use App\Models\HrmsPayrollDraftEmployee;
 use App\Models\HrmsPayrollDraftAudit;
 use App\Models\HrmsPayslip;
 use App\Models\HrmsPayrollPeriod;
+use App\Models\HrmsPayrollFieldDefinition;
+use App\Models\HrmsPayrollMaster;
+use App\Models\HrmsPayrollMasterHistory;
+use App\Services\QuarterService;
+use App\Services\PayrollCalculationService;
+use App\Services\PayrollMasterService;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class PayrollDraftService
 {
+    public function __construct(
+        private readonly ?QuarterService $quarterService = null,
+        private readonly ?PayrollCalculationService $payrollCalculationService = null,
+    ) {}
     /**
      * @return array{
      *   exists: bool,
@@ -43,10 +55,27 @@ class PayrollDraftService
             ];
         }
 
+        $quarterPayrollFieldDefinitions = ! $finalized
+            ? HrmsPayrollFieldDefinition::query()->where('company_id', $companyId)->where('is_active', true)
+                ->get(['field_key', 'field_group', 'field_type', 'include_in_total_earnings', 'include_in_total_deductions'])->all()
+            : [];
         $employees = $draft->employees()
             ->orderBy('employee_code')
             ->get()
-            ->map(fn (HrmsPayrollDraftEmployee $row) => $this->formatEmployee($row))
+            ->map(function (HrmsPayrollDraftEmployee $row) use ($companyId, $year, $month, $finalized, $quarterPayrollFieldDefinitions) {
+                if (! $finalized && is_array($row->row_payload)) {
+                    $meta = ($this->quarterService ?? app(QuarterService::class))->quarterMetaForEmployeePeriod($companyId, (string) $row->employee_user_id, $year, $month);
+                    $master = $this->resolvePayrollMasterForPeriod($companyId, (string) $row->employee_user_id, $year, $month);
+                    $row->row_payload = $this->applyAuthoritativeQuarterValues($row->row_payload, $meta, $year, $month, $quarterPayrollFieldDefinitions, $master);
+                    $row->gross_pay = $row->row_payload['grossPay'] ?? $row->gross_pay;
+                    $gm = $row->row_payload['governmentMonthly'] ?? [];
+                    $row->total_earnings = $gm['totalEarnings'] ?? $row->total_earnings;
+                    $row->total_deductions = $gm['totalDeductions'] ?? $row->total_deductions;
+                    $row->net_pay = $gm['netSalary'] ?? $row->net_pay;
+                }
+
+                return $this->formatEmployee($row);
+            })
             ->values()
             ->all();
 
@@ -110,6 +139,12 @@ class PayrollDraftService
             if ($draft && (int) $draft->version !== (int) $expectedVersion) {
                 throw new PayrollConcurrencyException((int) $draft->version, 'draft', (string) $draft->id);
             }
+            $isExistingDraft = $draft !== null;
+            if ($isExistingDraft && $replaceAllEmployees) {
+                throw ValidationException::withMessages([
+                    'replaceAllEmployees' => ['Existing drafts accept field-level patches only. Reload and save explicitly edited fields.'],
+                ]);
+            }
 
             if (! $draft) {
                 $draft = HrmsPayrollDraft::create([
@@ -129,6 +164,10 @@ class PayrollDraftService
                 ]);
                 $draft->refresh();
             }
+
+            $payrollFieldDefinitions = HrmsPayrollFieldDefinition::query()
+                ->where('company_id', $companyId)->where('is_active', true)
+                ->get(['field_key', 'field_group', 'field_type', 'include_in_total_earnings', 'include_in_total_deductions'])->all();
 
             $seenUserIds = [];
             $saved = 0;
@@ -163,13 +202,23 @@ class PayrollDraftService
                     ->lockForUpdate()
                     ->first();
 
-                // Draft rows are snapshots, but older/partial clients may send only
-                // edited fields. Merge objects recursively and keep explicit zeroes;
-                // a missing/null field must never erase a previously saved amount.
                 $beforePayload = is_array($existing?->row_payload) ? $existing->row_payload : [];
-                $payload = $existing
-                    ? $this->mergeSnapshot($beforePayload, $payload)
-                    : $payload;
+                $changedFields = [];
+                if ($isExistingDraft) {
+                    $changedFields = $row['changedFields'] ?? $row['changed_fields'] ?? null;
+                    if (! $existing || ! is_array($changedFields) || $changedFields === []) {
+                        throw ValidationException::withMessages([
+                            'employees' => ['Existing drafts accept patches for existing employees with explicit changedFields only. Reload and retry.'],
+                        ]);
+                    }
+                    $payload = $this->applyChangedFields($beforePayload, $payload, $changedFields);
+                    $payload = $this->recalculateDraftTotals($payload, $payrollFieldDefinitions);
+                } else {
+                    $payload = $existing ? $this->mergeSnapshot($beforePayload, $payload) : $payload;
+                }
+                $quarterMeta = ($this->quarterService ?? app(QuarterService::class))->quarterMetaForEmployeePeriod($companyId, $employeeUserId, $year, $month);
+                $master = $this->resolvePayrollMasterForPeriod($companyId, $employeeUserId, $year, $month);
+                $payload = $this->applyAuthoritativeQuarterValues($payload, $quarterMeta, $year, $month, $payrollFieldDefinitions, $master);
 
                 $attrs = [
                     'employee_code' => $row['employeeCode'] ?? $row['employee_code'] ?? ($payload['employeeCode'] ?? $payload['employee_code'] ?? $existing?->employee_code),
@@ -184,6 +233,20 @@ class PayrollDraftService
                     'row_payload' => $payload,
                     'version' => $existing ? ((int) $existing->version + 1) : 1,
                 ];
+                if ($isExistingDraft) {
+                    $attrs['pay_days'] = $this->num($payload['payDays'] ?? $payload['pay_days'] ?? $existing->pay_days);
+                    $attrs['gross_pay'] = $this->num($payload['grossPay'] ?? $payload['gross_pay'] ?? $existing->gross_pay);
+                    $attrs['total_earnings'] = $this->num(data_get($payload, 'governmentMonthly.totalEarnings', $existing->total_earnings));
+                    $attrs['total_deductions'] = $this->num(data_get($payload, 'governmentMonthly.totalDeductions', $existing->total_deductions));
+                    $attrs['net_pay'] = $this->num(data_get($payload, 'governmentMonthly.netSalary', $existing->net_pay));
+                    $attrs['total_arrears'] = $existing->total_arrears;
+                    if (array_intersect($changedFields, ['daArrear', 'transportArrear', 'grossArrear', 'cpfArrear', 'netArrear']) !== []) {
+                        $gmForArrears = $payload['governmentMonthly'] ?? [];
+                        $attrs['total_arrears'] = round((float) ($gmForArrears['daArrearsPaid'] ?? 0) + (float) ($gmForArrears['transportArrearsPaid'] ?? 0) + (float) ($gmForArrears['grossArrear'] ?? 0), 2);
+                    }
+                    if (! in_array('leaveRemarks', $changedFields, true)) $remarks = $existing->remarks;
+                    $attrs['remarks'] = is_string($remarks) ? $remarks : $existing->remarks;
+                }
 
                 // Prefer government monthly totals when present (camel or snake keys).
                 $gm = $payload['governmentMonthly'] ?? $payload['government_monthly'] ?? null;
@@ -238,7 +301,7 @@ class PayrollDraftService
                 $saved++;
             }
 
-            if ($replaceAllEmployees && $seenUserIds !== []) {
+            if (! $isExistingDraft && $replaceAllEmployees && $seenUserIds !== []) {
                 HrmsPayrollDraftEmployee::query()
                     ->where('payroll_draft_id', $draft->id)
                     ->whereNotIn('employee_user_id', $seenUserIds)
@@ -263,7 +326,7 @@ class PayrollDraftService
                 ->values()
                 ->all();
 
-            if (count($employees) !== $expectedCount) {
+            if ((! $isExistingDraft && count($employees) !== $expectedCount) || ($isExistingDraft && count($employees) < $expectedCount)) {
                 throw ValidationException::withMessages([
                     'employees' => [
                         'Draft save incomplete: stored employee count does not match the request.',
@@ -275,7 +338,7 @@ class PayrollDraftService
                 'draft' => $this->formatDraft($draft),
                 'employees' => $employees,
                 'saved' => $saved,
-                'expectedEmployeeCount' => $expectedCount,
+                'expectedEmployeeCount' => count($employees),
                 'savedEmployeeCount' => $saved,
                 'distinctEmployeeCount' => $distinctCount,
             ];
@@ -421,6 +484,297 @@ class PayrollDraftService
         }
 
         return round((float) $v, 2);
+    }
+
+    /**
+     * Apply operator field tokens to the stored row snapshot. Missing values in
+     * rowPayload are never interpreted as edits; an explicitly edited 0 is.
+     * @param list<string> $fields
+     */
+    private function recalculateDraftTotals(array $payload, array $definitions): array
+    {
+        $gm = $payload['governmentMonthly'] ?? $payload['government_monthly'] ?? null;
+        if (! is_array($gm)) return $payload;
+
+        $amount = static fn (mixed $value): float => is_numeric($value) ? max(0, round((float) $value, 2)) : 0.0;
+        $earningKeys = ['basicPaid', 'spPayPaid', 'daPaid', 'transportPaid', 'hraPaid', 'medicalPaid', 'extraWorkAllowancePaid', 'nightAllowancePaid', 'uniformAllowancePaid', 'educationAllowancePaid', 'daArrearsPaid', 'transportArrearsPaid', 'encashmentPaid', 'encashmentDaPaid', 'incentive', 'prBonus', 'reimbursement'];
+        $earningTotal = 0.0;
+        foreach ($earningKeys as $key) $earningTotal += $amount($gm[$key] ?? 0);
+        $grossArrear = $amount($gm['grossArrear'] ?? $gm['gross_arrear'] ?? 0);
+        $detailedArrear = $amount($gm['daArrearsPaid'] ?? $gm['da_arrears_paid'] ?? 0) + $amount($gm['transportArrearsPaid'] ?? $gm['transport_arrears_paid'] ?? 0);
+        $earningTotal += max(0, round($grossArrear - $detailedArrear, 2));
+
+        $ded = $gm['deductions'] ?? [];
+        $deductionKeys = ['incomeTax', 'pt', 'lic', 'cpf', 'daCpf', 'vpf', 'pfLoan', 'postOffice', 'creditSociety', 'stdLicenceFee', 'electricity', 'water', 'mess', 'loanRecovery', 'welfare', 'hpl', 'eol', 'vehCharge', 'other', 'quarterRent'];
+        $deductionTotal = 0.0;
+        foreach ($deductionKeys as $key) $deductionTotal += $amount(is_array($ded) ? ($ded[$key] ?? 0) : 0);
+        $deductionTotal += $amount($gm['cpfArrear'] ?? $gm['cpf_arrear'] ?? 0);
+
+        $sumCustom = static function (mixed $values, string $group) use ($definitions, $amount): float {
+            if (! is_array($values)) return 0.0;
+            $sum = 0.0;
+            $canonical = static function (string $key): string {
+                if (str_contains($key, '_')) return strtolower($key);
+                return strtolower((string) preg_replace('/([a-z0-9])([A-Z])/', '$1_$2', $key));
+            };
+            foreach ($values as $key => $value) {
+                $normalizedKey = $canonical((string) $key);
+                $definition = null;
+                foreach ($definitions as $candidate) {
+                    if ($canonical((string) ($candidate->field_key ?? '')) === $normalizedKey) {
+                        $definition = $candidate;
+                        break;
+                    }
+                }
+                // Like the TypeScript sheet calculator, saved historical custom
+                // values without a current definition remain part of the total.
+                if ($definition) {
+                    $fieldGroup = $definition->field_group ?? null;
+                    if ($group === 'earnings') {
+                        if ($fieldGroup !== 'earnings' || ! ($definition->include_in_total_earnings ?? false)) continue;
+                    } else {
+                        $numericDeduction = in_array($fieldGroup, ['statutory', 'deductions'], true) && ($definition->field_type ?? null) === 'number';
+                        if (! in_array($fieldGroup, ['deductions', 'statutory'], true) || (! ($definition->include_in_total_deductions ?? false) && ! $numericDeduction)) continue;
+                    }
+                }
+                $sum += $amount($value);
+            }
+            return $sum;
+        };
+        $earningTotal += $sumCustom($gm['customEarnings'] ?? $gm['custom_earnings'] ?? null, 'earnings');
+        $deductionTotal += $sumCustom($gm['customDeductions'] ?? $gm['custom_deductions'] ?? null, 'deductions');
+        $earningTotal = round($earningTotal, 2);
+        $deductionTotal = round($deductionTotal, 2);
+        $net = round($earningTotal - $deductionTotal, 2);
+        $gm['totalEarnings'] = $gm['total_earnings'] = $earningTotal;
+        $gm['totalDeductions'] = $gm['total_deductions'] = $deductionTotal;
+        $gm['netSalary'] = $gm['net_salary'] = $net;
+        if (is_array($ded) && array_key_exists('quarterRent', $ded)) $gm['quarterRent'] = $gm['quarter_rent'] = $amount($ded['quarterRent']);
+        $payload['governmentMonthly'] = $gm;
+        $payload['grossPay'] = $earningTotal;
+        $payload['deductions'] = $deductionTotal;
+        $payload['netPay'] = $net;
+        $payload['takeHome'] = $net;
+        return $payload;
+    }
+
+    /**
+     * Apply date-effective assignment context while keeping every unrelated
+     * draft component and override. HRA entitlement remains in Payroll Master;
+     * only the period's payable HRA is zeroed for an assigned quarter.
+     * @param array<string, mixed> $payload
+     * @param array<string, mixed> $quarterMeta
+     * @return array<string, mixed>
+     */
+    public function applyAuthoritativeQuarterValues(
+        array $payload,
+        array $quarterMeta,
+        int $year,
+        int $month,
+        array $definitions = [],
+        ?HrmsPayrollMaster $master = null,
+    ): array
+    {
+        $hasQuarter = (bool) ($quarterMeta['hasQuarter'] ?? false);
+        $rent = $hasQuarter ? max(0, round((float) ($quarterMeta['quarterRent'] ?? 0), 2)) : 0.0;
+        $gm = $payload['governmentMonthly'] ?? $payload['government_monthly'] ?? null;
+        if (! is_array($gm)) return $payload;
+        $gr = $payload['govRecalc'] ?? $payload['gov_recalc'] ?? [];
+        if (! is_array($gr)) $gr = [];
+        $grossBasic = max(0, (float) ($gr['grossBasic'] ?? $gr['gross_basic'] ?? $gm['grossBasic'] ?? $master?->gross_basic_pay ?? $master?->gross_basic ?? 0));
+        $hraPercent = (float) ($gr['hraPercent'] ?? $gr['hra_percent'] ?? $master?->hra_percent ?? 0);
+        $fullHra = ($this->payrollCalculationService ?? app(PayrollCalculationService::class))->calculateMaster([
+            'gross_basic_pay' => $grossBasic,
+            'hra_percent' => $hraPercent,
+            'has_quarter' => $hasQuarter,
+        ])['hra_amount'];
+        $daysInMonth = Carbon::create($year, $month, 1)->daysInMonth;
+        $payDays = max(0, min($daysInMonth, (int) ($payload['payDays'] ?? $payload['pay_days'] ?? $daysInMonth)));
+        $hraPaid = $hasQuarter ? 0.0 : round((float) $fullHra - ((float) $fullHra / $daysInMonth) * ($daysInMonth - $payDays));
+
+        $deductions = $gm['deductions'] ?? [];
+        if (! is_array($deductions)) $deductions = [];
+        $gm = array_merge($gm, [
+            'hasQuarter' => $hasQuarter,
+            'quarterId' => $hasQuarter ? ($quarterMeta['quarterId'] ?? null) : null,
+            'quarterName' => $hasQuarter ? ($quarterMeta['quarterName'] ?? null) : null,
+            'quarterType' => $hasQuarter ? ($quarterMeta['quarterType'] ?? null) : null,
+            'quarterTypeId' => $hasQuarter ? ($quarterMeta['quarterTypeId'] ?? null) : null,
+            'quarterRent' => $rent,
+            'quarter_rent' => $rent,
+            'hraActual' => $hasQuarter ? 0.0 : (float) $fullHra,
+            'hraPaid' => $hraPaid,
+            'deductions' => array_merge($deductions, ['quarterRent' => $rent]),
+        ]);
+        $recalculated = $this->recalculateDraftTotals(['governmentMonthly' => $gm], $definitions);
+        $gm = $recalculated['governmentMonthly'] ?? $gm;
+
+        $earningOverrides = $gr['earningPaidOverrides'] ?? [];
+        $deductionOverrides = $gr['deductionPaidOverrides'] ?? [];
+        if (is_array($earningOverrides)) unset($earningOverrides['hraPaid']);
+        if (is_array($deductionOverrides)) unset($deductionOverrides['quarterRent']);
+        $deductionDefaults = is_array($gr['deductionDefaults'] ?? null) ? $gr['deductionDefaults'] : [];
+        $deductionDefaults['quarterRent'] = $rent;
+        $gr = array_merge($gr, [
+            'hasQuarter' => $hasQuarter,
+            'quarterId' => $hasQuarter ? ($quarterMeta['quarterId'] ?? null) : null,
+            'quarterName' => $hasQuarter ? ($quarterMeta['quarterName'] ?? null) : null,
+            'quarterType' => $hasQuarter ? ($quarterMeta['quarterType'] ?? null) : null,
+            'quarterRent' => $rent,
+            'quarterRentManualOverride' => false,
+            'earningPaidOverrides' => $earningOverrides,
+            'deductionPaidOverrides' => $deductionOverrides,
+            'deductionDefaults' => $deductionDefaults,
+        ]);
+        $payload['governmentMonthly'] = $gm;
+        $payload['govRecalc'] = $gr;
+        $payload['hasQuarter'] = $payload['quarterAssigned'] = $hasQuarter;
+        $payload['quarterContextVersion'] = 1;
+        $payload['quarterId'] = $hasQuarter ? ($quarterMeta['quarterId'] ?? null) : null;
+        $payload['quarterName'] = $hasQuarter ? ($quarterMeta['quarterName'] ?? null) : null;
+        $payload['quarterType'] = $hasQuarter ? ($quarterMeta['quarterType'] ?? null) : null;
+        $payload['quarterRent'] = $rent;
+        $payload['grossPay'] = $payload['governmentMonthly']['totalEarnings'] ?? $payload['grossPay'] ?? 0;
+        $payload['deductions'] = $payload['governmentMonthly']['totalDeductions'] ?? $payload['deductions'] ?? 0;
+        $payload['netPay'] = $payload['takeHome'] = $payload['governmentMonthly']['netSalary'] ?? $payload['netPay'] ?? 0;
+
+        return $payload;
+    }
+
+    private function resolvePayrollMasterForPeriod(string $companyId, string $employeeUserId, int $year, int $month): ?HrmsPayrollMaster
+    {
+        $asOf = Carbon::create($year, $month, 1)->endOfMonth()->toDateString();
+        $matches = HrmsPayrollMaster::query()
+            ->where('company_id', $companyId)
+            ->where(fn ($query) => $query->where('employee_user_id', $employeeUserId)->orWhere('user_id', $employeeUserId))
+            ->where(fn ($query) => $query->whereDate('effective_from', '<=', $asOf)
+                ->orWhere(fn ($fallback) => $fallback->whereNull('effective_from')->whereDate('effective_start_date', '<=', $asOf)))
+            ->where(fn ($query) => $query->whereNull('effective_to')->orWhereDate('effective_to', '>=', $asOf))
+            ->get();
+        if ($matches->count() > 1) {
+            throw ValidationException::withMessages(['payrollMaster' => ["Multiple Payroll Master rows match employee {$employeeUserId} for {$year}-{$month}; quarter HRA resolution stopped."]]);
+        }
+        if ($matches->isNotEmpty()) return $matches->first();
+
+        $history = HrmsPayrollMasterHistory::query()
+            ->where('company_id', $companyId)->where('is_superseded', false)
+            ->where(fn ($query) => $query->where('employee_user_id', $employeeUserId)->orWhere('user_id', $employeeUserId))
+            ->where(fn ($query) => $query->whereDate('effective_from', '<=', $asOf)
+                ->orWhere(fn ($fallback) => $fallback->whereNull('effective_from')->whereDate('effective_start_date', '<=', $asOf)))
+            ->where(fn ($query) => $query->whereNull('effective_to')->orWhereDate('effective_to', '>=', $asOf))
+            ->get();
+        if ($history->count() > 1) {
+            throw ValidationException::withMessages(['payrollMaster' => ["Multiple historical Payroll Master rows match employee {$employeeUserId} for {$year}-{$month}; quarter HRA resolution stopped."]]);
+        }
+        if ($history->isNotEmpty()) return app(PayrollMasterService::class)->historyToMasterModel($history->first());
+
+        $current = HrmsPayrollMaster::query()
+            ->where('company_id', $companyId)
+            ->where(fn ($query) => $query->where('employee_user_id', $employeeUserId)->orWhere('user_id', $employeeUserId))
+            ->whereNull('effective_to')->get();
+        if ($current->count() > 1) {
+            throw ValidationException::withMessages(['payrollMaster' => ["Multiple current Payroll Master rows exist for employee {$employeeUserId}; quarter HRA resolution stopped."]]);
+        }
+        if ($current->isNotEmpty()) return $current->first();
+
+        return null;
+    }
+
+    private function applyChangedFields(array $saved, array $incoming, array $fields): array
+    {
+        $paths = [];
+        $removePaths = [];
+        $totals = [
+            'governmentMonthly.totalEarnings', 'governmentMonthly.total_earnings',
+            'governmentMonthly.totalDeductions', 'governmentMonthly.total_deductions',
+            'governmentMonthly.netSalary', 'governmentMonthly.net_salary',
+            'grossPay', 'deductions', 'netPay', 'takeHome',
+        ];
+        foreach (array_unique($fields) as $field) {
+            if (! is_string($field) || $field === '') continue;
+            if (str_starts_with($field, 'govDeduction_')) {
+                $key = substr($field, strlen('govDeduction_'));
+                $paths = [...$paths, "governmentMonthly.deductions.$key", "govRecalc.deductionPaidOverrides.$key", ...$totals];
+                if ($key === 'quarterRent') $paths = [...$paths, 'governmentMonthly.quarterRent', 'governmentMonthly.quarter_rent', 'govRecalc.quarterRent'];
+                $flag = ['electricity' => 'electricityManualOverride', 'quarterRent' => 'quarterRentManualOverride', 'cpf' => 'cpfManualOverride', 'hpl' => 'hplDeductionManualOverride', 'eol' => 'eolDeductionManualOverride'][$key] ?? null;
+                if ($flag) $paths[] = "govRecalc.$flag";
+                continue;
+            }
+            if (str_starts_with($field, 'govEarning_')) {
+                $key = substr($field, strlen('govEarning_'));
+                $paths = [...$paths, "governmentMonthly.$key", "govRecalc.earningPaidOverrides.$key", ...$totals];
+                if (str_ends_with($key, 'Paid')) {
+                    $actual = substr($key, 0, -4).'Actual';
+                    $paths[] = "governmentMonthly.$actual";
+                }
+                if ($key === 'nightAllowancePaid') $paths[] = 'govRecalc.nightAllowanceManualOverride';
+                continue;
+            }
+            if (str_starts_with($field, 'govCustom_') || str_starts_with($field, 'govCustomDeduction_')) {
+                $isDeduction = str_starts_with($field, 'govCustomDeduction_');
+                $key = substr($field, strlen($isDeduction ? 'govCustomDeduction_' : 'govCustom_'));
+                $bag = $isDeduction ? 'customDeductions' : 'customEarnings';
+                $paths = [...$paths, "governmentMonthly.$bag.$key", "govRecalc.$bag.$key", ...$totals];
+                continue;
+            }
+
+            if ($field === 'electricityUnitsConsumed') {
+                $paths = [...$paths,
+                    'govRecalc.electricityUnitsConsumed', 'govRecalc.electricityMode', 'govRecalc.electricityApplicable', 'govRecalc.electricityManualOverride',
+                    'governmentMonthly.electricityUnitsConsumed', 'governmentMonthly.electricityUnitRate', 'governmentMonthly.electricityTariffId',
+                    'governmentMonthly.electricitySthirAakar', 'governmentMonthly.electricityConsumptionCharge', 'governmentMonthly.electricityVahanAakar',
+                    'governmentMonthly.electricityFuelCharge', 'governmentMonthly.electricityDuty', 'governmentMonthly.electricityTotal',
+                    'governmentMonthly.electricityBill', 'governmentMonthly.electricityApplicable', 'governmentMonthly.electricityMode',
+                    'governmentMonthly.electricity', 'governmentMonthly.deductions.electricity', ...$totals];
+                $removePaths[] = 'govRecalc.deductionPaidOverrides.electricity';
+                continue;
+            }
+            if (in_array($field, ['nightHours', 'nightAllowanceRate'], true)) {
+                $paths = [...$paths, "govRecalc.$field", 'govRecalc.nightAllowanceManualOverride',
+                    'governmentMonthly.nightHours', 'governmentMonthly.nightAllowanceRate', 'governmentMonthly.nightAllowanceSlabNo',
+                    'governmentMonthly.nightAllowanceWarning', 'governmentMonthly.nightAllowanceEligible', 'governmentMonthly.nightAllowanceBasicCeiling',
+                    'governmentMonthly.nightAllowanceAmount', 'governmentMonthly.nightAllowancePaid', 'governmentMonthly.nightAllowanceActual', ...$totals];
+                $removePaths[] = 'govRecalc.earningPaidOverrides.nightAllowancePaid';
+                continue;
+            }
+            if (in_array($field, ['incentive', 'prBonus', 'reimbursement', 'tds', 'takeHome', 'ctc'], true)) {
+                $paths = [...$paths, $field, "governmentMonthly.$field", ...$totals];
+                continue;
+            }
+            if ($field === 'leaveRemarks') {
+                $paths = [...$paths, 'govRecalc.leaveRemarks', 'governmentMonthly.leaveRemarks', 'governmentMonthly.leave_remarks', ...$totals];
+                continue;
+            }
+            if (in_array($field, ['payDays', 'unpaidLeaveDays', 'hplDays', 'eolDays', 'hplReferenceMonth', 'hplReferenceYear', 'eolReferenceMonth', 'eolReferenceYear'], true)) {
+                // These are calculation drivers. The resolved row contains the
+                // documented dependent monthly recalculation; unrelated employee
+                // rows and record membership remain untouched.
+                $paths = [...$paths, $field, 'governmentMonthly', "govRecalc.$field",
+                    'govRecalc.earningPaidOverrides', 'govRecalc.deductionPaidOverrides',
+                    'govRecalc.cpfManualOverride', 'govRecalc.hplDeductionManualOverride', 'govRecalc.eolDeductionManualOverride',
+                    'govRecalc.electricityManualOverride', 'govRecalc.quarterRentManualOverride', 'govRecalc.nightAllowanceManualOverride', ...$totals];
+                $removePaths = [...$removePaths, 'govRecalc.earningPaidOverrides', 'govRecalc.deductionPaidOverrides'];
+                continue;
+            }
+            if (in_array($field, ['daArrear', 'transportArrear', 'grossArrear', 'cpfArrear', 'netArrear'], true)) {
+                $snake = strtolower((string) preg_replace('/(?<!^)[A-Z]/', '_$0', $field));
+                $paths = [...$paths, $field, $snake, "governmentMonthly.$field", "governmentMonthly.$snake", ...$totals];
+                continue;
+            }
+            if (in_array($field, ['grossPay', 'deductions', 'netPay', 'pfEmployee', 'pfEmployer', 'esicEmployee', 'esicEmployer', 'profTax'], true)) {
+                $paths = [...$paths, $field];
+                continue;
+            }
+            throw ValidationException::withMessages([
+                'changedFields' => ["Unsupported payroll draft field: {$field}. Reload and update a supported field."],
+            ]);
+        }
+
+        foreach (array_unique($removePaths) as $path) Arr::forget($saved, $path);
+        foreach (array_unique($paths) as $path) {
+            if (Arr::has($incoming, $path)) Arr::set($saved, $path, Arr::get($incoming, $path));
+        }
+        return $saved;
     }
 
     private function mergeSnapshot(array $saved, array $incoming): array

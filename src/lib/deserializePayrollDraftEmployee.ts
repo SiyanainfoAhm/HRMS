@@ -571,10 +571,12 @@ export function deserializePayrollDraftEmployee(
     })(),
     governmentMonthly,
     govRecalc,
+    quarterContextVersion: numOrUndef(payload.quarterContextVersion),
     hasQuarter: firstDefined(payload.hasQuarter, gm.hasQuarter, calc.hasQuarter),
     quarterId: firstDefined(payload.quarterId, calc.quarterId),
     quarterName: firstDefined(payload.quarterName, calc.quarterName),
     quarterType: firstDefined(payload.quarterType, calc.quarterType),
+    quarterTypeId: firstDefined(payload.quarterTypeId, calc.quarterTypeId),
     quarterRent: firstDefined(numOrUndef(payload.quarterRent), numOrUndef(gm.quarterRent), numOrUndef(calc.quarterRent)),
   };
 }

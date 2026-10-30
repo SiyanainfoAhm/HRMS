@@ -118,15 +118,43 @@ final class QuarterService
         if ($quarter->status === 'inactive') {
             throw ValidationException::withMessages(['quarter' => 'Cannot assign an inactive quarter.']);
         }
-        if (
-            $quarter->assigned_employee_id
-            && $quarter->assigned_employee_id !== $employeeUserId
-            && $quarter->status === 'assigned'
-        ) {
-            throw ValidationException::withMessages(['quarter' => 'This quarter is already assigned to another employee.']);
-        }
-
         return DB::transaction(function () use ($quarter, $companyId, $employeeUserId, $actorId) {
+            $quarter = HrmsQuarter::query()->where('company_id', $companyId)->whereKey($quarter->id)->lockForUpdate()->firstOrFail();
+            if ($quarter->status === 'inactive') {
+                throw ValidationException::withMessages(['quarter' => 'Cannot assign an inactive quarter.']);
+            }
+            $assignedOn = Carbon::today()->toDateString();
+            $activeForQuarter = HrmsQuarterAssignment::query()
+                ->where('company_id', $companyId)->where('quarter_id', $quarter->id)
+                ->where(fn ($query) => $query->whereNull('assigned_from')->orWhereDate('assigned_from', '<=', $assignedOn))
+                ->where(fn ($query) => $query->whereNull('assigned_to')->orWhereDate('assigned_to', '>', $assignedOn))
+                ->lockForUpdate()->get();
+            if ($activeForQuarter->count() > 1 || $activeForQuarter->contains(fn (HrmsQuarterAssignment $assignment) => $assignment->employee_id !== $employeeUserId)) {
+                throw ValidationException::withMessages(['quarter' => 'This quarter already has another active authoritative assignment.']);
+            }
+            $activeForEmployee = HrmsQuarterAssignment::query()
+                ->where('company_id', $companyId)
+                ->where('employee_id', $employeeUserId)
+                ->where(function ($query) use ($assignedOn) {
+                    $query->whereNull('assigned_from')->orWhereDate('assigned_from', '<=', $assignedOn);
+                })
+                ->where(function ($query) use ($assignedOn) {
+                    $query->whereNull('assigned_to')->orWhereDate('assigned_to', '>', $assignedOn);
+                })
+                ->lockForUpdate()
+                ->get();
+            if ($activeForEmployee->contains(fn (HrmsQuarterAssignment $assignment) => $assignment->quarter_id !== $quarter->id)) {
+                throw ValidationException::withMessages(['quarter' => 'This employee already has another active quarter assignment.']);
+            }
+            if ($activeForEmployee->contains(fn (HrmsQuarterAssignment $assignment) => $assignment->quarter_id === $quarter->id)) {
+                $quarter->update([
+                    'status' => 'assigned',
+                    'assigned_employee_id' => $employeeUserId,
+                ]);
+                $this->syncCurrentPayrollMasterQuarter($companyId, $employeeUserId, $quarter, true);
+
+                return $this->formatQuarter($quarter->fresh(['quarterType']));
+            }
             $today = Carbon::today()->toDateString();
             $quarter->update([
                 'status' => 'assigned',
@@ -145,6 +173,8 @@ final class QuarterService
                 'created_by' => $actorId,
             ]);
 
+            $this->syncCurrentPayrollMasterQuarter($companyId, $employeeUserId, $quarter, true);
+
             return $this->formatQuarter($quarter->fresh(['quarterType']));
         });
     }
@@ -156,15 +186,19 @@ final class QuarterService
         }
 
         return DB::transaction(function () use ($quarter, $companyId) {
+            $quarter = HrmsQuarter::query()->where('company_id', $companyId)->whereKey($quarter->id)->lockForUpdate()->firstOrFail();
             $today = Carbon::today()->toDateString();
-            if ($quarter->assigned_employee_id) {
-                HrmsQuarterAssignment::query()
-                    ->where('company_id', $companyId)
-                    ->where('quarter_id', $quarter->id)
-                    ->where('employee_id', $quarter->assigned_employee_id)
-                    ->whereNull('assigned_to')
-                    ->update(['assigned_to' => $today]);
+            $activeAssignments = HrmsQuarterAssignment::query()
+                ->where('company_id', $companyId)->where('quarter_id', $quarter->id)
+                ->where(fn ($query) => $query->whereNull('assigned_from')->orWhereDate('assigned_from', '<=', $today))
+                ->where(fn ($query) => $query->whereNull('assigned_to')->orWhereDate('assigned_to', '>', $today))
+                ->lockForUpdate()->get();
+            if ($activeAssignments->count() > 1) {
+                throw ValidationException::withMessages(['quarterAssignment' => ['Multiple active assignments exist for this quarter; unassignment stopped.']]);
             }
+            $employeeIds = $activeAssignments->pluck('employee_id')->map(fn ($id) => (string) $id)->all();
+            if ($quarter->assigned_employee_id) $employeeIds[] = (string) $quarter->assigned_employee_id;
+            foreach ($activeAssignments as $assignment) $assignment->update(['assigned_to' => $today]);
 
             $quarter->update([
                 'status' => 'available',
@@ -172,6 +206,10 @@ final class QuarterService
                 'assigned_from' => null,
                 'assigned_to' => null,
             ]);
+
+            foreach (array_unique($employeeIds) as $employeeUserId) {
+                $this->syncCurrentPayrollMasterQuarter($companyId, $employeeUserId, null, false);
+            }
 
             return $this->formatQuarter($quarter->fresh(['quarterType']));
         });
@@ -271,8 +309,20 @@ final class QuarterService
 
     public function clearMasterQuarter(HrmsPayrollMaster $master, string $companyId, string $actorId): void
     {
-        if ($master->quarter_id) {
-            $quarter = HrmsQuarter::find($master->quarter_id);
+        $employeeUserId = (string) ($master->employee_user_id ?? $master->user_id ?? '');
+        $today = Carbon::today()->toDateString();
+        $activeAssignments = $employeeUserId === '' ? collect() : HrmsQuarterAssignment::query()
+            ->where('company_id', $companyId)
+            ->where('employee_id', $employeeUserId)
+            ->where(fn ($query) => $query->whereNull('assigned_from')->orWhereDate('assigned_from', '<=', $today))
+            ->where(fn ($query) => $query->whereNull('assigned_to')->orWhereDate('assigned_to', '>', $today))
+            ->get();
+        if ($activeAssignments->count() > 1) {
+            throw ValidationException::withMessages(['quarterAssignment' => ['Multiple active assignments exist; Payroll Master cannot clear one by guess.']]);
+        }
+        $authoritativeQuarterId = $activeAssignments->first()?->quarter_id ?? $master->quarter_id;
+        if ($authoritativeQuarterId) {
+            $quarter = HrmsQuarter::find($authoritativeQuarterId);
             if ($quarter && $quarter->company_id === $companyId) {
                 $this->unassign($quarter, $companyId, $actorId);
             }
@@ -304,36 +354,130 @@ final class QuarterService
     /** @return array<string, mixed> */
     public function quarterMetaForMaster(?HrmsPayrollMaster $master, ?string $companyId = null): array
     {
-        if (! $master || ! ($master->has_quarter || $master->quarter_id)) {
-            return [
-                'hasQuarter' => false,
-                'quarterId' => null,
-                'quarterName' => null,
-                'quarterType' => null,
-                'quarterTypeId' => null,
-                'quarterRent' => 0,
-                'hraEligible' => true,
-            ];
+        if (! $master) {
+            return $this->emptyQuarterMeta();
         }
 
-        $quarter = $master->quarter_id
-            ? HrmsQuarter::query()
-                ->with('quarterType')
-                ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
-                ->find($master->quarter_id)
-            : null;
+        return $this->quarterMetaForEmployeeAsOfDate(
+            $companyId ?? (string) $master->company_id,
+            (string) ($master->employee_user_id ?? $master->user_id ?? ''),
+            Carbon::today()->toDateString(),
+        );
+    }
 
-        $typeName = $quarter?->quarterType?->name ?? $quarter?->quarter_type;
+    /**
+     * Resolve the quarter assignment effective on the last day of the payroll month.
+     * cirt_quarter_assignments is the assignment source; Payroll Master flags are mirrors.
+     * @return array<string, mixed>
+     */
+    public function quarterMetaForEmployeePeriod(string $companyId, string $employeeUserId, int $year, int $month): array
+    {
+        $this->assertPeriod($year, $month);
+        $asOf = Carbon::create($year, $month, 1)->endOfMonth()->toDateString();
+
+        return $this->quarterMetaForEmployeeAsOfDate($companyId, $employeeUserId, $asOf);
+    }
+
+    /** @return array<string, mixed> */
+    public function quarterMetaForEmployeeAsOfDate(string $companyId, string $employeeUserId, string $asOfDate): array
+    {
+        if ($employeeUserId === '') {
+            return $this->emptyQuarterMeta();
+        }
+
+        $assignments = HrmsQuarterAssignment::query()
+            ->with(['quarter.quarterType'])
+            ->where('company_id', $companyId)
+            ->where('employee_id', $employeeUserId)
+            ->where(fn ($query) => $query->whereNull('assigned_from')->orWhereDate('assigned_from', '<=', $asOfDate))
+            ->where(fn ($query) => $query->whereNull('assigned_to')->orWhereDate('assigned_to', '>', $asOfDate))
+            ->orderByDesc('assigned_from')
+            ->get();
+
+        if ($assignments->count() > 1) {
+            throw ValidationException::withMessages([
+                'quarterAssignment' => ["Multiple quarter assignments are active for employee {$employeeUserId} on {$asOfDate}; payroll resolution stopped."],
+            ]);
+        }
+        if ($assignments->isEmpty()) {
+            return $this->emptyQuarterMeta();
+        }
+
+        $assignment = $assignments->first();
+        $quarter = $assignment?->quarter;
+        if (! $quarter || $quarter->company_id !== $companyId) {
+            throw ValidationException::withMessages([
+                'quarterAssignment' => ["Active quarter assignment for employee {$employeeUserId} has no valid company quarter."],
+            ]);
+        }
+        $typeName = $quarter->quarterType?->name ?: trim((string) $quarter->quarter_type);
+        $rentValue = $assignment->rent_at_assignment;
+        if ($rentValue === null || $rentValue === '' || ! is_numeric($rentValue) || (float) $rentValue < 0) {
+            $rentValue = $quarter->monthly_rent;
+        }
+        if ($typeName === '' || $rentValue === null || ! is_numeric($rentValue) || (float) $rentValue < 0) {
+            throw ValidationException::withMessages([
+                'quarterAssignment' => ["Quarter type or rent cannot be resolved for employee {$employeeUserId}; payroll resolution stopped."],
+            ]);
+        }
 
         return [
             'hasQuarter' => true,
-            'quarterId' => $master->quarter_id,
-            'quarterName' => $quarter?->quarter_name,
+            'quarterAssigned' => true,
+            'quarterId' => (string) $quarter->id,
+            'quarterName' => (string) $quarter->quarter_name,
             'quarterType' => $typeName,
-            'quarterTypeId' => $quarter?->quarter_type_id,
-            'quarterRent' => (float) ($master->quarter_rent ?? $quarter?->monthly_rent ?? 0),
+            'quarterTypeId' => $quarter->quarter_type_id,
+            'quarterRent' => round((float) $rentValue, 2),
             'hraEligible' => false,
         ];
+    }
+
+    /** @return array<string, mixed> */
+    private function emptyQuarterMeta(): array
+    {
+        return [
+            'hasQuarter' => false,
+            'quarterAssigned' => false,
+            'quarterId' => null,
+            'quarterName' => null,
+            'quarterType' => null,
+            'quarterTypeId' => null,
+            'quarterRent' => 0.0,
+            'hraEligible' => true,
+        ];
+    }
+
+    private function assertPeriod(int $year, int $month): void
+    {
+        if ($year < 2000 || $year > 2100 || $month < 1 || $month > 12) {
+            throw ValidationException::withMessages(['period' => ['Invalid payroll year/month.']]);
+        }
+    }
+
+    private function syncCurrentPayrollMasterQuarter(string $companyId, string $employeeUserId, ?HrmsQuarter $quarter, bool $assigned): void
+    {
+        $masters = HrmsPayrollMaster::query()
+            ->where('company_id', $companyId)
+            ->where(function ($query) use ($employeeUserId) {
+                $query->where('employee_user_id', $employeeUserId)->orWhere('user_id', $employeeUserId);
+            })
+            ->whereNull('effective_to')
+            ->lockForUpdate()
+            ->get();
+        if ($masters->count() > 1) {
+            throw ValidationException::withMessages([
+                'payrollMaster' => ["Multiple current Payroll Master rows exist for employee {$employeeUserId}; quarter assignment was rolled back."],
+            ]);
+        }
+        $master = $masters->first();
+        if (! $master) return;
+
+        $master->update([
+            'has_quarter' => $assigned,
+            'quarter_id' => $assigned ? $quarter?->id : null,
+            'quarter_rent' => $assigned ? (float) ($quarter?->monthly_rent ?? 0) : 0,
+        ]);
     }
 
     public function normalizeQuarterName(string $value): string
@@ -447,7 +591,18 @@ final class QuarterService
     /** @return array<string, mixed> */
     private function formatQuarter(HrmsQuarter $q): array
     {
-        $employee = $q->assigned_employee_id ? HrmsUser::find($q->assigned_employee_id) : null;
+        $today = Carbon::today()->toDateString();
+        $activeAssignments = HrmsQuarterAssignment::query()
+            ->where('company_id', $q->company_id)
+            ->where('quarter_id', $q->id)
+            ->where(fn ($query) => $query->whereNull('assigned_from')->orWhereDate('assigned_from', '<=', $today))
+            ->where(fn ($query) => $query->whereNull('assigned_to')->orWhereDate('assigned_to', '>', $today))
+            ->get();
+        if ($activeAssignments->count() > 1) {
+            throw ValidationException::withMessages(['quarterAssignment' => ["Quarter {$q->id} has multiple active assignment rows."]]);
+        }
+        $activeAssignment = $activeAssignments->first();
+        $employee = $activeAssignment ? HrmsUser::find($activeAssignment->employee_id) : null;
         $master = $employee
             ? HrmsPayrollMaster::query()
                 ->where('company_id', $q->company_id)
@@ -469,12 +624,12 @@ final class QuarterService
             'quarterType' => $typeName,
             'quarterTypeId' => $q->quarter_type_id,
             'monthlyRent' => (float) $q->monthly_rent,
-            'status' => $q->status,
-            'assignedEmployeeId' => $q->assigned_employee_id,
+            'status' => $activeAssignment ? 'assigned' : ($q->status === 'inactive' ? 'inactive' : 'available'),
+            'assignedEmployeeId' => $activeAssignment?->employee_id,
             'assignedEmployeeName' => $employee?->name,
             'assignedEmployeeCode' => $master?->employee_code,
-            'assignedFrom' => $q->assigned_from?->toDateString(),
-            'assignedTo' => $q->assigned_to?->toDateString(),
+            'assignedFrom' => $activeAssignment?->assigned_from?->toDateString(),
+            'assignedTo' => $activeAssignment?->assigned_to?->toDateString(),
             'createdAt' => $q->created_at?->toIso8601String(),
             'updatedAt' => $q->updated_at?->toIso8601String(),
         ];

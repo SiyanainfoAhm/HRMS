@@ -127,7 +127,7 @@ function testDraftOverlayKeepsExplicitZero() {
   assertEq(Number(resolved.grossPay), 0, "gross 0");
 }
 
-function testDirtyCacheWins() {
+function testOnlyExplicitlyEditedRowUsesDirtyCache() {
   const base = stubApiRow("u3");
   const cached: RunPayrollRowLike = {
     ...base,
@@ -140,8 +140,24 @@ function testDirtyCacheWins() {
       totalEarnings: 255110,
       totalDeductions: 55110,
       netSalary: 200000,
+      cacheOnlyMarker: true,
     },
   };
+  const unrelated = resolveRunPayrollRow(base, {
+    denom: 30,
+    runYear: 2026,
+    runMonth: 7,
+    payrollConfig: null,
+    alreadyRun: false,
+    draftDirty: true,
+    cached,
+    cachedPeriodKey: "2026-07",
+  });
+  assert(
+    !("cacheOnlyMarker" in (unrelated.governmentMonthly as Record<string, unknown>)),
+    "period dirty flag must not reuse unrelated cached employee row",
+  );
+
   const resolved = resolveRunPayrollRow(base, {
     denom: 30,
     runYear: 2026,
@@ -149,6 +165,7 @@ function testDirtyCacheWins() {
     payrollConfig: null,
     alreadyRun: false,
     draftDirty: true,
+    preserveEdits: true,
     cached,
     cachedPeriodKey: "2026-07",
   });
@@ -169,6 +186,7 @@ function testPriorPeriodCacheCannotHydrateNewMonth() {
     payrollConfig: null,
     alreadyRun: false,
     draftDirty: false,
+    preserveEdits: true,
     cached: novemberCache,
     cachedPeriodKey: "2026-11",
   });
@@ -191,6 +209,7 @@ function testPriorPeriodCacheCannotHydrateNewMonth() {
     payrollConfig: null,
     alreadyRun: false,
     draftDirty: false,
+    preserveEdits: true,
     cached: novemberCache,
     cachedPeriodKey: "2026-11",
   });
@@ -324,14 +343,97 @@ function testManyEmployeesResolveWithoutPageBias() {
   assertEq(zeros, 0, "no stubs after full resolve");
 }
 
+function testDraftQuarterContextOverridesStaleQuarterHraAndRent() {
+  const base = stubApiRow("u-quarter");
+  base.hasQuarter = true;
+  base.quarterAssigned = true;
+  base.quarterId = "quarter-1";
+  base.quarterName = "Q-1";
+  base.quarterType = "Type-A";
+  base.quarterRent = 138;
+  base.govRecalc = { ...base.govRecalc!, hasQuarter: true, quarterRent: 138 };
+  const assigned = resolveRunPayrollRow(base, {
+    denom: 30, runYear: 2026, runMonth: 10, payrollConfig: null,
+    alreadyRun: false, draftDirty: false,
+    draftStored: {
+      employeeUserId: "u-quarter",
+      rowPayload: {
+        ...base,
+        hasQuarter: false,
+        quarterId: null,
+        quarterRent: 0,
+        governmentMonthly: {
+          basicPaid: 50000, hraActual: 15000, hraPaid: 15000,
+          totalEarnings: 65000, totalDeductions: 0, netSalary: 65000,
+          quarterRent: 0, deductions: { pt: 200, quarterRent: 0 },
+        },
+        govRecalc: { ...base.govRecalc, hasQuarter: false, quarterRent: 0, earningPaidOverrides: { hraPaid: 15000 } },
+      },
+    },
+  });
+  const assignedGm = assigned.governmentMonthly as Record<string, unknown>;
+  const assignedDed = assignedGm.deductions as Record<string, number>;
+  assertEq(assigned.hasQuarter, true, "assigned context wins over stale draft flag");
+  assertEq(assignedGm.hraPaid, 0, "assigned quarter suppresses stale draft HRA");
+  assertEq(assignedDed.quarterRent, 138, "assigned period rent replaces stale draft rent");
+
+  const oldPreview = stubApiRow("u-quarter");
+  oldPreview.hasQuarter = false;
+  oldPreview.quarterRent = 0;
+  oldPreview.govRecalc = { ...oldPreview.govRecalc!, hasQuarter: false, quarterRent: 0 };
+  const savedByServer = resolveRunPayrollRow(oldPreview, {
+    denom: 30, runYear: 2026, runMonth: 10, payrollConfig: null,
+    alreadyRun: false, draftDirty: false,
+    draftStored: {
+      employeeUserId: "u-quarter",
+      rowPayload: {
+        ...base,
+        quarterContextVersion: 1,
+        governmentMonthly: assignedGm,
+      },
+    },
+  });
+  assertEq(savedByServer.hasQuarter, true, "server-synced period context wins over an older preview response");
+  assertEq((savedByServer.governmentMonthly as Record<string, unknown>).hraPaid, 0, "older preview cannot restore HRA after server save");
+
+  const unassignedBase = stubApiRow("u-unassigned");
+  unassignedBase.hasQuarter = false;
+  unassignedBase.quarterRent = 0;
+  unassignedBase.govRecalc = { ...unassignedBase.govRecalc!, hasQuarter: false, quarterRent: 0 };
+  const unassigned = resolveRunPayrollRow(unassignedBase, {
+    denom: 30, runYear: 2026, runMonth: 10, payrollConfig: null,
+    alreadyRun: false, draftDirty: false,
+    draftStored: {
+      employeeUserId: "u-unassigned",
+      rowPayload: {
+        ...unassignedBase,
+        hasQuarter: true,
+        quarterRent: 500,
+        governmentMonthly: {
+          basicPaid: 50000, hraActual: 0, hraPaid: 0,
+          totalEarnings: 50000, totalDeductions: 700, netSalary: 49300,
+          quarterRent: 500, deductions: { pt: 200, quarterRent: 500 },
+        },
+        govRecalc: { ...unassignedBase.govRecalc, hasQuarter: true, quarterRent: 500, earningPaidOverrides: { hraPaid: 0 } },
+      },
+    },
+  });
+  const unassignedGm = unassigned.governmentMonthly as Record<string, unknown>;
+  const unassignedDed = unassignedGm.deductions as Record<string, number>;
+  assertEq(unassigned.hasQuarter, false, "unassigned period clears stale draft flag");
+  assert(Number(unassignedGm.hraPaid) > 0, "unassigned period restores normal HRA");
+  assertEq(unassignedDed.quarterRent, 0, "unassigned period removes stale rent");
+}
+
 const tests = [
   testZeroStubDetection,
   testResolveComputesGovernmentMonthly,
   testDraftOverlayKeepsExplicitZero,
-  testDirtyCacheWins,
+  testOnlyExplicitlyEditedRowUsesDirtyCache,
   testPriorPeriodCacheCannotHydrateNewMonth,
   testGeneratedRunKeepsItsSavedLeaveReferences,
   testDraftElectricityUnitsRecalculateInsteadOfRestoringStaleBill,
+  testDraftQuarterContextOverridesStaleQuarterHraAndRent,
   testManyEmployeesResolveWithoutPageBias,
 ];
 

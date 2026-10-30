@@ -435,8 +435,10 @@ class PayrollController extends Controller
         // A completed period is an immutable audit view, so retain people who
         // have since been deactivated there. New/upcoming runs only include
         // active payroll-master records.
-        $isGeneratedPayrollPeriod = $existingPeriod
-            && HrmsPayslip::query()->where('payroll_period_id', $existingPeriod->id)->exists();
+        $isGeneratedPayrollPeriod = $existingPeriod && (
+            HrmsPayslip::query()->where('payroll_period_id', $existingPeriod->id)->exists()
+            || HrmsGovernmentMonthlyPayroll::query()->where('payroll_period_id', $existingPeriod->id)->exists()
+        );
         $employeeUserIds = $this->collectPayrollEmployeeUserIds($companyId, ! $isGeneratedPayrollPeriod);
 
         $usersById = HrmsUser::whereIn('id', $employeeUserIds)->get()->keyBy('id');
@@ -587,7 +589,15 @@ class PayrollController extends Controller
             $row['bankAccountHolderName'] = $empUser->bank_account_holder_name ?? $m->name ?? $empUser->name;
 
             if ($payrollMode === 'government') {
-                $quarterMeta = $this->quarterService->quarterMetaForMaster($m, (string) $user->company_id);
+                $quarterMeta = $isGeneratedPayrollPeriod
+                    ? ['hasQuarter' => false, 'quarterAssigned' => false, 'quarterId' => null, 'quarterName' => null,
+                        'quarterType' => null, 'quarterTypeId' => null, 'quarterRent' => 0.0, 'hraEligible' => true]
+                    : $this->quarterService->quarterMetaForEmployeePeriod(
+                        (string) $user->company_id,
+                        $employeeUserId,
+                        $year,
+                        $month,
+                    );
                 $row = array_merge($row, $quarterMeta);
                 $row['govRecalc'] = [
                     'grossBasic' => $grossBasic,
@@ -1965,6 +1975,15 @@ class PayrollController extends Controller
             'profTax' => (int) round((float) ($gov->pt_amount ?? 0)),
             'tds' => (float) ($gov->income_tax_amount ?? 0),
             'governmentMonthly' => $governmentMonthly,
+            // Generated payroll is a historical snapshot: use the quarter
+            // metadata persisted with this generated monthly row, never today's
+            // quarter assignment or the current Payroll Master mirror.
+            'hasQuarter' => (bool) ($gov->has_quarter ?? false),
+            'quarterAssigned' => (bool) ($gov->has_quarter ?? false),
+            'quarterId' => $gov->quarter_id ?? null,
+            'quarterName' => $gov->quarter_name ?? null,
+            'quarterType' => $gov->quarter_type ?? null,
+            'quarterRent' => (float) ($gov->quarter_rent_amount ?? 0),
             'govRecalc' => [
                 'grossBasic' => $grossBasic,
                 'daPercent' => $daPercent,
@@ -1978,8 +1997,11 @@ class PayrollController extends Controller
                 'nightHours' => (float) ($gov->night_hours ?? 0),
                 'nightAllowanceRate' => (float) ($gov->night_allowance_rate ?? 0),
                 'nightAllowanceSlabNo' => $gov->night_allowance_slab_no,
-                'hasQuarter' => (float) ($gov->quarter_rent_amount ?? 0) > 0,
+                'hasQuarter' => (bool) ($gov->has_quarter ?? false),
                 'quarterRent' => (float) ($gov->quarter_rent_amount ?? 0),
+                'quarterId' => $gov->quarter_id ?? null,
+                'quarterName' => $gov->quarter_name ?? null,
+                'quarterType' => $gov->quarter_type ?? null,
                 'deductionDefaults' => [
                     'incomeTax' => (float) ($gov->income_tax_amount ?? 0),
                     'pt' => (float) ($gov->pt_amount ?? 0),
@@ -2120,6 +2142,9 @@ class PayrollController extends Controller
             'quarterRent' => $num($gov->quarter_rent_amount ?? 0),
             'quarter_rent' => $num($gov->quarter_rent_amount ?? 0),
             'hasQuarter' => (bool) ($gov->has_quarter ?? false),
+            'quarterId' => $gov->quarter_id ?? null,
+            'quarterName' => $gov->quarter_name ?? null,
+            'quarterType' => $gov->quarter_type ?? null,
             'hplDays' => (int) ($gov->hpl_days ?? 0),
             'eolDays' => (int) ($gov->eol_days ?? 0),
             'hpl_days' => (int) ($gov->hpl_days ?? 0),

@@ -80,10 +80,12 @@ import {
   type RunPayrollRowLike,
 } from "@/lib/resolveRunPayrollRow";
 import { payrollPeriodKey, payrollRowCacheKey } from "@/lib/payrollPeriodIsolation";
+import { markPayrollDraftFieldEdited, rowsForPayrollDraftSave } from "@/lib/payrollDraftPatch";
 import {
   applyGovernmentSheetMonetaryEdit,
   applyDeductionPaidOverridesToGm,
   clearMonetaryOverridesFromGovRecalc,
+  clearNightAllowanceOverride,
   isGovernmentSheetMonetaryField,
   recalculateGovernmentSheetTotals,
   SHEET_DEDUCTION_KEYS,
@@ -978,6 +980,8 @@ function PayrollPageContent() {
   const [previewPerPage, setPreviewPerPage] = useState(DEFAULT_PAGE_SIZE);
   const [previewMeta, setPreviewMeta] = useState<PaginationMeta>(emptyPaginationMeta());
   const runRowEditsRef = useRef<Map<string, Record<string, unknown>>>(new Map());
+  const editedRunRowKeysRef = useRef<Set<string>>(new Set());
+  const changedDraftFieldsRef = useRef<Map<string, Set<string>>>(new Map());
   const auditDirectFieldsRef = useRef<Map<string, Set<string>>>(new Map());
   /** Canonical full-period payroll rows keyed by employee_user_id (not page/filter). */
   const resolvedPayrollByUserIdRef = useRef<Map<string, RunPayrollRowLike>>(new Map());
@@ -1392,7 +1396,7 @@ function PayrollPageContent() {
             payrollConfig,
             alreadyRun,
             draftDirty: draftDirtyRef.current,
-            preserveEdits,
+            preserveEdits: preserveEdits || editedRunRowKeysRef.current.has(cacheKey),
             cached: cached ?? null,
             cachedPeriodKey: periodKey,
             draftStored: draftPayloadByUserRef.current.get(cacheKey) ?? null,
@@ -1576,6 +1580,9 @@ function PayrollPageContent() {
     if (!preview?.alreadyRun) {
       draftDirtyRef.current = true;
       setDraftDirty(true);
+      editedRunRowKeysRef.current.add(payrollRowCacheKey(editPeriodKey, employeeUserId));
+      const rowKey = payrollRowCacheKey(editPeriodKey, employeeUserId);
+      markPayrollDraftFieldEdited(changedDraftFieldsRef.current, rowKey, field);
     } else if (auditMode) {
       auditDirtyRef.current = true;
       setAuditDirty(true);
@@ -1760,20 +1767,18 @@ function PayrollPageContent() {
 
           if (field === "nightHours") {
             const grNext: GovRecalcPayload = {
-              ...gr0,
+              ...clearNightAllowanceOverride(gr0),
               nightHours: Math.max(0, Number(value) || 0),
-              nightAllowanceManualOverride: false,
             };
-            return recompute(grNext, row.payDays, undefined, row, { clearMonetaryOverrides: true });
+            return recompute(grNext, row.payDays, undefined, row, { clearMonetaryOverrides: false });
           }
 
           if (field === "nightAllowanceRate") {
             const grNext: GovRecalcPayload = {
-              ...gr0,
+              ...clearNightAllowanceOverride(gr0),
               nightAllowanceRate: Math.max(0, Number(value) || 0),
-              nightAllowanceManualOverride: false,
             };
-            return recompute(grNext, row.payDays, undefined, row, { clearMonetaryOverrides: true });
+            return recompute(grNext, row.payDays, undefined, row, { clearMonetaryOverrides: false });
           }
 
           if (field === "hplDays" || field === "eolDays") {
@@ -1991,6 +1996,8 @@ function PayrollPageContent() {
     // prevents old preview rows from hydrating during the effects transition.
     activePeriodKeyRef.current = payrollPeriodKey(nextYear, nextMonth);
     runRowEditsRef.current.clear();
+    editedRunRowKeysRef.current.clear();
+    changedDraftFieldsRef.current.clear();
     resolvedPayrollByUserIdRef.current.clear();
     draftPayloadByUserRef.current.clear();
     auditDirectFieldsRef.current.clear();
@@ -2022,6 +2029,8 @@ function PayrollPageContent() {
     if (!didAcquire) return;
 
     runRowEditsRef.current.clear();
+    editedRunRowKeysRef.current.clear();
+    changedDraftFieldsRef.current.clear();
     resolvedPayrollByUserIdRef.current.clear();
     draftPayloadByUserRef.current.clear();
     auditDirectFieldsRef.current.clear();
@@ -2041,6 +2050,8 @@ function PayrollPageContent() {
   useEffect(() => {
     activePeriodKeyRef.current = payrollPeriodKey(runYear, runMonth);
     runRowEditsRef.current.clear();
+    editedRunRowKeysRef.current.clear();
+    changedDraftFieldsRef.current.clear();
     resolvedPayrollByUserIdRef.current.clear();
     draftPayloadByUserRef.current.clear();
     setDraftMeta(null);
@@ -2686,6 +2697,7 @@ function PayrollPageContent() {
       payrollConfig,
       alreadyRun: Boolean(preview?.alreadyRun),
       draftDirty: draftDirtyRef.current,
+      preserveEdits: editedRunRowKeysRef.current.has(cacheKey),
       cached: cached ?? null,
       cachedPeriodKey: periodKey,
       draftStored: draftPayloadByUserRef.current.get(cacheKey) ?? null,
@@ -2760,7 +2772,7 @@ function PayrollPageContent() {
         payrollConfig: previewData.payrollConfig ?? payrollConfig,
         alreadyRun,
         draftDirty: draftDirtyRef.current,
-        preserveEdits: auditMode && auditDirtyRef.current,
+        preserveEdits: (auditMode && auditDirtyRef.current) || editedRunRowKeysRef.current.has(cacheKey),
         cached: cached ?? null,
         cachedPeriodKey: periodKey,
         draftStored: draftPayloadByUserRef.current.get(cacheKey) ?? null,
@@ -2831,7 +2843,17 @@ function PayrollPageContent() {
       if (rows.length === 0) {
         throw new Error("No employees to save in draft.");
       }
-      const employees = rows.map((r) => {
+      const periodKey = payrollPeriodKey(runYear, runMonth);
+      const rowsToSave = rowsForPayrollDraftSave(
+        rows as Array<(typeof rows)[number] & { employeeUserId: string }>,
+        Boolean(draftMeta),
+        changedDraftFieldsRef.current,
+        (uid) => payrollRowCacheKey(periodKey, uid),
+      );
+      if (rowsToSave.length === 0) {
+        throw new Error("No explicitly edited payroll fields are available to save. Reload the draft and retry.");
+      }
+      const employees = rowsToSave.map((r) => {
         const anyRow = r as Record<string, unknown>;
         const gm = (anyRow.governmentMonthly ?? null) as Record<string, unknown> | null;
         const totalEarnings =
@@ -2854,6 +2876,7 @@ function PayrollPageContent() {
           totalArrears: Math.round(daArr + trArr + grossArr),
           netPay: r.netPay,
           remarks: r.govRecalc?.leaveRemarks ?? null,
+          ...("changedFields" in r ? { changedFields: r.changedFields } : {}),
           rowPayload: r,
         };
       });
@@ -2866,7 +2889,7 @@ function PayrollPageContent() {
           version: draftMeta?.version ?? undefined,
           clientId: payrollLease.clientId,
           leaseToken: payrollLease.leaseToken,
-          replaceAllEmployees: true,
+          replaceAllEmployees: !draftMeta,
           employees,
         }),
       });
@@ -2905,12 +2928,15 @@ function PayrollPageContent() {
           rowPayload: payload,
         });
       }
-      if (map.size !== expected) {
+      const storedEmployeeCount = Number(data.draft?.employeeCount ?? data.employees?.length ?? map.size);
+      if (map.size !== storedEmployeeCount) {
         throw new Error(
-          `Draft save incomplete: expected ${expected} employee payloads, received ${map.size}.`,
+          `Draft save incomplete: expected ${storedEmployeeCount} stored employee payloads, received ${map.size}.`,
         );
       }
       draftPayloadByUserRef.current = map;
+      editedRunRowKeysRef.current.clear();
+      changedDraftFieldsRef.current.clear();
       setDraftMeta({
         id: String(data.draft.id),
         version: Number(data.draft.version ?? 1),
@@ -2955,6 +2981,8 @@ function PayrollPageContent() {
         if (!res.ok) throw new Error(data?.error || data?.message || "Failed to reset draft");
       }
       runRowEditsRef.current.clear();
+      editedRunRowKeysRef.current.clear();
+      changedDraftFieldsRef.current.clear();
       resolvedPayrollByUserIdRef.current.clear();
       draftPayloadByUserRef.current.clear();
       setDraftMeta(null);
@@ -2991,6 +3019,8 @@ function PayrollPageContent() {
     if (!draftDirty) return;
     if (!window.confirm("Discard unsaved screen edits and reload the last saved draft or current payroll preview?")) return;
     runRowEditsRef.current.clear();
+    editedRunRowKeysRef.current.clear();
+    changedDraftFieldsRef.current.clear();
     resolvedPayrollByUserIdRef.current.clear();
     if (!draftMeta) draftPayloadByUserRef.current.clear();
     draftDirtyRef.current = false;

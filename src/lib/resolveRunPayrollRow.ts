@@ -264,6 +264,69 @@ function draftContainsElectricityUnits(draft: DraftEmployeeApiRow): boolean {
   );
 }
 
+function overlayAuthoritativeQuarterContext(
+  saved: RunPayrollRowLike,
+  calculated: RunPayrollRowLike,
+  payrollConfig: unknown,
+): RunPayrollRowLike {
+  const hasQuarter = Boolean(calculated.hasQuarter ?? calculated.govRecalc?.hasQuarter);
+  const calculatedGm = (calculated.governmentMonthly ?? {}) as Record<string, unknown>;
+  const savedGm = (saved.governmentMonthly ?? {}) as Record<string, unknown>;
+  const calculatedDeductions = (calculatedGm.deductions ?? {}) as Record<string, unknown>;
+  const savedDeductions = (savedGm.deductions ?? {}) as Record<string, unknown>;
+  const quarterRent = hasQuarter ? Number(calculatedDeductions.quarterRent ?? calculated.govRecalc?.quarterRent ?? 0) : 0;
+  const gm = {
+    ...savedGm,
+    hraActual: hasQuarter ? 0 : Number(calculatedGm.hraActual ?? 0),
+    hraPaid: hasQuarter ? 0 : Number(calculatedGm.hraPaid ?? 0),
+    hasQuarter,
+    quarterId: hasQuarter ? calculated.quarterId ?? null : null,
+    quarterName: hasQuarter ? calculated.quarterName ?? null : null,
+    quarterType: hasQuarter ? calculated.quarterType ?? null : null,
+    quarterTypeId: hasQuarter ? calculated.quarterTypeId ?? null : null,
+    quarterRent,
+    quarter_rent: quarterRent,
+    deductions: { ...savedDeductions, quarterRent },
+  };
+  const sourceGr: GovRecalcPayload = saved.govRecalc ?? calculated.govRecalc!;
+  const { hraPaid: _staleHraOverride, ...earningsOverrides } = sourceGr.earningPaidOverrides ?? {};
+  const { quarterRent: _staleRentOverride, ...deductionOverrides } = sourceGr.deductionPaidOverrides ?? {};
+  const gr: GovRecalcPayload = {
+    ...sourceGr,
+    hasQuarter,
+    quarterId: hasQuarter ? (calculated.quarterId as string | null | undefined) : null,
+    quarterName: hasQuarter ? (calculated.quarterName as string | null | undefined) : null,
+    quarterType: hasQuarter ? (calculated.quarterType as string | null | undefined) : null,
+    quarterTypeId: hasQuarter ? (calculated.quarterTypeId as string | null | undefined) : null,
+    quarterRent,
+    quarterRentManualOverride: false,
+    earningPaidOverrides: earningsOverrides,
+    deductionPaidOverrides: deductionOverrides,
+    deductionDefaults: { ...sourceGr.deductionDefaults, quarterRent },
+  };
+  const fields = (payrollConfig as { fields?: PayrollFieldDefinition[] } | null | undefined)?.fields;
+  const totals = recalculateGovernmentSheetTotals(gm, fields);
+  const grossPay = Number(totals.totalEarnings ?? 0);
+  const deductions = Number(totals.totalDeductions ?? 0);
+  const netPay = Number(totals.netSalary ?? 0);
+  return {
+    ...saved,
+    hasQuarter,
+    quarterAssigned: hasQuarter,
+    quarterId: hasQuarter ? calculated.quarterId ?? null : null,
+    quarterName: hasQuarter ? calculated.quarterName ?? null : null,
+    quarterType: hasQuarter ? calculated.quarterType ?? null : null,
+    quarterTypeId: hasQuarter ? calculated.quarterTypeId ?? null : null,
+    quarterRent,
+    govRecalc: gr,
+    governmentMonthly: totals,
+    grossPay,
+    deductions,
+    netPay,
+    takeHome: netPay + Number(saved.incentive ?? 0) + Number(saved.prBonus ?? 0) + Number(saved.reimbursement ?? 0),
+  };
+}
+
 /**
  * Canonical resolve priority:
  * 1. Unsaved edit cache when dirty
@@ -277,14 +340,31 @@ export function resolveRunPayrollRow(
   const uid = String(r.employeeUserId ?? "");
   const selectedPeriodKey = payrollPeriodKey(ctx.runYear, ctx.runMonth);
   const cachedForSelectedPeriod = ctx.cached && ctx.cachedPeriodKey === selectedPeriodKey ? ctx.cached : null;
-  const preserveEdits = Boolean(ctx.preserveEdits || (!ctx.alreadyRun && ctx.draftDirty));
+  // A dirty flag is period-wide. It must not make every cached employee row
+  // authoritative when only one row was edited; callers explicitly identify
+  // the row whose in-memory edit must win.
+  const preserveEdits = Boolean(ctx.preserveEdits);
   if (preserveEdits && cachedForSelectedPeriod && String(cachedForSelectedPeriod.employeeUserId) === uid) {
     return cachedForSelectedPeriod;
   }
 
   const draftEmp = !ctx.alreadyRun ? normalizeDraftEmployeeApiRow(ctx.draftStored, uid) : null;
   if (draftEmp) {
-    const overlaid = deserializePayrollDraftEmployee(draftEmp, r as Record<string, unknown>) as RunPayrollRowLike;
+    let overlaid = deserializePayrollDraftEmployee(draftEmp, r as Record<string, unknown>) as RunPayrollRowLike;
+    if (
+      overlaid.payrollMode === "government" &&
+      Number(overlaid.quarterContextVersion) !== 1 &&
+      ("hasQuarter" in r || r.govRecalc?.hasQuarter !== undefined)
+    ) {
+      const calculatedQuarterRow = computeGovernmentRow(
+        { ...r, governmentMonthly: null },
+        ctx.denom,
+        ctx.runYear,
+        ctx.runMonth,
+        ctx.payrollConfig,
+      );
+      overlaid = overlayAuthoritativeQuarterContext(overlaid, calculatedQuarterRow, ctx.payrollConfig);
+    }
     // Electricity units are an input, while the deduction is a derived value.
     // A draft can contain an older browser-calculated bill, so recompute rows
     // that explicitly saved units with the tariff returned for this preview.
@@ -321,7 +401,7 @@ export function resolveRunPayrollRow(
     return overlaid;
   }
 
-  if (!ctx.alreadyRun && cachedForSelectedPeriod && String(cachedForSelectedPeriod.employeeUserId) === uid) {
+  if (preserveEdits && !ctx.alreadyRun && cachedForSelectedPeriod && String(cachedForSelectedPeriod.employeeUserId) === uid) {
     return cachedForSelectedPeriod;
   }
 

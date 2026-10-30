@@ -21,6 +21,17 @@ function assertClose(a: number, b: number, msg: string, eps = 0.001) {
 
 const tariff = DEFAULT_APRIL_2026_ELECTRICITY_TARIFF;
 const slabs = tariff.slabs;
+// This section validates compatibility for a legacy flat-fuel tariff. The
+// default tariff has progressive per-slab fuel rates and is tested below.
+const legacyFlatFuelTariff = {
+  ...tariff,
+  slabs: tariff.slabs.map((slab) => {
+    const legacySlab = { ...slab };
+    delete legacySlab.fuelChargePerUnit;
+    return legacySlab;
+  }),
+  fuelCharge: 200.7,
+};
 
 // --- Boundary progressive slab tests ---
 const boundaries: Array<[number, number]> = [
@@ -54,7 +65,7 @@ for (const [units, expected] of boundaries) {
   assertEq(portions[1].units, 200, "next 200");
   assertEq(portions[2].units, 50, "remaining 50");
 
-  const bill = calculateElectricityBill({ units: 350, tariff, applicable: true });
+  const bill = calculateElectricityBill({ units: 350, tariff: legacyFlatFuelTariff, applicable: true });
   assertClose(bill.sthirAakar, 130, "sthir");
   assertClose(bill.consumptionCharge, 3307.5, "consumption");
   assertClose(bill.vahanAakar, 560, "vahan 350*1.6");
@@ -67,7 +78,7 @@ for (const [units, expected] of boundaries) {
 
 // Zero units still applies fixed charges when applicable
 {
-  const bill = calculateElectricityBill({ units: 0, tariff, applicable: true });
+  const bill = calculateElectricityBill({ units: 0, tariff: legacyFlatFuelTariff, applicable: true });
   assertClose(bill.sthirAakar, 130, "0u sthir");
   assertClose(bill.fuelCharge, 200.7, "0u fuel");
   assertEq(bill.consumptionCharge, 0, "0u consumption");
@@ -122,7 +133,7 @@ for (const [units, expected] of boundaries) {
     fuelCharge: 100,
     dutyPercentage: 10,
     slabs: tariff.slabs.map((s) =>
-      s.fromUnit === 0 ? { ...s, ratePerUnit: 5 } : s,
+      s.fromUnit === 0 ? { ...s, ratePerUnit: 5, fuelChargePerUnit: 2 } : s,
     ),
   };
   const a = calculateElectricityBill({ units: 50, tariff });
