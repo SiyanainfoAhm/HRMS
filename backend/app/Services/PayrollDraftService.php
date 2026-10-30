@@ -1018,6 +1018,18 @@ class PayrollDraftService
             if (in_array($field, ['daArrear', 'transportArrear', 'grossArrear', 'cpfArrear', 'netArrear'], true)) {
                 $snake = strtolower((string) preg_replace('/(?<!^)[A-Z]/', '_$0', $field));
                 $paths = [...$paths, $field, $snake, "governmentMonthly.$field", "governmentMonthly.$snake", ...$totals];
+                // The sheet stores DA / transport arrears as the *Paid earning lines and
+                // derives gross / CPF / net arrear from them as one unit. Patching only
+                // governmentMonthly.daArrear (a key that does not exist) dropped the typed
+                // arrear from the line, and therefore from gross, on every patch save.
+                foreach (['daArrear', 'transportArrear', 'grossArrear', 'cpfArrear', 'netArrear'] as $unit) {
+                    $unitSnake = strtolower((string) preg_replace('/(?<!^)[A-Z]/', '_$0', $unit));
+                    $paths = [...$paths, $unit, $unitSnake, "governmentMonthly.$unit", "governmentMonthly.$unitSnake"];
+                }
+                $paths = [...$paths,
+                    'governmentMonthly.daArrearsPaid', 'governmentMonthly.da_arrears_paid', 'governmentMonthly.daArrearsActual',
+                    'governmentMonthly.transportArrearsPaid', 'governmentMonthly.transport_arrears_paid', 'governmentMonthly.transportArrearsActual',
+                ];
                 continue;
             }
             if (in_array($field, ['grossPay', 'deductions', 'netPay', 'pfEmployee', 'pfEmployer', 'esicEmployee', 'esicEmployer', 'profTax'], true)) {
