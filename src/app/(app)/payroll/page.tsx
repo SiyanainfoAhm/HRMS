@@ -80,7 +80,14 @@ import {
   type RunPayrollRowLike,
 } from "@/lib/resolveRunPayrollRow";
 import { payrollPeriodKey, payrollRowCacheKey } from "@/lib/payrollPeriodIsolation";
-import { markPayrollDraftFieldEdited, rowsForPayrollDraftSave } from "@/lib/payrollDraftPatch";
+import { clearSavedPayrollDraftMasks, markPayrollDraftFieldEdited, rowsForPayrollDraftSave, snapshotPayrollDraftMasks } from "@/lib/payrollDraftPatch";
+import {
+  draftStoredMapFromEmployees,
+  saveDraftWithConflictRetry,
+  storedRowsByEmployee,
+  type DraftEmployeeApi,
+  type LatestDraft,
+} from "@/lib/payrollDraftConflict";
 import {
   applyGovernmentSheetMonetaryEdit,
   applyDeductionPaidOverridesToGm,
@@ -2014,26 +2021,7 @@ function PayrollPageContent() {
           setDraftLoadError(data?.message || data?.error || "Could not verify saved payroll draft for this period.");
           return;
         }
-        const map = new Map<string, Record<string, unknown>>();
-        const periodKey = requestedPeriodKey;
-        for (const emp of (data.employees ?? []) as DraftEmployeeApiRow[]) {
-          const uid = String(emp.employeeUserId ?? emp.employee_user_id ?? "");
-          const payload = (emp.rowPayload ?? emp.row_payload ?? null) as Record<string, unknown> | null;
-          if (!uid || !payload) continue;
-          map.set(payrollRowCacheKey(periodKey, uid), {
-            employeeUserId: uid,
-            employeeCode: emp.employeeCode ?? emp.employee_code ?? null,
-            payrollMasterId: emp.payrollMasterId ?? emp.payroll_master_id ?? null,
-            payDays: emp.payDays ?? emp.pay_days ?? null,
-            grossPay: emp.grossPay ?? emp.gross_pay ?? null,
-            totalEarnings: emp.totalEarnings ?? emp.total_earnings ?? null,
-            totalDeductions: emp.totalDeductions ?? emp.total_deductions ?? null,
-            totalArrears: emp.totalArrears ?? emp.total_arrears ?? null,
-            netPay: emp.netPay ?? emp.net_pay ?? null,
-            remarks: emp.remarks ?? null,
-            rowPayload: payload,
-          });
-        }
+        const map = draftStoredMapFromEmployees(requestedPeriodKey, (data.employees ?? []) as DraftEmployeeApi[]);
         draftPayloadByUserRef.current = map;
         // Drop calculated cache so draft payloads win on re-hydrate (keep unsaved edits).
         if (!draftDirtyRef.current) {
@@ -2052,7 +2040,7 @@ function PayrollPageContent() {
           setDraftMeta(null);
         }
         setDraftLoadError(null);
-        setDraftLoadedPeriodKey(periodKey);
+        setDraftLoadedPeriodKey(requestedPeriodKey);
         setDraftRevision((n) => n + 1);
       } catch {
         if (!cancelled) setDraftLoadError("Could not verify saved payroll draft for this period. Retry after reloading.");
@@ -2819,77 +2807,123 @@ function PayrollPageContent() {
           rowPayload: r,
         };
       });
-      const res = await fetch("/api/payroll/drafts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          year: parseInt(runYear, 10),
-          month: parseInt(runMonth, 10),
-          version: draftMeta?.version ?? undefined,
-          clientId: payrollLease.clientId,
-          leaseToken: payrollLease.leaseToken,
-          replaceAllEmployees: !draftMeta,
-          employees,
-        }),
+      // Edits typed while this request is in flight must stay marked as unsaved.
+      const sentMasks = snapshotPayrollDraftMasks(changedDraftFieldsRef.current);
+      const periodKeyForSave = payrollPeriodKey(runYear, runMonth);
+      const draftsUrl = `/api/payroll/drafts?year=${encodeURIComponent(runYear)}&month=${encodeURIComponent(String(parseInt(runMonth, 10)))}`;
+      const fetchLatestDraft = async (): Promise<LatestDraft> => {
+        const latestRes = await fetch(draftsUrl, { cache: "no-store" });
+        const latest = await latestRes.json();
+        if (!latestRes.ok) throw new Error(latest?.message || latest?.error || "Could not load the latest saved draft");
+        const rowsByUid = storedRowsByEmployee(
+          draftStoredMapFromEmployees(periodKeyForSave, (latest.employees ?? []) as DraftEmployeeApi[]),
+        );
+        return {
+          draftId: latest.draft?.id ? String(latest.draft.id) : undefined,
+          version: latest.draft?.version != null ? Number(latest.draft.version) : undefined,
+          rows: rowsByUid,
+        };
+      };
+      // On a 409 the same field-level patch is re-sent against the latest draft: the
+      // user's typed fields win, every other field keeps what the other session saved.
+      const outcome = await saveDraftWithConflictRetry({
+        patches: employees.map((e) => ({
+          employeeUserId: e.employeeUserId,
+          changedFields: (e as { changedFields?: string[] }).changedFields,
+          rowPayload: e.rowPayload as unknown as Record<string, unknown>,
+        })),
+        version: draftMeta?.version ?? undefined,
+        base: storedRowsByEmployee(draftPayloadByUserRef.current),
+        // A first save has no field masks to re-send, so it cannot be retried blindly.
+        maxRetries: draftMeta ? 2 : 0,
+        send: async (version) => {
+          const res = await fetch("/api/payroll/drafts", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              year: parseInt(runYear, 10),
+              month: parseInt(runMonth, 10),
+              version: version ?? undefined,
+              clientId: payrollLease.clientId,
+              leaseToken: payrollLease.leaseToken,
+              replaceAllEmployees: !draftMeta,
+              employees,
+            }),
+          });
+          return { status: res.status, body: await res.json() };
+        },
+        fetchLatest: fetchLatestDraft,
       });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data?.error || data?.message || data?.errors?.version?.[0] || "Failed to save draft");
+      if (!outcome.ok) {
+        if (outcome.status === 409) {
+          // Never reload over typed values: adopt the latest version so the next Save
+          // applies the still-marked edits on top of it.
+          try {
+            const latest = await fetchLatestDraft();
+            if (latest.draftId) {
+              setDraftMeta((m) => ({ id: latest.draftId as string, version: latest.version ?? m?.version ?? 1, updatedAt: m?.updatedAt ?? null, employeeCount: m?.employeeCount ?? latest.rows.size }));
+            }
+          } catch {
+            /* keep the current meta; the edits are untouched either way */
+          }
+          showToast("error", "Another session is saving this payroll draft at the same time. Your edits are still on screen and still marked unsaved; press Save Draft again.");
+          return false;
+        }
+        const body = outcome.body as { error?: string; message?: string; errors?: { version?: string[] } };
+        throw new Error(body?.error || body?.message || body?.errors?.version?.[0] || "Failed to save draft");
       }
+      const data = outcome.body as {
+        draft: { id: string; version?: number; updatedAt?: string | null; employeeCount?: number };
+        employees?: DraftEmployeeApi[];
+        savedEmployeeCount?: number;
+        saved_employee_count?: number;
+        saved?: number;
+        distinctEmployeeCount?: number;
+        distinct_employee_count?: number;
+      };
       const expected = employees.length;
-      const savedCount = Number(
-        data.savedEmployeeCount ?? data.saved_employee_count ?? data.saved ?? expected,
-      );
-      const distinctCount = Number(
-        data.distinctEmployeeCount ?? data.distinct_employee_count ?? savedCount,
-      );
+      const savedCount = Number(data.savedEmployeeCount ?? data.saved_employee_count ?? data.saved ?? expected);
+      const distinctCount = Number(data.distinctEmployeeCount ?? data.distinct_employee_count ?? savedCount);
       if (savedCount !== expected || distinctCount !== expected) {
         throw new Error(
           `Draft save incomplete: expected ${expected} employees, saved ${savedCount} (distinct ${distinctCount}).`,
         );
       }
-      const map = new Map<string, Record<string, unknown>>();
-      for (const emp of (data.employees ?? []) as DraftEmployeeApiRow[]) {
-        const uid = String(emp.employeeUserId ?? emp.employee_user_id ?? "");
-        const payload = (emp.rowPayload ?? emp.row_payload ?? null) as Record<string, unknown> | null;
-        if (!uid || !payload) continue;
-        map.set(uid, {
-          employeeUserId: uid,
-          employeeCode: emp.employeeCode ?? emp.employee_code ?? null,
-          payrollMasterId: emp.payrollMasterId ?? emp.payroll_master_id ?? null,
-          payDays: emp.payDays ?? emp.pay_days ?? null,
-          grossPay: emp.grossPay ?? emp.gross_pay ?? null,
-          totalEarnings: emp.totalEarnings ?? emp.total_earnings ?? null,
-          totalDeductions: emp.totalDeductions ?? emp.total_deductions ?? null,
-          totalArrears: emp.totalArrears ?? emp.total_arrears ?? null,
-          netPay: emp.netPay ?? emp.net_pay ?? null,
-          remarks: emp.remarks ?? null,
-          rowPayload: payload,
-        });
-      }
-      const storedEmployeeCount = Number(data.draft?.employeeCount ?? data.employees?.length ?? map.size);
+      const map = draftStoredMapFromEmployees(periodKeyForSave, (data.employees ?? []) as DraftEmployeeApi[]);
+      const storedEmployeeCount = Number((data.draft as { employeeCount?: number })?.employeeCount ?? data.employees?.length ?? map.size);
       if (map.size !== storedEmployeeCount) {
         throw new Error(
           `Draft save incomplete: expected ${storedEmployeeCount} stored employee payloads, received ${map.size}.`,
         );
       }
       draftPayloadByUserRef.current = map;
-      editedRunRowKeysRef.current.clear();
-      changedDraftFieldsRef.current.clear();
+      // Forget only what was saved exactly as sent; anything typed during the request stays unsaved.
+      const stillDirtyRows = clearSavedPayrollDraftMasks(changedDraftFieldsRef.current, sentMasks);
+      for (const key of [...editedRunRowKeysRef.current]) {
+        if (!stillDirtyRows.has(key)) editedRunRowKeysRef.current.delete(key);
+      }
       setDraftMeta({
         id: String(data.draft.id),
         version: Number(data.draft.version ?? 1),
         updatedAt: data.draft.updatedAt ?? null,
         employeeCount: Number(data.draft.employeeCount ?? map.size),
       });
-      setDraftDirty(false);
+      setDraftDirty(stillDirtyRows.size > 0);
       setDraftRevision((n) => n + 1);
-      showToast("success", `Draft saved (${expected} employees).`);
+      if (outcome.conflicts.length > 0) {
+        const nameOf = (uid: string) =>
+          String((rows.find((r) => (r as { employeeUserId?: string }).employeeUserId === uid) as { employeeName?: string } | undefined)?.employeeName ?? uid);
+        const list = outcome.conflicts.slice(0, 4).map((c) => `${nameOf(c.employeeUserId)} / ${c.field}`).join(", ");
+        showToast("success", `Draft saved with your values. Another session had also changed: ${list}${outcome.conflicts.length > 4 ? ` and ${outcome.conflicts.length - 4} more` : ""}.`);
+      } else if (outcome.changedElsewhere.length > 0) {
+        showToast("success", `Draft saved (${expected} employees). Merged changes another session saved for ${outcome.changedElsewhere.length} employee(s).`);
+      } else {
+        showToast("success", `Draft saved (${expected} employees).`);
+      }
       return true;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to save draft";
       showToast("error", msg);
-      if (msg === PAYROLL_REVISION_CONFLICT) offerPayrollConflictReload();
       return false;
     } finally {
       setDraftSaving(false);
