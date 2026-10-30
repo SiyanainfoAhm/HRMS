@@ -1,0 +1,131 @@
+[
+  {
+    "name": "typical level 10",
+    "input": {
+      "pay_level": 10,
+      "gross_basic_pay": 34590,
+      "da_percent": 53,
+      "hra_percent": 30,
+      "medical": 3000,
+      "professional_tax": 200
+    },
+    "expected": {
+      "da_amount": 18332.7,
+      "hra_amount": 10377,
+      "transport_total": 11016,
+      "total_earnings": 77315.7,
+      "cpf": 9278,
+      "total_deductions": 9478,
+      "take_home": 67837.7
+    }
+  },
+  {
+    "name": "with deductions",
+    "input": {
+      "pay_level": 10,
+      "gross_basic_pay": 34590,
+      "da_percent": 53,
+      "hra_percent": 30,
+      "medical": 3000,
+      "professional_tax": 200,
+      "lic": 1500,
+      "mess": 650,
+      "credit_society": 11750,
+      "water": 314,
+      "electricity": 49,
+      "advance": 500
+    },
+    "expected": {
+      "da_amount": 18332.7,
+      "hra_amount": 10377,
+      "transport_total": 11016,
+      "total_earnings": 77315.7,
+      "cpf": 9278,
+      "total_deductions": 24241,
+      "take_home": 53074.7
+    }
+  },
+  {
+    "name": "quarter holder (no HRA, rent deducted)",
+    "input": {
+      "pay_level": 12,
+      "gross_basic_pay": 52000,
+      "da_percent": 53,
+      "hra_percent": 30,
+      "medical": 3000,
+      "professional_tax": 200,
+      "has_quarter": true,
+      "quarter_rent": 880
+    },
+    "expected": {
+      "da_amount": 27560,
+      "hra_amount": 0,
+      "transport_total": 11016,
+      "total_earnings": 93576,
+      "cpf": 11229,
+      "total_deductions": 12309,
+      "take_home": 81267
+    }
+  },
+  {
+    "name": "zero gross",
+    "input": {
+      "pay_level": 1,
+      "gross_basic_pay": 0,
+      "da_percent": 53,
+      "hra_percent": 30,
+      "medical": 0,
+      "professional_tax": 0
+    },
+    "expected": {
+      "da_amount": 0,
+      "hra_amount": 0,
+      "transport_total": 2065.5,
+      "total_earnings": 2065.5,
+      "cpf": 248,
+      "total_deductions": 248,
+      "take_home": 1817.5
+    }
+  },
+  {
+    "name": "very large",
+    "input": {
+      "pay_level": 14,
+      "gross_basic_pay": 5000000,
+      "da_percent": 60,
+      "hra_percent": 27,
+      "medical": 3000,
+      "professional_tax": 200,
+      "income_tax": 90000
+    },
+    "expected": {
+      "da_amount": 3000000,
+      "hra_amount": 1350000,
+      "transport_total": 11520,
+      "total_earnings": 9364520,
+      "cpf": 1123742,
+      "total_deductions": 1213942,
+      "take_home": 8150578
+    }
+  },
+  {
+    "name": "fractional percentages",
+    "input": {
+      "pay_level": 8,
+      "gross_basic_pay": 28333,
+      "da_percent": 52.5,
+      "hra_percent": 27.5,
+      "medical": 3000,
+      "professional_tax": 200
+    },
+    "expected": {
+      "da_amount": 14874.83,
+      "hra_amount": 7791.58,
+      "transport_total": 5490,
+      "total_earnings": 59489.41,
+      "cpf": 7139,
+      "total_deductions": 7339,
+      "take_home": 52150.41
+    }
+  }
+]

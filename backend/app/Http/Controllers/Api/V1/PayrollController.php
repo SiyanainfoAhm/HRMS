@@ -1347,6 +1347,11 @@ class PayrollController extends Controller
             if (! is_numeric($payDays) || (float) $payDays < 0 || (float) $payDays > $daysInMonth) {
                 $problems[] = ['employee' => $label, 'field' => 'payDays', 'message' => "Pay days must be a number between 0 and {$daysInMonth}."];
             }
+            // A Master saved as "salary pending" is accepted by Master validation but cannot be paid.
+            $recalc = $row['govRecalc'] ?? $row['gov_recalc'] ?? null;
+            if (is_array($recalc) && array_key_exists('grossBasic', $recalc) && (! is_numeric($recalc['grossBasic']) || (float) $recalc['grossBasic'] <= 0)) {
+                $problems[] = ['employee' => $label, 'field' => 'grossBasicPay', 'message' => 'Payroll Master has no gross basic pay (salary pending). Complete the Master before running payroll.'];
+            }
             $gm = $row['government_monthly'] ?? $row['governmentMonthly'] ?? null;
             if (is_array($gm)) {
                 foreach (\App\Support\PayrollTotals::reconcile($gm) as $field => $message) {

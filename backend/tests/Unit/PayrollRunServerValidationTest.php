@@ -123,6 +123,15 @@ final class PayrollRunServerValidationTest extends TestCase
         $this->assertSame([], $this->problemsFor([$this->goodRow('a', ['payDays' => 0])], ['a' => 0], $users, collect(['a' => new HrmsPayrollMaster])));
     }
 
+    public function test_run_rejects_a_salary_pending_master(): void
+    {
+        $users = collect(['a' => $this->user('a', 'Asha Rao')]);
+        $row = $this->goodRow('a', ['govRecalc' => ['grossBasic' => 0]]);
+        $problems = $this->problemsFor([$row], ['a' => 0], $users, collect(['a' => new HrmsPayrollMaster]));
+        $this->assertSame('grossBasicPay', $problems[0]['field']);
+        $this->assertStringContainsString('salary pending', $problems[0]['message']);
+    }
+
     public function test_run_rejects_totals_that_do_not_match_their_components(): void
     {
         $users = collect(['a' => $this->user('a', 'Asha Rao')]);
