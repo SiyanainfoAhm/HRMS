@@ -1191,16 +1191,22 @@ class PayrollController extends Controller
         HrmsPayrollMaster $master,
         string $companyId,
         string $periodEnd,
+        bool $manualElectricityOverride = false,
     ): array {
         $num = static fn (mixed $value): float => is_numeric($value) ? (float) $value : 0.0;
         $deductions = is_array($monthly['deductions'] ?? null) ? $monthly['deductions'] : [];
         $units = max(0, $num($monthly['electricityUnitsConsumed'] ?? $monthly['electricity_units_consumed'] ?? 0));
         $requestedMode = (string) ($monthly['electricityMode'] ?? $monthly['electricity_mode'] ?? '');
-        // A units edit explicitly changes this run to tariff billing. Otherwise
-        // retain the employee's configured fixed/unit billing mode.
+        // calculateBill() derives the effective mode: Master's manual_fixed is a
+        // flat charge only while no units are recorded; positive units are billed
+        // from the tariff.
         $mode = $requestedMode === 'unit_based'
             ? 'unit_based'
             : (string) ($master->electricity_mode ?? 'manual_fixed');
+        // An amount the operator typed into the sheet is stored exactly as entered.
+        $manualOverride = $manualElectricityOverride
+            || (bool) ($monthly['electricityManualOverride'] ?? $monthly['electricity_manual_override'] ?? false)
+            || (bool) ($monthly['electricityBill']['manualOverride'] ?? false);
         $applicable = (bool) ($master->electricity_applicable ?? true);
         $tariff = $this->electricityTariffForDate($companyId, $periodEnd);
         $fixedAmount = $this->masterNumeric($master, 'electricity', 'electricity_default');
@@ -1213,12 +1219,16 @@ class PayrollController extends Controller
             // the configured fixed master amount) is the only authority here.
             0,
             $fixedAmount,
+            $manualOverride,
+            $manualOverride ? $num($deductions['electricity'] ?? 0) : null,
         );
 
         $previousElectricity = $num($deductions['electricity'] ?? 0);
         $deductions['electricity'] = $bill['total'];
         $previousDeductions = $num($monthly['totalDeductions'] ?? $monthly['total_deductions'] ?? 0);
-        $totalDeductions = round(max(0, $previousDeductions - $previousElectricity + $bill['total']), 0);
+        // Money is held at 2 decimals everywhere (same as the TypeScript sheet
+        // totals); rounding totals to whole rupees made net != gross - deductions.
+        $totalDeductions = round(max(0, $previousDeductions - $previousElectricity + $bill['total']), 2);
 
         $monthly = array_merge($monthly, [
             'deductions' => $deductions,
@@ -1232,7 +1242,7 @@ class PayrollController extends Controller
             'electricityTotal' => $bill['total'],
             'electricityApplicable' => $applicable,
             'electricityMode' => $mode,
-            'electricityManualOverride' => false,
+            'electricityManualOverride' => $manualOverride,
             'totalDeductions' => $totalDeductions,
         ]);
 
@@ -1240,14 +1250,16 @@ class PayrollController extends Controller
         // payable HRA for this period; do not mutate the underlying entitlement.
         if ((bool) ($master->has_quarter ?? false) || $master->quarter_id) {
             $previousHra = $num($monthly['hraPaid'] ?? $monthly['hra_paid'] ?? 0);
-            $totalEarnings = round(max(0, $num($monthly['totalEarnings'] ?? $monthly['total_earnings'] ?? 0) - $previousHra), 0);
+            $totalEarnings = round(max(0, $num($monthly['totalEarnings'] ?? $monthly['total_earnings'] ?? 0) - $previousHra), 2);
             $monthly['hraActual'] = 0.0;
             $monthly['hraPaid'] = 0.0;
             $monthly['totalEarnings'] = $totalEarnings;
         }
 
         $totalEarnings = $num($monthly['totalEarnings'] ?? $monthly['total_earnings'] ?? 0);
-        $monthly['netSalary'] = round($totalEarnings - $totalDeductions, 0);
+        $monthly['netSalary'] = round($totalEarnings - $totalDeductions, 2);
+        $monthly['totalEarnings'] = $totalEarnings;
+        $monthly['totalDeductions'] = $totalDeductions;
 
         return $monthly;
     }
@@ -1285,6 +1297,70 @@ class PayrollController extends Controller
 
             return $this->executePayrollRunInTransaction($user, $lockedPeriod, $rows, $year, $month, $runDay, $completeMissing);
         });
+    }
+
+    /**
+     * Fail before any write when a submitted row cannot become a payslip. Each
+     * problem names the employee and the reason so the operator can fix it.
+     *
+     * @param list<array<string, mixed>> $rows
+     * @param array<string, int|string> $masterEmployeeIds
+     */
+    private function assertRunRowsProcessable(
+        array $rows,
+        array $masterEmployeeIds,
+        \Illuminate\Support\Collection $usersById,
+        \Illuminate\Support\Collection $mastersByUserId,
+        array $existingPayslipUserIds,
+        array $existingMonthlyUserIds,
+        int $daysInMonth,
+    ): void {
+        $problems = [];
+        $seen = [];
+        foreach ($rows as $index => $row) {
+            $id = $row['employee_user_id'] ?? $row['employeeUserId'] ?? null;
+            $label = (string) ($row['employeeName'] ?? $row['name'] ?? $row['employeeCode'] ?? $row['employee_code'] ?? ('row '.($index + 1)));
+            if (! is_string($id) || $id === '') {
+                $problems[] = ['employee' => $label, 'field' => 'employeeUserId', 'message' => 'Row has no employee id.'];
+                continue;
+            }
+            $empUser = $usersById->get($id);
+            if ($empUser && trim((string) ($empUser->name ?? '')) !== '') $label = (string) $empUser->name;
+            if (isset($seen[$id])) {
+                $problems[] = ['employee' => $label, 'field' => 'employeeUserId', 'message' => 'Employee appears more than once in this run.'];
+                continue;
+            }
+            $seen[$id] = true;
+            if (! $empUser) {
+                $problems[] = ['employee' => $label, 'field' => 'employee', 'message' => 'Employee record was not found for this company.'];
+                continue;
+            }
+            if (! isset($masterEmployeeIds[$id])) {
+                $problems[] = ['employee' => $label, 'field' => 'payrollMaster', 'message' => 'No active Payroll Master (open-ended, status active) exists for this employee.'];
+            } elseif (! $mastersByUserId->has($id)) {
+                $problems[] = ['employee' => $label, 'field' => 'payrollMaster', 'message' => 'Payroll Master could not be loaded for this employee.'];
+            }
+            if (isset($existingPayslipUserIds[$id]) || isset($existingMonthlyUserIds[$id])) {
+                $problems[] = ['employee' => $label, 'field' => 'payslip', 'message' => 'A payslip already exists for this employee in this period.'];
+            }
+            $payDays = $row['pay_days'] ?? $row['payDays'] ?? null;
+            if (! is_numeric($payDays) || (float) $payDays < 0 || (float) $payDays > $daysInMonth) {
+                $problems[] = ['employee' => $label, 'field' => 'payDays', 'message' => "Pay days must be a number between 0 and {$daysInMonth}."];
+            }
+            $gm = $row['government_monthly'] ?? $row['governmentMonthly'] ?? null;
+            if (is_array($gm)) {
+                foreach (\App\Support\PayrollTotals::reconcile($gm) as $field => $message) {
+                    $problems[] = ['employee' => $label, 'field' => $field, 'message' => $message];
+                }
+            }
+        }
+        if ($problems !== []) {
+            throw new \Illuminate\Http\Exceptions\HttpResponseException(response()->json([
+                'error' => 'Payroll cannot be run: '.count($problems).' problem(s) found. Nothing was saved.',
+                'code' => 'PAYROLL_ROWS_NOT_PROCESSABLE',
+                'blockingErrors' => $problems,
+            ], 422));
+        }
     }
 
     /** All payslips, monthly snapshots, arrear settlement, and draft finalization run under the caller transaction. */
@@ -1346,14 +1422,33 @@ class PayrollController extends Controller
             ->get()
             ->keyBy('id');
 
+        // collectPayrollEmployeeUserIds() accepts masters identified by user_id
+        // when employee_user_id is null; key them the same way here so such an
+        // employee still gets the authoritative recalculation and master data.
         $mastersByUserId = HrmsPayrollMaster::query()
             ->where('company_id', $user->company_id)
-            ->whereIn('employee_user_id', $employeeUserIds)
+            ->where(function ($q) use ($employeeUserIds) {
+                $q->whereIn('employee_user_id', $employeeUserIds)->orWhereIn('user_id', $employeeUserIds);
+            })
             ->whereNull('effective_to')
             ->orderByDesc('effective_start_date')
             ->get()
-            ->unique('employee_user_id')
-            ->keyBy('employee_user_id');
+            ->unique(fn (HrmsPayrollMaster $m) => (string) ($m->employee_user_id ?? $m->user_id))
+            ->keyBy(fn (HrmsPayrollMaster $m) => (string) ($m->employee_user_id ?? $m->user_id));
+
+        if (! $completeMissing) {
+            // Never drop a submitted employee silently: a partial run would mark the
+            // whole month generated and the remaining employees could not be run.
+            $this->assertRunRowsProcessable(
+                $normalizedRows,
+                $masterEmployeeIds,
+                $usersById,
+                $mastersByUserId,
+                $existingPayslipUserIds,
+                $existingMonthlyUserIds,
+                $daysInMonth,
+            );
+        }
 
         $processRow = function (array $row) use (
             $user,
@@ -1443,11 +1538,14 @@ class PayrollController extends Controller
                 // a new payroll is persisted.  Generated historical rows are excluded:
                 // they remain an immutable snapshot when completing a missing payslip.
                 if (! $completeMissing && $master) {
+                    $govRecalc = is_array($row['govRecalc'] ?? $row['gov_recalc'] ?? null)
+                        ? ($row['govRecalc'] ?? $row['gov_recalc']) : [];
                     $gm = $this->applyAuthoritativeGovernmentPayrollAmounts(
                         $gm,
                         $master,
                         $companyId,
                         $periodEnd,
+                        (bool) ($govRecalc['electricityManualOverride'] ?? $govRecalc['electricity_manual_override'] ?? false),
                     );
                     $row['grossPay'] = (float) ($gm['totalEarnings'] ?? 0);
                     $row['deductions'] = (float) ($gm['totalDeductions'] ?? 0);
@@ -1578,6 +1676,14 @@ class PayrollController extends Controller
                 $arrearLineIdsByEmployee,
             );
         });
+
+        if (! $completeMissing && $generated !== count($normalizedRows)) {
+            // Defensive: assertRunRowsProcessable() should make this unreachable.
+            throw new \Illuminate\Http\Exceptions\HttpResponseException(response()->json([
+                'error' => "Payroll run incomplete: {$generated} of ".count($normalizedRows).' employees were generated. Nothing was saved.',
+                'code' => 'PAYROLL_RUN_INCOMPLETE',
+            ], 422));
+        }
 
         if ($generated === 0) {
             return response()->json([

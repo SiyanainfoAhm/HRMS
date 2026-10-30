@@ -269,26 +269,36 @@ final class QuarterService
             throw ValidationException::withMessages(['quarter_id' => 'This quarter is already assigned to another employee.']);
         }
 
-        if ($master->quarter_id && $master->quarter_id !== $quarterId) {
-            $old = HrmsQuarter::find($master->quarter_id);
-            if ($old) {
-                $this->unassign($old, $companyId, $actorId);
-            }
-        }
-
-        if ($employeeUserId) {
-            $this->assign($quarter, $companyId, $employeeUserId, $actorId);
-        }
-
         $payloadRent = $payload['quarter_rent'] ?? $payload['quarterRent'] ?? null;
-        $master->update([
-            'quarter_id' => $quarter->id,
-            'has_quarter' => true,
-            'quarter_rent' => $this->resolveEffectiveMasterQuarterRent(
-                $payloadRent,
-                (float) $quarter->monthly_rent,
-            ),
-        ]);
+        $effectiveRent = $this->resolveEffectiveMasterQuarterRent($payloadRent, (float) $quarter->monthly_rent);
+
+        // Unassign-old / assign-new / mirror update succeed or fail together.
+        DB::transaction(function () use ($master, $quarter, $quarterId, $employeeUserId, $companyId, $actorId, $effectiveRent): void {
+            if ($master->quarter_id && $master->quarter_id !== $quarterId) {
+                $old = HrmsQuarter::find($master->quarter_id);
+                if ($old) {
+                    $this->unassign($old, $companyId, $actorId);
+                }
+            }
+
+            if ($employeeUserId) {
+                $this->assign($quarter, $companyId, $employeeUserId, $actorId);
+                // The assignment row is what payroll resolves rent from, so an
+                // employee-specific rent entered in Master must be stored there.
+                HrmsQuarterAssignment::query()
+                    ->where('company_id', $companyId)
+                    ->where('quarter_id', $quarter->id)
+                    ->where('employee_id', $employeeUserId)
+                    ->whereNull('assigned_to')
+                    ->update(['rent_at_assignment' => $effectiveRent]);
+            }
+
+            $master->update([
+                'quarter_id' => $quarter->id,
+                'has_quarter' => true,
+                'quarter_rent' => $effectiveRent,
+            ]);
+        });
     }
 
     /**
@@ -394,7 +404,11 @@ final class QuarterService
             ->orderByDesc('assigned_from')
             ->get();
 
-        if ($assignments->count() > 1) {
+        // Repeated saves can leave several open rows for the same employee and the
+        // same quarter. They describe one occupancy, so resolve to the latest and
+        // let the repair command close the extras. Only different quarters on the
+        // same day are a genuine conflict.
+        if ($assignments->pluck('quarter_id')->unique()->count() > 1) {
             throw ValidationException::withMessages([
                 'quarterAssignment' => ["Multiple quarter assignments are active for employee {$employeeUserId} on {$asOfDate}; payroll resolution stopped."],
             ]);
