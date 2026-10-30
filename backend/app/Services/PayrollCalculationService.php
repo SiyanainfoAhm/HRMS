@@ -237,11 +237,11 @@ final class PayrollCalculationService
         $cpfBasisAmount = PayrollFieldRegistry::resolveMasterCpfBasisAmount($partialCalc, $cpfBasisKeys, $customEarnings);
         // Fixed-amount mode must honour explicit 0 (do not fall through to %).
         if ($cpfMode === 'fixed_amount') {
-            $cpfEffective = $this->roundRupees($cpfFixed);
+            $cpfEffective = $this->wholeRupee($cpfFixed);
         } elseif ($cpfDefault > 0) {
-            $cpfEffective = $this->roundRupees($cpfDefault);
+            $cpfEffective = $this->wholeRupee($cpfDefault);
         } else {
-            $cpfEffective = $this->roundRupees($cpfBasisAmount * ($cpfPercentage / 100));
+            $cpfEffective = $this->wholeRupee($cpfBasisAmount * ($cpfPercentage / 100));
         }
 
         $daCpf = $this->roundRupees((float) ($input['da_cpf'] ?? $input['da_cpf_default'] ?? $input['daCpf'] ?? $deductions['da_cpf']));
@@ -429,8 +429,19 @@ final class PayrollCalculationService
         return (bool) $flag;
     }
 
+    /**
+     * THE money rounding rule, identical to roundRupees() in src/lib/payrollMasterCalc.ts
+     * and src/lib/governmentPayroll.ts: round half up to 2 decimals (paise). Written as
+     * floor(x*100+0.5)/100 so it matches JavaScript's Math.round exactly.
+     */
     private function roundRupees(float $n): float
     {
-        return round($n, 0);
+        return floor($n * 100 + 0.5) / 100;
+    }
+
+    /** CPF is the one component taken in whole rupees (Math.round in payrollCpfCalculation.ts). */
+    private function wholeRupee(float $n): float
+    {
+        return floor($n + 0.5);
     }
 }

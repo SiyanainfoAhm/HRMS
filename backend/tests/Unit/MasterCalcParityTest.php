@@ -25,7 +25,7 @@ final class MasterCalcParityTest extends TestCase
                 // paise while the server stores whole rupees for DA/HRA/transport, so the
                 // saved figure can differ by up to the sum of those roundings. Anything
                 // larger than that is a real calculation difference.
-                $tolerance = in_array($key, ['cpf'], true) ? 1.0 : 3.0;
+                $tolerance = 0.0;
                 $this->assertEqualsWithDelta($expected, (float) $actual[$key], $tolerance, "{$case['name']}: {$key}");
             }
         }
