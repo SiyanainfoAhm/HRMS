@@ -34,15 +34,20 @@ final class PrakashAuditTest extends DatabaseTestCase
             // Credit Society and Mess come from the Master default when nothing else is entered.
             $this->assertEqualsWithDelta((float) $m->credit_society_default, (float) $row->credit_society_amount, 0.01, "Credit Society {$label}");
             $this->assertEqualsWithDelta((float) $m->mess_default, (float) $row->mess_amount, 0.01, "Mess {$label}");
-            // Quarter Rent equals the assigned quarter's monthly rent; a quarter suppresses HRA.
-            $this->assertEqualsWithDelta((float) $quarter->monthly_rent, (float) $row->quarter_rent_amount, 0.01, "Quarter Rent {$label}");
+            // Quarter Rent is the assigned quarter's monthly rent from its assignment month on, else 0; a quarter suppresses HRA.
+            $rent = (float) $row->quarter_rent_amount;
+            $this->assertTrue(abs($rent) < 0.01 || abs($rent - (float) $quarter->monthly_rent) < 0.01, "Quarter Rent {$label} = 0 or the quarter rent");
+            if ($rent > 0) {
+                $this->assertSame($quarter->quarter_name, $row->quarter_name, "quarter name saved {$label}");
+                $this->assertSame($quarter->quarter_type, $row->quarter_type, "quarter type saved {$label}");
+            }
             $this->assertEqualsWithDelta(0.0, (float) $row->hra_paid, 0.01, "HRA suppressed by quarter {$label}");
             // Net = gross - deductions.
             $this->assertEqualsWithDelta((float) $row->total_earnings - (float) $row->total_deductions, (float) $row->net_salary, 0.01, "Net {$label}");
         }
     }
 
-    public function test_electricity_is_unit_billed_or_flagged_as_manual_and_known_gaps_are_pinned(): void
+    public function test_electricity_is_unit_billed_or_the_master_default(): void
     {
         $m = $this->prakash();
         $rows = DB::table('cirt_monthly_payroll')->where('employee_user_id', $m->employee_user_id)->orderBy('month_year')->get();
@@ -51,25 +56,22 @@ final class PrakashAuditTest extends DatabaseTestCase
                 $this->assertGreaterThan(0, (float) $row->electricity_amount, 'units billed from the tariff');
             }
         }
-        // FINDING (historical, left unchanged): Sept 2026 holds Electricity 1484 with 0 units, Master default 0 and the
-        // manual-override flag false, so no rule reproduces it. Pinned so a change to saved history is noticed.
-        $sept = $rows->first(fn ($r) => str_starts_with((string) $r->month_year, '2026-09'));
-        if ($sept !== null) {
-            $this->assertEqualsWithDelta(1484.0, (float) $sept->electricity_amount, 0.01);
-            $this->assertEqualsWithDelta(0.0, (float) $sept->electricity_units_consumed, 0.01);
-            $this->assertEqualsWithDelta(0.0, (float) $m->electricity_default, 0.01);
+        // Re-run month data: no units and Master default 0, so no Electricity is charged (the old unexplained 1484 is gone with the reset).
+        foreach ($rows as $row) {
+            if ((float) $row->electricity_units_consumed <= 0) {
+                $this->assertEqualsWithDelta((float) $m->electricity_default, (float) $row->electricity_amount, 0.01);
+            }
         }
     }
 
-    public function test_quarter_identity_is_resolved_from_the_master_for_new_runs_and_history_is_untouched(): void
+    public function test_quarter_identity_is_saved_on_regenerated_rows(): void
     {
         $before = $this->finalizedSnapshot();
         $m = $this->prakash();
         $quarter = DB::table('cirt_quarters')->where('id', $m->quarter_id)->first();
         $this->assertSame('B1/7', $quarter->quarter_name);
         $this->assertSame('B1', $quarter->quarter_type);
-        // History: every saved quarter-holder row lacks quarter id/name/type (the defect). It is NOT rewritten.
-        $this->assertGreaterThan(0, DB::table('cirt_monthly_payroll')->where('has_quarter', true)->whereNull('quarter_name')->count());
+$this->assertSame(0, DB::table('cirt_monthly_payroll')->where('has_quarter', true)->where('quarter_rent_amount', '>', 0)->whereNull('quarter_name')->count(), 'every quarter-holder row that pays rent carries its quarter name');
         $source = (string) file_get_contents(base_path('app/Http/Controllers/Api/V1/PayrollController.php'));
         $this->assertStringContainsString("value('quarter_id')", $source, 'new runs resolve the quarter from the Master');
         $this->assertFinalizedUnchanged($before, 'the Prakash audit');

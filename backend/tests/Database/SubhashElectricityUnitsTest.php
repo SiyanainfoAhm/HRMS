@@ -65,6 +65,7 @@ final class SubhashElectricityUnitsTest extends DatabaseTestCase
         $out = $apply->invoke($controller, $saved['governmentMonthly'], $master, $companyId, '2026-12-31', false);
         $this->assertEquals(80, $out['electricityUnitsConsumed']);
         $this->assertEqualsWithDelta((float) $bill80['total'], (float) $out['deductions']['electricity'], 0.01);
+        $this->assertSame("unit_based", $out["electricityMode"], "stored mode is the one used to bill (not the Master manual_fixed)");
         $expectedTotal = 50000 - $out['totalDeductions'];
         $this->assertEqualsWithDelta($expectedTotal, (float) $out['netSalary'], 0.01, 'net = gross - deductions with the tariff bill');
 

@@ -1243,7 +1243,8 @@ class PayrollController extends Controller
             'electricityDuty' => $bill['dutyAmount'],
             'electricityTotal' => $bill['total'],
             'electricityApplicable' => $applicable,
-            'electricityMode' => $mode,
+            // Store the mode actually used: positive units are tariff-billed even when the Master says manual_fixed.
+            'electricityMode' => (string) ($bill['mode'] ?? $mode),
             'electricityManualOverride' => $manualOverride,
             'totalDeductions' => $totalDeductions,
         ]);
