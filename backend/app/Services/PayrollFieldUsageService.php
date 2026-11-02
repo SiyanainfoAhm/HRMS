@@ -53,10 +53,11 @@ final class PayrollFieldUsageService
                 );
                 $source = "cirt_monthly_payroll.{$bag}['{$d->field_key}']";
             }
-            $masterRows = DB::selectOne(
+            $masterRow = DB::selectOne(
                 "select count(*) as n from cirt_payroll_field_values where field_key = ? and field_value ~ '^-?[0-9]+(\\.[0-9]+)?$' and field_value::numeric <> 0",
                 [$d->field_key],
-            )->n ?? 0;
+            );
+            $masterRows = isset($masterRow->n) ? $masterRow->n : 0;
             $out[] = [
                 'field' => $d->field_label, 'key' => $d->field_key, 'group' => $d->field_group,
                 'system' => (bool) $d->is_system, 'active' => (bool) $d->is_active,
