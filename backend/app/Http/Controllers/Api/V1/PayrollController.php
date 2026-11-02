@@ -2525,7 +2525,7 @@ class PayrollController extends Controller
             'gross_arrear' => $num($gm['grossArrear'] ?? $gm['gross_arrear'] ?? 0),
             'cpf_arrear' => $num($gm['cpfArrear'] ?? $gm['cpf_arrear'] ?? ($gm['arrearDeductions']['cpfArrear'] ?? 0)),
             // Net Arrears is derived (Gross Arrears - CPF Arr), never a stored-as-typed value (CIRT-07).
-            'net_arrear' => AppSupportPayrollTotals::netArrear($gm),
+            'net_arrear' => \App\Support\PayrollTotals::netArrear($gm),
             'arrear_batch_id' => $gm['arrearBatchId'] ?? $gm['arrear_batch_id'] ?? null,
             'custom_earnings' => $gm['customEarnings'] ?? $gm['custom_earnings'] ?? null,
             'custom_deductions' => $gm['customDeductions'] ?? $gm['custom_deductions'] ?? null,
