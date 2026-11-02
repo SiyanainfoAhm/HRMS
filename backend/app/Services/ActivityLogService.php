@@ -271,7 +271,7 @@ final class ActivityLogService
         if (str_ends_with($route, 'payroll/run/audit') || preg_match('~payroll/monthly/[^/]+/audit$~', $route)) return 'payroll.generated.amended';
         if (str_ends_with($route, 'payroll/run') && $method === 'POST') return 'payroll.generated';
         if (str_ends_with($route, 'payroll/payslips') && $method === 'POST') return 'payslip.generated';
-        if ($method === 'GET' && (str_ends_with($route, 'payroll/export') || str_ends_with($route, 'payroll/master/export') || str_ends_with($route, 'payroll/master/export-employee-payroll'))) return 'payroll.excel.exported';
+        if ($method === 'GET' && (str_ends_with($route, 'payroll/export') || str_contains($route, 'payroll/post-downloads/') || str_ends_with($route, 'payroll/master/export') || str_ends_with($route, 'payroll/master/export-employee-payroll'))) return 'payroll.excel.exported';
         if ($method === 'GET' && str_ends_with($route, 'payslips/employee')) return 'payslip.viewed';
         if (preg_match('~(?:users/[^/]+|users)$~', $route) && in_array($method, ['POST', 'PUT'], true)) return 'user.access.changed';
         if (preg_match('~(?:company/(?:me|setup)|settings/(?:salary-increment/apply|payroll-fields(?:/[^/]+)?(?:/deactivate)?|payroll-calculation-settings))$~', $route) && in_array($method, ['POST', 'PUT', 'DELETE'], true)) return 'payroll.configuration.changed';
