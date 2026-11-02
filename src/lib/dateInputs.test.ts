@@ -140,13 +140,8 @@ const monthFilled = html(createElement(MonthInput, { value: "2026-10", onChange:
 assertEq(monthFilled.includes("Oct 2026"), true, "month shows Oct 2026");
 assertEq(monthFilled.includes('aria-label="Clear To month"'), true, "optional month has a clear button");
 
-// ---- smoke: the two screens use the shared components
+// ---- smoke: the Activity Log uses the shared components (the TDS month range lives in the Run Payroll Downloads menu, see downloadsMenu.test.ts)
 async function smoke() {
-  const downloads = html(createElement((await import("../components/payroll/PostPayrollDownloads")).PostPayrollDownloads));
-  assertEq(downloads.includes("Post Payroll Downloads"), true, "downloads screen renders");
-  assertEq(downloads.includes("To month (TDS only, optional)"), true, "label kept");
-  assertEq(downloads.includes(">Optional<"), true, "To month shows the Optional placeholder");
-  assertEq(/type="(month|date)"/.test(downloads), false, "downloads has no native month/date input");
   const act = html(createElement((await import("../components/activity/ActivityEntriesView")).ActivityEntriesView));
   assertEq(act.includes('aria-label="From date"') && act.includes('aria-label="To date"'), true, "activity filters use DateInput");
   assertEq(/type="(month|date)"/.test(act), false, "activity entries has no native date input");

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { forwardRef, useImperativeHandle, useState } from "react";
 import { AppPageLoader } from "@/components/ui/AppPageLoader";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -37,7 +37,12 @@ async function downloadFromApi(path: string, fallbackName: string) {
   URL.revokeObjectURL(url);
 }
 
+/** Lets the Downloads menu open the dialog without rendering the standalone button. */
+export type EmployeePayrollExportHandle = { openDialog: () => void };
+
 type Props = {
+  /** Hide the standalone button (the Downloads menu opens the dialog through the ref). */
+  hideTrigger?: boolean;
   /** Prefer shorter label on Run Payroll toolbar */
   buttonLabel?: string;
   disabled?: boolean;
@@ -53,12 +58,16 @@ type Props = {
  * Download saved employee-payroll snapshots for one month or a custom three-month period.
  * Shared by Payroll Master and Run Payroll.
  */
-export function EmployeePayrollExportButton({
-  buttonLabel = "Export Employee Payroll",
-  disabled = false,
-  className,
-  resolveEmployeeUserIds,
-}: Props) {
+export const EmployeePayrollExportButton = forwardRef<EmployeePayrollExportHandle, Props>(function EmployeePayrollExportButton(
+  {
+    buttonLabel = "Export Employee Payroll",
+    disabled = false,
+    className,
+    resolveEmployeeUserIds,
+    hideTrigger = false,
+  },
+  ref,
+) {
   const { showToast } = useToast();
   const [open, setOpen] = useState(false);
   const [loadingOpts, setLoadingOpts] = useState(false);
@@ -162,19 +171,23 @@ export function EmployeePayrollExportButton({
     }
   }
 
+  useImperativeHandle(ref, () => ({ openDialog: () => void openDialog() }));
+
   return (
     <>
-      <Button
-        type="button"
-        size="sm"
-        variant="outline"
-        className={className}
-        disabled={disabled || downloading}
-        loading={downloading}
-        onClick={() => void openDialog()}
-      >
-        {buttonLabel}
-      </Button>
+      {hideTrigger ? null : (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className={className}
+          disabled={disabled || downloading}
+          loading={downloading}
+          onClick={() => void openDialog()}
+        >
+          {buttonLabel}
+        </Button>
+      )}
 
       <Modal
         open={open}
@@ -270,4 +283,4 @@ export function EmployeePayrollExportButton({
       </Modal>
     </>
   );
-}
+});
