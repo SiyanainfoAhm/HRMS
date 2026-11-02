@@ -12,26 +12,58 @@ use Illuminate\Validation\ValidationException;
 
 class PayrollFieldService
 {
+    /** @var array<string, bool> request-scoped schema lookups (CIRT-03: each Schema::has* is a catalog query). */
+    private static array $schemaMemo = [];
+
+    /** @var array<string, bool> companies whose system field definitions were verified complete in this process. */
+    private static array $defaultsVerified = [];
+
+    /** @var array<string, array<string, mixed>> getPayrollConfig() results, dropped on every write. */
+    private array $configMemo = [];
+
+    /** @var array<string, HrmsPayrollCalculationSetting> */
+    private array $settingsMemo = [];
+
+    private static function schemaHasTable(string $table): bool
+    {
+        return self::$schemaMemo["t:{$table}"] ??= Schema::hasTable($table);
+    }
+
+    private static function schemaHasColumn(string $table, string $column): bool
+    {
+        return self::$schemaMemo["c:{$table}.{$column}"] ??= Schema::hasColumn($table, $column);
+    }
+
+    private function forgetConfigMemo(): void
+    {
+        $this->configMemo = [];
+        $this->settingsMemo = [];
+    }
+
     public function ensureCompanyDefaults(string $companyId, ?string $createdBy = null): void
     {
-        if (! Schema::hasTable('cirt_payroll_field_definitions')) {
+        if (! self::schemaHasTable('cirt_payroll_field_definitions')) {
             return;
         }
 
-        foreach (PayrollFieldRegistry::systemFieldDefinitions() as $def) {
-            $exists = HrmsPayrollFieldDefinition::query()
-                ->where('company_id', $companyId)
-                ->where('field_key', $def['field_key'])
-                ->exists();
-            if ($exists) {
-                continue;
+        if (! (self::$defaultsVerified[$companyId] ?? false)) {
+            // One query for all keys instead of one EXISTS per system field (was 44 per call).
+            $existing = array_flip(HrmsPayrollFieldDefinition::query()->where('company_id', $companyId)->pluck('field_key')->all());
+            $created = false;
+            foreach (PayrollFieldRegistry::systemFieldDefinitions() as $def) {
+                if (isset($existing[$def['field_key']])) {
+                    continue;
+                }
+                HrmsPayrollFieldDefinition::create([
+                    'id' => (string) Str::uuid(),
+                    'company_id' => $companyId,
+                    'created_by' => $createdBy,
+                    ...$def,
+                ]);
+                $created = true;
             }
-            HrmsPayrollFieldDefinition::create([
-                'id' => (string) Str::uuid(),
-                'company_id' => $companyId,
-                'created_by' => $createdBy,
-                ...$def,
-            ]);
+            // Only remember a company once nothing had to be created (a rolled-back creation must be redone).
+            self::$defaultsVerified[$companyId] = ! $created;
         }
 
         $this->ensureCalculationSettings($companyId);
@@ -39,9 +71,12 @@ class PayrollFieldService
 
     public function ensureCalculationSettings(string $companyId): HrmsPayrollCalculationSetting
     {
+        if (isset($this->settingsMemo[$companyId])) {
+            return $this->settingsMemo[$companyId];
+        }
         $existing = HrmsPayrollCalculationSetting::query()->where('company_id', $companyId)->first();
         if ($existing) {
-            return $existing;
+            return $this->settingsMemo[$companyId] = $existing;
         }
 
         return HrmsPayrollCalculationSetting::create([
@@ -59,6 +94,10 @@ class PayrollFieldService
     /** @return array{fields: list<array<string, mixed>>, calculationSettings: array<string, mixed>} */
     public function getPayrollConfig(string $companyId, ?string $group = null, bool $activeOnly = true): array
     {
+        $memoKey = $companyId.'|'.($group ?? '').'|'.($activeOnly ? '1' : '0');
+        if (isset($this->configMemo[$memoKey])) {
+            return $this->configMemo[$memoKey];
+        }
         $this->ensureCompanyDefaults($companyId);
 
         $query = HrmsPayrollFieldDefinition::query()
@@ -76,7 +115,7 @@ class PayrollFieldService
         $settings = $this->ensureCalculationSettings($companyId);
         $fields = $query->get()->map(fn (HrmsPayrollFieldDefinition $f) => $this->formatField($f))->values()->all();
 
-        return [
+        return $this->configMemo[$memoKey] = [
             'fields' => $fields,
             'calculationSettings' => $this->formatCalculationSettings($settings, $fields),
         ];
@@ -107,6 +146,7 @@ class PayrollFieldService
     /** @param array<string, mixed> $data */
     public function createField(string $companyId, array $data, ?string $createdBy = null): array
     {
+        $this->forgetConfigMemo();
         $this->ensureCompanyDefaults($companyId);
 
         $fieldKey = trim((string) ($data['field_key'] ?? $data['fieldKey'] ?? ''));
@@ -178,6 +218,7 @@ class PayrollFieldService
     /** @param array<string, mixed> $data */
     public function updateField(string $companyId, string $id, array $data): array
     {
+        $this->forgetConfigMemo();
         $field = HrmsPayrollFieldDefinition::query()->where('company_id', $companyId)->findOrFail($id);
 
         if ($field->is_system) {
@@ -255,6 +296,7 @@ class PayrollFieldService
 
     public function deactivateField(string $companyId, string $id): array
     {
+        $this->forgetConfigMemo();
         $field = HrmsPayrollFieldDefinition::query()->where('company_id', $companyId)->findOrFail($id);
         $field->update(['is_active' => false]);
 
@@ -270,6 +312,7 @@ class PayrollFieldService
      */
     public function deleteField(string $companyId, string $id): array
     {
+        $this->forgetConfigMemo();
         $field = HrmsPayrollFieldDefinition::query()->where('company_id', $companyId)->findOrFail($id);
 
         if ($field->is_system) {
@@ -314,6 +357,7 @@ class PayrollFieldService
     /** @param array<string, mixed> $data */
     public function saveCalculationSettings(string $companyId, array $data): array
     {
+        $this->forgetConfigMemo();
         $settings = $this->ensureCalculationSettings($companyId);
         $pct = (float) ($data['cpf_percentage'] ?? $data['cpfPercentage'] ?? $settings->cpf_percentage);
         $basis = $data['cpf_basis_field_keys'] ?? $data['cpfBasisFieldKeys'] ?? $settings->cpf_basis_field_keys;
@@ -361,16 +405,16 @@ class PayrollFieldService
             'cpf_percentage' => $pct,
             'cpf_basis_field_keys' => is_array($basis) ? array_values(array_unique(array_map('strval', $basis))) : ($settings->cpf_basis_field_keys ?? []),
         ];
-        if (Schema::hasColumn('cirt_payroll_calculation_settings', 'cpf_calculation_mode')) {
+        if (self::schemaHasColumn('cirt_payroll_calculation_settings', 'cpf_calculation_mode')) {
             $update['cpf_calculation_mode'] = $mode === 'fixed_amount' ? 'fixed_amount' : 'percentage';
         }
-        if (Schema::hasColumn('cirt_payroll_calculation_settings', 'cpf_fixed_amount')) {
+        if (self::schemaHasColumn('cirt_payroll_calculation_settings', 'cpf_fixed_amount')) {
             $update['cpf_fixed_amount'] = max(0, $fixed);
         }
-        if (Schema::hasColumn('cirt_payroll_calculation_settings', 'electricity_unit_rate')) {
+        if (self::schemaHasColumn('cirt_payroll_calculation_settings', 'electricity_unit_rate')) {
             $update['electricity_unit_rate'] = max(0, $elecRate);
         }
-        if (Schema::hasColumn('cirt_payroll_calculation_settings', 'night_allowance_basic_ceiling')) {
+        if (self::schemaHasColumn('cirt_payroll_calculation_settings', 'night_allowance_basic_ceiling')) {
             $update['night_allowance_basic_ceiling'] = max(0, $nightCeiling);
         }
 
@@ -523,7 +567,7 @@ class PayrollFieldService
     /** @return array<string, string> */
     public function getCustomFieldValuesForMaster(string $companyId, string $masterId): array
     {
-        if (! Schema::hasTable('cirt_payroll_field_values')) {
+        if (! self::schemaHasTable('cirt_payroll_field_values')) {
             return [];
         }
 
@@ -542,7 +586,7 @@ class PayrollFieldService
      */
     public function getCustomFieldValuesForMasters(string $companyId, array $masterIds, ?string $asOfDate = null): array
     {
-        if (! Schema::hasTable('cirt_payroll_field_values') || $masterIds === []) {
+        if (! self::schemaHasTable('cirt_payroll_field_values') || $masterIds === []) {
             return [];
         }
 
@@ -550,7 +594,7 @@ class PayrollFieldService
         $query = HrmsPayrollFieldValue::query()
             ->where('company_id', $companyId)
             ->whereIn('payroll_master_id', $masterIds);
-        if ($asOfDate !== null && Schema::hasColumn('cirt_payroll_field_values', 'recurrence')) {
+        if ($asOfDate !== null && self::schemaHasColumn('cirt_payroll_field_values', 'recurrence')) {
             $query->where(function ($q) use ($asOfDate): void {
                 $q->where(function ($q) use ($asOfDate): void {
                     $q->where('recurrence', 'recurring')
@@ -577,7 +621,7 @@ class PayrollFieldService
         ?string $employeeId,
         array $values,
     ): void {
-        if (! Schema::hasTable('cirt_payroll_field_values')) {
+        if (! self::schemaHasTable('cirt_payroll_field_values')) {
             return;
         }
 
@@ -864,7 +908,7 @@ class PayrollFieldService
 
     private function fieldHasValues(HrmsPayrollFieldDefinition $field): bool
     {
-        if (! Schema::hasTable('cirt_payroll_field_values')) {
+        if (! self::schemaHasTable('cirt_payroll_field_values')) {
             return false;
         }
 
@@ -928,25 +972,25 @@ class PayrollFieldService
         return [
             'cpfPercentage' => (float) $settings->cpf_percentage,
             'cpfBasisFieldKeys' => $settings->cpf_basis_field_keys ?? [],
-            'cpfCalculationMode' => Schema::hasColumn('cirt_payroll_calculation_settings', 'cpf_calculation_mode')
+            'cpfCalculationMode' => self::schemaHasColumn('cirt_payroll_calculation_settings', 'cpf_calculation_mode')
                 ? (string) ($settings->cpf_calculation_mode ?? 'percentage')
                 : 'percentage',
-            'cpfFixedAmount' => Schema::hasColumn('cirt_payroll_calculation_settings', 'cpf_fixed_amount')
+            'cpfFixedAmount' => self::schemaHasColumn('cirt_payroll_calculation_settings', 'cpf_fixed_amount')
                 ? (float) ($settings->cpf_fixed_amount ?? 0)
                 : 0,
-            'electricityUnitRate' => Schema::hasColumn('cirt_payroll_calculation_settings', 'electricity_unit_rate')
+            'electricityUnitRate' => self::schemaHasColumn('cirt_payroll_calculation_settings', 'electricity_unit_rate')
                 ? (float) ($settings->electricity_unit_rate ?? 0)
                 : 0,
-            'nightAllowanceBasicCeiling' => Schema::hasColumn('cirt_payroll_calculation_settings', 'night_allowance_basic_ceiling')
+            'nightAllowanceBasicCeiling' => self::schemaHasColumn('cirt_payroll_calculation_settings', 'night_allowance_basic_ceiling')
                 ? (float) ($settings->night_allowance_basic_ceiling ?? NightAllowanceRateService::DEFAULT_BASIC_CEILING)
                 : NightAllowanceRateService::DEFAULT_BASIC_CEILING,
             'cpfFormulaPreview' => PayrollFieldRegistry::cpfFormulaPreview(
                 $basisLabels,
                 (float) $settings->cpf_percentage,
-                Schema::hasColumn('cirt_payroll_calculation_settings', 'cpf_calculation_mode')
+                self::schemaHasColumn('cirt_payroll_calculation_settings', 'cpf_calculation_mode')
                     ? (string) ($settings->cpf_calculation_mode ?? 'percentage')
                     : 'percentage',
-                Schema::hasColumn('cirt_payroll_calculation_settings', 'cpf_fixed_amount')
+                self::schemaHasColumn('cirt_payroll_calculation_settings', 'cpf_fixed_amount')
                     ? (float) ($settings->cpf_fixed_amount ?? 0)
                     : 0,
             ),
