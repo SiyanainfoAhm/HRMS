@@ -19,6 +19,8 @@ final class PrakashAuditTest extends DatabaseTestCase
         // Fixture of the dev database after a re-run; the client copy has its own real data (see ClientDataCopyTest).
         DB::connection()->getDatabaseName() === 'hrms' || $this->markTestSkipped('Dev-database fixture.');
         DB::table('cirt_monthly_payroll')->where('employee_user_id', $m->employee_user_id)->exists() || $this->markTestSkipped('No generated payroll for employee 055 in this database.');
+        // The client's real closed months hold known defects (units billed as 0, DA at the old %); those are pinned in ClientDataCopyTest.
+        DB::table('cirt_monthly_payroll')->where('employee_user_id', $m->employee_user_id)->where('electricity_units_consumed', '>', 0)->where('electricity_amount', 0)->doesntExist() || $this->markTestSkipped('Holds the client\x27s real data; see ClientDataCopyTest.');
 
         return $m;
     }

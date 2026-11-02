@@ -4,6 +4,7 @@ import { COOKIE_NAME, TOKEN_COOKIE_NAME } from "@/lib/auth";
 import { peekSessionFromCookie } from "@/lib/authEdge";
 import { isAdminRole } from "@/lib/roles";
 import { applyNoStoreHeaders } from "@/lib/apiAuth";
+import { loginCapFlagged } from "@/lib/authRouting";
 
 const PUBLIC_PAGE_PREFIXES = ["/auth"];
 
@@ -46,6 +47,13 @@ export function middleware(request: NextRequest) {
     if (isAdminOnlyPage(pathname) && session && !isAdminRole(session.role)) {
       return applyNoStoreHeaders(NextResponse.redirect(new URL("/employee/dashboard", request.url)));
     }
+  }
+
+  // The login page reads this to know a guard already sent the user here: it must not redirect again.
+  if (pathname.startsWith("/auth/login") && loginCapFlagged(request.nextUrl.search)) {
+    const forwarded = new Headers(request.headers);
+    forwarded.set("x-auth-cap", "1");
+    return applyNoStoreHeaders(NextResponse.next({ request: { headers: forwarded } }));
   }
 
   return applyNoStoreHeaders(NextResponse.next());
