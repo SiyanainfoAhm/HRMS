@@ -2419,6 +2419,19 @@ class PayrollController extends Controller
         );
         $this->nightAllowanceService->enforceCeilingOnGovernmentMonthly($gm, $nightCeiling);
 
+        // CIRT-02: the draft payload carries has_quarter but not the quarter itself, so every quarter-holder was
+        // saved with no quarter id/name/type. Take them from the Master's quarter (new runs only).
+        $quarterId = $gm['quarterId'] ?? $gm['quarter_id'] ?? null;
+        if (! $quarterId && (bool) ($gm['hasQuarter'] ?? $gm['has_quarter'] ?? false)) {
+            $quarterId = \Illuminate\Support\Facades\DB::table('cirt_payroll_master')->where('id', $masterId)->value('quarter_id');
+        }
+        if ($quarterId && empty($gm['quarterName'] ?? $gm['quarter_name'] ?? null)) {
+            $quarter = \Illuminate\Support\Facades\DB::table('cirt_quarters')->where('id', $quarterId)->first(['quarter_name', 'quarter_type']);
+            $gm['quarterId'] = $quarterId;
+            $gm['quarterName'] = $quarter->quarter_name ?? null;
+            $gm['quarterType'] = $quarter->quarter_type ?? null;
+        }
+
         $record = HrmsGovernmentMonthlyPayroll::create([
             'company_id' => $companyId,
             'payroll_period_id' => $periodId,
