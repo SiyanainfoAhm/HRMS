@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { SESSION_EXPIRED_PATH } from "@/lib/authRouting";
 import { cookies } from "next/headers";
 import { COOKIE_NAME, TOKEN_COOKIE_NAME } from "@/lib/auth";
 import { getValidatedSession } from "@/lib/authValidate";
@@ -12,7 +13,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     cookieStore.get(COOKIE_NAME)?.value,
     cookieStore.get(TOKEN_COOKIE_NAME)?.value,
   );
-  if (!session) redirect("/auth/login");
+  if (!session) redirect(SESSION_EXPIRED_PATH);
 
   const companyBranding = {
     name: FIXED_ORG_BRANDING.organization,

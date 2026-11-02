@@ -31,9 +31,8 @@ export function middleware(request: NextRequest) {
   const apiToken = request.cookies.get(TOKEN_COOKIE_NAME)?.value;
   const session = peekSessionFromCookie(request.cookies.get(COOKIE_NAME)?.value);
 
-  if (pathname.startsWith("/auth/login") && apiToken) {
-    return applyNoStoreHeaders(NextResponse.redirect(new URL("/dashboard", request.url)));
-  }
+  // /auth/login is never redirected here: a cookie that is present may be stale. The login page validates the
+  // session itself (decideLoginPage) and redirects to the dashboard only for a valid one.
 
   if (!isPublicPage(pathname)) {
     if (!apiToken) {

@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { SESSION_EXPIRED_PATH } from "@/lib/authRouting";
 import { cookies } from "next/headers";
 import { COOKIE_NAME, TOKEN_COOKIE_NAME } from "@/lib/auth";
 import { getValidatedSession } from "@/lib/authValidate";
@@ -12,7 +13,7 @@ export default async function DashboardPage() {
   );
 
   if (!session) {
-    redirect("/auth/login");
+    redirect(SESSION_EXPIRED_PATH);
   }
 
   if (isAdminRole(session.role)) {
