@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { actionLabel, auditChanges, buildActivityLogQueryParams, changeClassification, eventSummary, fieldLabel, formatTimestamp, payrollMonth, safeValue } from "./activityLogPresentation.ts";
+import { actionLabel, auditChanges, buildActivityLogQueryParams, changeClassification, eventSummary, fieldLabel, formatTimestamp, payrollMonth, safeValue } from "./activityLogPresentation";
 
 const event = {
   eventId: "event-1", timestamp: "2026-10-27T11:52:00Z", actor: "Admin", actorRole: "admin", action: "payroll.generated.amended", outcome: "succeeded", employee: "Harshal Vishnu Karalkar", payrollYear: 2026, payrollMonth: 11,

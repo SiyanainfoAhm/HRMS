@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { FormField } from "@/components/ui/FormField";
 import { Input } from "@/components/ui/Input";
+import { DateInput } from "@/components/ui/DateInput";
 import { Modal } from "@/components/ui/Modal";
 import { formatNightAllowanceSlabLabel, DEFAULT_NIGHT_ALLOWANCE_BASIC_CEILING } from "@/lib/nightAllowanceCalculation";
 import { payLevelSelectOptions } from "@/lib/payLevel";
@@ -366,11 +367,7 @@ export function NightAllowanceSettings() {
             />
           </FormField>
           <FormField label="Effective From">
-            <Input
-              type="date"
-              value={form.effectiveFrom}
-              onChange={(e) => setForm((f) => ({ ...f, effectiveFrom: e.target.value }))}
-            />
+            <DateInput aria-label="Effective from" optional value={form.effectiveFrom} onChange={(v) => setForm((f) => ({ ...f, effectiveFrom: v }))} />
           </FormField>
           {form.slabNo && form.payLevel && form.ratePerDuty ? (
             <p className="text-xs text-slate-600">

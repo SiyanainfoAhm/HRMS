@@ -5,6 +5,8 @@ import { Download, Search, SlidersHorizontal } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Button } from "@/components/ui/Button";
 import { PaginationControls } from "@/components/ui/PaginationControls";
+import { MonthInput } from "@/components/ui/MonthInput";
+import { DateInput } from "@/components/ui/DateInput";
 import { emptyPaginationMeta, type PaginationMeta } from "@/lib/pagination";
 import { ActivityLogDetails } from "./ActivityLogDetails";
 import { ActivityEntriesView } from "./ActivityEntriesView";
@@ -87,9 +89,9 @@ function LegacyActivityLogScreen() {
         <Select label="Outcome" value={outcome} onChange={(v) => update(setOutcome, v)}><option value="">All outcomes</option><option value="succeeded">Successful</option><option value="failed">Failed</option></Select>
         <label className="min-w-0"><span className="label-field">User</span><input className="input-field w-full" value={actor} onChange={(e) => update(setActor, e.target.value)} placeholder="Name or email" /></label>
         <label className="min-w-0"><span className="label-field">Employee</span><input className="input-field w-full" value={employee} onChange={(e) => update(setEmployee, e.target.value)} placeholder="Name or employee code" /></label>
-        <label className="min-w-0"><span className="label-field">Payroll month</span><input className="input-field w-full" type="month" value={period} onChange={(e) => update(setPeriod, e.target.value)} /></label>
-        <label className="min-w-0"><span className="label-field">From</span><input className="input-field w-full" type="date" value={from} onChange={(e) => update(setFrom, e.target.value)} /></label>
-        <label className="min-w-0"><span className="label-field">To</span><input className="input-field w-full" type="date" value={to} onChange={(e) => update(setTo, e.target.value)} /></label>
+        <div className="min-w-0"><span className="label-field">Payroll month</span><MonthInput aria-label="Payroll month" optional value={period} onChange={(v) => update(setPeriod, v)} /></div>
+        <div className="min-w-0"><span className="label-field">From</span><DateInput aria-label="From date" optional value={from} max={to || undefined} onChange={(v) => update(setFrom, v)} /></div>
+        <div className="min-w-0"><span className="label-field">To</span><DateInput aria-label="To date" optional value={to} min={from || undefined} onChange={(v) => update(setTo, v)} /></div>
       </div>
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700" role="alert">{error}</p> : null}
       <div className="overflow-x-auto rounded-xl border border-slate-200">

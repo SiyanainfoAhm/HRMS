@@ -1,3 +1,4 @@
+import { formatDmyTimeFromIso } from "../../lib/dateInputs";
 export type AuditRecord = {
   eventId: string;
   timestamp: string | null;
@@ -190,8 +191,7 @@ export function eventSummary(event: AuditRecord, changes = auditChanges(event)):
 
 export function formatTimestamp(timestamp: string | null): string {
   if (!timestamp) return "—";
-  const date = new Date(timestamp);
-  return Number.isNaN(date.getTime()) ? "—" : new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeStyle: "short" }).format(date);
+  return formatDmyTimeFromIso(timestamp); // DD/MM/YYYY, 3:22 pm (IST), same as the Activity tab
 }
 
 export function payrollMonth(year: number | null, month: number | null): string {

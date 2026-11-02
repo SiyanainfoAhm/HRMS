@@ -197,7 +197,7 @@ final class ActivityLogController extends Controller
                 return [
                     'id' => $e->id, 'action' => $e->action_label, 'actionCode' => $e->action_code,
                     'performedBy' => $e->performed_by_name ?? 'Unknown user',
-                    'date' => $at?->format('d-m-Y'), 'time' => $at?->format('H:i:s'), 'module' => $e->module,
+                    'date' => $at?->format('d-m-Y'), 'time' => $at?->format('H:i:s'), 'performedAt' => $e->performed_at?->toIso8601String(), 'module' => $e->module,
                     'outcome' => $e->outcome, 'employeeCount' => (int) $e->employee_count, 'detailCount' => (int) $e->detail_count,
                     'payrollYear' => $e->payroll_year, 'payrollMonth' => $e->payroll_month,
                 ];
@@ -214,7 +214,7 @@ final class ActivityLogController extends Controller
 
         return response()->json(['entry' => [
             'id' => $entry->id, 'action' => $entry->action_label, 'performedBy' => $entry->performed_by_name,
-            'date' => $at?->format('d-m-Y'), 'time' => $at?->format('H:i:s'), 'module' => $entry->module, 'outcome' => $entry->outcome,
+            'date' => $at?->format('d-m-Y'), 'time' => $at?->format('H:i:s'), 'performedAt' => $entry->performed_at?->toIso8601String(), 'module' => $entry->module, 'outcome' => $entry->outcome,
             'details' => $entry->details()->get()->map(fn ($d) => [
                 'employee' => $d->employee_label, 'changedItem' => $d->changed_item,
                 'previousValue' => $d->previous_value, 'updatedValue' => $d->updated_value,

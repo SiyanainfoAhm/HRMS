@@ -184,7 +184,7 @@ final class ActivityEntriesTest extends DatabaseTestCase
         $controller = new ActivityLogController;
         $list = $controller->entries($this->request('GET', 'api/v1/activity-logs/entries', ['module' => 'Payroll'], $admin))->getData(true);
         $first = $list['entries'][0];
-        $this->assertSame(['id', 'action', 'actionCode', 'performedBy', 'date', 'time', 'module', 'outcome', 'employeeCount', 'detailCount', 'payrollYear', 'payrollMonth'], array_keys($first));
+        $this->assertSame(['id', 'action', 'actionCode', 'performedBy', 'date', 'time', 'performedAt', 'module', 'outcome', 'employeeCount', 'detailCount', 'payrollYear', 'payrollMonth'], array_keys($first));
         $this->assertMatchesRegularExpression('/^\d{2}-\d{2}-\d{4}$/', $first['date']);
         $this->assertMatchesRegularExpression('/^\d{2}:\d{2}:\d{2}$/', $first['time']);
         $this->assertSame('Payroll', $first['module']);

@@ -4,13 +4,25 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Services\PostPayrollDownloadService;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 /** CIRT-11/12: Post Payroll Downloads (CPF, Division-Wise, TDS, Paybill) for generated months. */
 final class PostPayrollDownloadController extends Controller
 {
     public function __construct(private readonly PostPayrollDownloadService $service) {}
+
+    /** Months that have generated payroll (the only months a report can be built for), as "YYYY-MM". */
+    public function months(Request $request): JsonResponse
+    {
+        $months = DB::table('cirt_monthly_payroll')
+            ->where('company_id', (string) $request->user()->company_id)
+            ->selectRaw("to_char(month_year, 'YYYY-MM') as ym")->distinct()->orderBy('ym')->pluck('ym')->all();
+
+        return response()->json(['months' => $months]);
+    }
 
     public function download(Request $request, string $type): BinaryFileResponse
     {
