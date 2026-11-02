@@ -87,7 +87,10 @@ export function applyAutoArrearsToGovernmentMonthly<T extends Record<string, unk
   const trA = presentNumber(arrear?.transportArrear) ?? 0;
   const cpfA = presentNumber(arrear?.cpfArrear) ?? 0;
   const grossA = presentNumber(arrear?.grossArrear) ?? r2(daA + trA);
-  const netA = presentNumber(arrear?.netArrear) ?? r2(grossA - cpfA);
+  // Net Arrears is a derived memo (Gross Arrears - CPF Arr). A passed-in value is
+  // never trusted: UI rows default it to 0, which used to be stored next to a
+  // positive Gross Arrears (CIRT-07).
+  const netA = r2(Math.max(0, grossA - cpfA));
 
   // Arrear already inside the snapshot totals.
   const daIn = presentNumber(comp.daArrearsPaid) ?? 0;

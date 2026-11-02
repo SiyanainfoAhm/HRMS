@@ -1,3 +1,4 @@
+import { PAYROLL_LABELS } from "./payrollLabels";
 /**
  * Government payslip: T-account style (earnings left, deductions right) and period title.
  * Matches typical state govt pay slip ordering (see earnings / deductions sequence).
@@ -135,12 +136,12 @@ export function governmentPayslipEarningPairs(
     ["Night Allowance", gnum(gov, "night_allowance_paid")],
     ["Uniform Allowance", gnum(gov, "uniform_allowance_paid")],
     ["Education Allowance", gnum(gov, "education_allowance_paid")],
-    ["DA Arrears", gnum(gov, "da_arrears_paid")],
-    ["Transport Arrears", gnum(gov, "transport_arrears_paid")],
+    [PAYROLL_LABELS.daArrears, gnum(gov, "da_arrears_paid")],
+    [PAYROLL_LABELS.transportArrears, gnum(gov, "transport_arrears_paid")],
     // Gross arrear already contains the DA and transport arrear lines above; show
     // only the remainder so the printed lines add up to Gross (same rule as the
     // sheet totals: totalArrearsPaid in payrollArrearCalc.ts).
-    ["Arrears", Math.max(0, gnum(gov, "gross_arrear") - gnum(gov, "da_arrears_paid") - gnum(gov, "transport_arrears_paid"))],
+    [PAYROLL_LABELS.grossArrears, Math.max(0, gnum(gov, "gross_arrear") - gnum(gov, "da_arrears_paid") - gnum(gov, "transport_arrears_paid"))],
     ["Encashment", gnum(gov, "encashment_paid")],
     ["Encashment DA", gnum(gov, "encashment_da_paid")],
   ];
@@ -158,7 +159,7 @@ export function governmentPayslipDeductionPairs(
     ["LIC", gnum(gov, "lic_amount")],
     ["CPF", gnum(gov, "cpf_amount")],
     ["DA CPF", gnum(gov, "da_cpf_amount")],
-    ["CPF on DA/Transport Arrears", gnum(gov, "cpf_arrear")],
+    [PAYROLL_LABELS.cpfArrears, gnum(gov, "cpf_arrear")],
     ["VPF", gnum(gov, "vpf_amount")],
     ["Post Office", gnum(gov, "post_office_amount")],
     ["Credit Society", gnum(gov, "credit_society_amount")],

@@ -2,8 +2,16 @@
 
 import type { ReactNode } from "react";
 import type { GovernmentPreviewMonthly } from "./GovernmentRunPreviewTable";
+import { PAYROLL_LABELS } from "@/lib/payrollLabels";
 
-export const GOV_PREVIEW_EARNING_FIELDS: { key: keyof GovernmentPreviewMonthly; label: string; fieldKey?: string }[] = [
+/**
+ * `arrearField` marks the arrears lines that are edited through the arrear path
+ * (grossArrear/netArrear are not sheet earning keys, so `govEarning_<key>` would be ignored).
+ * `memo` lines are derived, shown for information and never added to totals.
+ */
+export type GovPreviewLine<K> = { key: K; label: string; fieldKey?: string; arrearField?: string; memo?: boolean };
+
+export const GOV_PREVIEW_EARNING_FIELDS: GovPreviewLine<keyof GovernmentPreviewMonthly>[] = [
   { key: "basicPaid", label: "Basic", fieldKey: "gross_basic" },
   { key: "spPayPaid", label: "Special Pay", fieldKey: "sp_pay" },
   { key: "daPaid", label: "DA", fieldKey: "da" },
@@ -14,14 +22,16 @@ export const GOV_PREVIEW_EARNING_FIELDS: { key: keyof GovernmentPreviewMonthly; 
   { key: "nightAllowancePaid", label: "N. All.", fieldKey: "night_allowance" },
   { key: "uniformAllowancePaid", label: "Uniform", fieldKey: "uniform_allowance" },
   { key: "educationAllowancePaid", label: "Education", fieldKey: "education_allowance" },
-  { key: "daArrearsPaid", label: "DA arr.", fieldKey: "da_arrears" },
-  { key: "transportArrearsPaid", label: "Tr. arr.", fieldKey: "transport_arrears" },
+  { key: "daArrearsPaid", label: PAYROLL_LABELS.daArrears, fieldKey: "da_arrears" },
+  { key: "transportArrearsPaid", label: PAYROLL_LABELS.transportArrears, fieldKey: "transport_arrears" },
   { key: "encashmentPaid", label: "Encash." },
   { key: "encashmentDaPaid", label: "Enc. DA" },
-  { key: "grossArrear", label: "Arrears", fieldKey: "gross_arrears" },
+  { key: "grossArrear", label: PAYROLL_LABELS.grossArrears, fieldKey: "gross_arrears", arrearField: "grossArrear" },
+  { key: "netArrear", label: PAYROLL_LABELS.netArrears, fieldKey: "net_arrears", arrearField: "netArrear", memo: true },
 ];
 
-export const GOV_PREVIEW_DEDUCTION_FIELDS: { key: keyof GovernmentPreviewMonthly["deductions"]; label: string; fieldKey?: string }[] = [
+/** CPF Arr is stored on the monthly row (cpfArrear), not inside `deductions`, so it is rendered after this list. */
+export const GOV_PREVIEW_DEDUCTION_FIELDS: GovPreviewLine<keyof GovernmentPreviewMonthly["deductions"]>[] = [
   { key: "incomeTax", label: "Inc. tax", fieldKey: "income_tax" },
   { key: "pt", label: "Professional Tax", fieldKey: "professional_tax" },
   { key: "lic", label: "LIC", fieldKey: "lic" },
@@ -42,6 +52,9 @@ export const GOV_PREVIEW_DEDUCTION_FIELDS: { key: keyof GovernmentPreviewMonthly
   { key: "quarterRent", label: "Quarter Rent", fieldKey: "quarter_rent" },
   { key: "other", label: "Other", fieldKey: "other_deduction" },
 ];
+
+/** CPF Arr deduction line (cpfArrear on the monthly row). */
+export const GOV_PREVIEW_CPF_ARREAR_LINE = { key: "cpfArrear", label: PAYROLL_LABELS.cpfArrears, fieldKey: "cpf_arrears", arrearField: "cpfArrear" } as const;
 
 export const payrollAmountInputClass = "payroll-amount-input";
 export const payrollDaysInputClass = "payroll-days-input";

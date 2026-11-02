@@ -9,8 +9,10 @@ import { Button } from "@/components/ui/Button";
 import type { ElectricityBillBreakdown } from "@/lib/electricityTariffCalculation";
 import { PayrollComponentScroller, type PayrollScrollerHandle } from "./PayrollComponentScroller";
 import { PayrollEmployeeCardHeader } from "./PayrollEmployeeCardHeader";
+import { PAYROLL_LABELS } from "@/lib/payrollLabels";
 import { calendarDaysInMonth, equivalentPayableDays, leaveSalaryAdjustment } from "@/lib/payrollLeaveDays";
 import {
+  GOV_PREVIEW_CPF_ARREAR_LINE,
   GOV_PREVIEW_DEDUCTION_FIELDS,
   GOV_PREVIEW_EARNING_FIELDS,
   FieldChip,
@@ -424,6 +426,15 @@ function resolveUnpaidArrears(row: GovernmentRunPreviewRow) {
   };
 }
 
+/** Value of an arrear-path line (grossArrear / cpfArrear / netArrear) for the preview chips. */
+function resolveUnpaidArrearValue(row: GovernmentRunPreviewRow, field: string): number {
+  const a = resolveUnpaidArrears(row);
+  if (field === "grossArrear") return a.grossArrear;
+  if (field === "cpfArrear") return a.cpfArrear;
+  if (field === "netArrear") return a.netArrear;
+  return 0;
+}
+
 function ArrearField({
   label,
   value,
@@ -471,31 +482,31 @@ function ArrearsUnpaidSection({
       <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-violet-900">{title}</p>
       <div className="flex flex-wrap gap-1.5 rounded-lg border border-slate-200/90 bg-white/90 p-1.5 sm:flex-nowrap">
         <ArrearField
-          label="DA arr."
+          label={PAYROLL_LABELS.daArrears}
           value={arrears.daArrear}
           readOnly={readOnly}
           onChange={(n) => onUpdate(row.employeeUserId, "daArrear", n)}
         />
         <ArrearField
-          label="Tr. arr."
+          label={PAYROLL_LABELS.transportArrears}
           value={arrears.trArrear}
           readOnly={readOnly}
           onChange={(n) => onUpdate(row.employeeUserId, "transportArrear", n)}
         />
         <ArrearField
-          label="Gross arr."
+          label={PAYROLL_LABELS.grossArrears}
           value={arrears.grossArrear}
           readOnly={readOnly}
           onChange={(n) => onUpdate(row.employeeUserId, "grossArrear", n)}
         />
         <ArrearField
-          label="CPF arr."
+          label={PAYROLL_LABELS.cpfArrears}
           value={arrears.cpfArrear}
           readOnly={readOnly}
           onChange={(n) => onUpdate(row.employeeUserId, "cpfArrear", n)}
         />
         <ArrearField
-          label="Net arr."
+          label={PAYROLL_LABELS.netArrears}
           value={arrears.netArrear}
           readOnly={readOnly}
           onChange={(n) => onUpdate(row.employeeUserId, "netArrear", n)}
@@ -866,13 +877,13 @@ function GovernmentEmployeeDetail({
             <PayrollComponentScroller ref={scrollerRef}>
               <div className="flex flex-col gap-2.5">
                 <PayrollSectionRow title="Earnings" titleClassName="text-emerald-900">
-                  {GOV_PREVIEW_EARNING_FIELDS.filter((field) => isVisibleConfiguredField(field.fieldKey)).map(({ key, label }) => (
+                  {GOV_PREVIEW_EARNING_FIELDS.filter((field) => isVisibleConfiguredField(field.fieldKey)).map(({ key, label, arrearField, memo }) => (
                     <FieldChip
                       key={key}
                       label={label}
-                      readOnly={readOnly}
-                      value={v(g, key)}
-                      onChange={(n) => onUpdate(row.employeeUserId, `govEarning_${key}`, n)}
+                      readOnly={readOnly || Boolean(memo)}
+                      value={arrearField ? resolveUnpaidArrearValue(row, arrearField) : v(g, key)}
+                      onChange={(n) => onUpdate(row.employeeUserId, arrearField ?? `govEarning_${key}`, n)}
                     />
                   ))}
                   {customEarningFields.map((f) => (
@@ -895,6 +906,14 @@ function GovernmentEmployeeDetail({
                       onChange={(n) => onUpdate(row.employeeUserId, `govDeduction_${key}`, n)}
                     />
                   ))}
+                  {isVisibleConfiguredField(GOV_PREVIEW_CPF_ARREAR_LINE.fieldKey) && (
+                    <FieldChip
+                      label={GOV_PREVIEW_CPF_ARREAR_LINE.label}
+                      readOnly={readOnly}
+                      value={resolveUnpaidArrearValue(row, GOV_PREVIEW_CPF_ARREAR_LINE.arrearField)}
+                      onChange={(n) => onUpdate(row.employeeUserId, GOV_PREVIEW_CPF_ARREAR_LINE.arrearField, n)}
+                    />
+                  )}
                   {customDeductionFields.map((f) => (
                     <FieldChip
                       key={f.id}

@@ -52,6 +52,15 @@ final class PayrollTotals
         return round($da + $tr + self::supplementalGrossArrear($gm), 2);
     }
 
+    /** Net Arrears memo = Gross Arrears - CPF Arr (floored at 0). Not part of any total. */
+    public static function netArrear(array $gm): float
+    {
+        $gross = self::amount($gm['grossArrear'] ?? $gm['gross_arrear'] ?? 0);
+        $cpf = self::amount($gm['cpfArrear'] ?? $gm['cpf_arrear'] ?? ($gm['arrearDeductions']['cpfArrear'] ?? 0));
+
+        return max(0.0, round($gross - $cpf, 2));
+    }
+
     /** Sum of the fixed (non-custom) earning lines. */
     public static function fixedEarnings(array $gm): float
     {

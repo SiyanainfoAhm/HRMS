@@ -7,6 +7,7 @@ use App\Models\HrmsMonthlyPayrollAudit;
 use App\Models\HrmsPayrollPeriod;
 use App\Models\HrmsPayslip;
 use App\Models\HrmsUser;
+use App\Support\PayrollLabels;
 use InvalidArgumentException;
 use RuntimeException;
 use Illuminate\Support\Facades\DB;
@@ -58,9 +59,9 @@ class PayrollAmendmentService
         'other' => 'Other',
         'daArrear' => 'DA Arrear',
         'transportArrear' => 'Transport Arrear',
-        'grossArrear' => 'Gross Arrear',
-        'cpfArrear' => 'CPF Arrear',
-        'netArrear' => 'Net Arrear',
+        'grossArrear' => PayrollLabels::GROSS_ARREARS,
+        'cpfArrear' => PayrollLabels::CPF_ARREARS,
+        'netArrear' => PayrollLabels::NET_ARREARS,
         'customEarnings' => 'Custom Earnings',
         'customDeductions' => 'Custom Deductions',
         'totalEarnings' => 'Total Earnings',

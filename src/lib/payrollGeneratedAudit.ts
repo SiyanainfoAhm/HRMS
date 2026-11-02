@@ -1,3 +1,5 @@
+import { PAYROLL_LABELS } from "./payrollLabels";
+
 /**
  * Helpers for Admin audit of already-generated payroll.
  * Canonical source of truth is cirt_monthly_payroll (exposed as governmentMonthly).
@@ -42,9 +44,9 @@ export const GENERATED_AUDIT_FIELD_LABELS: Record<string, string> = {
   other: "Other",
   daArrear: "DA Arrear",
   transportArrear: "Transport Arrear",
-  grossArrear: "Gross Arrear",
-  cpfArrear: "CPF Arrear",
-  netArrear: "Net Arrear",
+  grossArrear: PAYROLL_LABELS.grossArrears,
+  cpfArrear: PAYROLL_LABELS.cpfArrears,
+  netArrear: PAYROLL_LABELS.netArrears,
   customEarnings: "Custom Earnings",
   customDeductions: "Custom Deductions",
   totalEarnings: "Total Earnings",
