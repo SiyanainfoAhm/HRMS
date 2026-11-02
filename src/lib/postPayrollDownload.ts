@@ -44,6 +44,22 @@ export function fileNameFromDisposition(header: string | null | undefined, fallb
   return match?.[1] ?? fallback;
 }
 
+/**
+ * Saves a blob under a file name. The link is attached to the page (Firefox needs that) and the object URL is released
+ * only after the browser has started the download (revoking it in the same tick can cancel the download).
+ */
+export function saveBlob(blob: Blob, name: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
 /** Downloads one report and resolves with the saved file name. Rejects with the reason shown in the error toast. */
 export async function downloadPostPayrollReport(
   type: PostPayrollReportType,
@@ -58,11 +74,6 @@ export async function downloadPostPayrollReport(
   }
   const blob = await res.blob();
   const name = fileNameFromDisposition(res.headers.get("content-disposition"), `${type}_${ym.replace("-", "")}.xlsx`);
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = name;
-  a.click();
-  URL.revokeObjectURL(url);
+  saveBlob(blob, name);
   return name;
 }
