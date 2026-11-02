@@ -329,15 +329,18 @@ const STATUS_OPTIONS = ["active", "inactive", "retired", "deceased", "resigned"]
 
 const DEFAULT_DEDUCTION_FIELDS = [["professionalTax", "Professional Tax (PT)"]] as const;
 
+/**
+ * CIRT-09: Mess, Credit Society and Electricity are no longer entered in Master Payroll
+ * Deductions. Their stored Master defaults still seed Run Payroll, where they are entered
+ * every month (Electricity as units); the calculation is unchanged.
+ * Electricity applicability / mode (below) stay: they decide how Run Payroll bills it.
+ */
 const VARIABLE_DEDUCTION_FIELDS = [
   ["incomeTax", "Income Tax"],
   ["lic", "LIC"],
-  ["mess", "Mess"],
   ["welfare", "Welfare"],
   ["vpf", "VPF"],
   ["postOffice", "Post Office"],
-  ["creditSociety", "Credit Society"],
-  ["electricity", "Electricity"],
   ["water", "Water"],
   ["loanRecovery", "Bank Recovery"],
   ["otherDeduction", "Other Deduction"],
@@ -3433,7 +3436,6 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                           value={form[key]}
                           onChange={(e) => patchForm({ [key]: e.target.value })}
                           onBlur={() => touchField(key)}
-                          disabled={key === "electricity" && form.electricityMode === "unit_based" && form.electricityApplicable}
                         />
                       </FormField>
                     ))}
@@ -3460,7 +3462,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                         helperText={
                           form.electricityMode === "unit_based"
                             ? "Run Payroll uses monthly units + Admin tariff (slabs)."
-                            : "Uses the fixed Electricity amount above (legacy / non-metered)."
+                            : "Uses the stored Master Electricity default (legacy / non-metered); enter units in Run Payroll to bill by tariff."
                         }
                       >
                         <select
