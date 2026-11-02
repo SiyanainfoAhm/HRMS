@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { FormField } from "@/components/ui/FormField";
 import { Input } from "@/components/ui/Input";
+import { DateInput } from "@/components/ui/DateInput";
 import { Modal } from "@/components/ui/Modal";
 import {
   DEFAULT_APRIL_2026_ELECTRICITY_TARIFF,
@@ -294,11 +295,7 @@ export function ElectricityTariffSettings() {
         <div className="space-y-3">
           {formError ? <p className="text-sm text-red-600">{formError}</p> : null}
           <FormField label="Effective from">
-            <Input
-              type="date"
-              value={form.effectiveFrom}
-              onChange={(e) => setForm((f) => ({ ...f, effectiveFrom: e.target.value }))}
-            />
+            <DateInput aria-label="Effective from" value={form.effectiveFrom} onChange={(v) => setForm((f) => ({ ...f, effectiveFrom: v }))} />
           </FormField>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <FormField label="Sthir Aakar">

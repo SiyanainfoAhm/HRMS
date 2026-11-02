@@ -1,9 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Download } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Button } from "@/components/ui/Button";
+import { MonthInput } from "@/components/ui/MonthInput";
+import { reconcileMonthRange } from "@/lib/dateInputs";
 
 /** CIRT-11/12: Post Payroll Downloads. Each report is built from the generated payroll of the chosen month. */
 const REPORTS = [
@@ -22,6 +24,35 @@ function defaultMonth(): string {
 export function PostPayrollDownloads() {
   const [month, setMonth] = useState(defaultMonth());
   const [toMonth, setToMonth] = useState("");
+  /** Months that have generated payroll; null while loading or if the list cannot be read (then nothing is disabled). */
+  const [available, setAvailable] = useState<string[] | null>(null);
+  const touched = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/payroll/post-downloads-months", { cache: "no-store" });
+        const data = await res.json();
+        if (!res.ok || !Array.isArray(data.months) || cancelled) return;
+        setAvailable(data.months);
+        // The default (last month) may not be generated yet: start on the latest month that is, unless the user already chose.
+        if (data.months.length > 0 && !touched.current) setMonth((m) => (data.months.includes(m) ? m : data.months[data.months.length - 1]));
+      } catch {
+        /* leave every month selectable; the download reports a missing month itself */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function changeMonth(next: string) {
+    touched.current = true;
+    const r = reconcileMonthRange({ from: next, to: toMonth });
+    setMonth(r.from);
+    setToMonth(r.to);
+  }
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -61,14 +92,14 @@ export function PostPayrollDownloads() {
       <PageHeader title="Post Payroll Downloads" description="Excel files for a generated payroll month." className="!mb-0" />
       <div className="card space-y-4 !p-4 sm:!p-5">
         <div className="flex flex-wrap items-end gap-3">
-          <label>
+          <div>
             <span className="label-field">Month</span>
-            <input className="input-field" type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
-          </label>
-          <label>
+            <MonthInput aria-label="Month" required value={month} available={available} unavailableReason="No payroll generated" onChange={changeMonth} className="w-44" />
+          </div>
+          <div>
             <span className="label-field">To month (TDS only, optional)</span>
-            <input className="input-field" type="month" value={toMonth} min={month} onChange={(e) => setToMonth(e.target.value)} />
-          </label>
+            <MonthInput aria-label="To month" optional value={toMonth} min={month || undefined} available={available} unavailableReason="No payroll generated" onChange={(v) => setToMonth(reconcileMonthRange({ from: month, to: v }).to)} className="w-44" />
+          </div>
         </div>
         {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700" role="alert">{error}</p> : null}
         <div className="grid gap-3 sm:grid-cols-2">

@@ -5,6 +5,8 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { PaginationControls } from "@/components/ui/PaginationControls";
+import { DateInput } from "@/components/ui/DateInput";
+import { formatDmyFromIso, formatDmyTimeFromIso, formatTime12FromIso } from "@/lib/dateInputs";
 import { emptyPaginationMeta, type PaginationMeta } from "@/lib/pagination";
 
 /**
@@ -16,8 +18,8 @@ export type ActivityEntry = {
   action: string;
   actionCode: string;
   performedBy: string;
-  date: string;
-  time: string;
+  /** ISO timestamp; Date and Time columns are formatted from it (DD/MM/YYYY, 12-hour, IST). */
+  performedAt: string;
   module: "Payroll" | "Master" | "Configuration" | string;
   outcome: string;
   employeeCount: number;
@@ -111,14 +113,14 @@ export function ActivityEntriesView() {
             <span className="label-field">Performed By</span>
             <input className="input-field w-full" value={actor} onChange={(e) => { setActor(e.target.value); setPage(1); }} placeholder="User name" />
           </label>
-          <label className="min-w-0">
+          <div className="min-w-0">
             <span className="label-field">From</span>
-            <input className="input-field w-full" type="date" value={from} onChange={(e) => { setFrom(e.target.value); setPage(1); }} />
-          </label>
-          <label className="min-w-0">
+            <DateInput aria-label="From date" optional value={from} max={to || undefined} onChange={(v) => { setFrom(v); setPage(1); }} />
+          </div>
+          <div className="min-w-0">
             <span className="label-field">To</span>
-            <input className="input-field w-full" type="date" value={to} onChange={(e) => { setTo(e.target.value); setPage(1); }} />
-          </label>
+            <DateInput aria-label="To date" optional value={to} min={from || undefined} onChange={(v) => { setTo(v); setPage(1); }} />
+          </div>
           <div className="flex items-end">
             <Button type="button" variant="outline" onClick={() => { setModule(""); setActor(""); setFrom(""); setTo(""); setPage(1); }}>Reset filters</Button>
           </div>
@@ -151,8 +153,8 @@ export function ActivityEntriesView() {
                     {entry.employeeCount > 0 ? <span className="block text-xs font-normal text-slate-500">{entry.employeeCount} employee{entry.employeeCount === 1 ? "" : "s"}</span> : null}
                   </td>
                   <td className="px-4 py-3.5 text-slate-700">{entry.performedBy}</td>
-                  <td className="whitespace-nowrap px-4 py-3.5 text-slate-600">{entry.date}</td>
-                  <td className="whitespace-nowrap px-4 py-3.5 text-slate-600">{entry.time}</td>
+                  <td className="whitespace-nowrap px-4 py-3.5 text-slate-600">{formatDmyFromIso(entry.performedAt)}</td>
+                  <td className="whitespace-nowrap px-4 py-3.5 text-slate-600">{formatTime12FromIso(entry.performedAt)}</td>
                   <td className="px-4 py-3.5 text-slate-700">{entry.module}</td>
                   <td className="px-4 py-3.5">
                     <button type="button" className="rounded-md font-medium text-brand-blue hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500" onClick={() => void openDetails(entry)}>
@@ -167,7 +169,7 @@ export function ActivityEntriesView() {
         <PaginationControls meta={meta} onPageChange={setPage} onPerPageChange={(size) => { setPerPage(size); setPage(1); }} loading={loading} />
       </div>
 
-      <Modal open={open !== null} onClose={() => setOpen(null)} title={open ? `${open.action} — ${open.date} ${open.time}` : "Details"}>
+      <Modal open={open !== null} onClose={() => setOpen(null)} title={open ? `${open.action} — ${formatDmyTimeFromIso(open.performedAt)}` : "Details"}>
         {detailError ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700" role="alert">{detailError}</p> : null}
         {!detailError && details === null ? <div className="h-16 animate-pulse rounded bg-slate-100" /> : null}
         {details !== null && details.length === 0 ? <p className="text-sm text-slate-500">No individual field changes were recorded for this action.</p> : null}
