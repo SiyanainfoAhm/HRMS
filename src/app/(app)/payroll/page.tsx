@@ -50,7 +50,8 @@ import {
   type GovernmentRunPreviewRow,
 } from "@/components/payroll/GovernmentRunPreviewTable";
 import { PayrollPreviewToolbar } from "@/components/payroll/PayrollPreviewToolbar";
-import { EmployeePayrollExportButton } from "@/components/payroll/EmployeePayrollExportButton";
+import { EmployeePayrollExportButton, type EmployeePayrollExportHandle } from "@/components/payroll/EmployeePayrollExportButton";
+import { DownloadsMenu } from "@/components/payroll/DownloadsMenu";
 import { PrivateRunPreviewCards } from "@/components/payroll/PrivateRunPreviewCards";
 import { v as govPreviewV } from "@/components/payroll/payrollRunPreviewShared";
 import { downloadPayrollRunWorkbook, type PayrollWorkbookStatus } from "@/lib/payrollRunWorkbook";
@@ -959,6 +960,7 @@ function PayrollPageContent() {
   const [resolvedRevision, setResolvedRevision] = useState(0);
   const [draftSaving, setDraftSaving] = useState(false);
   const [bankLetterLoading, setBankLetterLoading] = useState(false);
+  const employeeExportRef = useRef<EmployeePayrollExportHandle>(null);
   const [auditMode, setAuditMode] = useState(false);
   const [auditDirty, setAuditDirty] = useState(false);
   /** Mirrors auditDirty for resolve effect (must not be an effect dep — see draftDirtyRef). */
@@ -3213,7 +3215,8 @@ function PayrollPageContent() {
     }
   }
 
-  async function downloadRunExcel(kind: "detail" | "summary") {
+  /** Resolves true when a file was saved (the Downloads menu closes on success). */
+  async function downloadRunExcel(kind: "detail" | "summary"): Promise<boolean> {
     try {
       // With no active filters, always use the complete period, never the
       // currently visible page of the preview table.
@@ -3227,8 +3230,12 @@ function PayrollPageContent() {
             ? "No employees match the current filters."
             : "No employees to export.",
         );
-        return;
+        return false;
       }
+      const runExcelFileName =
+        kind === "summary"
+          ? payrollExtractWorkbookFilename(runMonth, runYear)
+          : payrollDetailWorkbookFilename(runMonth, runYear);
       downloadPayrollRunWorkbook(
         rows.map((r) => {
           const anyRow = r as Record<string, unknown>;
@@ -3264,18 +3271,14 @@ function PayrollPageContent() {
           departmentName: previewDepartmentName || undefined,
           designationName: previewDesignationName || undefined,
           payrollFields: payrollConfig?.fields ?? [],
-          filename:
-            kind === "summary"
-              ? payrollExtractWorkbookFilename(runMonth, runYear)
-              : payrollDetailWorkbookFilename(runMonth, runYear),
+          filename: runExcelFileName,
         },
       );
-      showToast(
-        "success",
-        `${kind === "summary" ? "Extract" : "Preview Excel"} downloaded.`,
-      );
+      showToast("success", `${runExcelFileName} downloaded.`);
+      return true;
     } catch (err: unknown) {
       showToast("error", err instanceof Error ? err.message : "Export failed");
+      return false;
     }
   }
 
@@ -3319,7 +3322,7 @@ function PayrollPageContent() {
     }
   }
 
-  async function downloadBankLetter(format: BankLetterExportFormat = "docx") {
+  async function downloadBankLetter(format: BankLetterExportFormat = "docx"): Promise<boolean> {
     setBankLetterLoading(true);
     try {
       // A payroll document is complete by default; audit/search state cannot
@@ -3332,7 +3335,7 @@ function PayrollPageContent() {
             ? "Bank letter cannot be generated. No employees match the current filters."
             : "Bank letter cannot be generated. No employees were provided.",
         );
-        return;
+        return false;
       }
       const employees = rows.map((r) =>
         mapRowToBankLetterEmployee(r as BankLetterEmployeeInput & Record<string, unknown>),
@@ -3340,7 +3343,7 @@ function PayrollPageContent() {
       const validated = validateBankLetterEmployees(employees);
       if (!validated.ok) {
         showToast("error", validated.message);
-        return;
+        return false;
       }
 
       const filename = payrollBankLetterFilenameForFormat(format, runMonth, runYear);
@@ -3348,15 +3351,15 @@ function PayrollPageContent() {
       if (format === "xlsx") {
         const blob = buildBankLetterExcelBlob(employees, runMonth, runYear);
         triggerBlobDownload(blob, filename);
-        showToast("success", "Bank letter Excel downloaded.");
-        return;
+        showToast("success", `${filename} downloaded.`);
+        return true;
       }
 
       if (format === "pdf") {
         const blob = await buildBankLetterPdfBlob(employees, runMonth, runYear);
         triggerBlobDownload(blob, filename);
-        showToast("success", "Bank letter PDF downloaded.");
-        return;
+        showToast("success", `${filename} downloaded.`);
+        return true;
       }
 
       const source = preview?.alreadyRun
@@ -3396,14 +3399,16 @@ function PayrollPageContent() {
             message;
         }
         showToast("error", message);
-        return;
+        return false;
       }
 
       const blob = await res.blob();
       triggerBlobDownload(blob, filename);
-      showToast("success", "Bank letter Word downloaded.");
+      showToast("success", `${filename} downloaded.`);
+      return true;
     } catch (err: unknown) {
       showToast("error", err instanceof Error ? err.message : "Failed to download bank letter");
+      return false;
     } finally {
       setBankLetterLoading(false);
     }
@@ -3818,14 +3823,30 @@ function PayrollPageContent() {
             onSaveDraft={preview?.alreadyRun ? undefined : () => void savePayrollDraft()}
             onResetUnsavedEdits={preview?.alreadyRun || !draftDirty || !payrollLease.acquired ? undefined : discardUnsavedPayrollEdits}
             onDiscardDraft={preview?.alreadyRun || !draftMeta || !payrollLease.acquired ? undefined : () => void resetPayrollDraft()}
-            onDownloadPreviewExcel={() => void downloadRunExcel("detail")}
-            onExportMonthlySummary={() => void downloadRunExcel("summary")}
-            onDownloadBankLetter={(format) => void downloadBankLetter(format)}
-            bankLetterLoading={bankLetterLoading}
-            exportDisabled={previewLoading || draftHydrationLoading || Boolean(draftLoadError) || (editableRows.length === 0 && !draftMeta && !preview?.alreadyRun)}
-            employeePayrollExportSlot={
-              canManage ? (
+            downloadsSlot={
+              <>
+                <DownloadsMenu
+                  runMonth={runMonth}
+                  runYear={runYear}
+                  canManage={canManage}
+                  running={running || draftSaving || auditSaving}
+                  exportDisabled={previewLoading || draftHydrationLoading || Boolean(draftLoadError) || (editableRows.length === 0 && !draftMeta && !preview?.alreadyRun)}
+                  bankLetterLoading={bankLetterLoading}
+                  generated={
+                    Number(preview?.year) === Number(runYear) &&
+                    Number(preview?.month) === Number(runMonth) &&
+                    !previewLoading &&
+                    isGeneratedPayrollMonth(preview)
+                  }
+                  onPreviewExcel={() => downloadRunExcel("detail")}
+                  onExtract={() => downloadRunExcel("summary")}
+                  onBankLetter={(format) => downloadBankLetter(format)}
+                  onExportEmployeePayroll={() => employeeExportRef.current?.openDialog()}
+                />
+                {canManage ? (
                 <EmployeePayrollExportButton
+                  ref={employeeExportRef}
+                  hideTrigger
                   buttonLabel="Export Employee Payroll"
                   resolveEmployeeUserIds={
                     hasActiveRunFilters
@@ -3838,7 +3859,8 @@ function PayrollPageContent() {
                       : undefined
                   }
                 />
-              ) : undefined
+                ) : null}
+              </>
             }
           >
               {canManage && (!payrollLease.ready || !payrollLease.acquired) && (

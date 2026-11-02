@@ -76,6 +76,7 @@ export function PickerPopover({ open, anchorRef, onClose, label, estimatedHeight
   return createPortal(
     <div
       ref={panelRef}
+      data-picker-popover=""
       role="dialog"
       aria-label={label}
       className="fixed z-[9999] max-h-[calc(100vh-16px)] overflow-y-auto rounded-xl border border-slate-200 bg-white p-3 shadow-2xl shadow-slate-300/40 ring-1 ring-slate-900/5"

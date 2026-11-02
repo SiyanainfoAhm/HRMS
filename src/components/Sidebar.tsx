@@ -78,7 +78,6 @@ export function Sidebar({
           : []),
         { href: "/payroll?tab=run", label: "Run Payroll", icon: <PlayCircle className={iconCls} /> },
         { href: "/payroll?tab=slips", label: "Salary Slips", icon: <FileText className={iconCls} /> },
-        { href: "/post-payroll-downloads", label: "Post Payroll Downloads", icon: <FileText className={iconCls} /> },
         { href: "/activity-log", label: "Activity Log", icon: <Activity className={iconCls} /> },
         { href: "/settings", label: "Settings", icon: <Settings className={iconCls} /> },
       ]
