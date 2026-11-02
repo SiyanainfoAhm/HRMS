@@ -114,6 +114,8 @@ function computeGovernmentRow(
         r.govRecalc.electricityUnitsConsumed ?? Number(gm0?.electricityUnitsConsumed ?? 0),
       nightHours: r.govRecalc.nightHours ?? Number(gm0?.nightHours ?? 0),
       nightAllowanceRate: r.govRecalc.nightAllowanceRate ?? Number(gm0?.nightAllowanceRate ?? 0),
+      nightAllowanceRateBasis:
+        r.govRecalc.nightAllowanceRateBasis ?? (gm0?.nightAllowanceRateBasis === "duty" ? "duty" : undefined),
       nightAllowanceSlabNo: r.govRecalc.nightAllowanceSlabNo ?? null,
       nightAllowanceWarning:
         r.govRecalc.nightAllowanceWarning ??

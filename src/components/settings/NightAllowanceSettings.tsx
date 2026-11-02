@@ -16,7 +16,10 @@ export type NightAllowanceRateRecord = {
   id: string;
   slabNo: number;
   payLevel: number;
+  /** Legacy per-hour rate (kept for history). */
   ratePerHour: number;
+  /** Night Allowance Rate per 8-hour duty: allowance = (night hours / 8) x this rate. */
+  ratePerDuty: number;
   effectiveFrom?: string | null;
   isActive: boolean;
   label?: string;
@@ -25,14 +28,14 @@ export type NightAllowanceRateRecord = {
 type RateForm = {
   slabNo: string;
   payLevel: string;
-  ratePerHour: string;
+  ratePerDuty: string;
   effectiveFrom: string;
 };
 
 const emptyForm = (): RateForm => ({
   slabNo: "",
   payLevel: "",
-  ratePerHour: "",
+  ratePerDuty: "",
   effectiveFrom: "",
 });
 
@@ -60,9 +63,9 @@ function validateRateForm(
     errors.payLevel = "Please select a valid Pay Level.";
   }
 
-  const rate = Number(form.ratePerHour);
-  if (!form.ratePerHour.trim() || !Number.isFinite(rate) || rate < 0) {
-    errors.ratePerHour = "Rate per hour is required.";
+  const rate = Number(form.ratePerDuty);
+  if (!form.ratePerDuty.trim() || !Number.isFinite(rate) || rate < 0) {
+    errors.ratePerDuty = "Night allowance rate is required.";
   }
 
   return errors;
@@ -118,7 +121,7 @@ export function NightAllowanceSettings() {
     setForm({
       slabNo: String(rate.slabNo),
       payLevel: String(rate.payLevel),
-      ratePerHour: String(rate.ratePerHour),
+      ratePerDuty: String(rate.ratePerDuty ?? Math.round(rate.ratePerHour * 8 * 100) / 100),
       effectiveFrom: rate.effectiveFrom?.slice(0, 10) ?? "",
     });
     setFormErrors({});
@@ -144,7 +147,7 @@ export function NightAllowanceSettings() {
       const payload = {
         slabNo: Number(form.slabNo),
         payLevel: Number(form.payLevel),
-        ratePerHour: Number(form.ratePerHour),
+        ratePerDuty: Number(form.ratePerDuty),
         effectiveFrom: form.effectiveFrom.trim() || null,
         isActive: true,
       };
@@ -258,7 +261,7 @@ export function NightAllowanceSettings() {
               <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-500">
                 <th className="px-2 py-2">S.No</th>
                 <th className="px-2 py-2">Pay Level</th>
-                <th className="px-2 py-2 text-right">Allowance Rate / Hour</th>
+                <th className="px-2 py-2 text-right">Night Allowance Rate / Duty (8 h)</th>
                 <th className="px-2 py-2">Effective From</th>
                 <th className="px-2 py-2">Status</th>
                 <th className="px-2 py-2 text-right">Actions</th>
@@ -270,7 +273,7 @@ export function NightAllowanceSettings() {
                   <td className="px-2 py-2 font-medium">{rate.slabNo}</td>
                   <td className="px-2 py-2">Level {rate.payLevel}</td>
                   <td className="px-2 py-2 text-right tabular-nums">
-                    ₹{rate.ratePerHour.toFixed(2)}
+                    ₹{(rate.ratePerDuty ?? rate.ratePerHour * 8).toFixed(2)}
                   </td>
                   <td className="px-2 py-2">{rate.effectiveFrom ?? "—"}</td>
                   <td className="px-2 py-2">
@@ -340,17 +343,22 @@ export function NightAllowanceSettings() {
               required
             />
           </FormField>
-          <FormField label="Rate Per Hour (₹)" required error={formErrors.ratePerHour}>
+          <FormField
+            label="Night Allowance Rate per 8-hour duty (₹)"
+            required
+            error={formErrors.ratePerDuty}
+            helperText="Night Duty Allowance = (Total Night Duty Hours / 8) x this rate for the employee's Pay Level."
+          >
             <Input
               type="number"
               min={0}
               step="0.01"
-              value={form.ratePerHour}
+              value={form.ratePerDuty}
               onChange={(e) => {
-                setForm((f) => ({ ...f, ratePerHour: e.target.value }));
+                setForm((f) => ({ ...f, ratePerDuty: e.target.value }));
                 setFormErrors((prev) => {
                   const next = { ...prev };
-                  delete next.ratePerHour;
+                  delete next.ratePerDuty;
                   return next;
                 });
               }}
@@ -364,13 +372,13 @@ export function NightAllowanceSettings() {
               onChange={(e) => setForm((f) => ({ ...f, effectiveFrom: e.target.value }))}
             />
           </FormField>
-          {form.slabNo && form.payLevel && form.ratePerHour ? (
+          {form.slabNo && form.payLevel && form.ratePerDuty ? (
             <p className="text-xs text-slate-600">
               Preview:{" "}
               {formatNightAllowanceSlabLabel(
                 Number(form.slabNo) || 0,
                 Number(form.payLevel) || 0,
-                Number(form.ratePerHour) || 0,
+                Number(form.ratePerDuty) || 0,
               )}
             </p>
           ) : null}

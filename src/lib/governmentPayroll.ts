@@ -176,6 +176,8 @@ export type GovernmentMonthlyInput = {
   electricityMode?: "unit_based" | "manual_fixed";
   nightHours?: number;
   nightAllowanceRate?: number;
+  /** "duty" = per-8-hour-duty rate (CIRT-08); anything else = legacy per-hour rate. */
+  nightAllowanceRateBasis?: "duty" | "hour";
   nightAllowanceBasicCeiling?: number;
   nightAllowanceManualOverride?: boolean;
   nightAllowanceSlabNo?: number | null;
@@ -288,6 +290,7 @@ export type GovernmentMonthlyComputed = {
   electricityMode?: "unit_based" | "manual_fixed";
   nightHours?: number;
   nightAllowanceRate?: number;
+  nightAllowanceRateBasis?: "duty" | "hour";
   nightAllowanceAmount?: number;
   nightAllowanceBasicCeiling?: number;
   nightAllowanceEligible?: boolean;
@@ -447,7 +450,8 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
   const basicForCeiling = basicPaidF > 0 ? basicPaidF : basicActual;
   const nightResolved = resolveNightAllowanceAmount({
     hours: nightHours,
-    ratePerHour: nightRate,
+    rate: nightRate,
+    rateBasis: input.nightAllowanceRateBasis === "duty" ? "duty" : "hour",
     basicPay: basicForCeiling,
     ceiling: nightCeiling,
     manualOverride: input.nightAllowanceManualOverride,
@@ -655,6 +659,7 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
     electricityMode,
     nightHours,
     nightAllowanceRate: nightRate,
+    nightAllowanceRateBasis: input.nightAllowanceRateBasis === "duty" ? "duty" : "hour",
     nightAllowanceAmount: naF,
     nightAllowanceBasicCeiling: nightResolved.ceiling,
     nightAllowanceEligible: nightResolved.eligible,

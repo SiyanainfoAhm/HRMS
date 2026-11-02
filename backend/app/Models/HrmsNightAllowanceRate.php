@@ -21,6 +21,7 @@ class HrmsNightAllowanceRate extends Model
         'slab_no',
         'pay_level',
         'rate_per_hour',
+        'rate_per_duty',
         'effective_from',
         'is_active',
     ];
@@ -31,6 +32,7 @@ class HrmsNightAllowanceRate extends Model
             'slab_no' => 'integer',
             'pay_level' => 'integer',
             'rate_per_hour' => 'decimal:2',
+            'rate_per_duty' => 'decimal:2',
             'effective_from' => 'date',
             'is_active' => 'boolean',
             'created_at' => 'datetime',

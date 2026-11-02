@@ -41,6 +41,7 @@ function leaveMetaFromRow(row: GovernmentRunPreviewRow) {
     electricityUnitsConsumed?: number;
     nightHours?: number;
     nightAllowanceRate?: number;
+    nightAllowanceRateBasis?: "duty" | "hour";
     nightAllowanceWarning?: string;
     nightAllowanceEligible?: boolean;
     nightAllowanceBasicCeiling?: number;
@@ -61,6 +62,7 @@ function leaveMetaFromRow(row: GovernmentRunPreviewRow) {
     electricityUnitsConsumed?: number;
     nightHours?: number;
     nightAllowanceRate?: number;
+    nightAllowanceRateBasis?: "duty" | "hour";
     nightAllowanceWarning?: string;
     nightAllowanceEligible?: boolean;
     nightAllowanceBasicCeiling?: number;
@@ -80,6 +82,7 @@ function leaveMetaFromRow(row: GovernmentRunPreviewRow) {
     electricityUnitsConsumed: gr?.electricityUnitsConsumed ?? gm?.electricityUnitsConsumed ?? 0,
     nightHours: gr?.nightHours ?? gm?.nightHours ?? 0,
     nightAllowanceRate: gr?.nightAllowanceRate ?? gm?.nightAllowanceRate ?? 0,
+    nightAllowanceRateBasis: gr?.nightAllowanceRateBasis ?? gm?.nightAllowanceRateBasis,
     nightAllowanceWarning: gr?.nightAllowanceWarning ?? gm?.nightAllowanceWarning,
     nightAllowanceEligible: gr?.nightAllowanceEligible ?? gm?.nightAllowanceEligible ?? true,
     nightAllowanceBasicCeiling: gr?.nightAllowanceBasicCeiling ?? gm?.nightAllowanceBasicCeiling,
@@ -133,6 +136,7 @@ export type GovernmentPreviewMonthly = {
   electricityMode?: "unit_based" | "manual_fixed" | string;
   nightHours?: number;
   nightAllowanceRate?: number;
+  nightAllowanceRateBasis?: "duty" | "hour";
   nightAllowanceAmount?: number;
   nightAllowanceWarning?: string;
   deductions: {
@@ -779,11 +783,11 @@ function GovernmentEmployeeDetail({
                       onUpdate(row.employeeUserId, "nightHours", parseFloat(e.target.value) || 0)
                     }
                     className={payrollDaysInputClass}
-                    title="Night duty hours — allowance = hours × night allowance rate"
+                    title="Night duty hours — allowance = (hours / 8) × night allowance rate for the Pay Level"
                   />
                 )}
                 <p className="mt-0.5 text-[10px] tabular-nums text-slate-500">
-                  Rate ₹{(leave.nightAllowanceRate ?? 0).toFixed(2)}/hr
+                  Rate ₹{(leave.nightAllowanceRate ?? 0).toFixed(2)}/{leave.nightAllowanceRateBasis === "duty" ? "duty" : "hr"}
                 </p>
 
               </div>

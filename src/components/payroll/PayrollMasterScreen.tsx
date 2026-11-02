@@ -928,7 +928,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     }>
   >([]);
   const [nightAllowanceRates, setNightAllowanceRates] = useState<
-    Array<{ slabNo: number; payLevel: number; ratePerHour: number; effectiveFrom?: string | null; isActive?: boolean }>
+    Array<{ slabNo: number; payLevel: number; ratePerHour: number; ratePerDuty?: number | null; effectiveFrom?: string | null; isActive?: boolean }>
   >([]);
   const [divisions, setDivisions] = useState<OrgDivision[]>([]);
   const [departments, setDepartments] = useState<OrgDepartment[]>([]);
@@ -1193,12 +1193,14 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
               slabNo: number;
               payLevel: number;
               ratePerHour: number;
+              ratePerDuty?: number | null;
               effectiveFrom?: string | null;
               isActive?: boolean;
             }>).map((r) => ({
               slabNo: r.slabNo,
               payLevel: r.payLevel,
               ratePerHour: r.ratePerHour,
+              ratePerDuty: r.ratePerDuty ?? null,
               effectiveFrom: r.effectiveFrom ?? null,
               isActive: r.isActive !== false,
             })),
