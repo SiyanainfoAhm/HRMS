@@ -16,6 +16,9 @@ final class PrakashAuditTest extends DatabaseTestCase
     {
         $m = DB::table('cirt_payroll_master')->where('employee_code', '055')->whereNull('effective_to')->first();
         $m !== null || $this->markTestSkipped('Employee 055 is not in the local database.');
+        // Fixture of the dev database after a re-run; the client copy has its own real data (see ClientDataCopyTest).
+        DB::connection()->getDatabaseName() === 'hrms' || $this->markTestSkipped('Dev-database fixture.');
+        DB::table('cirt_monthly_payroll')->where('employee_user_id', $m->employee_user_id)->exists() || $this->markTestSkipped('No generated payroll for employee 055 in this database.');
 
         return $m;
     }

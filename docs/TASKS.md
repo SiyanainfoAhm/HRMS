@@ -19,3 +19,9 @@ Rules: finalized payroll never changes (proved: md5 of monthly/payslips/periods/
 
 ### Needs clarification
 Unpaid Arrears exact field; the two extra arrears fields (which is "second" = Past Arrears); Net Arrears approved formula (kept Gross - CPF Arr); night duty rounding (NIGHT_DUTY_UNITS_DECIMALS=2, ROUND_TO_RUPEE=true) and per-duty rates (seeded hourly x 8); "DA Arr" = DA CPF or CPF Arr; where Mess/Credit Society/Electricity defaults are maintained now; employee category and division-to-report-group mapping; PENSION/EMP_CONTR split; latest report samples.
+
+## Client-data rehearsal (local restore of the client backup, nothing touched on the client server)
+- [x] Restore -> `migrate` (8 pending) -> counts, per-row hashes, rendering and catalog diff: see the report. Closed Sept 2026: 83/83 monthly rows and payslips byte-identical.
+- [x] Reports (TDS, CPF, Division-Wise, Paybill) tie to every Sept row including the client's custom fields.
+- Deploy: use `scripts/deploy-cirt-hrms.ps1` (backup, stage build, migrate --force, schema-check, rollback). Do NOT pass `-RepairData` until the dry run `php artisan payroll:repair-data` has been reviewed (it only touches the open July/October drafts).
+- Open for the client: closed Sept has electricity 0 for all 21 employees with units; Prakash DA 60% vs master 63%; employee 043 special allowance sits on an old master revision.

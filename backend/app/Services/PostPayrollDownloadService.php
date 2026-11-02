@@ -50,9 +50,14 @@ final class PostPayrollDownloadService
     public const PAYBILL_EARNINGS = [
         'Basic' => ['basic_paid'], 'sp.pay' => ['sp_pay_paid'], 'D.A.' => ['da_paid'], 'H.R.A.' => ['hra_paid'],
         'UNIFORM' => ['uniform_allowance_paid'], 'EWA' => ['extra_work_allowance_paid'], 'Trpt.' => ['transport_paid'],
-        'Medical' => ['medical_paid'], 'DA Arrs.' => ['da_arrears_paid'], 'En.DA' => ['encashment_da_paid'],
+        'Medical' => ['medical_paid'],
+        // All arrears (DA + transport + gross-only remainder): the legacy paybill has a single arrears column.
+        'DA Arrs.' => ['@arrears'], 'En.DA' => ['encashment_da_paid'],
         'T.Fees.' => ['education_allowance_paid'], 'CCA' => null, 'NDA' => ['night_allowance_paid'],
-        'Encash' => ['encashment_paid'], 'Tot. Pay' => ['total_earnings'],
+        'Encash' => ['encashment_paid'],
+        // Company-defined earnings (e.g. special_allowance, arrears, over_time_allowance) have no legacy column.
+        // They are shown together so the printed columns add up to Tot. Pay.
+        'Custom Earnings' => ['@custom_earnings'], 'Tot. Pay' => ['total_earnings'],
     ];
 
     public const PAYBILL_DEDUCTIONS = [
@@ -66,7 +71,9 @@ final class PostPayrollDownloadService
         'OTHER' => ['other_deduction_amount'],
         // The paybill's "DA CPF" column carries the renamed CPF Arr (CIRT-06): CPF on arrears + the DA CPF deduction.
         PayrollLabels::CPF_ARREARS => ['da_cpf_amount', 'cpf_arrear'], 'Lib.' => null, 'Union' => null,
-        'TOT.DED.' => ['total_deductions'],
+        // No legacy column: shown so the deduction columns add up to TOT.DED.
+        'Quarter Rent' => ['quarter_rent_amount'], 'HPL+EOL' => ['hpl_amount', 'eol_amount'],
+        'Custom Deductions' => ['@custom_deductions'], 'TOT.DED.' => ['total_deductions'],
     ];
 
     /** @return list<string> paybill columns that have no payroll source field */
@@ -112,8 +119,41 @@ final class PostPayrollDownloadService
         return is_numeric($row[$key] ?? null) ? (float) $row[$key] : 0.0;
     }
 
+    /** Custom (company-defined) field amounts of a monthly row; the bag is JSON text, [] or an object. @return array<string, float> */
+    public static function customBag(array $row, string $column): array
+    {
+        $bag = $row[$column] ?? null;
+        if (is_string($bag)) $bag = json_decode($bag, true);
+        $out = [];
+        foreach (is_array($bag) ? $bag : [] as $key => $value) {
+            if (is_string($key) && is_numeric($value)) $out[$key] = (float) $value;
+        }
+
+        return $out;
+    }
+
+    /**
+     * TDS columns that receive company-defined earnings, by field key. UNCONFIRMED: any other custom earning
+     * goes to TDS_CUSTOM_FALLBACK so taxable pay is never dropped from the TDS file.
+     */
+    public const TDS_CUSTOM_COLUMNS = ['arrears' => 'Total Arrears', 'encashment_arrears' => 'ENCASHMENT+ENCA DA', 'over_time_allowance' => 'OT ALLOWANCE'];
+
+    public const TDS_CUSTOM_FALLBACK = 'PERKS';
+
+    /** DA + transport arrears plus the part of Gross Arrears not already inside them. */
+    public static function arrearsTotal(array $row): float
+    {
+        $da = self::n($row, 'da_arrears_paid');
+        $tr = self::n($row, 'transport_arrears_paid');
+
+        return $da + $tr + max(0.0, self::n($row, 'gross_arrear') - $da - $tr);
+    }
+
     private static function sum(array $row, array $keys): float
     {
+        if (($keys[0] ?? '') === '@arrears') return round(self::arrearsTotal($row), 2);
+        if (($keys[0] ?? '') === '@custom_earnings') return round(array_sum(self::customBag($row, 'custom_earnings')), 2);
+        if (($keys[0] ?? '') === '@custom_deductions') return round(array_sum(self::customBag($row, 'custom_deductions')), 2);
         return array_sum(array_map(fn ($k) => self::n($row, $k), $keys));
     }
 
@@ -375,6 +415,10 @@ final class PostPayrollDownloadService
         [$f, $mid, $l] = self::splitName((string) ($m['name'] ?? $u['name'] ?? ''));
         $date = fn ($d) => $d ? XlDate::PHPToExcel(strtotime((string) $d)) : null;
         $remainderGross = max(0.0, self::n($r, 'gross_arrear') - self::n($r, 'da_arrears_paid') - self::n($r, 'transport_arrears_paid'));
+        $custom = array_fill_keys(array_values(self::TDS_CUSTOM_COLUMNS) + [self::TDS_CUSTOM_FALLBACK => self::TDS_CUSTOM_FALLBACK], 0.0);
+        foreach (self::customBag($r, 'custom_earnings') as $key => $value) {
+            $custom[self::TDS_CUSTOM_COLUMNS[$key] ?? self::TDS_CUSTOM_FALLBACK] = ($custom[self::TDS_CUSTOM_COLUMNS[$key] ?? self::TDS_CUSTOM_FALLBACK] ?? 0.0) + $value;
+        }
 
         return [
             $m['employee_code'] ?? '', $f, $mid, $l, $m['pan'] ?? '', $date($m['date_of_birth'] ?? $u['date_of_birth'] ?? null),
@@ -383,11 +427,11 @@ final class PostPayrollDownloadService
             $u['current_state'] ?? '', $u['current_country'] ?? '', $u['current_postal_code'] ?? '', $u['current_state'] ?? '',
             $m['phone'] ?? $u['phone'] ?? '', $r['_ym'],
             self::n($r, 'basic_paid'), self::n($r, 'da_paid') + self::n($r, 'da_arrears_paid'), null, self::n($r, 'sp_pay_paid'), null,
-            self::n($r, 'medical_paid'), self::n($r, 'extra_work_allowance_paid'), 0.0,
-            self::n($r, 'encashment_paid') + self::n($r, 'encashment_da_paid'), null, self::n($r, 'education_allowance_paid'), null,
+            self::n($r, 'medical_paid'), self::n($r, 'extra_work_allowance_paid') + $custom['OT ALLOWANCE'], 0.0,
+            self::n($r, 'encashment_paid') + self::n($r, 'encashment_da_paid') + $custom['ENCASHMENT+ENCA DA'], null, self::n($r, 'education_allowance_paid'), $custom[self::TDS_CUSTOM_FALLBACK] ?: null,
             self::n($r, 'uniform_allowance_paid'), null, null,
             // DA arrears already sit in DA+DA ARRS, so Total Arrears = transport arrears + the gross-only remainder.
-            self::n($r, 'transport_arrears_paid') + $remainderGross,
+            self::n($r, 'transport_arrears_paid') + $remainderGross + $custom['Total Arrears'],
             self::n($r, 'hra_paid'), self::n($r, 'transport_paid'), self::n($r, 'pt_amount'),
             self::n($r, 'cpf_amount') + self::n($r, 'vpf_amount'), self::n($r, 'income_tax_amount'), self::n($r, 'lic_amount'),
             null, null, null, null,
