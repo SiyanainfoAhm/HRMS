@@ -25,8 +25,8 @@ import {
   applyStatusBannerStyle,
   applyTotalCurrencyStyle,
   applyTotalRowStyle,
-  autoFitColumnsWithLimits,
   configurePayrollPrintSetup,
+  contentColumnWidths,
   mergeCells,
   writeStyledCell,
 } from "@/lib/payrollExcelStyles";
@@ -259,14 +259,18 @@ function buildFinalizedDetailSheet(opts: {
   }
 
   ws["!merges"] = merges;
-  ws["!cols"] = autoFitColumnsWithLimits(
-    headers.map((h, i) => (i < 2 ? 22 : h === "Remarks" ? 28 : TEXT_HEADERS.has(h) ? 16 : 12)),
-    { min: 10, max: 36 },
-  );
+  ws["!cols"] = contentColumnWidths(ws as unknown as Record<string, unknown>, {
+    firstRow0: headerRow,
+    lastRow0: totalsRow,
+    lastCol0: lastCol,
+    min: 10,
+    max: 50,
+  });
   configurePayrollPrintSetup(ws as unknown as Record<string, unknown>, {
     lastRow0: totalsRow,
     lastCol0: lastCol,
     freezeRows: headerRow + 1,
+    freezeCols: 2,
     landscape: true,
     titleRows: headerRow + 1,
     autoFilterRef: `A${headerRow + 1}:${XLSX.utils.encode_col(lastCol)}${totalsRow}`,

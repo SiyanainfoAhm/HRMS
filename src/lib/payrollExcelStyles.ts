@@ -264,11 +264,76 @@ export function autoFitColumnsWithLimits(
   return widths.map((w) => ({ wch: Math.min(max, Math.max(min, Math.ceil(w))) }));
 }
 
+/** Decimals / prefix / grouping / percent implied by an Excel number format code. */
+function numberFormatShape(z: string | undefined): { decimals: number; prefix: number; grouping: boolean; percent: boolean } {
+  const code = (z ?? "").split(";")[0];
+  const dec = /\.(0+)/.exec(code);
+  return {
+    decimals: dec ? dec[1].length : 0,
+    prefix: /["₹$]/.test(code) ? 1 : 0,
+    grouping: code.includes(","),
+    percent: code.includes("%"),
+  };
+}
+
+/** Characters Excel needs to render a cell, estimated from its value and number format. */
+export function renderedCellLength(cell: { v?: unknown; z?: string } | undefined): number {
+  if (!cell || cell.v == null || cell.v === "") return 0;
+  if (typeof cell.v === "number") {
+    const shape = numberFormatShape(cell.z);
+    const v = shape.percent ? cell.v * 100 : cell.v;
+    const text = Math.abs(v).toLocaleString("en-US", {
+      minimumFractionDigits: shape.decimals,
+      maximumFractionDigits: shape.decimals,
+      useGrouping: shape.grouping,
+    });
+    return text.length + (v < 0 ? 1 : 0) + shape.prefix + (shape.percent ? 1 : 0);
+  }
+  return String(cell.v)
+    .split("\n")
+    .reduce((m, line) => Math.max(m, line.length), 0);
+}
+
+/**
+ * Shared sheet finisher: per-column width from the longest of header and values (plus padding),
+ * clamped to [min, max]. Rows above `firstRow0` (merged titles) are ignored. A formula cell with no
+ * cached value counts as the widest number in its column plus 3 (a total is larger than its parts).
+ */
+export function contentColumnWidths(
+  ws: Record<string, unknown>,
+  opts: { firstRow0: number; lastRow0: number; lastCol0: number; min?: number; max?: number; padding?: number },
+): Array<{ wch: number }> {
+  const min = opts.min ?? 8;
+  const max = opts.max ?? 50;
+  const padding = opts.padding ?? 2;
+  const out: Array<{ wch: number }> = [];
+  for (let c = 0; c <= opts.lastCol0; c++) {
+    let widest = 0;
+    let widestNumber = 0;
+    let hasFormula = false;
+    for (let r = opts.firstRow0; r <= opts.lastRow0; r++) {
+      const cell = ws[`${colLetter(c)}${r + 1}`] as { v?: unknown; z?: string; f?: string } | undefined;
+      if (!cell) continue;
+      if (cell.f && (cell.v == null || cell.v === "")) {
+        hasFormula = true;
+        continue;
+      }
+      const len = renderedCellLength(cell) * (r === opts.firstRow0 ? 1.15 : 1);
+      widest = Math.max(widest, len);
+      if (typeof cell.v === "number") widestNumber = Math.max(widestNumber, len);
+    }
+    if (hasFormula) widest = Math.max(widest, widestNumber + 3);
+    out.push({ wch: Math.min(max, Math.max(min, Math.ceil(widest + padding))) });
+  }
+  return out;
+}
+
 export function configurePayrollPrintSetup(
   ws: Record<string, unknown>,
   opts: {
     lastRow0: number;
     lastCol0: number;
+    freezeCols?: number;
     freezeRows?: number;
     landscape?: boolean;
     titleRows?: number;
@@ -310,12 +375,16 @@ export function configurePayrollPrintSetup(
   }
 
   const freezeRows = opts.freezeRows ?? 0;
+  const freezeCols = opts.freezeCols ?? 0;
+  const frozen = freezeRows > 0 || freezeCols > 0;
   ws["!views"] = [
     {
-      state: freezeRows > 0 ? "frozen" : "normal",
+      state: frozen ? "frozen" : "normal",
       ySplit: freezeRows,
-      topLeftCell: freezeRows > 0 ? `A${freezeRows + 1}` : "A1",
-      activePane: freezeRows > 0 ? "bottomLeft" : "topLeft",
+      xSplit: freezeCols,
+      topLeftCell: frozen ? `${colLetter(freezeCols)}${freezeRows + 1}` : "A1",
+      activePane:
+        freezeRows > 0 && freezeCols > 0 ? "bottomRight" : freezeCols > 0 ? "topRight" : freezeRows > 0 ? "bottomLeft" : "topLeft",
       showGridLines: false,
       zoomScale: 95,
     },

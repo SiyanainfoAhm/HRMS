@@ -6,6 +6,7 @@ use App\Models\HrmsGovernmentMonthlyPayroll;
 use App\Models\HrmsPayslip;
 use App\Models\HrmsPayrollPeriod;
 use App\Services\EmployeePayrollExportService;
+use App\Support\SpreadsheetLayout;
 use Carbon\Carbon;
 use Illuminate\Contracts\Console\Kernel;
 use PHPUnit\Framework\TestCase;
@@ -256,6 +257,8 @@ final class EmployeePayrollExportLongFormatTest extends TestCase
                     'employeeCode' => str_pad((string) $number, 3, '0', STR_PAD_LEFT),
                     'name' => 'Employee '.$number,
                     'status' => $number <= 3 ? 'audited' : 'unaudited',
+                    'dateOfJoining' => '2012-07-01',
+                    'dateOfBirth' => $number === 5 ? '' : '1990-05-15',
                     // Only two employees have accommodation, which must not filter rows.
                     'quarterAssigned' => $number <= 2,
                     'quarterName' => $number <= 2 ? 'Q-'.$number : '',
@@ -279,6 +282,11 @@ final class EmployeePayrollExportLongFormatTest extends TestCase
             [],
             ['earnings' => ['July Custom Earn', 'June Custom Earn'], 'deductions' => ['August Custom Deduction']],
         );
+        // Layout: no "####" cells, dates are real date cells (blank stays blank), see SpreadsheetLayout.
+        $this->assertSame([], SpreadsheetLayout::audit($sheet, ['Employee Payroll' => ['Date of Joining', 'Date of Birth']]));
+        foreach (SpreadsheetLayout::columnsByHeader($sheet->getActiveSheet(), 1, ['Date of Joining', 'Date of Birth']) as $letter) {
+            $this->assertSame('dd/mm/yyyy', $sheet->getActiveSheet()->getStyle($letter.'2')->getNumberFormat()->getFormatCode());
+        }
         $path = tempnam(sys_get_temp_dir(), 'cirt-export-');
         self::assertIsString($path);
         try {
