@@ -7,6 +7,7 @@ use App\Models\HrmsPayrollMaster;
 use App\Models\HrmsPayrollPeriod;
 use App\Models\HrmsQuarter;
 use App\Support\PayrollLabels;
+use App\Support\SpreadsheetLayout;
 use Illuminate\Support\Facades\Schema;
 use PhpOffice\PhpSpreadsheet\Cell\DataType;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
@@ -118,7 +119,6 @@ class EmployeePayrollExportService
         $active->fromArray($headers, null, 'A1');
         $lastHeaderCol = $this->colLetter(count($headers));
         $active->getStyle('A1:'.$lastHeaderCol.'1')->getFont()->setBold(true);
-        $active->freezePane('A2');
 
         $rowNum = 2;
         // Month first (periods already ordered by period_start), then employee code.
@@ -154,10 +154,12 @@ class EmployeePayrollExportService
                 $rowNum++;
             }
         }
-        $active->setAutoFilter('A1:'.$lastHeaderCol.max(1, $rowNum - 1));
-        foreach (range(1, count($headers)) as $i) {
-            $active->getColumnDimension($this->colLetter($i))->setAutoSize(true);
-        }
+        SpreadsheetLayout::finish($active, [
+            'header_row' => 1, 'freeze' => 'C2', 'autofilter' => 'A1:'.$lastHeaderCol.max(1, $rowNum - 1),
+            'date_columns' => array_fill_keys(SpreadsheetLayout::columnsByHeader($active, 1, ['Date of Joining', 'Date of Birth']), SpreadsheetLayout::FORMAT_DATE),
+            'text_columns' => SpreadsheetLayout::columnsByHeader($active, 1, ['Employee Code', 'Phone', 'PAN', 'Aadhaar', 'UAN', 'CPF No', 'Bank Account Number', 'IFSC']),
+            'wrap_columns' => SpreadsheetLayout::columnsByHeader($active, 1, ['Designation', 'Department', 'Division', 'Email']),
+        ]);
 
         return $sheet;
     }

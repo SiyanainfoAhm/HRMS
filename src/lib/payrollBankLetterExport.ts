@@ -4,6 +4,7 @@
 import * as XLSX from "xlsx-js-style";
 import type { BankLetterEmployeePayload } from "@/lib/payrollBankLetter";
 import { formatPayrollMonthYear } from "@/lib/payrollDownloadFilenames";
+import { contentColumnWidths } from "@/lib/payrollExcelStyles";
 
 export type BankLetterExportFormat = "docx" | "xlsx" | "pdf";
 
@@ -69,6 +70,9 @@ function totalAmount(employees: BankLetterEmployeePayload[]): number {
   return Math.round(employees.reduce((s, e) => s + (Number(e.netPay) || 0), 0) * 100) / 100;
 }
 
+/** Indian lakh/crore grouping for a numeric cell, e.g. 1,27,858.00. */
+const INDIAN_AMOUNT_FORMAT = "[>=10000000]##\\,##\\,##\\,##0.00;[>=100000]##\\,##\\,##0.00;##,##0.00";
+
 /** Build HDFC-style bank letter Excel workbook. */
 export function buildBankLetterExcelBlob(
   employees: BankLetterEmployeePayload[],
@@ -110,23 +114,16 @@ export function buildBankLetterExcelBlob(
       e.employeeCode,
       e.employeeName,
       e.bankAccountNumber,
-      formatBankLetterAmount(e.netPay),
+      Math.round((Number(e.netPay) || 0) * 100) / 100,
     ]);
   });
 
   rows.push([]);
-  rows.push(["", "", "", "Total", formatBankLetterAmount(total)]);
+  rows.push(["", "", "", "Total", total]);
   rows.push([]);
   rows.push([`For Rs. ${formatBankLetterAmount(total)} /- drawn in your favour.`]);
 
   const ws = XLSX.utils.aoa_to_sheet(rows);
-  ws["!cols"] = [
-    { wch: 8 },
-    { wch: 14 },
-    { wch: 28 },
-    { wch: 22 },
-    { wch: 16 },
-  ];
 
   const ref = ws["!ref"];
   if (ref) {
@@ -152,13 +149,24 @@ export function buildBankLetterExcelBlob(
         if (cell && typeof cell === "object") Object.assign(cell, { s: textStyle });
       }
       const amt = ws[`E${r}`];
-      if (amt && typeof amt === "object") Object.assign(amt, { s: amountStyle });
+      if (amt && typeof amt === "object") Object.assign(amt, { t: "n", z: INDIAN_AMOUNT_FORMAT, s: amountStyle });
     });
     const totalRow = 6 + employees.length + 1;
     const totalLabel = ws[`D${totalRow}`];
     const totalVal = ws[`E${totalRow}`];
     if (totalLabel && typeof totalLabel === "object") Object.assign(totalLabel, { s: totalStyle });
-    if (totalVal && typeof totalVal === "object") Object.assign(totalVal, { s: totalStyle });
+    if (totalVal && typeof totalVal === "object") Object.assign(totalVal, { t: "n", z: INDIAN_AMOUNT_FORMAT, s: totalStyle });
+
+    ws["!cols"] = contentColumnWidths(ws as unknown as Record<string, unknown>, {
+      firstRow0: 4,
+      lastRow0: totalRow - 1,
+      lastCol0: 4,
+      min: 8,
+      max: 50,
+    });
+    ws["!autofilter"] = { ref: `A5:E${5 + employees.length}` };
+    ws["!views"] = [{ state: "frozen", ySplit: 5, topLeftCell: "A6", activePane: "bottomLeft" }];
+    ws["!pageSetup"] = { orientation: "portrait", fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
   }
 
   const wb = XLSX.utils.book_new();

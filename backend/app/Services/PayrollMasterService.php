@@ -26,6 +26,7 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
+use App\Support\SpreadsheetLayout;
 use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Shared\Date as ExcelDate;
@@ -1178,7 +1179,8 @@ final class PayrollMasterService
         $sheet->fromArray($this->importTemplateDisplayHeaders(), null, 'A1');
         $sheet->fromArray($this->importTemplateSampleValues(), null, 'A2');
         $lastCol = Coordinate::stringFromColumnIndex(count($this->importTemplateColumns()));
-        $sheet->getStyle('A1:'.$lastCol.'1')->getFont()->setBold(true);
+        // Template sample dates/ids stay as typed text (the importer parses them); only layout is finished.
+        SpreadsheetLayout::finish($sheet, ['header_row' => 1, 'freeze' => 'C2', 'autofilter' => true]);
     }
 
     private function writeImportTemplateInstructionsSheet(\PhpOffice\PhpSpreadsheet\Worksheet\Worksheet $sheet, ?string $companyId = null): void
@@ -1212,14 +1214,7 @@ final class PayrollMasterService
 
         $sheet->fromArray($lines, null, 'A1');
         $sheet->getStyle('A1')->getFont()->setBold(true);
-        $sheet->getColumnDimension('A')->setWidth(28);
-        $sheet->getColumnDimension('B')->setWidth(22);
-        $sheet->getColumnDimension('C')->setWidth(14);
-        $sheet->getColumnDimension('D')->setWidth(12);
-        $sheet->getColumnDimension('E')->setWidth(10);
-        $sheet->getColumnDimension('F')->setWidth(16);
-        $sheet->getColumnDimension('G')->setWidth(18);
-        $sheet->getColumnDimension('H')->setWidth(36);
+        SpreadsheetLayout::finish($sheet, ['header_row' => 1, 'wrap_columns' => ['H']]);
     }
 
     private function importColumnDisplayName(string $key): string
@@ -1607,6 +1602,22 @@ final class PayrollMasterService
             $activeSheet->fromArray($this->rowToExport($r, $columns), null, 'A'.$i);
             $i++;
         }
+        $lettersFor = static function (array $keys) use ($columns): array {
+            $out = [];
+            foreach ($columns as $idx => $col) {
+                if (in_array($col['key'], $keys, true)) {
+                    $out[] = Coordinate::stringFromColumnIndex($idx + 1);
+                }
+            }
+
+            return $out;
+        };
+        SpreadsheetLayout::finish($activeSheet, [
+            'header_row' => 1, 'freeze' => 'C2', 'autofilter' => true,
+            'date_columns' => array_fill_keys($lettersFor(['date_of_birth', 'date_of_joining']), SpreadsheetLayout::FORMAT_DATE),
+            'text_columns' => $lettersFor(['employee_code', 'phone', 'pan', 'aadhaar', 'uan', 'cpf_no', 'bank_account_number', 'bank_ifsc']),
+            'wrap_columns' => $lettersFor(['designation', 'department', 'division', 'email']),
+        ]);
     }
 
     private function resolveTakeHome(HrmsPayrollMaster $m): float

@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Support\PayrollLabels;
+use App\Support\SpreadsheetLayout;
 use Illuminate\Support\Facades\DB;
 use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 use PhpOffice\PhpSpreadsheet\Shared\Date as XlDate;
@@ -242,7 +243,7 @@ final class PostPayrollDownloadService
                 $ws->setCellValue("A{$line}", $sr++);
                 $ws->setCellValueExplicit("B{$line}", (string) ($m['uan'] ?? ''), \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
                 $ws->setCellValue("C{$line}", $m['name'] ?? '');
-                $ws->setCellValue("D{$line}", is_numeric($m['cpf_no'] ?? null) ? (float) $m['cpf_no'] : ($m['cpf_no'] ?? ''));
+                $ws->setCellValueExplicit("D{$line}", (string) ($m['cpf_no'] ?? ''), \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
                 foreach ([
                     'E' => self::n($r, 'basic_actual'), 'F' => self::n($r, 'unpaid_days'), 'G' => self::n($r, 'basic_paid'),
                     'H' => self::n($r, 'da_paid'), 'I' => self::n($r, 'hra_paid'), 'J' => self::n($r, 'transport_paid'),
@@ -276,11 +277,11 @@ final class PostPayrollDownloadService
         $ws->setCellValue('D'.($s + 5), '=SUM(D'.($s + 1).':D'.($s + 4).')');
         $ws->getStyle('C'.($s + 5).':D'.($s + 5))->getFont()->setBold(true);
         $ws->setCellValue('A'.($s + 7), 'Put up for approval for remittance to ASRTU CPF Trust')->getStyle('A'.($s + 7))->getFont()->setBold(true);
-        foreach (['A' => 8, 'B' => 15, 'C' => 29, 'D' => 16, 'E' => 10, 'F' => 13, 'G' => 10, 'H' => 11, 'I' => 11, 'J' => 9, 'K' => 10, 'L' => 12, 'M' => 10, 'N' => 9, 'O' => 9, 'P' => 10] as $c => $w) {
-            $ws->getColumnDimension($c)->setWidth($w);
-        }
         $ws->getStyle("E5:P{$grand}")->getNumberFormat()->setFormatCode('#,##0');
-        $ws->freezePane('A5');
+        SpreadsheetLayout::finish($ws, [
+            'header_row' => 4, 'last_header_row' => $s, 'freeze' => 'D5', 'autofilter' => 'A4:P'.($grand - 1),
+            'landscape' => true, 'fit_width' => true,
+        ]);
 
         return $wb;
     }
@@ -331,7 +332,7 @@ final class PostPayrollDownloadService
         if ($unmapped !== []) {
             $ws->setCellValue('A'.($tot + 3), 'Unmapped Master divisions (no report group configured): '.implode('; ', array_keys($unmapped)));
         }
-        $ws->getColumnDimension('A')->setWidth(22);
+        SpreadsheetLayout::finish($ws, ['header_row' => 3, 'last_header_row' => 4, 'freeze' => 'B5', 'landscape' => true, 'fit_width' => true]);
 
         // Sheet 2: Count
         $cs = $wb->createSheet()->setTitle('Count');
@@ -349,7 +350,7 @@ final class PostPayrollDownloadService
         $cs->setCellValue('A'.($cl + 2), 'TOTAL');
         foreach (['B', 'C', 'D', 'E'] as $col) $cs->setCellValue("{$col}".($cl + 2), "=SUM({$col}5:{$col}{$cl})");
         $cs->getStyle('A'.($cl + 2).':E'.($cl + 2))->getFont()->setBold(true);
-        $cs->getColumnDimension('A')->setWidth(22);
+        SpreadsheetLayout::finish($cs, ['header_row' => 4, 'freeze' => 'B5', 'landscape' => true, 'fit_width' => true]);
 
         // Sheet 3: Pay Level
         $ps = $wb->createSheet()->setTitle('Pay Level');
@@ -378,8 +379,7 @@ final class PostPayrollDownloadService
         $ps->setCellValue('A'.($row + 1), 'GRAND TOTAL')->setCellValue('C'.($row + 1), "=C{$row}+D{$row}+E{$row}+F{$row}+G{$row}+H{$row}");
         $ps->getStyle("A{$row}:H".($row + 1))->getFont()->setBold(true);
         $ps->getStyle("C8:H".($row + 1))->getNumberFormat()->setFormatCode('#,##0');
-        $ps->getColumnDimension('A')->setWidth(22);
-        $ps->getColumnDimension('B')->setWidth(24);
+        SpreadsheetLayout::finish($ps, ['header_row' => 6, 'last_header_row' => 7, 'freeze' => 'C8', 'landscape' => true, 'fit_width' => true]);
 
         return $wb;
     }
@@ -413,7 +413,8 @@ final class PostPayrollDownloadService
         $m = $r['_master'];
         $u = $r['_user'];
         [$f, $mid, $l] = self::splitName((string) ($m['name'] ?? $u['name'] ?? ''));
-        $date = fn ($d) => $d ? XlDate::PHPToExcel(strtotime((string) $d)) : null;
+        // Whole-day serial built in UTC: strtotime() under Asia/Kolkata gave a fractional serial that displayed a day early.
+        $date = fn ($d) => SpreadsheetLayout::toExcelDate($d);
         $remainderGross = max(0.0, self::n($r, 'gross_arrear') - self::n($r, 'da_arrears_paid') - self::n($r, 'transport_arrears_paid'));
         $custom = array_fill_keys(array_values(self::TDS_CUSTOM_COLUMNS) + [self::TDS_CUSTOM_FALLBACK => self::TDS_CUSTOM_FALLBACK], 0.0);
         foreach (self::customBag($r, 'custom_earnings') as $key => $value) {
@@ -455,11 +456,15 @@ final class PostPayrollDownloadService
                     $ws->setCellValue([$i + 1, $line], $v);
                 }
             }
-            $ws->getStyle("F{$line}")->getNumberFormat()->setFormatCode('mm/dd/yyyy');
-            $ws->getStyle("H{$line}")->getNumberFormat()->setFormatCode('mm/dd/yyyy');
             $line++;
         }
-        $ws->freezePane('A3');
+        if ($line > 3) $ws->getStyle('R3:R'.($line - 1))->getNumberFormat()->setFormatCode('0'); // YYYYMM: no thousands separator
+        SpreadsheetLayout::finish($ws, [
+            'header_row' => 2, 'freeze' => 'B3', 'autofilter' => true,
+            'date_columns' => ['F' => SpreadsheetLayout::FORMAT_DATE_US, 'H' => SpreadsheetLayout::FORMAT_DATE_US],
+            'text_columns' => ['E', 'O', 'Q'], 'amount_columns' => array_map(fn ($i) => Coordinate::stringFromColumnIndex($i), range(19, 44)),
+            'wrap_columns' => ['I', 'J', 'K', 'L', 'M', 'N'],
+        ]);
 
         return $wb;
     }
@@ -477,19 +482,23 @@ final class PostPayrollDownloadService
         $line = 4;
         foreach ($rows as $i => $r) {
             $m = $r['_master'];
-            $vals = [$i + 1, $m['name'] ?? '', $m['employee_code'] ?? '', is_numeric($m['cpf_no'] ?? null) ? (float) $m['cpf_no'] : ($m['cpf_no'] ?? ''), (int) ($r['pay_level'] ?? 0), self::n($r, 'basic_actual')];
+            $vals = [$i + 1, $m['name'] ?? '', $m['employee_code'] ?? '', (string) ($m['cpf_no'] ?? ''),(int) ($r['pay_level'] ?? 0), self::n($r, 'basic_actual')];
             foreach ([...self::PAYBILL_EARNINGS, ...self::PAYBILL_DEDUCTIONS] as $keys) {
                 $vals[] = $keys === null ? null : round(self::sum($r, $keys), 2);
             }
             array_push($vals, self::n($r, 'total_earnings'), self::n($r, 'total_deductions'), self::n($r, 'net_salary'), $r['leave_remarks'] ?? '');
             foreach ($vals as $c => $v) {
-                if ($v !== null && $v !== '') $ws->setCellValue([$c + 1, $line], $v);
+                if ($v === null || $v === '') continue;
+                if ($c === 3) $ws->setCellValueExplicit([$c + 1, $line], (string) $v, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING); // CPF No. stays text
+                else $ws->setCellValue([$c + 1, $line], $v);
             }
             $line++;
         }
         $ws->getStyle('F4:'.Coordinate::stringFromColumnIndex(count($headers) - 1).($line))->getNumberFormat()->setFormatCode('#,##0.00');
-        $ws->getColumnDimension('B')->setWidth(30);
-        $ws->freezePane('G4');
+        SpreadsheetLayout::finish($ws, [
+            'header_row' => 3, 'freeze' => 'C4', 'autofilter' => true, 'landscape' => true, 'fit_width' => true,
+            'wrap_columns' => [Coordinate::stringFromColumnIndex(count($headers))],
+        ]);
 
         // Optional print-style sheet: the three-line block per employee of the legacy paybill.
         $ps = $wb->createSheet()->setTitle('Print');
@@ -514,6 +523,8 @@ final class PostPayrollDownloadService
             $ps->setCellValue("A{$p}", 'Total Pay-'.round(self::n($r, 'total_earnings')).'  Total Deduction-'.round(self::n($r, 'total_deductions'), 2).'  Net Pay - '.round(self::n($r, 'net_salary'), 2));
             $p += 2;
         }
+
+        SpreadsheetLayout::finish($ps, ['header_row' => 1, 'landscape' => true, 'fit_width' => true]);
 
         return $wb;
     }

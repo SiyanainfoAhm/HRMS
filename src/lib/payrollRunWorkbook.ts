@@ -26,6 +26,7 @@ import {
   applyTotalRowStyle,
   autoFitColumnsWithLimits,
   configurePayrollPrintSetup,
+  contentColumnWidths,
   mergeCells,
   pairItems,
   writeStyledCell,
@@ -842,25 +843,20 @@ export function buildEmployeeDetailSheet(
 
   ws["!merges"] = merges;
 
-  const widths = headers.map((h, i) => {
-    if (i < 2) return 22;
-    if (h === "Remarks") return 28;
-    if (h === "EmployeeName") return 24;
-    // Organisation names are commonly longer than their IDs/numeric payroll values.
-    // Keep these readable in every Run Payroll Excel export.
-    if (h === "Division") return 26;
-    if (h === "Department") return 32;
-    if (h === "Designation") return 32;
-    if (TEXT_HEADERS.has(h)) return 16;
-    return 12;
+  ws["!cols"] = contentColumnWidths(ws as unknown as Record<string, unknown>, {
+    firstRow0: headerRow,
+    lastRow0: totalsRow,
+    lastCol0: lastCol,
+    min: 10,
+    max: 50,
   });
-  ws["!cols"] = autoFitColumnsWithLimits(widths, { min: 10, max: 40 });
 
   const autoFilterRef = `A${headerRow + 1}:${XLSX.utils.encode_col(lastCol)}${totalsRow}`;
   configurePayrollPrintSetup(ws as unknown as Record<string, unknown>, {
     lastRow0: totalsRow,
     lastCol0: lastCol,
     freezeRows: headerRow + 1,
+    freezeCols: 2,
     landscape: true,
     titleRows: headerRow + 1,
     autoFilterRef,
