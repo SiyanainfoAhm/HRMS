@@ -264,9 +264,12 @@ export function DateInput({
                     onClick={() => pick(ymd)}
                     className={cn(
                       "mx-auto h-9 w-9 rounded-full text-sm tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-blue",
-                      selected ? "bg-brand-blue font-semibold text-white" : "text-slate-800 hover:bg-slate-100",
-                      ymd === today && !selected && "ring-1 ring-slate-300",
-                      out !== "ok" && "cursor-not-allowed text-slate-300 hover:bg-transparent",
+                      out !== "ok"
+                        ? "cursor-not-allowed text-slate-300"
+                        : selected
+                          ? "bg-brand-blue font-semibold text-white"
+                          : "text-slate-800 hover:bg-slate-100",
+                      ymd === today && !selected && out === "ok" && "ring-1 ring-slate-300",
                     )}
                   >
                     {Number(ymd.slice(8, 10))}

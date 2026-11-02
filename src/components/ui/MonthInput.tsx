@@ -182,9 +182,12 @@ export function MonthInput({
                 onClick={() => pick(ym)}
                 className={cn(
                   "h-10 rounded-lg text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-blue",
-                  selected ? "bg-brand-blue text-white" : "text-slate-800 hover:bg-slate-100",
-                  ym === todayYm && !selected && "ring-1 ring-slate-300",
-                  reason && "cursor-not-allowed text-slate-300 hover:bg-transparent",
+                  reason
+                    ? "cursor-not-allowed text-slate-300"
+                    : selected
+                      ? "bg-brand-blue text-white"
+                      : "text-slate-800 hover:bg-slate-100",
+                  ym === todayYm && !selected && !reason && "ring-1 ring-slate-300",
                 )}
               >
                 {name}
