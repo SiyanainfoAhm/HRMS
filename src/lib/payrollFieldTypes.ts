@@ -61,6 +61,7 @@ export type PayrollConfig = {
     slabNo: number;
     payLevel: number;
     ratePerHour: number;
+    ratePerDuty?: number;
     label?: string;
     isActive?: boolean;
   }>;

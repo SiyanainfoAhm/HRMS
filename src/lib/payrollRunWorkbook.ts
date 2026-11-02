@@ -1,5 +1,7 @@
+import { PAYROLL_LABELS } from "./payrollLabels";
 import * as XLSX from "xlsx-js-style";
 import { calendarDaysInMonth, equivalentPayableDays } from "@/lib/payrollLeaveDays";
+import { totalArrearsPaid } from "@/lib/payrollArrearCalc";
 import {
   buildPayrollExcelHeaders,
   buildPayrollExcelRow,
@@ -189,9 +191,9 @@ export function aggregatePayrollSummary(rows: PayrollRunExportRow[]) {
     "Encashment DA": 0,
   };
   const arrears: Record<string, number> = {
-    "DA Arrears": 0,
-    "Transport Arrears": 0,
-    "Gross Arrears": 0,
+    [PAYROLL_LABELS.daArrears]: 0,
+    [PAYROLL_LABELS.transportArrears]: 0,
+    [PAYROLL_LABELS.grossArrears]: 0,
   };
   const deductions: Record<string, number> = {
     "Income Tax": 0,
@@ -242,9 +244,9 @@ export function aggregatePayrollSummary(rows: PayrollRunExportRow[]) {
         addAmount(earnings, titleFromFieldKey(key), amount);
       }
 
-      arrears["DA Arrears"] += gmNum(gm, "daArrearsPaid", "da_arrears_paid");
-      arrears["Transport Arrears"] += gmNum(gm, "transportArrearsPaid", "transport_arrears_paid");
-      arrears["Gross Arrears"] += gmNum(gm, "grossArrear", "gross_arrear");
+      arrears[PAYROLL_LABELS.daArrears] += gmNum(gm, "daArrearsPaid", "da_arrears_paid");
+      arrears[PAYROLL_LABELS.transportArrears] += gmNum(gm, "transportArrearsPaid", "transport_arrears_paid");
+      arrears[PAYROLL_LABELS.grossArrears] += gmNum(gm, "grossArrear", "gross_arrear");
 
       const d = gmDeductions(gm);
       deductions["Income Tax"] += d.incomeTax;
@@ -276,10 +278,11 @@ export function aggregatePayrollSummary(rows: PayrollRunExportRow[]) {
       totalEarnings += gmNum(gm, "totalEarnings", "total_earnings");
       totalDeductions += gmNum(gm, "totalDeductions", "total_deductions");
       totalNet += gmNum(gm, "netSalary", "net_salary") || num(r.netPay);
-      totalArrears +=
-        gmNum(gm, "daArrearsPaid", "da_arrears_paid") +
-        gmNum(gm, "transportArrearsPaid", "transport_arrears_paid") +
-        gmNum(gm, "grossArrear", "gross_arrear");
+      totalArrears += totalArrearsPaid(
+        gmNum(gm, "daArrearsPaid", "da_arrears_paid"),
+        gmNum(gm, "transportArrearsPaid", "transport_arrears_paid"),
+        gmNum(gm, "grossArrear", "gross_arrear"),
+      );
     } else {
       totalEarnings += num(r.grossPay);
       totalDeductions += num(r.deductions);

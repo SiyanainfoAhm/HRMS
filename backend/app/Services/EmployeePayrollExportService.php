@@ -6,6 +6,7 @@ use App\Models\HrmsGovernmentMonthlyPayroll;
 use App\Models\HrmsPayrollMaster;
 use App\Models\HrmsPayrollPeriod;
 use App\Models\HrmsQuarter;
+use App\Support\PayrollLabels;
 use Illuminate\Support\Facades\Schema;
 use PhpOffice\PhpSpreadsheet\Cell\DataType;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
@@ -489,8 +490,8 @@ class EmployeePayrollExportService
 
         return array_merge($headers, [
             'Total Deductions',
-            'CPF Arrear',
-            'Net Arrear',
+            PayrollLabels::CPF_ARREARS,
+            PayrollLabels::NET_ARREARS,
             'Net Salary',
         ]);
     }

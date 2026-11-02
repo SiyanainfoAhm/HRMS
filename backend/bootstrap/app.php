@@ -17,6 +17,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'cirt.company' => \App\Http\Middleware\EnsureCirtCompanyContext::class,
             'managerial' => \App\Http\Middleware\EnsureManagerial::class,
             'payroll.edit-lock' => \App\Http\Middleware\RequirePayrollEditLock::class,
+            'schema.current' => \App\Http\Middleware\EnsureSchemaCurrent::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {
@@ -47,6 +48,13 @@ return Application::configure(basePath: dirname(__DIR__))
                     'error' => 'Could not save payroll master because an active record already exists for this employee. Please refresh and try again.',
                     'message' => 'Could not save payroll master because an active record already exists for this employee. Please refresh and try again.',
                 ], 409);
+            }
+
+            // Missing table/column: the database is behind the code. Say so plainly.
+            if (str_contains($raw, 'SQLSTATE[42703]') || str_contains($raw, 'SQLSTATE[42P01]')) {
+                $message = 'Database schema is out of date for this release. Run the deployment migrations (php artisan migrate --force) and retry.';
+
+                return response()->json(['error' => $message, 'message' => $message, 'code' => 'SCHEMA_OUT_OF_DATE'], 503);
             }
 
             if ($e instanceof \Illuminate\Database\QueryException || str_contains($raw, 'SQLSTATE[')) {

@@ -31,7 +31,7 @@ Route::prefix('v1')->group(function () {
     });
 
     // ── Authenticated routes ────────────────────────────────────
-    Route::middleware(['auth:sanctum', 'hrms.session', 'cirt.company'])->group(function () {
+    Route::middleware(['auth:sanctum', 'hrms.session', 'cirt.company', 'schema.current'])->group(function () {
 
         // Auth
         Route::post('auth/logout', [AuthController::class, 'logout']);
@@ -143,6 +143,9 @@ Route::prefix('v1')->group(function () {
 
             // Payroll
             Route::get('activity-logs', [\App\Http\Controllers\Api\V1\ActivityLogController::class, 'index']);
+            Route::get('payroll/post-downloads/{type}', [\App\Http\Controllers\Api\V1\PostPayrollDownloadController::class, 'download']);
+            Route::get('activity-logs/entries', [\App\Http\Controllers\Api\V1\ActivityLogController::class, 'entries']);
+            Route::get('activity-logs/entries/{id}', [\App\Http\Controllers\Api\V1\ActivityLogController::class, 'entryDetails']);
             Route::get('activity-logs/{id}', [\App\Http\Controllers\Api\V1\ActivityLogController::class, 'show']);
             Route::post('payroll/edit-lock/acquire', [\App\Http\Controllers\Api\V1\PayrollEditLockController::class, 'acquire']);
             Route::post('payroll/edit-lock/heartbeat', [\App\Http\Controllers\Api\V1\PayrollEditLockController::class, 'heartbeat']);

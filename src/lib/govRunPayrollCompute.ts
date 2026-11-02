@@ -53,6 +53,8 @@ export type GovRecalcPayload = {
   electricityTariff?: import("./electricityTariffCalculation").ElectricityTariffConfig | null;
   nightHours?: number;
   nightAllowanceRate?: number;
+  /** "duty" = rate per 8-hour duty (CIRT-08); missing = legacy per-hour rate. */
+  nightAllowanceRateBasis?: "duty" | "hour";
   nightAllowanceSlabNo?: number | null;
   nightAllowanceManualOverride?: boolean;
   nightAllowanceWarning?: string;
@@ -142,6 +144,7 @@ export function runGovernmentPayrollCompute(
     electricityMode: gr.electricityMode,
     nightHours: gr.nightHours ?? 0,
     nightAllowanceRate: gr.nightAllowanceRate ?? 0,
+    nightAllowanceRateBasis: gr.nightAllowanceRateBasis,
     nightAllowanceBasicCeiling,
     nightAllowanceManualOverride: gr.nightAllowanceManualOverride,
     nightAllowanceSlabNo: gr.nightAllowanceSlabNo ?? null,

@@ -43,7 +43,7 @@ import {
   referenceSalaryFromGovRecalc,
 } from "@/lib/hplEolDeductions";
 import { customRunFieldsForPreview, type PayrollConfig, type PayrollFieldDefinition } from "@/lib/payrollFieldTypes";
-import { applyAutoArrearsToGovernmentMonthly } from "@/lib/payrollArrearCalc";
+import { applyAutoArrearsToGovernmentMonthly, totalArrearsPaid } from "@/lib/payrollArrearCalc";
 import {
   GovernmentRunPreviewTable,
   type GovernmentPreviewMonthly,
@@ -80,11 +80,28 @@ import {
   type RunPayrollRowLike,
 } from "@/lib/resolveRunPayrollRow";
 import { payrollPeriodKey, payrollRowCacheKey } from "@/lib/payrollPeriodIsolation";
-import { markPayrollDraftFieldEdited, rowsForPayrollDraftSave } from "@/lib/payrollDraftPatch";
+import {
+  clearSavedPayrollDraftMasks,
+  ensureDraftSavedBeforeGenerate,
+  hasUnsavedDraftEdits,
+  markPayrollDraftFieldEdited,
+  rowsForPayrollDraftSave,
+  snapshotPayrollDraftMasks,
+} from "@/lib/payrollDraftPatch";
+import {
+  chooseLatestDraftForGenerate,
+  describeExternalChanges,
+  draftStoredMapFromEmployees,
+  saveDraftWithConflictRetry,
+  storedRowsByEmployee,
+  type DraftEmployeeApi,
+  type LatestDraft,
+} from "@/lib/payrollDraftConflict";
 import {
   applyGovernmentSheetMonetaryEdit,
   applyDeductionPaidOverridesToGm,
-  clearMonetaryOverridesFromGovRecalc,
+  applyFrozenSheetOverridesToComputed,
+  clearDayDependentOverridesFromGovRecalc,
   clearNightAllowanceOverride,
   isGovernmentSheetMonetaryField,
   recalculateGovernmentSheetTotals,
@@ -185,7 +202,9 @@ type MasterGridRow = {
 };
 
 const PAYROLL_REVISION_CONFLICT = "Payroll was updated in another tab or session. Reload the latest values before saving.";
-function offerPayrollConflictReload(): void {
+function offerPayrollConflictReload(hasUnsavedEdits = false): void {
+  // Reloading throws away whatever is only on screen, so with unsaved edits do not offer it.
+  if (hasUnsavedEdits) return;
   if (window.confirm(`${PAYROLL_REVISION_CONFLICT}\n\nOK: Reload latest values (discard unsaved edits).\nCancel: Review Changes (keep this screen and its unsaved edits).`)) {
     window.location.reload();
   }
@@ -326,68 +345,6 @@ function governmentRowFromCompute<T extends {
     esicEmployer: 0,
     takeHome: Math.round(netSalary),
   };
-}
-
-/** After full payroll compute, restore any frozen/manual sheet component values. */
-function applyFrozenSheetOverridesToComputed(
-  gr: GovRecalcPayload,
-  comp: Record<string, unknown>,
-  payrollFieldDefs?: PayrollFieldDefinition[],
-): Record<string, unknown> {
-  const eo = gr.earningPaidOverrides ?? {};
-  const paidDed = gr.deductionPaidOverrides ?? {};
-  const hasEarningFreeze = SHEET_EARNING_KEYS.some((k) => hasOwn(eo, k));
-  const hasDeductionFreeze =
-    Object.keys(paidDed).length > 0 ||
-    Boolean(
-      gr.cpfManualOverride ||
-        gr.hplDeductionManualOverride ||
-        gr.eolDeductionManualOverride ||
-        gr.electricityManualOverride ||
-        gr.quarterRentManualOverride,
-    );
-  if (!hasEarningFreeze && !hasDeductionFreeze) {
-    return comp;
-  }
-
-  let gm: Record<string, unknown> = { ...comp };
-  if (hasEarningFreeze) {
-    for (const key of SHEET_EARNING_KEYS) {
-      if (hasOwn(eo, key)) {
-        const v = Number((eo as Record<string, number>)[key]);
-        if (Number.isFinite(v)) gm[key] = Math.max(0, Math.round(v));
-      }
-    }
-  }
-  if (hasDeductionFreeze) {
-    return applyDeductionPaidOverridesToGm(
-      // The computed row already contains its current master defaults. Only
-      // explicit sheet overrides belong here, otherwise a draft's unrelated
-      // CPF/other override can overwrite recalculated electricity.
-      gm,
-      null,
-      {
-        ...paidDed,
-        ...(gr.cpfManualOverride && hasOwn(gr.deductionDefaults, "cpf")
-          ? { cpf: gr.deductionDefaults.cpf }
-          : {}),
-        ...(gr.hplDeductionManualOverride && hasOwn(gr.deductionDefaults, "hpl")
-          ? { hpl: gr.deductionDefaults.hpl }
-          : {}),
-        ...(gr.eolDeductionManualOverride && hasOwn(gr.deductionDefaults, "eol")
-          ? { eol: gr.deductionDefaults.eol }
-          : {}),
-        ...(gr.electricityManualOverride && hasOwn(gr.deductionDefaults, "electricity")
-          ? { electricity: gr.deductionDefaults.electricity }
-          : {}),
-        ...(gr.quarterRentManualOverride && hasOwn(gr.deductionDefaults, "quarterRent")
-          ? { quarterRent: gr.deductionDefaults.quarterRent }
-          : {}),
-      },
-      payrollFieldDefs,
-    );
-  }
-  return recalculateGovernmentSheetTotals(gm, payrollFieldDefs);
 }
 
 function applyGovernmentPayrollRowCompute(
@@ -1655,7 +1612,7 @@ function PayrollPageContent() {
             }
             // Calculation drivers: wipe monthly monetary overrides, then full calc.
             const grForCalc = opts?.clearMonetaryOverrides
-              ? clearMonetaryOverridesFromGovRecalc(gr)
+              ? clearDayDependentOverridesFromGovRecalc(gr)
               : gr;
             const grReady = ensureReferenceSalariesForRecompute(grForCalc, runY, runM);
             const currentArrear = arrear ?? arrearSnapshotFromRow(incentiveBase);
@@ -1697,7 +1654,7 @@ function PayrollPageContent() {
             if (isSamePayrollReferencePeriod(refMonth, refYear, runM, runY)) {
               return recompute(grNext, row.payDays, undefined, row, { clearMonetaryOverrides: true });
             }
-            void hydrateEolReferenceSalary(employeeUserId, clearMonetaryOverridesFromGovRecalc(grNext), runY, runM).then((grHydrated) => {
+            void hydrateEolReferenceSalary(employeeUserId, clearDayDependentOverridesFromGovRecalc(grNext), runY, runM).then((grHydrated) => {
               if (activePeriodKeyRef.current !== editPeriodKey) return;
               setEditableRows((prev) =>
                 prev.map((r) => {
@@ -1733,7 +1690,7 @@ function PayrollPageContent() {
             if (isSamePayrollReferencePeriod(refMonth, refYear, runM, runY)) {
               return recompute(grNext, row.payDays, undefined, row, { clearMonetaryOverrides: true });
             }
-            void hydrateHplReferenceSalary(employeeUserId, clearMonetaryOverridesFromGovRecalc(grNext), runY, runM).then((grHydrated) => {
+            void hydrateHplReferenceSalary(employeeUserId, clearDayDependentOverridesFromGovRecalc(grNext), runY, runM).then((grHydrated) => {
               if (activePeriodKeyRef.current !== editPeriodKey) return;
               setEditableRows((prev) =>
                 prev.map((r) => {
@@ -2075,26 +2032,7 @@ function PayrollPageContent() {
           setDraftLoadError(data?.message || data?.error || "Could not verify saved payroll draft for this period.");
           return;
         }
-        const map = new Map<string, Record<string, unknown>>();
-        const periodKey = requestedPeriodKey;
-        for (const emp of (data.employees ?? []) as DraftEmployeeApiRow[]) {
-          const uid = String(emp.employeeUserId ?? emp.employee_user_id ?? "");
-          const payload = (emp.rowPayload ?? emp.row_payload ?? null) as Record<string, unknown> | null;
-          if (!uid || !payload) continue;
-          map.set(payrollRowCacheKey(periodKey, uid), {
-            employeeUserId: uid,
-            employeeCode: emp.employeeCode ?? emp.employee_code ?? null,
-            payrollMasterId: emp.payrollMasterId ?? emp.payroll_master_id ?? null,
-            payDays: emp.payDays ?? emp.pay_days ?? null,
-            grossPay: emp.grossPay ?? emp.gross_pay ?? null,
-            totalEarnings: emp.totalEarnings ?? emp.total_earnings ?? null,
-            totalDeductions: emp.totalDeductions ?? emp.total_deductions ?? null,
-            totalArrears: emp.totalArrears ?? emp.total_arrears ?? null,
-            netPay: emp.netPay ?? emp.net_pay ?? null,
-            remarks: emp.remarks ?? null,
-            rowPayload: payload,
-          });
-        }
+        const map = draftStoredMapFromEmployees(requestedPeriodKey, (data.employees ?? []) as DraftEmployeeApi[]);
         draftPayloadByUserRef.current = map;
         // Drop calculated cache so draft payloads win on re-hydrate (keep unsaved edits).
         if (!draftDirtyRef.current) {
@@ -2113,7 +2051,7 @@ function PayrollPageContent() {
           setDraftMeta(null);
         }
         setDraftLoadError(null);
-        setDraftLoadedPeriodKey(periodKey);
+        setDraftLoadedPeriodKey(requestedPeriodKey);
         setDraftRevision((n) => n + 1);
       } catch {
         if (!cancelled) setDraftLoadError("Could not verify saved payroll draft for this period. Retry after reloading.");
@@ -2873,84 +2811,131 @@ function PayrollPageContent() {
           grossPay: r.grossPay,
           totalEarnings,
           totalDeductions: r.deductions,
-          totalArrears: Math.round(daArr + trArr + grossArr),
+          totalArrears: totalArrearsPaid(daArr, trArr, grossArr),
           netPay: r.netPay,
           remarks: r.govRecalc?.leaveRemarks ?? null,
           ...("changedFields" in r ? { changedFields: r.changedFields } : {}),
           rowPayload: r,
         };
       });
-      const res = await fetch("/api/payroll/drafts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          year: parseInt(runYear, 10),
-          month: parseInt(runMonth, 10),
-          version: draftMeta?.version ?? undefined,
-          clientId: payrollLease.clientId,
-          leaseToken: payrollLease.leaseToken,
-          replaceAllEmployees: !draftMeta,
-          employees,
-        }),
+      // Edits typed while this request is in flight must stay marked as unsaved.
+      const sentMasks = snapshotPayrollDraftMasks(changedDraftFieldsRef.current);
+      const periodKeyForSave = payrollPeriodKey(runYear, runMonth);
+      const draftsUrl = `/api/payroll/drafts?year=${encodeURIComponent(runYear)}&month=${encodeURIComponent(String(parseInt(runMonth, 10)))}`;
+      const fetchLatestDraft = async (): Promise<LatestDraft> => {
+        const latestRes = await fetch(draftsUrl, { cache: "no-store" });
+        const latest = await latestRes.json();
+        if (!latestRes.ok) throw new Error(latest?.message || latest?.error || "Could not load the latest saved draft");
+        const rowsByUid = storedRowsByEmployee(
+          draftStoredMapFromEmployees(periodKeyForSave, (latest.employees ?? []) as DraftEmployeeApi[]),
+        );
+        return {
+          draftId: latest.draft?.id ? String(latest.draft.id) : undefined,
+          version: latest.draft?.version != null ? Number(latest.draft.version) : undefined,
+          rows: rowsByUid,
+        };
+      };
+      // On a 409 the same field-level patch is re-sent against the latest draft: the
+      // user's typed fields win, every other field keeps what the other session saved.
+      const outcome = await saveDraftWithConflictRetry({
+        patches: employees.map((e) => ({
+          employeeUserId: e.employeeUserId,
+          changedFields: (e as { changedFields?: string[] }).changedFields,
+          rowPayload: e.rowPayload as unknown as Record<string, unknown>,
+        })),
+        version: draftMeta?.version ?? undefined,
+        base: storedRowsByEmployee(draftPayloadByUserRef.current),
+        // A first save has no field masks to re-send, so it cannot be retried blindly.
+        maxRetries: draftMeta ? 2 : 0,
+        send: async (version) => {
+          const res = await fetch("/api/payroll/drafts", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              year: parseInt(runYear, 10),
+              month: parseInt(runMonth, 10),
+              version: version ?? undefined,
+              clientId: payrollLease.clientId,
+              leaseToken: payrollLease.leaseToken,
+              replaceAllEmployees: !draftMeta,
+              employees,
+            }),
+          });
+          return { status: res.status, body: await res.json() };
+        },
+        fetchLatest: fetchLatestDraft,
       });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data?.error || data?.message || data?.errors?.version?.[0] || "Failed to save draft");
+      if (!outcome.ok) {
+        if (outcome.status === 409) {
+          // Never reload over typed values: adopt the latest version so the next Save
+          // applies the still-marked edits on top of it.
+          try {
+            const latest = await fetchLatestDraft();
+            if (latest.draftId) {
+              setDraftMeta((m) => ({ id: latest.draftId as string, version: latest.version ?? m?.version ?? 1, updatedAt: m?.updatedAt ?? null, employeeCount: m?.employeeCount ?? latest.rows.size }));
+            }
+          } catch {
+            /* keep the current meta; the edits are untouched either way */
+          }
+          showToast("error", "Another session is saving this payroll draft at the same time. Your edits are still on screen and still marked unsaved; press Save Draft again.");
+          return false;
+        }
+        const body = outcome.body as { error?: string; message?: string; errors?: { version?: string[] } };
+        throw new Error(body?.error || body?.message || body?.errors?.version?.[0] || "Failed to save draft");
       }
+      const data = outcome.body as {
+        draft: { id: string; version?: number; updatedAt?: string | null; employeeCount?: number };
+        employees?: DraftEmployeeApi[];
+        savedEmployeeCount?: number;
+        saved_employee_count?: number;
+        saved?: number;
+        distinctEmployeeCount?: number;
+        distinct_employee_count?: number;
+      };
       const expected = employees.length;
-      const savedCount = Number(
-        data.savedEmployeeCount ?? data.saved_employee_count ?? data.saved ?? expected,
-      );
-      const distinctCount = Number(
-        data.distinctEmployeeCount ?? data.distinct_employee_count ?? savedCount,
-      );
+      const savedCount = Number(data.savedEmployeeCount ?? data.saved_employee_count ?? data.saved ?? expected);
+      const distinctCount = Number(data.distinctEmployeeCount ?? data.distinct_employee_count ?? savedCount);
       if (savedCount !== expected || distinctCount !== expected) {
         throw new Error(
           `Draft save incomplete: expected ${expected} employees, saved ${savedCount} (distinct ${distinctCount}).`,
         );
       }
-      const map = new Map<string, Record<string, unknown>>();
-      for (const emp of (data.employees ?? []) as DraftEmployeeApiRow[]) {
-        const uid = String(emp.employeeUserId ?? emp.employee_user_id ?? "");
-        const payload = (emp.rowPayload ?? emp.row_payload ?? null) as Record<string, unknown> | null;
-        if (!uid || !payload) continue;
-        map.set(uid, {
-          employeeUserId: uid,
-          employeeCode: emp.employeeCode ?? emp.employee_code ?? null,
-          payrollMasterId: emp.payrollMasterId ?? emp.payroll_master_id ?? null,
-          payDays: emp.payDays ?? emp.pay_days ?? null,
-          grossPay: emp.grossPay ?? emp.gross_pay ?? null,
-          totalEarnings: emp.totalEarnings ?? emp.total_earnings ?? null,
-          totalDeductions: emp.totalDeductions ?? emp.total_deductions ?? null,
-          totalArrears: emp.totalArrears ?? emp.total_arrears ?? null,
-          netPay: emp.netPay ?? emp.net_pay ?? null,
-          remarks: emp.remarks ?? null,
-          rowPayload: payload,
-        });
-      }
-      const storedEmployeeCount = Number(data.draft?.employeeCount ?? data.employees?.length ?? map.size);
+      const map = draftStoredMapFromEmployees(periodKeyForSave, (data.employees ?? []) as DraftEmployeeApi[]);
+      const storedEmployeeCount = Number((data.draft as { employeeCount?: number })?.employeeCount ?? data.employees?.length ?? map.size);
       if (map.size !== storedEmployeeCount) {
         throw new Error(
           `Draft save incomplete: expected ${storedEmployeeCount} stored employee payloads, received ${map.size}.`,
         );
       }
       draftPayloadByUserRef.current = map;
-      editedRunRowKeysRef.current.clear();
-      changedDraftFieldsRef.current.clear();
+      // Forget only what was saved exactly as sent; anything typed during the request stays unsaved.
+      const stillDirtyRows = clearSavedPayrollDraftMasks(changedDraftFieldsRef.current, sentMasks);
+      for (const key of [...editedRunRowKeysRef.current]) {
+        if (!stillDirtyRows.has(key)) editedRunRowKeysRef.current.delete(key);
+      }
       setDraftMeta({
         id: String(data.draft.id),
         version: Number(data.draft.version ?? 1),
         updatedAt: data.draft.updatedAt ?? null,
         employeeCount: Number(data.draft.employeeCount ?? map.size),
       });
-      setDraftDirty(false);
+      draftDirtyRef.current = stillDirtyRows.size > 0; // keep the ref in step so the Generate re-check is exact
+      setDraftDirty(stillDirtyRows.size > 0);
       setDraftRevision((n) => n + 1);
-      showToast("success", `Draft saved (${expected} employees).`);
+      if (outcome.conflicts.length > 0) {
+        const nameOf = (uid: string) =>
+          String((rows.find((r) => (r as { employeeUserId?: string }).employeeUserId === uid) as { employeeName?: string } | undefined)?.employeeName ?? uid);
+        const list = outcome.conflicts.slice(0, 4).map((c) => `${nameOf(c.employeeUserId)} / ${c.field}`).join(", ");
+        showToast("success", `Draft saved with your values. Another session had also changed: ${list}${outcome.conflicts.length > 4 ? ` and ${outcome.conflicts.length - 4} more` : ""}.`);
+      } else if (outcome.changedElsewhere.length > 0) {
+        showToast("success", `Draft saved (${expected} employees). Merged changes another session saved for ${outcome.changedElsewhere.length} employee(s).`);
+      } else {
+        showToast("success", `Draft saved (${expected} employees).`);
+      }
       return true;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to save draft";
       showToast("error", msg);
-      if (msg === PAYROLL_REVISION_CONFLICT) offerPayrollConflictReload();
       return false;
     } finally {
       setDraftSaving(false);
@@ -3195,7 +3180,10 @@ function PayrollPageContent() {
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Failed to update generated payroll";
       showToast("error", message);
-      if (message === PAYROLL_REVISION_CONFLICT) offerPayrollConflictReload();
+      if (message === PAYROLL_REVISION_CONFLICT) {
+        if (auditDirtyRef.current) showToast("error", "Your amendment edits are still on screen and unsaved. Copy them down or press Save again after the page state is refreshed; nothing was reloaded.");
+        offerPayrollConflictReload(auditDirtyRef.current);
+      }
     } finally {
       setAuditSaving(false);
     }
@@ -3435,13 +3423,78 @@ function PayrollPageContent() {
       showToast("error", "Payroll has already been generated for this month. Use Audit Generated Payroll.");
       return;
     }
-    if (draftDirty) {
-      const ok = window.confirm(
-        "You have unsaved draft changes. Save Draft before Generate so finalized values stay auditable.\n\nClick OK to save draft first, or Cancel to abort.",
-      );
-      if (!ok) return;
-      const saved = await savePayrollDraft();
-      if (!saved) return;
+    // Unsaved edits are detected from the edit masks (not just the dirty flag) and are
+    // saved first with the merge-and-retry save; Generate never proceeds past edits that
+    // exist only in this browser.
+    // What the screen showed and what the user edited, captured before the save clears the marks.
+    const periodKeyForGenerate = payrollPeriodKey(runYear, runMonth);
+    const shownBeforeGenerate = storedRowsByEmployee(draftPayloadByUserRef.current);
+    const userEditedBeforeGenerate = new Map<string, Set<string>>();
+    for (const [rowKey, fields] of changedDraftFieldsRef.current) {
+      const uid = rowKey.startsWith(`${periodKeyForGenerate}:`) ? rowKey.slice(periodKeyForGenerate.length + 1) : rowKey;
+      userEditedBeforeGenerate.set(uid, new Set(fields));
+    }
+    const gate = await ensureDraftSavedBeforeGenerate({
+      hasUnsaved: () => hasUnsavedDraftEdits(changedDraftFieldsRef.current, editedRunRowKeysRef.current, draftDirtyRef.current),
+      confirmSave: () =>
+        window.confirm(
+          "You have unsaved draft changes. They will be saved to the draft first so finalized values stay auditable.\n\nOK: save the draft and continue. Cancel: stop here (your edits stay on screen).",
+        ),
+      save: () => savePayrollDraft(),
+    });
+    if (!gate.proceed) {
+      showToast("error", gate.message);
+      return;
+    }
+    // Generate from the LATEST saved draft (the user's typed fields are already saved in it
+    // and win). If another session changed values the user did not edit, say so first.
+    if (draftMeta || draftPayloadByUserRef.current.size > 0) {
+      try {
+        const source = await chooseLatestDraftForGenerate({
+          shown: shownBeforeGenerate,
+          userEdited: userEditedBeforeGenerate,
+          fetchLatest: async () => {
+            const latestRes = await fetch(
+              `/api/payroll/drafts?year=${encodeURIComponent(runYear)}&month=${encodeURIComponent(String(parseInt(runMonth, 10)))}`,
+              { cache: "no-store" },
+            );
+            const latest = await latestRes.json();
+            if (!latestRes.ok) throw new Error(latest?.message || latest?.error || "Could not load the latest saved draft");
+            const stored = draftStoredMapFromEmployees(periodKeyForGenerate, (latest.employees ?? []) as DraftEmployeeApi[]);
+            return {
+              rows: storedRowsByEmployee(stored),
+              stored,
+              draft: latest.draft as { id?: string; version?: number; updatedAt?: string | null; employeeCount?: number } | null,
+            };
+          },
+          confirmChanges: (changes) => {
+            const nameOf = (uid: string) =>
+              String((editableRows.find((r) => r.employeeUserId === uid) as { employeeName?: string | null } | undefined)?.employeeName ?? uid);
+            return window.confirm(
+              `Another session changed saved draft values you did not edit:\n\n${describeExternalChanges(changes, nameOf)}\n\nOK: generate using the latest saved draft (your own edits are included). Cancel: stop; nothing is generated.`,
+            );
+          },
+        });
+        if (!source.proceed) {
+          showToast("error", source.message);
+          return;
+        }
+        // Generate from exactly what the server holds now.
+        draftPayloadByUserRef.current = source.latest.stored;
+        editedRunRowKeysRef.current.clear();
+        resolvedPayrollByUserIdRef.current.clear();
+        if (source.latest.draft?.id) {
+          setDraftMeta({
+            id: String(source.latest.draft.id),
+            version: Number(source.latest.draft.version ?? 1),
+            updatedAt: source.latest.draft.updatedAt ?? null,
+            employeeCount: Number(source.latest.draft.employeeCount ?? source.latest.stored.size),
+          });
+        }
+      } catch (err) {
+        showToast("error", err instanceof Error ? err.message : "Could not load the latest saved draft; payroll was not generated.");
+        return;
+      }
     }
     const sourceLabel = draftMeta
       ? "saved draft values"
@@ -3582,7 +3635,11 @@ function PayrollPageContent() {
     } catch (e: any) {
       setRunError(e?.message || "Failed to run payroll");
       showToast("error", e?.message || "Failed to run payroll");
-      if (e?.message === PAYROLL_REVISION_CONFLICT) offerPayrollConflictReload();
+      if (e?.message === PAYROLL_REVISION_CONFLICT) {
+        const unsaved = hasUnsavedDraftEdits(changedDraftFieldsRef.current, editedRunRowKeysRef.current, draftDirtyRef.current);
+        if (unsaved) showToast("error", "Payroll changed in another session. Your edits are still on screen and unsaved; press Save Draft, then Generate again. Nothing was reloaded.");
+        offerPayrollConflictReload(unsaved);
+      }
     } finally {
       setRunning(false);
     }

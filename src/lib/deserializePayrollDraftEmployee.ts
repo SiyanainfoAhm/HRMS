@@ -4,6 +4,7 @@
  */
 
 import { canonicalizeDynamicFieldKey, normalizeDynamicFieldBag } from "@/lib/payrollFieldTypes";
+import { totalArrearsPaid } from "@/lib/payrollArrearCalc";
 
 export function firstDefined<T>(...values: Array<T | null | undefined>): T | undefined {
   for (const v of values) {
@@ -628,7 +629,7 @@ export function sumResolvedPayrollTotals(rows: Array<Record<string, unknown>>) {
     gross += gEarn;
     deductions += gDed;
     net += gNet;
-    arrears += daArr + trArr + grossArr;
+    arrears += totalArrearsPaid(daArr, trArr, grossArr);
   }
   return {
     employees: rows.length,

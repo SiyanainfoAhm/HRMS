@@ -1,0 +1,1 @@
+- 2026-11-02 CIRT-FIX (CIRT-01..12) on branch fix/cirt-pune-issues: arrears labels, inactive fields, night duty, activity log entries, Post Payroll Downloads, query cuts. Local only.

@@ -53,7 +53,7 @@ final class PayrollSecurityTest extends TestCase
         $this->assertIsString($routes);
         $this->assertStringContainsString('EnsureManagerial', $bootstrap);
         $this->assertStringContainsString("'managerial'", $bootstrap);
-        $this->assertStringContainsString("Route::middleware(['auth:sanctum', 'hrms.session', 'cirt.company'])", $routes);
+        $this->assertStringContainsString("Route::middleware(['auth:sanctum', 'hrms.session', 'cirt.company', 'schema.current'])", $routes);
         $this->assertStringContainsString("middleware(['managerial'", $routes);
     }
 

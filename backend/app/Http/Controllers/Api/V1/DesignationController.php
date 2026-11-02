@@ -43,7 +43,7 @@ class DesignationController extends Controller
 
     public function update(Request $request, string $id): JsonResponse
     {
-        $item = HrmsDesignation::findOrFail($id);
+        $item = HrmsDesignation::where('company_id', (string) $request->user()->company_id)->findOrFail($id);
         $data = $request->validate([
             'title' => ['sometimes', 'string', 'max:255'],
             'level' => ['nullable', 'integer'],
@@ -61,7 +61,13 @@ class DesignationController extends Controller
             }
         }
 
-        $item->update($data);
+        \Illuminate\Support\Facades\DB::transaction(function () use ($item, $data) {
+            $oldTitle = (string) $item->title;
+            $item->update($data);
+            if (isset($data['title'])) {
+                \App\Support\OrgNameSync::rename('designation', (string) $item->company_id, $oldTitle, (string) $data['title']);
+            }
+        });
 
         return response()->json(['designation' => $item->refresh()]);
     }
@@ -77,9 +83,10 @@ class DesignationController extends Controller
         $userCount = HrmsUser::where('company_id', $companyId)
             ->where('designation_id', $id)
             ->count();
-        if ($employeeCount + $userCount > 0) {
+        $masterCount = \App\Support\OrgNameSync::masterUsage('designation', $companyId, (string) $item->title);
+        if ($employeeCount + $userCount + $masterCount > 0) {
             return response()->json([
-                'error' => 'Cannot delete: employees are assigned to this designation.',
+                'error' => 'Cannot delete: employees or Payroll Master records use this designation.',
             ], 409);
         }
 

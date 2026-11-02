@@ -10,6 +10,7 @@ use App\Models\HrmsPayrollPeriod;
 use App\Models\HrmsPayrollFieldDefinition;
 use App\Models\HrmsPayrollDraft;
 use App\Models\HrmsPayrollDraftEmployee;
+use App\Services\Concerns\WritesActivityEntries;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -17,12 +18,24 @@ use Symfony\Component\HttpFoundation\Response;
 
 final class ActivityLogService
 {
+    use WritesActivityEntries;
+
     /** Record only actions that materially change payroll, identity, or exported payroll data. */
     public function captureConfigurationSnapshot(Request $request): ?array
     {
         $route = ltrim($request->path(), '/');
         $companyId = $request->user()?->company_id;
         if (! is_string($companyId) || $companyId === '') return null;
+
+        if (preg_match('~payroll/master(?:/([0-9a-f-]{36}))?(?:/(?:recalculate|deactivate))?$~i', $route, $masterMatch)
+            && in_array(strtoupper($request->method()), ['POST', 'PUT', 'PATCH'], true)) {
+            $employeeId = $request->input('employeeUserId') ?? $request->input('employee_user_id') ?? $request->input('userId');
+            if (! is_string($employeeId) && ! empty($masterMatch[1])) {
+                $employeeId = DB::table('cirt_payroll_master')->where('company_id', $companyId)->where('id', $masterMatch[1])->value('employee_user_id');
+            }
+
+            return $this->currentMasterValues($companyId, is_string($employeeId) ? $employeeId : null);
+        }
 
         if (preg_match('~(?:^|/)company/(?:me|setup)$~', $route)) {
             $keys = [
@@ -48,7 +61,7 @@ final class ActivityLogService
     /** @return array<string, array<string, mixed>>|null */
     public function captureDraftSnapshot(Request $request): ?array
     {
-        if (! str_ends_with(ltrim($request->path(), '/'), 'payroll/drafts') || strtoupper($request->method()) !== 'POST') return null;
+        if (! str_ends_with(ltrim($request->path(), '/'), 'payroll/drafts') || ! in_array(strtoupper($request->method()), ['POST', 'DELETE'], true)) return null;
         $companyId = $request->user()?->company_id;
         $year = (int) $request->input('year', 0);
         $month = (int) $request->input('month', 0);
@@ -154,6 +167,23 @@ final class ActivityLogService
             $newValue = $configurationAfter ?? [];
         }
 
+        if ($this->usesEntryModel($action)) {
+            try {
+                $this->writeEntry([
+                    'action' => $action, 'success' => $success, 'companyId' => $companyId, 'actor' => $actor,
+                    'year' => $year, 'month' => $month, 'periodId' => $periodId, 'monthly' => $monthly,
+                    'targets' => $targets === [] && is_string($configurationBefore['__employee'] ?? $configurationAfter['__employee'] ?? null)
+                        ? [(string) ($configurationBefore['__employee'] ?? $configurationAfter['__employee'])] : $targets,
+                    'rows' => $rows, 'safeInput' => $safeInput, 'before' => $configurationBefore, 'after' => $configurationAfter,
+                    'draftBefore' => $draftBefore, 'requestId' => $correlationId, 'metadata' => $metadata,
+                ]);
+            } catch (\Throwable $exception) {
+                report($exception);
+            }
+
+            return;
+        }
+
         try {
             DB::transaction(function () use ($targets, $rows, $safeInput, $companyId, $actor, $actorRole, $action, $success, $year, $month, $periodId, $monthly, $fields, $correlationId, $metadata, $previousValue, $newValue, $draftBefore, $responseData): void {
                 foreach ($targets ?: [null] as $targetId) {
@@ -229,13 +259,19 @@ final class ActivityLogService
         if (str_ends_with($route, 'auth/signup')) return $method === 'POST' ? 'user.created' : null;
         if (preg_match('~employees$~', $route) && $method === 'POST') return 'employee.created';
         if (preg_match('~employees/[^/]+$~', $route) && $method === 'PUT') return 'employee.updated';
-        if (preg_match('~payroll/master(?:/[^/]+)?$~', $route) && in_array($method, ['POST', 'PUT', 'PATCH'], true)) return 'payroll_master.changed';
+        if (preg_match('~payroll/master/(?:import-preview|preview)$~', $route)) return null; // read-only, never an activity
+        if (preg_match('~payroll/master/(?:import|recalculate-all|sync-existing-employees)$~', $route) && $method === 'POST') return 'payroll_master.bulk';
+        if (preg_match('~payroll/master/resolve-employee-code-conflict$~', $route) && $method === 'POST') return 'payroll_master.changed';
+        if (preg_match('~payroll/master(?:/[0-9a-f-]{36}(?:/(?:recalculate|deactivate))?)?$~i', $route) && in_array($method, ['POST', 'PUT', 'PATCH'], true)) return 'payroll_master.changed';
+        if (preg_match('~payroll/periods(?:/[^/]+)?$~', $route) && in_array($method, ['POST', 'PUT'], true)) return 'payroll.period.changed';
+        if (preg_match('~settings/(?:night-allowance-rates|electricity-tariffs)(?:/[0-9a-f-]{36}(?:/deactivate)?)?$~i', $route) && in_array($method, ['POST', 'PUT'], true)) return 'payroll.rates.changed';
+        if (preg_match('~settings/(?:quarters|quarter-types)(?:/[0-9a-f-]{36}(?:/(?:assign|unassign|deactivate|activate))?)?$~i', $route) && in_array($method, ['POST', 'PUT'], true)) return 'payroll.quarters.changed';
         if (str_ends_with($route, 'payroll/drafts') && $method === 'POST') return 'payroll.draft.saved';
         if (str_ends_with($route, 'payroll/drafts') && $method === 'DELETE') return 'payroll.draft.discarded';
         if (str_ends_with($route, 'payroll/run/audit') || preg_match('~payroll/monthly/[^/]+/audit$~', $route)) return 'payroll.generated.amended';
         if (str_ends_with($route, 'payroll/run') && $method === 'POST') return 'payroll.generated';
         if (str_ends_with($route, 'payroll/payslips') && $method === 'POST') return 'payslip.generated';
-        if ($method === 'GET' && (str_ends_with($route, 'payroll/export') || str_ends_with($route, 'payroll/master/export') || str_ends_with($route, 'payroll/master/export-employee-payroll'))) return 'payroll.excel.exported';
+        if ($method === 'GET' && (str_ends_with($route, 'payroll/export') || str_contains($route, 'payroll/post-downloads/') || str_ends_with($route, 'payroll/master/export') || str_ends_with($route, 'payroll/master/export-employee-payroll'))) return 'payroll.excel.exported';
         if ($method === 'GET' && str_ends_with($route, 'payslips/employee')) return 'payslip.viewed';
         if (preg_match('~(?:users/[^/]+|users)$~', $route) && in_array($method, ['POST', 'PUT'], true)) return 'user.access.changed';
         if (preg_match('~(?:company/(?:me|setup)|settings/(?:salary-increment/apply|payroll-fields(?:/[^/]+)?(?:/deactivate)?|payroll-calculation-settings))$~', $route) && in_array($method, ['POST', 'PUT', 'DELETE'], true)) return 'payroll.configuration.changed';

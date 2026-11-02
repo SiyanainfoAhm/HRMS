@@ -45,7 +45,7 @@ class DepartmentController extends Controller
 
     public function update(Request $request, string $id): JsonResponse
     {
-        $dept = HrmsDepartment::findOrFail($id);
+        $dept = HrmsDepartment::where('company_id', (string) $request->user()->company_id)->findOrFail($id);
         $data = $request->validate([
             'name' => ['sometimes', 'string', 'max:255'],
             'description' => ['nullable', 'string'],
@@ -64,7 +64,13 @@ class DepartmentController extends Controller
             }
         }
 
-        $dept->update($data);
+        \Illuminate\Support\Facades\DB::transaction(function () use ($dept, $data) {
+            $oldName = (string) $dept->name;
+            $dept->update($data);
+            if (isset($data['name'])) {
+                \App\Support\OrgNameSync::rename('department', (string) $dept->company_id, $oldName, (string) $data['name']);
+            }
+        });
 
         return response()->json(['department' => $dept->refresh()]);
     }
@@ -80,9 +86,10 @@ class DepartmentController extends Controller
         $userCount = HrmsUser::where('company_id', $companyId)
             ->where('department_id', $id)
             ->count();
-        if ($employeeCount + $userCount > 0) {
+        $masterCount = \App\Support\OrgNameSync::masterUsage('department', $companyId, (string) $dept->name);
+        if ($employeeCount + $userCount + $masterCount > 0) {
             return response()->json([
-                'error' => 'Cannot delete: employees are assigned to this department.',
+                'error' => 'Cannot delete: employees or Payroll Master records use this department.',
             ], 409);
         }
 

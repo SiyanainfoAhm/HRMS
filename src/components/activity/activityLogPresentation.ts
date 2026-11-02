@@ -108,8 +108,10 @@ export function safeValue(value: unknown, field = ""): string {
 export type AuditChange = { field: string; label: string; before: unknown; after: unknown; difference?: number };
 
 function isIdentifierField(field: string): boolean {
-  const normalized = field.replace(/[^a-z0-9]/gi, "").toLowerCase();
-  return normalized === "id" || normalized.endsWith("id") || normalized.endsWith("uuid");
+  // Match whole identifier words (id, userId, employee_id, rowUuid), not any name
+  // that merely ends in the letters "id" such as basicPaid or daPaid.
+  const last = field.split(/[.\\/]/).filter(Boolean).pop() ?? field;
+  return /^(id|uuid)$/i.test(last) || /_(id|uuid)$/i.test(last) || /[a-z0-9](Id|ID|Uuid|UUID)$/.test(last);
 }
 
 function isUuidValue(value: unknown): boolean {

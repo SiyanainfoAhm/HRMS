@@ -505,6 +505,30 @@ export function clearMonetaryOverridesFromGovRecalc(gr: GovRecalcPayload): GovRe
   };
 }
 
+const DAY_DEPENDENT_EARNING_KEYS = ["basicPaid", "daPaid", "hraPaid", "medicalPaid", "transportPaid"] as const;
+const DAY_DEPENDENT_DEDUCTION_KEYS = ["cpf", "daCpf", "hpl", "eol"] as const;
+
+/**
+ * For pay days / HPL / EOL / reference-month changes: reset only what those inputs
+ * actually drive (pro-rated pay heads, CPF on them, and the leave deductions).
+ * Everything else the operator typed this month (Electricity, Water, Mess, Quarter
+ * Rent, arrears, allowances, custom fields, night allowance) stays exactly as entered.
+ */
+export function clearDayDependentOverridesFromGovRecalc(gr: GovRecalcPayload): GovRecalcPayload {
+  const earnings = { ...(gr.earningPaidOverrides ?? {}) } as Record<string, number>;
+  for (const key of DAY_DEPENDENT_EARNING_KEYS) delete earnings[key];
+  const deductions = { ...(gr.deductionPaidOverrides ?? {}) } as Record<string, number>;
+  for (const key of DAY_DEPENDENT_DEDUCTION_KEYS) delete deductions[key];
+  return {
+    ...gr,
+    earningPaidOverrides: Object.keys(earnings).length ? (earnings as GovRecalcPayload["earningPaidOverrides"]) : undefined,
+    deductionPaidOverrides: Object.keys(deductions).length ? (deductions as GovRecalcPayload["deductionPaidOverrides"]) : undefined,
+    cpfManualOverride: false,
+    hplDeductionManualOverride: false,
+    eolDeductionManualOverride: false,
+  };
+}
+
 /** Clear only Night Allowance's manual value when its hours or rate are edited. */
 export function clearNightAllowanceOverride(gr: GovRecalcPayload): GovRecalcPayload {
   const earningPaidOverrides = { ...(gr.earningPaidOverrides ?? {}) };
@@ -514,4 +538,72 @@ export function clearNightAllowanceOverride(gr: GovRecalcPayload): GovRecalcPayl
     nightAllowanceManualOverride: false,
     earningPaidOverrides: Object.keys(earningPaidOverrides).length ? earningPaidOverrides : undefined,
   };
+}
+
+/**
+ * After a full payroll compute, restore the values the operator froze this month
+ * (earning overrides, typed deductions, manual CPF/HPL/EOL/electricity/rent) and
+ * recalculate the totals from the resulting lines. Single copy used by the Run
+ * Payroll screen and by the saved-row resolver so they cannot disagree.
+ */
+export function applyFrozenSheetOverridesToComputed(
+  gr: GovRecalcPayload,
+  comp: Record<string, unknown>,
+  payrollFieldDefs?: PayrollFieldDefinition[],
+): Record<string, unknown> {
+  const eo = gr.earningPaidOverrides ?? {};
+  const paidDed = gr.deductionPaidOverrides ?? {};
+  const hasEarningFreeze = SHEET_EARNING_KEYS.some((k) => hasOwn(eo, k));
+  const hasDeductionFreeze =
+    Object.keys(paidDed).length > 0 ||
+    Boolean(
+      gr.cpfManualOverride ||
+        gr.hplDeductionManualOverride ||
+        gr.eolDeductionManualOverride ||
+        gr.electricityManualOverride ||
+        gr.quarterRentManualOverride,
+    );
+  if (!hasEarningFreeze && !hasDeductionFreeze) {
+    return comp;
+  }
+
+  let gm: Record<string, unknown> = { ...comp };
+  if (hasEarningFreeze) {
+    for (const key of SHEET_EARNING_KEYS) {
+      if (hasOwn(eo, key)) {
+        const v = Number((eo as Record<string, number>)[key]);
+        if (Number.isFinite(v)) gm[key] = Math.max(0, Math.round(v));
+      }
+    }
+  }
+  if (hasDeductionFreeze) {
+    gm = applyDeductionPaidOverridesToGm(
+      gm,
+      // `gm` is already a fresh full calculation. Reapply only explicitly
+      // frozen monthly values; merging every master default here would replace
+      // derived values such as tariff-based electricity after a units edit.
+      null,
+      {
+        ...paidDed,
+        ...(gr.cpfManualOverride && hasOwn(gr.deductionDefaults, "cpf")
+          ? { cpf: gr.deductionDefaults.cpf }
+          : {}),
+        ...(gr.hplDeductionManualOverride && hasOwn(gr.deductionDefaults, "hpl")
+          ? { hpl: gr.deductionDefaults.hpl }
+          : {}),
+        ...(gr.eolDeductionManualOverride && hasOwn(gr.deductionDefaults, "eol")
+          ? { eol: gr.deductionDefaults.eol }
+          : {}),
+        ...(gr.electricityManualOverride && hasOwn(gr.deductionDefaults, "electricity")
+          ? { electricity: gr.deductionDefaults.electricity }
+          : {}),
+        ...(gr.quarterRentManualOverride && hasOwn(gr.deductionDefaults, "quarterRent")
+          ? { quarterRent: gr.deductionDefaults.quarterRent }
+          : {}),
+      },
+      payrollFieldDefs,
+    );
+    return gm;
+  }
+  return recalculateGovernmentSheetTotals(gm, payrollFieldDefs);
 }

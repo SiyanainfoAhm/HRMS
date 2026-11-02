@@ -244,8 +244,7 @@ class PayrollDraftService
                     $attrs['net_pay'] = $this->num(data_get($payload, 'governmentMonthly.netSalary', $existing->net_pay));
                     $attrs['total_arrears'] = $existing->total_arrears;
                     if (array_intersect($changedFields, ['daArrear', 'transportArrear', 'grossArrear', 'cpfArrear', 'netArrear']) !== []) {
-                        $gmForArrears = $payload['governmentMonthly'] ?? [];
-                        $attrs['total_arrears'] = round((float) ($gmForArrears['daArrearsPaid'] ?? 0) + (float) ($gmForArrears['transportArrearsPaid'] ?? 0) + (float) ($gmForArrears['grossArrear'] ?? 0), 2);
+                        $attrs['total_arrears'] = \App\Support\PayrollTotals::arrearsTotal(is_array($payload['governmentMonthly'] ?? null) ? $payload['governmentMonthly'] : []);
                     }
                     if (! in_array('leaveRemarks', $changedFields, true)) $remarks = $existing->remarks;
                     $attrs['remarks'] = is_string($remarks) ? $remarks : $existing->remarks;
@@ -257,19 +256,17 @@ class PayrollDraftService
                     $attrs['total_earnings'] = $this->num($gm['totalEarnings'] ?? $gm['total_earnings'] ?? $attrs['total_earnings'] ?? $attrs['gross_pay']);
                     $attrs['total_deductions'] = $this->num($gm['totalDeductions'] ?? $gm['total_deductions'] ?? $attrs['total_deductions']);
                     $attrs['net_pay'] = $this->num($gm['netSalary'] ?? $gm['net_salary'] ?? $attrs['net_pay']);
-                    $daArr = (float) ($gm['daArrearsPaid'] ?? $gm['da_arrears_paid'] ?? 0);
-                    $trArr = (float) ($gm['transportArrearsPaid'] ?? $gm['transport_arrears_paid'] ?? 0);
-                    $grossArr = (float) ($gm['grossArrear'] ?? $gm['gross_arrear'] ?? 0);
-                    $attrs['total_arrears'] = round($daArr + $trArr + $grossArr, 2);
+                    $attrs['total_arrears'] = \App\Support\PayrollTotals::arrearsTotal($gm);
                 } elseif ($attrs['total_earnings'] === null && $attrs['gross_pay'] !== null) {
                     $attrs['total_earnings'] = $attrs['gross_pay'];
                 }
 
                 if ($attrs['total_arrears'] === null) {
-                    $daArr = (float) ($payload['daArrear'] ?? $payload['da_arrear'] ?? 0);
-                    $trArr = (float) ($payload['transportArrear'] ?? $payload['transport_arrear'] ?? 0);
-                    $grossArr = (float) ($payload['grossArrear'] ?? $payload['gross_arrear'] ?? 0);
-                    $attrs['total_arrears'] = round($daArr + $trArr + $grossArr, 2);
+                    $attrs['total_arrears'] = \App\Support\PayrollTotals::arrearsTotal([
+                        'daArrearsPaid' => $payload['daArrear'] ?? $payload['da_arrear'] ?? 0,
+                        'transportArrearsPaid' => $payload['transportArrear'] ?? $payload['transport_arrear'] ?? 0,
+                        'grossArrear' => $payload['grossArrear'] ?? $payload['gross_arrear'] ?? 0,
+                    ]);
                 }
 
                 if ($existing) {
@@ -451,6 +448,57 @@ class PayrollDraftService
         ]);
     }
 
+    /**
+     * Re-derive the values of ONE stored draft row that the application derives
+     * from its inputs (tariff-billed Electricity, the stored arrears total) and
+     * report what differs. Typed values, overrides and every other field are left
+     * as stored. Used by `payroll:repair-data`; never called for finalized months.
+     *
+     * @return array{changed: bool, changes: array<string, array{from: mixed, to: mixed}>}
+     */
+    public function repairStoredDraftRow(string $companyId, int $year, int $month, HrmsPayrollDraftEmployee $row, bool $apply): array
+    {
+        $before = is_array($row->row_payload) ? $row->row_payload : [];
+        if (! is_array($before['governmentMonthly'] ?? $before['government_monthly'] ?? null)) {
+            return ['changed' => false, 'changes' => []];
+        }
+        $definitions = HrmsPayrollFieldDefinition::query()->where('company_id', $companyId)->where('is_active', true)
+            ->get(['field_key', 'field_group', 'field_type', 'include_in_total_earnings', 'include_in_total_deductions'])->all();
+        $master = $this->resolvePayrollMasterForPeriod($companyId, (string) $row->employee_user_id, $year, $month);
+        $after = $this->reconcileDraftElectricity($before, $companyId, $year, $month, [], $master, $definitions);
+
+        $gmBefore = $before['governmentMonthly'] ?? $before['government_monthly'];
+        $gmAfter = $after['governmentMonthly'] ?? $after['government_monthly'];
+        $changes = [];
+        $watch = [
+            'electricity' => [data_get($gmBefore, 'deductions.electricity'), data_get($gmAfter, 'deductions.electricity')],
+            'totalDeductions' => [$gmBefore['totalDeductions'] ?? null, $gmAfter['totalDeductions'] ?? null],
+            'netSalary' => [$gmBefore['netSalary'] ?? null, $gmAfter['netSalary'] ?? null],
+        ];
+        $arrears = \App\Support\PayrollTotals::arrearsTotal($gmAfter);
+        $watch['total_arrears'] = [$row->total_arrears, $arrears];
+        foreach ($watch as $name => [$from, $to]) {
+            if (is_numeric($from) && is_numeric($to) ? abs((float) $from - (float) $to) > 0.004 : $from !== $to) {
+                $changes[$name] = ['from' => $from, 'to' => $to];
+            }
+        }
+        if ($changes === []) return ['changed' => false, 'changes' => []];
+
+        if ($apply) {
+            $row->update([
+                'row_payload' => $after,
+                'gross_pay' => $this->num($after['grossPay'] ?? $row->gross_pay),
+                'total_earnings' => $this->num($gmAfter['totalEarnings'] ?? $row->total_earnings),
+                'total_deductions' => $this->num($gmAfter['totalDeductions'] ?? $row->total_deductions),
+                'net_pay' => $this->num($gmAfter['netSalary'] ?? $row->net_pay),
+                'total_arrears' => $arrears,
+                'version' => (int) $row->version + 1,
+            ]);
+        }
+
+        return ['changed' => true, 'changes' => $changes];
+    }
+
     public function isMonthFinalized(string $companyId, int $year, int $month): bool
     {
         $start = sprintf('%04d-%02d-01', $year, $month);
@@ -617,11 +665,10 @@ class PayrollDraftService
             $manualOverride = true;
             $paidOverrides['electricity'] = (float) $amount;
         }
-        if (! $unitsEdited && ! $manualOverride && $applicable && ($units ?? 0) > 0
-            && (! $amountExists || (float) $amount === 0.0)) {
-            // Legacy rows can have units and a zero stub but still say manual_fixed.
-            // In the absence of an explicit approved override, units make this a
-            // unit-based bill that must be derived from the effective tariff.
+        if (! $manualOverride && $applicable && ($units ?? 0) > 0) {
+            // Units without an approved manual amount are always tariff-billed.
+            // A stored manual_fixed mode (seeded from Payroll Master) or a stale
+            // flat amount such as 49 must never win over recorded consumption.
             $mode = 'unit_based';
         }
         $staleElectricityOverride = $mode === 'unit_based' && ! $manualOverride
@@ -647,7 +694,10 @@ class PayrollDraftService
             || ! is_array($savedTariffSnapshot)
             || $this->electricityTariffFingerprint($savedTariffSnapshot) !== $this->electricityTariffFingerprint($tariff)
         );
-        $needsRecalculation = $this->draftElectricityNeedsRecalculation(
+        // A derived (tariff) bill is cheap and deterministic: always rebuild it so
+        // a cached amount can never disagree with units x effective tariff.
+        $derivedBill = $mode === 'unit_based' && ! $manualOverride && $applicable;
+        $needsRecalculation = $derivedBill || $this->draftElectricityNeedsRecalculation(
             $unitsEdited, $amountExists, $amount, $units, $manualOverride, $mode,
             $tariffChanged || $electricityTotalConflict || $staleElectricityOverride,
         );
@@ -772,6 +822,16 @@ class PayrollDraftService
         if (! is_array($gm)) return $payload;
         $gr = $payload['govRecalc'] ?? $payload['gov_recalc'] ?? [];
         if (! is_array($gr)) $gr = [];
+        // The quarter state recorded in the draft before this reconciliation.
+        $wasQuarter = (bool) ($gm['hasQuarter'] ?? $gr['hasQuarter'] ?? false);
+        $previousQuarterId = $gm['quarterId'] ?? $gr['quarterId'] ?? null;
+        // A rent typed for this month stays exactly as entered while the same
+        // quarter remains assigned; a different/new assignment re-derives rent.
+        $typedRent = $gr['deductionPaidOverrides']['quarterRent'] ?? null;
+        $keepTypedRent = $hasQuarter && ($gr['quarterRentManualOverride'] ?? false) === true
+            && is_numeric($typedRent) && $previousQuarterId !== null
+            && (string) $previousQuarterId === (string) ($quarterMeta['quarterId'] ?? '');
+        if ($keepTypedRent) $rent = max(0, round((float) $typedRent, 2));
         $grossBasic = max(0, (float) ($gr['grossBasic'] ?? $gr['gross_basic'] ?? $gm['grossBasic'] ?? $master?->gross_basic_pay ?? $master?->gross_basic ?? 0));
         $hraPercent = (float) ($gr['hraPercent'] ?? $gr['hra_percent'] ?? $master?->hra_percent ?? 0);
         $fullHra = ($this->payrollCalculationService ?? app(PayrollCalculationService::class))->calculateMaster([
@@ -782,6 +842,14 @@ class PayrollDraftService
         $daysInMonth = Carbon::create($year, $month, 1)->daysInMonth;
         $payDays = max(0, min($daysInMonth, (int) ($payload['payDays'] ?? $payload['pay_days'] ?? $daysInMonth)));
         $hraPaid = $hasQuarter ? 0.0 : round((float) $fullHra - ((float) $fullHra / $daysInMonth) * ($daysInMonth - $payDays));
+        // HRA is only re-derived when the quarter state changes (or was never
+        // stored). Otherwise the stored figures stand: they already include leave
+        // cuts and anything the operator typed, which this pro-rata would discard.
+        $rederiveHra = $hasQuarter || $wasQuarter || ! array_key_exists('hraPaid', $gm);
+        if (! $rederiveHra) {
+            $fullHra = (float) ($gm['hraActual'] ?? $fullHra);
+            $hraPaid = (float) $gm['hraPaid'];
+        }
 
         $deductions = $gm['deductions'] ?? [];
         if (! is_array($deductions)) $deductions = [];
@@ -802,8 +870,8 @@ class PayrollDraftService
 
         $earningOverrides = $gr['earningPaidOverrides'] ?? [];
         $deductionOverrides = $gr['deductionPaidOverrides'] ?? [];
-        if (is_array($earningOverrides)) unset($earningOverrides['hraPaid']);
-        if (is_array($deductionOverrides)) unset($deductionOverrides['quarterRent']);
+        if (is_array($earningOverrides) && $rederiveHra) unset($earningOverrides['hraPaid']);
+        if (is_array($deductionOverrides) && ! $keepTypedRent) unset($deductionOverrides['quarterRent']);
         $deductionDefaults = is_array($gr['deductionDefaults'] ?? null) ? $gr['deductionDefaults'] : [];
         $deductionDefaults['quarterRent'] = $rent;
         $gr = array_merge($gr, [
@@ -812,7 +880,7 @@ class PayrollDraftService
             'quarterName' => $hasQuarter ? ($quarterMeta['quarterName'] ?? null) : null,
             'quarterType' => $hasQuarter ? ($quarterMeta['quarterType'] ?? null) : null,
             'quarterRent' => $rent,
-            'quarterRentManualOverride' => false,
+            'quarterRentManualOverride' => $keepTypedRent,
             'earningPaidOverrides' => $earningOverrides,
             'deductionPaidOverrides' => $deductionOverrides,
             'deductionDefaults' => $deductionDefaults,
@@ -950,6 +1018,18 @@ class PayrollDraftService
             if (in_array($field, ['daArrear', 'transportArrear', 'grossArrear', 'cpfArrear', 'netArrear'], true)) {
                 $snake = strtolower((string) preg_replace('/(?<!^)[A-Z]/', '_$0', $field));
                 $paths = [...$paths, $field, $snake, "governmentMonthly.$field", "governmentMonthly.$snake", ...$totals];
+                // The sheet stores DA / transport arrears as the *Paid earning lines and
+                // derives gross / CPF / net arrear from them as one unit. Patching only
+                // governmentMonthly.daArrear (a key that does not exist) dropped the typed
+                // arrear from the line, and therefore from gross, on every patch save.
+                foreach (['daArrear', 'transportArrear', 'grossArrear', 'cpfArrear', 'netArrear'] as $unit) {
+                    $unitSnake = strtolower((string) preg_replace('/(?<!^)[A-Z]/', '_$0', $unit));
+                    $paths = [...$paths, $unit, $unitSnake, "governmentMonthly.$unit", "governmentMonthly.$unitSnake"];
+                }
+                $paths = [...$paths,
+                    'governmentMonthly.daArrearsPaid', 'governmentMonthly.da_arrears_paid', 'governmentMonthly.daArrearsActual',
+                    'governmentMonthly.transportArrearsPaid', 'governmentMonthly.transport_arrears_paid', 'governmentMonthly.transportArrearsActual',
+                ];
                 continue;
             }
             if (in_array($field, ['grossPay', 'deductions', 'netPay', 'pfEmployee', 'pfEmployer', 'esicEmployee', 'esicEmployer', 'profTax'], true)) {

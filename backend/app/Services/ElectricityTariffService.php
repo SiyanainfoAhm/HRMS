@@ -114,6 +114,10 @@ class ElectricityTariffService
         ?float $manualAmount = null,
     ): array {
         $units = max(0, $units);
+        // Mirrors electricityTariffCalculation.ts: the stored mode is only a
+        // hint. Master's manual_fixed amount applies while no units are recorded;
+        // positive consumption is always billed from the tariff.
+        $mode = ($mode === 'manual_fixed' && $units <= 0) ? 'manual_fixed' : 'unit_based';
         if (! $applicable) {
             return $this->emptyBill($units, $mode, $tariff['id'] ?? null, $manualOverride, $manualAmount);
         }
@@ -186,6 +190,7 @@ class ElectricityTariffService
     {
         $data = $this->validatedPayload($payload);
         $this->assertUniqueEffectiveFrom($companyId, $data['effective_from'], null);
+        $this->assertEffectiveDateIsSafe($companyId, $data['effective_from']);
 
         return DB::transaction(function () use ($companyId, $data, $createdBy) {
             $tariff = HrmsElectricityTariff::create([
@@ -212,7 +217,9 @@ class ElectricityTariffService
     public function update(HrmsElectricityTariff $tariff, array $payload): array
     {
         $data = $this->validatedPayload($payload, true);
+        $this->assertEditable($tariff);
         if (isset($data['effective_from'])) {
+            $this->assertEffectiveDateIsSafe((string) $tariff->company_id, $data['effective_from']);
             $this->assertUniqueEffectiveFrom((string) $tariff->company_id, $data['effective_from'], (string) $tariff->id);
         }
 
@@ -223,7 +230,7 @@ class ElectricityTariffService
                 'vahan_aakar_per_unit' => $data['vahan_aakar_per_unit'] ?? null,
                 'fuel_charge' => $data['fuel_charge'] ?? null,
                 'duty_percentage' => $data['duty_percentage'] ?? null,
-                'is_active' => array_key_exists('is_active', $data) ? $data['is_active'] : null,
+                'is_active' => $data['is_active'] ?? null,
             ], static fn ($v) => $v !== null));
             $tariff->save();
             if (isset($data['slabs'])) {
@@ -236,6 +243,7 @@ class ElectricityTariffService
 
     public function deactivate(HrmsElectricityTariff $tariff): array
     {
+        $this->assertEditable($tariff);
         $tariff->update(['is_active' => false]);
 
         return $this->formatTariff($tariff->fresh('slabs'));
@@ -429,14 +437,27 @@ class ElectricityTariffService
             }
         }
 
-        $sthir = (float) ($payload['sthir_aakar'] ?? $payload['sthirAakar'] ?? 0);
-        $vahan = (float) ($payload['vahan_aakar_per_unit'] ?? $payload['vahanAakarPerUnit'] ?? 0);
-        $fuel = (float) ($payload['fuel_charge'] ?? $payload['fuelCharge'] ?? 0);
-        $duty = (float) ($payload['duty_percentage'] ?? $payload['dutyPercentage'] ?? 0);
+        // On a partial update a field that was not sent stays null (= leave unchanged).
+        // Coercing it to 0 / true zeroed the charges and re-activated a deactivated
+        // tariff whenever only the slabs (or only the flag) were edited.
+        $pick = static function (array $keys) use ($payload, $partial): ?float {
+            foreach ($keys as $key) {
+                if (array_key_exists($key, $payload) && $payload[$key] !== null && $payload[$key] !== '') return (float) $payload[$key];
+            }
 
-        if ($sthir < 0 || $vahan < 0 || $fuel < 0 || $duty < 0) {
-            throw ValidationException::withMessages(['tariff' => 'Charges and duty percentage must be >= 0.']);
+            return $partial ? null : 0.0;
+        };
+        $sthir = $pick(['sthir_aakar', 'sthirAakar']);
+        $vahan = $pick(['vahan_aakar_per_unit', 'vahanAakarPerUnit']);
+        $fuel = $pick(['fuel_charge', 'fuelCharge']);
+        $duty = $pick(['duty_percentage', 'dutyPercentage']);
+
+        foreach ([$sthir, $vahan, $fuel, $duty] as $charge) {
+            if ($charge !== null && $charge < 0) {
+                throw ValidationException::withMessages(['tariff' => 'Charges and duty percentage must be >= 0.']);
+            }
         }
+        $activeRaw = $payload['is_active'] ?? $payload['isActive'] ?? null;
 
         $data = [
             'effective_from' => $effectiveFrom ? substr((string) $effectiveFrom, 0, 10) : null,
@@ -444,7 +465,7 @@ class ElectricityTariffService
             'vahan_aakar_per_unit' => $vahan,
             'fuel_charge' => $fuel,
             'duty_percentage' => $duty,
-            'is_active' => filter_var($payload['is_active'] ?? $payload['isActive'] ?? true, FILTER_VALIDATE_BOOLEAN),
+            'is_active' => $activeRaw === null ? ($partial ? null : true) : filter_var($activeRaw, FILTER_VALIDATE_BOOLEAN),
         ];
 
         if (is_array($slabsRaw)) {
@@ -477,6 +498,62 @@ class ElectricityTariffService
                 'sort_order' => $slab['sort_order'],
             ]);
         }
+    }
+
+    /** Today in the business timezone (effective dates are calendar dates in India). */
+    private function today(): string
+    {
+        return \Illuminate\Support\Carbon::now('Asia/Kolkata')->toDateString();
+    }
+
+    /**
+     * A tariff that is already in force (effective date today or earlier) is part of
+     * history: months are billed from it, drafts reconcile against it and generated
+     * payroll snapshots reference it. It is never edited or deactivated in place;
+     * create a new tariff with a new effective date instead.
+     */
+    private function assertEditable(HrmsElectricityTariff $tariff): void
+    {
+        $from = $tariff->effective_from?->format('Y-m-d');
+        if ($from !== null && $from <= $this->today()) {
+            throw ValidationException::withMessages([
+                'tariff' => 'This tariff is already in force (effective '.$from.') and cannot be edited or deactivated, because that would change billing for months already drafted or finalized. Create a new tariff with a new effective date instead.',
+            ]);
+        }
+    }
+
+    /**
+     * A new tariff must start after every month that already has a draft or a
+     * generated payroll, otherwise it would silently re-bill those months. The very
+     * first tariff of a company is exempt.
+     */
+    private function assertEffectiveDateIsSafe(string $companyId, string $effectiveFrom): void
+    {
+        $locked = $this->lastLockedMonthEnd($companyId);
+        if ($locked !== null && $effectiveFrom <= $locked) {
+            throw ValidationException::withMessages([
+                'effectiveFrom' => "Effective date must be after {$locked}: payroll for that month is drafted or already generated, and a tariff starting on or before it would change those amounts. Choose a later date.",
+            ]);
+        }
+    }
+
+    private function lastLockedMonthEnd(string $companyId): ?string
+    {
+        if (! HrmsElectricityTariff::query()->where('company_id', $companyId)->exists()) {
+            return null;
+        }
+        $ends = [];
+        $draft = DB::table('cirt_payroll_drafts')->where('company_id', $companyId)->where('status', 'draft')
+            ->orderByDesc('payroll_year')->orderByDesc('payroll_month')->first(['payroll_year', 'payroll_month']);
+        if ($draft) {
+            $ends[] = \Illuminate\Support\Carbon::create((int) $draft->payroll_year, (int) $draft->payroll_month, 1)->endOfMonth()->toDateString();
+        }
+        $period = DB::table('cirt_payroll_periods')->where('company_id', $companyId)->orderByDesc('period_start')->value('period_start');
+        if ($period) {
+            $ends[] = \Illuminate\Support\Carbon::parse($period)->endOfMonth()->toDateString();
+        }
+
+        return $ends === [] ? null : max($ends);
     }
 
     private function assertUniqueEffectiveFrom(string $companyId, string $effectiveFrom, ?string $exceptId): void

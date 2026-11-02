@@ -44,7 +44,7 @@ class DivisionController extends Controller
 
     public function update(Request $request, string $id): JsonResponse
     {
-        $division = HrmsDivision::findOrFail($id);
+        $division = HrmsDivision::where('company_id', (string) $request->user()->company_id)->findOrFail($id);
         $data = $request->validate([
             'name' => ['sometimes', 'string', 'max:255'],
             'description' => ['nullable', 'string'],
@@ -62,7 +62,13 @@ class DivisionController extends Controller
             }
         }
 
-        $division->update($data);
+        \Illuminate\Support\Facades\DB::transaction(function () use ($division, $data) {
+            $oldName = (string) $division->name;
+            $division->update($data);
+            if (isset($data['name'])) {
+                \App\Support\OrgNameSync::rename('division', (string) $division->company_id, $oldName, (string) $data['name']);
+            }
+        });
 
         return response()->json(['division' => $division->refresh()]);
     }
@@ -87,9 +93,10 @@ class DivisionController extends Controller
         $userCount = HrmsUser::where('company_id', $companyId)
             ->where('division_id', $id)
             ->count();
-        if ($employeeCount + $userCount > 0) {
+        $masterCount = \App\Support\OrgNameSync::masterUsage('division', $companyId, (string) $division->name);
+        if ($employeeCount + $userCount + $masterCount > 0) {
             return response()->json([
-                'error' => 'Cannot delete: employees are assigned to this division.',
+                'error' => 'Cannot delete: employees or Payroll Master records use this division.',
             ], 409);
         }
 

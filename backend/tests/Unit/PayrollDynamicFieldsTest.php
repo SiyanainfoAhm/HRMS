@@ -254,7 +254,7 @@ final class PayrollDynamicFieldsTest extends TestCase
     public function test_custom_field_lifecycle_preserves_assigned_component_history(): void
     {
         $servicePath = dirname(__DIR__, 2).'/app/Services/PayrollFieldService.php';
-        $source = file_get_contents($servicePath);
+        $source = str_replace("\r\n", "\n", (string) file_get_contents($servicePath)); // checkout line endings differ on Windows
 
         $this->assertIsString($source);
         $this->assertStringContainsString('Cannot change field classification after values exist', $source);

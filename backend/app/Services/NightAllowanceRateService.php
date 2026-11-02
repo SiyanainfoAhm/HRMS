@@ -9,6 +9,48 @@ use Illuminate\Support\Str;
 
 final class NightAllowanceRateService
 {
+    /**
+     * CIRT-08 - Night Duty Allowance = (Total Night Duty Hours / 8) x Night Allowance Rate for the
+     * employee's Pay Level (rate per 8-hour duty). Mirror: src/lib/nightAllowanceCalculation.ts.
+     *
+     * UNCONFIRMED rules, each behind ONE constant:
+     *  - DUTY_UNITS_DECIMALS: duties (hours / 8) are rounded to this many decimals;
+     *  - ROUND_AMOUNT_TO_RUPEE: final amount rounded to the nearest rupee (the previous code already did).
+     */
+    public const DUTY_BASE_HOURS = 8;
+
+    public const DUTY_UNITS_DECIMALS = 2;
+
+    public const ROUND_AMOUNT_TO_RUPEE = true;
+
+    /** 'duty' = rate is per 8-hour duty; 'hour' = legacy rows keep hours x rate (history unchanged). */
+    public const BASIS_DUTY = 'duty';
+
+    public const BASIS_HOUR = 'hour';
+
+    public static function allowanceAmount(float $hours, float $rate, string $basis = self::BASIS_HOUR): float
+    {
+        $hours = max(0.0, $hours);
+        $rate = max(0.0, $rate);
+        if ($hours <= 0) {
+            return 0.0;
+        }
+        if ($basis !== self::BASIS_DUTY) {
+            return (float) round($hours * $rate);
+        }
+        $scale = 10 ** self::DUTY_UNITS_DECIMALS;
+        $duties = round(($hours / self::DUTY_BASE_HOURS) * $scale) / $scale;
+        $amount = $duties * $rate;
+
+        return self::ROUND_AMOUNT_TO_RUPEE ? (float) round($amount) : round($amount, 2);
+    }
+
+    /** Rate per duty: the stored value, else the legacy hourly rate x 8. */
+    public static function ratePerDuty(mixed $stored, float $legacyPerHour): float
+    {
+        return is_numeric($stored) ? (float) $stored : round($legacyPerHour * self::DUTY_BASE_HOURS, 2);
+    }
+
     /** @return list<array<string, mixed>> */
     public function listForCompany(string $companyId, bool $activeOnly = false): array
     {
@@ -40,7 +82,7 @@ final class NightAllowanceRateService
      * Resolve from preloaded rate rows (avoids per-employee DB query in Run Payroll).
      *
      * @param  list<array<string, mixed>>  $preloadedRates
-     * @return array{rate: float, slabNo: int|null, warning: string|null}
+     * @return array{rate: float, slabNo: int|null, warning: string|null, basis: string}
      */
     public function resolveFromPreloadedRates(array $preloadedRates, int $payLevel, ?string $periodEndDate = null): array
     {
@@ -49,6 +91,7 @@ final class NightAllowanceRateService
                 'rate' => 0.0,
                 'slabNo' => null,
                 'warning' => 'Night allowance rate is not configured for this Pay Level.',
+                'basis' => self::BASIS_DUTY,
             ];
         }
 
@@ -86,9 +129,10 @@ final class NightAllowanceRateService
         $pick = $matches[0] ?? null;
         if ($pick) {
             return [
-                'rate' => (float) ($pick['ratePerHour'] ?? 0),
+                'rate' => self::ratePerDuty($pick['ratePerDuty'] ?? null, (float) ($pick['ratePerHour'] ?? 0)),
                 'slabNo' => isset($pick['slabNo']) ? (int) $pick['slabNo'] : null,
                 'warning' => null,
+                'basis' => self::BASIS_DUTY,
             ];
         }
 
@@ -96,6 +140,7 @@ final class NightAllowanceRateService
             'rate' => 0.0,
             'slabNo' => null,
             'warning' => 'Night allowance rate is not configured for this Pay Level.',
+            'basis' => self::BASIS_DUTY,
         ];
     }
 
@@ -112,6 +157,7 @@ final class NightAllowanceRateService
                 'rate' => 0.0,
                 'slabNo' => null,
                 'warning' => 'Night allowance rate is not configured for this Pay Level.',
+                'basis' => self::BASIS_DUTY,
             ];
         }
 
@@ -136,7 +182,8 @@ final class NightAllowanceRateService
 
         if ($match) {
             return [
-                'rate' => (float) $match->rate_per_hour,
+                'basis' => self::BASIS_DUTY,
+                'rate' => self::ratePerDuty($match->rate_per_duty, (float) $match->rate_per_hour),
                 'slabNo' => (int) $match->slab_no,
                 'warning' => null,
             ];
@@ -164,7 +211,7 @@ final class NightAllowanceRateService
     {
         $slabNo = (int) ($data['slab_no'] ?? $data['slabNo'] ?? 0);
         $payLevel = (int) ($data['pay_level'] ?? $data['payLevel'] ?? 0);
-        $rate = (float) ($data['rate_per_hour'] ?? $data['ratePerHour'] ?? -1);
+        $rate = (float) ($data['rate_per_duty'] ?? $data['ratePerDuty'] ?? -1);
 
         $this->validateSlab($companyId, $slabNo, $payLevel, $rate);
 
@@ -178,7 +225,8 @@ final class NightAllowanceRateService
             'company_id' => $companyId,
             'slab_no' => $slabNo,
             'pay_level' => $payLevel,
-            'rate_per_hour' => round($rate, 2),
+            'rate_per_duty' => round($rate, 2),
+            'rate_per_hour' => round($rate / self::DUTY_BASE_HOURS, 2),
             'effective_from' => $effectiveFrom ? Carbon::parse((string) $effectiveFrom)->toDateString() : null,
             'is_active' => (bool) ($data['is_active'] ?? $data['isActive'] ?? true),
         ]);
@@ -195,7 +243,7 @@ final class NightAllowanceRateService
 
         $slabNo = (int) ($data['slab_no'] ?? $data['slabNo'] ?? $row->slab_no);
         $payLevel = (int) ($data['pay_level'] ?? $data['payLevel'] ?? $row->pay_level);
-        $rate = (float) ($data['rate_per_hour'] ?? $data['ratePerHour'] ?? $row->rate_per_hour);
+        $rate = (float) ($data['rate_per_duty'] ?? $data['ratePerDuty'] ?? self::ratePerDuty($row->rate_per_duty, (float) $row->rate_per_hour));
 
         $this->validateSlab((string) $row->company_id, $slabNo, $payLevel, $rate);
 
@@ -215,7 +263,8 @@ final class NightAllowanceRateService
         $row->update([
             'slab_no' => $slabNo,
             'pay_level' => $payLevel,
-            'rate_per_hour' => round($rate, 2),
+            'rate_per_duty' => round($rate, 2),
+            'rate_per_hour' => round($rate / self::DUTY_BASE_HOURS, 2),
             'effective_from' => $effectiveFrom,
             'is_active' => array_key_exists('is_active', $data) || array_key_exists('isActive', $data)
                 ? (bool) ($data['is_active'] ?? $data['isActive'])
@@ -257,6 +306,7 @@ final class NightAllowanceRateService
         float $ceiling,
         bool $manualOverride = false,
         ?float $manualAmount = null,
+        string $rateBasis = self::BASIS_HOUR,
     ): array {
         $ceiling = max(0, $ceiling > 0 ? $ceiling : self::DEFAULT_BASIC_CEILING);
         $basic = max(0, $basicPay);
@@ -274,7 +324,7 @@ final class NightAllowanceRateService
             ];
         }
 
-        $amount = $hours > 0 ? round(max(0, $hours) * max(0, $rate)) : 0.0;
+        $amount = self::allowanceAmount($hours, $rate, $rateBasis);
         if ($manualOverride && $manualAmount !== null) {
             $amount = round(max(0, $manualAmount));
         }
@@ -300,6 +350,7 @@ final class NightAllowanceRateService
 
         $hours = (float) ($gm['nightHours'] ?? $gm['night_hours'] ?? 0);
         $rate = (float) ($gm['nightAllowanceRate'] ?? $gm['night_allowance_rate'] ?? 0);
+        $rateBasis = ($gm['nightAllowanceRateBasis'] ?? $gm['night_allowance_rate_basis'] ?? null) === self::BASIS_DUTY ? self::BASIS_DUTY : self::BASIS_HOUR;
         $manualOverride = (bool) ($gm['nightAllowanceManualOverride'] ?? $gm['night_allowance_manual_override'] ?? false);
         $oldAmount = (float) ($gm['nightAllowancePaid'] ?? $gm['night_allowance_paid'] ?? $gm['nightAllowanceAmount'] ?? 0);
 
@@ -310,6 +361,7 @@ final class NightAllowanceRateService
             $ceiling,
             $manualOverride,
             $manualOverride ? $oldAmount : null,
+            $rateBasis,
         );
 
         $newAmount = (float) $resolved['amount'];
@@ -348,9 +400,10 @@ final class NightAllowanceRateService
             'slabNo' => (int) $r->slab_no,
             'payLevel' => (int) $r->pay_level,
             'ratePerHour' => (float) $r->rate_per_hour,
+            'ratePerDuty' => self::ratePerDuty($r->rate_per_duty, (float) $r->rate_per_hour),
             'effectiveFrom' => $r->effective_from?->toDateString(),
             'isActive' => (bool) $r->is_active,
-            'label' => sprintf('S.No %d - Level %d - ₹%s/hr', $r->slab_no, $r->pay_level, number_format((float) $r->rate_per_hour, 2)),
+            'label' => sprintf('S.No %d - Level %d - ₹%s/duty', $r->slab_no, $r->pay_level, number_format(self::ratePerDuty($r->rate_per_duty, (float) $r->rate_per_hour), 2)),
         ];
     }
 }

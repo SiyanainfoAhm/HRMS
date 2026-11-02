@@ -100,6 +100,7 @@ import {
 } from "@/lib/payrollFieldTypes";
 import { isAdminRole, normalizeRole, type AppRole } from "@/lib/roles";
 import {
+  applyServerFields,
   assessAutosaveReadiness,
   autosaveDebounceMs,
   hasMeaningfulAddDraft,
@@ -107,6 +108,7 @@ import {
   parseAddDraft,
   PAYROLL_MASTER_ADD_DRAFT_KEY,
   readAutosaveEnabled,
+  saveWithConflictRetry,
   serializeAddDraft,
   writeAutosaveEnabled,
 } from "@/lib/payrollMasterAutosave";
@@ -299,7 +301,9 @@ type ImportPreviewRow = {
   grossBasicPay?: string | number | null;
   status?: string | null;
   remarks?: string | null;
-  action: "insert" | "update" | string;
+  action: "insert" | "update" | "ambiguous" | string;
+  actionLabel?: string;
+  matchedBy?: string[];
   valid: boolean;
   errors: ImportIssue[];
   warnings?: ImportIssue[];
@@ -325,15 +329,18 @@ const STATUS_OPTIONS = ["active", "inactive", "retired", "deceased", "resigned"]
 
 const DEFAULT_DEDUCTION_FIELDS = [["professionalTax", "Professional Tax (PT)"]] as const;
 
+/**
+ * CIRT-09: Mess, Credit Society and Electricity are no longer entered in Master Payroll
+ * Deductions. Their stored Master defaults still seed Run Payroll, where they are entered
+ * every month (Electricity as units); the calculation is unchanged.
+ * Electricity applicability / mode (below) stay: they decide how Run Payroll bills it.
+ */
 const VARIABLE_DEDUCTION_FIELDS = [
   ["incomeTax", "Income Tax"],
   ["lic", "LIC"],
-  ["mess", "Mess"],
   ["welfare", "Welfare"],
   ["vpf", "VPF"],
   ["postOffice", "Post Office"],
-  ["creditSociety", "Credit Society"],
-  ["electricity", "Electricity"],
   ["water", "Water"],
   ["loanRecovery", "Bank Recovery"],
   ["otherDeduction", "Other Deduction"],
@@ -921,7 +928,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     }>
   >([]);
   const [nightAllowanceRates, setNightAllowanceRates] = useState<
-    Array<{ slabNo: number; payLevel: number; ratePerHour: number; effectiveFrom?: string | null; isActive?: boolean }>
+    Array<{ slabNo: number; payLevel: number; ratePerHour: number; ratePerDuty?: number | null; effectiveFrom?: string | null; isActive?: boolean }>
   >([]);
   const [divisions, setDivisions] = useState<OrgDivision[]>([]);
   const [departments, setDepartments] = useState<OrgDepartment[]>([]);
@@ -1186,12 +1193,14 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
               slabNo: number;
               payLevel: number;
               ratePerHour: number;
+              ratePerDuty?: number | null;
               effectiveFrom?: string | null;
               isActive?: boolean;
             }>).map((r) => ({
               slabNo: r.slabNo,
               payLevel: r.payLevel,
               ratePerHour: r.ratePerHour,
+              ratePerDuty: r.ratePerDuty ?? null,
               effectiveFrom: r.effectiveFrom ?? null,
               isActive: r.isActive !== false,
             })),
@@ -1556,24 +1565,39 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
     setAutosaveStatus("saving");
     setAutosaveHint(null);
     try {
-      const payload = { ...formToPayload(form, payrollFieldDefs), revision: editing.revision, autosave: true };
-      const res = await fetch(`/api/payroll/master/${editing.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        cache: "no-store",
+      // On a 409 the typed values are merged with the latest server values and the
+      // save is retried; the form is never reloaded over the user's edits.
+      const result = await saveWithConflictRetry<MasterFormState>({
+        mine: form,
+        base: editBaseline ?? form,
+        revision: editing.revision,
+        send: async (f, revision) => {
+          const res = await fetch(`/api/payroll/master/${editing.id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ...formToPayload(f, payrollFieldDefs), revision, autosave: true }),
+            cache: "no-store",
+          });
+          return { status: res.status, body: await res.json() };
+        },
+        fetchLatest: async () => {
+          const res = await fetch(`/api/payroll/master/${editing.id}`, { cache: "no-store" });
+          const latest = await res.json();
+          if (!res.ok) throw new Error(latest?.error || "Could not load the latest values");
+          return { form: formFromRecord(latest.master), revision: latest.master?.revision as string | undefined };
+        },
       });
-      const data = await res.json();
-      if (!res.ok) {
-        if (res.status === 409) {
-          const message = data?.message || data?.error || "Payroll was updated in another tab or session. Reload the latest values before saving.";
-          showToast("error", message);
-          if (window.confirm(`${message}\n\nOK: Reload latest values (discard unsaved edits).\nCancel: Review Changes (keep this form and its unsaved edits).`)) window.location.reload();
-          return;
+      if (!result.ok) throw new Error(result.error);
+      const saved = result.body?.master as PayrollMasterRecord | undefined;
+      if (saved?.revision) setEditing((current) => (current ? { ...current, ...saved } : current));
+      if (result.report) {
+        const report = result.report;
+        setForm((current) => applyServerFields(current, form, report));
+        setEditBaseline(result.base);
+        if (report.takenFromTheirs.length) {
+          showToast("success", `Merged changes made elsewhere (${report.takenFromTheirs.join(", ")}); your edits were kept.`);
         }
-        throw new Error(data?.message || data?.error || "Autosave failed");
       }
-      if (data?.master?.revision) setEditing((current) => current ? { ...current, ...data.master } : current);
       setAutosaveBaseline(snapshot);
       setAutosaveStatus("saved");
     } catch (e: unknown) {
@@ -2074,24 +2098,55 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
 
     setFormSaving(true);
     try {
-      const payload = { ...formToPayload(form, payrollFieldDefs), ...(editing ? { revision: editing.revision } : {}) };
-      if (process.env.NODE_ENV === "development") {
-        console.info("[PayrollMaster] update payload", { id: editing?.id, daPercent: payload.daPercent });
-      }
-      const res = await fetch(editing ? `/api/payroll/master/${editing.id}` : "/api/payroll/master", {
-        method: editing ? "PUT" : "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        cache: "no-store",
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        if (res.status === 409) {
-          const message = data?.message || data?.error || "Payroll was updated in another tab or session. Reload the latest values before saving.";
-          showToast("error", message);
-          if (window.confirm(`${message}\n\nOK: Reload latest values (discard unsaved edits).\nCancel: Review Changes (keep this form and its unsaved edits).`)) window.location.reload();
+      let res: { ok: boolean; status: number };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let data: Record<string, any>;
+      if (editing) {
+        // 409 => merge the latest server values with what was typed and retry; never reload.
+        const result = await saveWithConflictRetry<MasterFormState>({
+          mine: form,
+          base: editBaseline ?? form,
+          revision: editing.revision,
+          send: async (f, revision) => {
+            const r = await fetch(`/api/payroll/master/${editing.id}`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ ...formToPayload(f, payrollFieldDefs), revision }),
+              cache: "no-store",
+            });
+            return { status: r.status, body: await r.json() };
+          },
+          fetchLatest: async () => {
+            const r = await fetch(`/api/payroll/master/${editing.id}`, { cache: "no-store" });
+            const latest = await r.json();
+            if (!r.ok) throw new Error(latest?.error || "Could not load the latest values");
+            return { form: formFromRecord(latest.master), revision: latest.master?.revision as string | undefined };
+          },
+        });
+        res = { ok: result.ok, status: result.ok ? 200 : result.status };
+        data = result.body;
+        if (result.ok && result.report?.takenFromTheirs.length) {
+          showToast("success", `Merged changes made elsewhere (${result.report.takenFromTheirs.join(", ")}); your edits were kept.`);
+        }
+        if (!result.ok && result.status === 409) {
+          // Still conflicting after the retries: keep the form exactly as typed.
+          setForm(result.form);
+          setEditBaseline(result.base);
+          setEditing((current) => (current ? { ...current, revision: result.revision } : current));
+          showToast("error", "This employee keeps changing in another session. Your edits are still here; press Save again.");
           return;
         }
+      } else {
+        const r = await fetch("/api/payroll/master", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(formToPayload(form, payrollFieldDefs)),
+          cache: "no-store",
+        });
+        res = { ok: r.ok, status: r.status };
+        data = await r.json();
+      }
+      if (!res.ok) {
         const msg = data?.message || data?.error || "Save failed";
         if (data?.code === "employee_code_conflict" && data?.conflict) {
           const conflict = data.conflict as {
@@ -3383,7 +3438,6 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                           value={form[key]}
                           onChange={(e) => patchForm({ [key]: e.target.value })}
                           onBlur={() => touchField(key)}
-                          disabled={key === "electricity" && form.electricityMode === "unit_based" && form.electricityApplicable}
                         />
                       </FormField>
                     ))}
@@ -3410,7 +3464,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                         helperText={
                           form.electricityMode === "unit_based"
                             ? "Run Payroll uses monthly units + Admin tariff (slabs)."
-                            : "Uses the fixed Electricity amount above (legacy / non-metered)."
+                            : "Uses the stored Master Electricity default (legacy / non-metered); enter units in Run Payroll to bill by tariff."
                         }
                       >
                         <select
@@ -3799,6 +3853,16 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                       </div>
                     )}
 
+                    {importPreview.rows.length > 0 ? (
+                      <div className="rounded border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                        Will update {importPreview.summary.update_rows ?? 0} · Will create {importPreview.summary.insert_rows ?? 0} ·
+                        Ambiguous, skipped {importPreview.summary.ambiguous_rows ?? 0}
+                        {(importPreview.summary.ambiguous_rows ?? 0) > 0
+                          ? ". Ambiguous rows match more than one existing employee by code, email, CPF no. or UAN; fix those keys to import them."
+                          : "."}
+                      </div>
+                    ) : null}
+
                     {importPreview.rows.length > 0 && importIssueRows.length === 0 && importPreview.fileErrors.length === 0 ? (
                       <div className="rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
                         All {importPreview.summary.valid_rows ?? importPreview.rows.length} rows passed validation.
@@ -3839,7 +3903,10 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                                     {r.employeeLabel ?? r.employeeName ?? r.name ?? r.employeeCode ?? "—"}
                                   </td>
                                   <td className="px-2 py-1">{r.email || "—"}</td>
-                                  <td className="px-2 py-1 capitalize">{r.action}</td>
+                                  <td className={`px-2 py-1 ${r.action === "ambiguous" ? "text-amber-700" : ""}`}>
+                                    {r.actionLabel ?? r.action}
+                                    {r.matchedBy && r.matchedBy.length > 0 ? ` (by ${r.matchedBy.join(", ").replace(/_/g, " ")})` : ""}
+                                  </td>
                                   <td className="px-2 py-1">
                                     {!r.valid ? (
                                       <span className="text-red-700">Errors</span>

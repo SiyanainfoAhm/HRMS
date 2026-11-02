@@ -7,12 +7,13 @@ import { Button } from "@/components/ui/Button";
 import { PaginationControls } from "@/components/ui/PaginationControls";
 import { emptyPaginationMeta, type PaginationMeta } from "@/lib/pagination";
 import { ActivityLogDetails } from "./ActivityLogDetails";
+import { ActivityEntriesView } from "./ActivityEntriesView";
 import { actionLabel, buildActivityLogQueryParams, fieldLabel, formatTimestamp, payrollMonth, type AuditRecord } from "./activityLogPresentation";
 
 type ActivityEvent = AuditRecord & { actorUserId?: string | null; employeeId?: string | null; changeCount?: number; changeClassificationSource?: string | null; directChangeCount?: number | null; recalculatedChangeCount?: number | null };
 const ACTIONS = ["auth.login", "user.created", "employee.created", "employee.updated", "payroll_master.changed", "payroll.draft.saved", "payroll.draft.discarded", "payroll.generated", "payroll.generated.amended", "payroll.excel.exported", "payslip.generated", "payslip.viewed", "user.access.changed", "payroll.configuration.changed"];
 
-export function ActivityLogScreen() {
+function LegacyActivityLogScreen() {
   const [events, setEvents] = useState<ActivityEvent[]>([]);
   const [meta, setMeta] = useState<PaginationMeta>(emptyPaginationMeta(25));
   const [loading, setLoading] = useState(true);
@@ -116,3 +117,22 @@ export function ActivityLogScreen() {
 }
 
 function Select({ label, value, onChange, children }: { label: string; value: string; onChange: (value: string) => void; children: React.ReactNode }) { return <label className="min-w-0"><span className="label-field">{label}</span><select className="input-field w-full" value={value} onChange={(e) => onChange(e.target.value)}>{children}</select></label>; }
+
+/**
+ * CIRT-10: the Activity tab shows one record per action; the per-employee records written
+ * before this change stay readable under "Earlier records".
+ */
+export function ActivityLogScreen() {
+  const [tab, setTab] = useState<"entries" | "earlier">("entries");
+  const tabClass = (active: boolean) =>
+    `rounded-lg px-3 py-1.5 text-sm font-medium ${active ? "bg-brand-blue text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"}`;
+  return (
+    <div className="flex min-h-0 flex-col gap-4">
+      <div className="flex gap-2" role="tablist" aria-label="Activity log views">
+        <button type="button" role="tab" aria-selected={tab === "entries"} className={tabClass(tab === "entries")} onClick={() => setTab("entries")}>Activity</button>
+        <button type="button" role="tab" aria-selected={tab === "earlier"} className={tabClass(tab === "earlier")} onClick={() => setTab("earlier")}>Earlier records</button>
+      </div>
+      {tab === "entries" ? <ActivityEntriesView /> : <LegacyActivityLogScreen />}
+    </div>
+  );
+}

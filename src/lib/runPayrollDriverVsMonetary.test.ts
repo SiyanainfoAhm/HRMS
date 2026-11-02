@@ -1,12 +1,14 @@
 /**
  * Run: npx --yes tsx src/lib/runPayrollDriverVsMonetary.test.ts
  *
- * Calculation drivers (Days/HPL/EOL) clear monetary overrides and full-recalc.
+ * Calculation drivers (Days/HPL/EOL) reset only day-dependent overrides and full-recalc;
+ * typed values that days do not drive (Water, Electricity, ...) stay as entered.
  * Monetary edits only patch fields + totals.
  */
 import {
   applyGovernmentSheetMonetaryEdit,
   clearMonetaryOverridesFromGovRecalc,
+  clearDayDependentOverridesFromGovRecalc,
   isGovernmentCalculationDriverField,
   isGovernmentSheetMonetaryField,
   type GovernmentSheetRow,
@@ -136,13 +138,13 @@ assertEq(gm4.deductions.water, 500, "TEST4 Water still 500");
 
 // 5 — DAYS 31 → 29: clear overrides + full recalc
 {
-  const grCleared = clearMonetaryOverridesFromGovRecalc({
+  const grCleared = clearDayDependentOverridesFromGovRecalc({
     ...row.govRecalc!,
-    // Keep Master water seed (400), not the manual 500, after clear.
     deductionDefaults: { ...emptyDed, water: 400 },
   });
-  assertEq(grCleared.deductionPaidOverrides, undefined, "TEST5 overrides cleared");
-  assertEq(grCleared.earningPaidOverrides, undefined, "TEST5 earning overrides cleared");
+  assertEq(grCleared.deductionPaidOverrides?.cpf, undefined, "TEST5 day-dependent CPF override cleared");
+  assertEq(grCleared.deductionPaidOverrides?.water, 500, "TEST5 typed water is kept");
+  assertEq(grCleared.earningPaidOverrides?.basicPaid, undefined, "TEST5 basic override cleared");
   assertEq(grCleared.cpfManualOverride, false, "TEST5 cpf flag cleared");
   const { comp } = fullCompute(29, grCleared);
   row = {
@@ -160,7 +162,7 @@ assertEq(gm4.deductions.water, 500, "TEST4 Water still 500");
     deductions: { cpf: number; water: number };
   };
   assert(gm5.basicPaid !== 50000 || gm5.deductions.cpf !== 0, "TEST5 recalc replaced manual sheet");
-  assertEq(gm5.deductions.water, 400, "TEST5 water back to master after driver recalc");
+  assertEq(gm5.deductions.water, 500, "TEST5 typed water survives the days change");
   assert(gm5.deductions.cpf > 0, "TEST5 cpf recalculated");
 }
 
@@ -170,7 +172,7 @@ assertEq((row.governmentMonthly as { deductions: { cpf: number } }).deductions.c
 
 // 7 — HPL DAYS driver clears + recalc
 {
-  const grNext = clearMonetaryOverridesFromGovRecalc({
+  const grNext = clearDayDependentOverridesFromGovRecalc({
     ...row.govRecalc!,
     hplDays: 2,
     deductionDefaults: { ...emptyDed, water: 400 },
@@ -196,7 +198,7 @@ assert(hplBefore !== 1234 || hplBefore === 1234, "TEST8 edited");
 
 // 9 — EOL DAYS driver clears HPL override
 {
-  const grNext = clearMonetaryOverridesFromGovRecalc({
+  const grNext = clearDayDependentOverridesFromGovRecalc({
     ...row.govRecalc!,
     eolDays: 1,
     hplDays: 2,
@@ -241,12 +243,12 @@ assertEq(draftSnap.govRecalc?.earningPaidOverrides?.basicPaid, 60000, "TEST11 ea
 
 // 12 — Days after draft: clear + recalc replaces
 {
-  const grCleared = clearMonetaryOverridesFromGovRecalc({
+  const grCleared = clearDayDependentOverridesFromGovRecalc({
     ...draftSnap.govRecalc!,
     deductionDefaults: { ...emptyDed, water: 400 },
   });
   const { comp } = fullCompute(29, grCleared);
-  assertEq(comp.deductions.water, 400, "TEST12 water master after days");
+  assertEq(comp.deductions.water, 500, "TEST12 typed water kept after days");
   assert(comp.basicPaid !== 60000, "TEST12 basic replaced");
   assert(comp.deductions.cpf !== 0, "TEST12 cpf replaced");
 }
@@ -270,5 +272,21 @@ assertEq(draftSnap.govRecalc?.earningPaidOverrides?.basicPaid, 60000, "TEST11 ea
 
 // Sanity: 31-day calc CPF was positive
 assert(calcCpf > 0, "baseline cpf");
+
+// 14 — Day-dependent reset leaves every other typed value alone
+{
+  const typed = clearDayDependentOverridesFromGovRecalc({
+    ...baseGr,
+    earningPaidOverrides: { basicPaid: 1, daPaid: 2, nightAllowancePaid: 700, extraWorkAllowancePaid: 300 },
+    deductionPaidOverrides: { cpf: 0, hpl: 5, electricity: 0, mess: 25, water: 500, quarterRent: 90 },
+    cpfManualOverride: true, electricityManualOverride: true, quarterRentManualOverride: true, nightAllowanceManualOverride: true,
+  });
+  assertEq(JSON.stringify(typed.earningPaidOverrides), JSON.stringify({ nightAllowancePaid: 700, extraWorkAllowancePaid: 300 }), "TEST14 earnings kept");
+  assertEq(JSON.stringify(typed.deductionPaidOverrides), JSON.stringify({ electricity: 0, mess: 25, water: 500, quarterRent: 90 }), "TEST14 deductions kept");
+  assertEq(typed.electricityManualOverride, true, "TEST14 electricity flag kept");
+  assertEq(typed.quarterRentManualOverride, true, "TEST14 rent flag kept");
+  assertEq(typed.nightAllowanceManualOverride, true, "TEST14 night flag kept");
+  assertEq(typed.cpfManualOverride, false, "TEST14 cpf flag reset");
+}
 
 console.log("runPayrollDriverVsMonetary.test.ts: all tests passed");

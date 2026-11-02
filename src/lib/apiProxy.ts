@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { TOKEN_COOKIE_NAME } from "@/lib/auth";
+import { COOKIE_NAME, TOKEN_COOKIE_NAME, getCookieOptions } from "@/lib/auth";
 import { getApiBaseUrl } from "@/lib/apiBase";
 import { requireApiAuth, requireAdminApi } from "@/lib/apiAuth";
 
@@ -50,6 +50,12 @@ function laravelPathRequiresAdmin(laravelPath: string, method: string): boolean 
   if (laravelPath.startsWith("/employees") && !readOnly) return true;
 
   return false;
+}
+
+/** Clears both auth cookies on a response (same attributes they were set with, so the browser really drops them). */
+export function clearAuthCookies(res: NextResponse): void {
+  res.cookies.set(COOKIE_NAME, "", { ...getCookieOptions(), maxAge: 0, expires: new Date(0) });
+  res.cookies.set(TOKEN_COOKIE_NAME, "", { ...getCookieOptions(), maxAge: 0, expires: new Date(0) });
 }
 
 export async function proxyToLaravel(
@@ -128,10 +134,13 @@ export async function proxyToLaravel(
   try {
     const res = await fetch(targetUrl, { ...fetchOptions, cache: "no-store" });
     const data = await res.text();
-    return new NextResponse(data, {
+    const out = new NextResponse(data, {
       status: res.status,
       headers: { "Content-Type": res.headers.get("content-type") || "application/json" },
     });
+    // The backend rejected the token (expired / revoked / user deleted): treat the browser as logged out, once.
+    if (res.status === 401 && /unauthenticated|session expired/i.test(data)) clearAuthCookies(out);
+    return out;
   } catch (err) {
     const message = err instanceof Error ? err.message : "fetch failed";
     return NextResponse.json(

@@ -4,7 +4,9 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Models\HrmsActivityLog;
+use App\Models\HrmsActivityLogEntry;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -163,6 +165,61 @@ final class ActivityLogController extends Controller
             'directChangeCount' => is_array($event->metadata['directEditedFields'] ?? null) ? count($event->metadata['directEditedFields']) : null,
             'recalculatedChangeCount' => is_array($event->metadata['recalculatedFields'] ?? null) ? count($event->metadata['recalculatedFields']) : null,
         ];
+    }
+
+    /** CIRT-10: one row per action (not per employee). */
+    public function entries(Request $request): JsonResponse
+    {
+        $f = $request->validate([
+            'module' => ['sometimes', 'in:Payroll,Master,Configuration'],
+            'action' => ['sometimes', 'string', 'max:64'],
+            'actor' => ['sometimes', 'string', 'max:160'],
+            'from' => ['sometimes', 'date'],
+            'to' => ['sometimes', 'date', 'after_or_equal:from'],
+            'page' => ['sometimes', 'integer', 'min:1'],
+            'per_page' => ['sometimes', 'integer', 'min:10', 'max:100'],
+        ]);
+        $tz = (string) config('app.timezone');
+        $page = HrmsActivityLogEntry::query()
+            ->where('company_id', (string) $request->user()->company_id)
+            ->when(isset($f['module']), fn (Builder $q) => $q->where('module', $f['module']))
+            ->when(isset($f['action']), fn (Builder $q) => $q->where('action_code', $f['action']))
+            ->when(isset($f['actor']), fn (Builder $q) => $q->whereRaw('LOWER(performed_by_name) LIKE ?', ['%'.mb_strtolower($f['actor']).'%']))
+            ->when(isset($f['from']), fn (Builder $q) => $q->where('performed_at', '>=', Carbon::parse($f['from'], $tz)->startOfDay()))
+            ->when(isset($f['to']), fn (Builder $q) => $q->where('performed_at', '<=', Carbon::parse($f['to'], $tz)->endOfDay()))
+            ->orderByDesc('performed_at')->orderByDesc('id')
+            ->paginate((int) ($f['per_page'] ?? 25));
+
+        return response()->json([
+            'entries' => collect($page->items())->map(function (HrmsActivityLogEntry $e) use ($tz): array {
+                $at = $e->performed_at?->timezone($tz);
+
+                return [
+                    'id' => $e->id, 'action' => $e->action_label, 'actionCode' => $e->action_code,
+                    'performedBy' => $e->performed_by_name ?? 'Unknown user',
+                    'date' => $at?->format('d-m-Y'), 'time' => $at?->format('H:i:s'), 'module' => $e->module,
+                    'outcome' => $e->outcome, 'employeeCount' => (int) $e->employee_count, 'detailCount' => (int) $e->detail_count,
+                    'payrollYear' => $e->payroll_year, 'payrollMonth' => $e->payroll_month,
+                ];
+            })->values(),
+            'pagination' => ['currentPage' => $page->currentPage(), 'perPage' => $page->perPage(), 'total' => $page->total(), 'lastPage' => $page->lastPage()],
+        ]);
+    }
+
+    /** CIRT-10: View Details = Changed Item | Previous Value | Updated Value. */
+    public function entryDetails(Request $request, string $id): JsonResponse
+    {
+        $entry = HrmsActivityLogEntry::query()->where('company_id', (string) $request->user()->company_id)->findOrFail($id);
+        $at = $entry->performed_at?->timezone((string) config('app.timezone'));
+
+        return response()->json(['entry' => [
+            'id' => $entry->id, 'action' => $entry->action_label, 'performedBy' => $entry->performed_by_name,
+            'date' => $at?->format('d-m-Y'), 'time' => $at?->format('H:i:s'), 'module' => $entry->module, 'outcome' => $entry->outcome,
+            'details' => $entry->details()->get()->map(fn ($d) => [
+                'employee' => $d->employee_label, 'changedItem' => $d->changed_item,
+                'previousValue' => $d->previous_value, 'updatedValue' => $d->updated_value,
+            ])->values(),
+        ]]);
     }
 
     public function show(Request $request, string $id): JsonResponse

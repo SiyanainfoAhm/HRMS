@@ -7,6 +7,7 @@ use App\Models\HrmsMonthlyPayrollAudit;
 use App\Models\HrmsPayrollPeriod;
 use App\Models\HrmsPayslip;
 use App\Models\HrmsUser;
+use App\Support\PayrollLabels;
 use InvalidArgumentException;
 use RuntimeException;
 use Illuminate\Support\Facades\DB;
@@ -58,9 +59,9 @@ class PayrollAmendmentService
         'other' => 'Other',
         'daArrear' => 'DA Arrear',
         'transportArrear' => 'Transport Arrear',
-        'grossArrear' => 'Gross Arrear',
-        'cpfArrear' => 'CPF Arrear',
-        'netArrear' => 'Net Arrear',
+        'grossArrear' => PayrollLabels::GROSS_ARREARS,
+        'cpfArrear' => PayrollLabels::CPF_ARREARS,
+        'netArrear' => PayrollLabels::NET_ARREARS,
         'customEarnings' => 'Custom Earnings',
         'customDeductions' => 'Custom Deductions',
         'totalEarnings' => 'Total Earnings',
@@ -451,6 +452,8 @@ class PayrollAmendmentService
             'hpl_basis_amount' => $num($gm['hplBasisAmount'] ?? $gm['hpl_basis_amount'] ?? $existing->hpl_basis_amount),
             'night_hours' => $num($gm['nightHours'] ?? $gm['night_hours'] ?? $existing->night_hours),
             'night_allowance_rate' => $num($gm['nightAllowanceRate'] ?? $gm['night_allowance_rate'] ?? $existing->night_allowance_rate),
+            // A generated row keeps the basis its rate was stored with (legacy rows stay per-hour).
+            'night_allowance_rate_basis' => (string) ($existing->night_allowance_rate_basis ?? 'hour'),
             'night_allowance_amount' => $num($gm['nightAllowanceAmount'] ?? $gm['night_allowance_amount'] ?? $gm['nightAllowancePaid'] ?? $existing->night_allowance_amount),
             'veh_charge_amount' => $num($ded['vehCharge'] ?? $ded['veh_charge'] ?? $existing->veh_charge_amount),
             'other_deduction_amount' => $num($ded['other'] ?? $existing->other_deduction_amount),

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { DaysNumberInput } from "@/components/ui/DaysNumberInput";
 import { PayrollComponentScroller, type PayrollScrollerHandle } from "./PayrollComponentScroller";
 import { PayrollEmployeeCardHeader } from "./PayrollEmployeeCardHeader";
@@ -261,31 +261,21 @@ export function PrivateRunPreviewCards({
   pfLabel,
   onUpdate,
 }: Props) {
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
-
-  useEffect(() => {
-    if (!rows.length) {
-      setExpandedIds(new Set());
-      return;
-    }
-    setExpandedIds((prev) => {
-      if (prev.size > 0) {
-        const next = new Set([...prev].filter((id) => rows.some((r) => r.employeeUserId === id)));
-        if (next.size > 0) return next;
-      }
-      return new Set([rows[0].employeeUserId]);
-    });
-  }, [rows]);
+  const [openIds, setOpenIds] = useState<Set<string>>(() => new Set());
+  // Derived, not synced in an effect: drop cards that left the list; if none of the
+  // user's open cards remain, show the first one.
+  const expandedIds = useMemo(() => {
+    const kept = [...openIds].filter((id) => rows.some((r) => r.employeeUserId === id));
+    if (kept.length > 0) return new Set(kept);
+    return rows.length ? new Set([rows[0].employeeUserId]) : new Set<string>();
+  }, [rows, openIds]);
 
   const toggleExpand = (id: string) => {
-    setExpandedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+    const next = new Set(expandedIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setOpenIds(next);
   };
-
   return (
     <div className="space-y-4">
       <p className="text-xs leading-relaxed text-slate-600">

@@ -19,6 +19,13 @@ final class PayrollFieldRegistry
         'transport',
     ];
 
+    /** Other standard components payroll accepts as a CPF basis (shared by Settings validation and preflight). */
+    public const EXTRA_CPF_BASIS_KEYS = [
+        'sp_pay', 'telephone_allowance', 'education_allowance', 'encashment', 'gpf',
+        'extra_work_allowance', 'night_allowance', 'uniform_allowance', 'da_arrears',
+        'transport_arrears', 'gross_arrears', 'net_arrears',
+    ];
+
     /** Employee-level CPF override (DB/API may store 0 instead of boolean false). */
     public static function isCpfEmployeeCustomMode(mixed $value): bool
     {
@@ -82,10 +89,10 @@ final class PayrollFieldRegistry
             // Separate statutory/accounting classifications; never fold into Other Allowance.
             $row(['field_label' => 'Telephone Allowance', 'field_key' => 'telephone_allowance', 'field_group' => 'earnings', 'field_type' => 'number', 'include_in_total_earnings' => true]),
             $row(['field_label' => 'Encashment', 'field_key' => 'encashment', 'field_group' => 'earnings', 'field_type' => 'number', 'include_in_total_earnings' => true]),
-            $row(['field_label' => 'DA Arrears', 'field_key' => 'da_arrears', 'field_group' => 'earnings', 'field_type' => 'number', 'include_in_total_earnings' => true]),
-            $row(['field_label' => 'Transport Arrears', 'field_key' => 'transport_arrears', 'field_group' => 'earnings', 'field_type' => 'number', 'include_in_total_earnings' => true]),
-            $row(['field_label' => 'Gross Arrears', 'field_key' => 'gross_arrears', 'field_group' => 'earnings', 'field_type' => 'number', 'include_in_total_earnings' => true]),
-            $row(['field_label' => 'Net Arrears', 'field_key' => 'net_arrears', 'field_group' => 'earnings', 'field_type' => 'number', 'include_in_total_earnings' => true]),
+            $row(['field_label' => PayrollLabels::DA_ARREARS, 'field_key' => 'da_arrears', 'field_group' => 'earnings', 'field_type' => 'number', 'include_in_total_earnings' => true]),
+            $row(['field_label' => PayrollLabels::TRANSPORT_ARREARS, 'field_key' => 'transport_arrears', 'field_group' => 'earnings', 'field_type' => 'number', 'include_in_total_earnings' => true]),
+            $row(['field_label' => PayrollLabels::GROSS_ARREARS, 'field_key' => 'gross_arrears', 'field_group' => 'earnings', 'field_type' => 'number', 'include_in_total_earnings' => true]),
+            $row(['field_label' => PayrollLabels::NET_ARREARS, 'field_key' => 'net_arrears', 'field_group' => 'earnings', 'field_type' => 'number', 'include_in_total_earnings' => true]),
             $row(['field_label' => 'UAN', 'field_key' => 'uan', 'field_group' => 'statutory', 'field_type' => 'text']),
             $row(['field_label' => 'CPF No', 'field_key' => 'cpf_no', 'field_group' => 'statutory', 'field_type' => 'text']),
             $row(['field_label' => 'PAN', 'field_key' => 'pan', 'field_group' => 'statutory', 'field_type' => 'text', 'is_required' => true]),
@@ -100,7 +107,7 @@ final class PayrollFieldRegistry
             $row(['field_label' => 'VPF', 'field_key' => 'vpf', 'field_group' => 'deductions', 'field_type' => 'number', 'include_in_total_deductions' => true]),
             $row(['field_label' => 'Post Office', 'field_key' => 'post_office', 'field_group' => 'deductions', 'field_type' => 'number', 'include_in_total_deductions' => true]),
             $row(['field_label' => 'Credit Society', 'field_key' => 'credit_society', 'field_group' => 'deductions', 'field_type' => 'number', 'include_in_total_deductions' => true]),
-            $row(['field_label' => 'CPF Arrears', 'field_key' => 'cpf_arrears', 'field_group' => 'deductions', 'field_type' => 'number', 'include_in_total_deductions' => true]),
+            $row(['field_label' => PayrollLabels::CPF_ARREARS, 'field_key' => 'cpf_arrears', 'field_group' => 'deductions', 'field_type' => 'number', 'include_in_total_deductions' => true]),
             $row(['field_label' => 'Electricity', 'field_key' => 'electricity', 'field_group' => 'deductions', 'field_type' => 'number', 'include_in_total_deductions' => true]),
             $row(['field_label' => 'Water', 'field_key' => 'water', 'field_group' => 'deductions', 'field_type' => 'number', 'include_in_total_deductions' => true]),
             $row(['field_label' => 'Mess', 'field_key' => 'mess', 'field_group' => 'deductions', 'field_type' => 'number', 'include_in_total_deductions' => true]),
