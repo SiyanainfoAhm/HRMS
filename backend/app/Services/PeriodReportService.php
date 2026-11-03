@@ -104,7 +104,8 @@ final class PeriodReportService
         }
         $defs = HrmsPayrollFieldDefinition::query()->where('company_id', $companyId)
             ->where(function ($q): void {
-                $q->where('is_system', false)->orWhere('field_key', 'telephone_allowance');
+                // Telephone Allowance and the Advance deduction are system fields that live in the custom bags.
+                $q->where('is_system', false)->orWhereIn('field_key', ['telephone_allowance', 'advance']);
             })
             ->whereIn('field_group', ['earnings', 'deductions', 'statutory'])
             ->orderBy('display_order')->orderBy('field_label')->get();

@@ -217,20 +217,46 @@ final class PeriodReportTest extends DatabaseTestCase
         $this->assertSame(1010.0, (float) $excelRow[$h['Total Earnings']]);
     }
 
-    public function test_employee_export_keeps_totals_beside_their_fields_and_preview_matches_excel(): void
+    /** Every column has a known group; earnings sit left of Total Earnings, deductions left of Total Deductions, Net follows. */
+    private function assertGroupOrder(array $headers, array $groups, string $what): void
+    {
+        $this->assertCount(count($headers), $groups, "$what: one group per column");
+        $known = ['identity', 'info', 'earning', 'total_earnings', 'deduction', 'total_deductions', 'net'];
+        foreach ($groups as $i => $g) $this->assertContains($g, $known, "$what: column '{$headers[$i]}' is unclassified");
+        $te = array_search('total_earnings', $groups, true);
+        $td = array_search('total_deductions', $groups, true);
+        $this->assertNotFalse($te);
+        $this->assertNotFalse($td);
+        foreach ($groups as $i => $g) {
+            if ($g === 'earning') $this->assertLessThan($te, $i, "$what: earning '{$headers[$i]}' must be left of Total Earnings");
+            if ($g === 'deduction') $this->assertLessThan($td, $i, "$what: deduction '{$headers[$i]}' must be left of Total Deductions");
+            if ($g === 'deduction') $this->assertGreaterThan($te, $i, "$what: deduction '{$headers[$i]}' follows Total Earnings");
+        }
+        $this->assertSame('net', $groups[$td + 1], "$what: Net follows Total Deductions");
+        $this->assertSame(1, count(array_keys($groups, 'net', true)), "$what: one Net column");
+        $this->assertSame(count($headers), count(array_unique(array_map('strtolower', $headers))), "$what: no two columns share a header");
+    }
+
+    public function test_employee_export_columns_are_grouped_and_preview_matches_excel(): void
     {
         $svc = app(EmployeePayrollExportService::class);
-        $keys = ['earnings' => ['tmp_a', 'arrears'], 'deductions' => ['tmp_d'], 'labels' => ['tmp_a' => 'Alpha Earn', 'arrears' => 'Arrears', 'tmp_d' => 'Beta Ded']];
+        $keys = [
+            'earnings' => ['tmp_a', 'arrears'], 'deductions' => ['tmp_d', 'advance'],
+            'labels' => ['tmp_a' => 'Alpha Earn', 'arrears' => 'Arrears', 'tmp_d' => 'Beta Ded', 'advance' => 'Advance'],
+        ];
         $headers = $svc->buildHeaders($keys);
+        $groups = array_column($svc->columnGroups($keys), 'group');
+        $this->assertGroupOrder($headers, $groups, 'Export Employee Payroll');
         $pos = array_flip($headers);
-        $this->assertSame('Arrears (Custom)', $headers[$pos['Alpha Earn'] + 1], 'a custom field named like a fixed column keeps the (Custom) suffix');
         $this->assertTrue($pos['Month'] + 1 === $pos['Year'], 'Month then Year');
-        $this->assertTrue($pos['Alpha Earn'] < $pos['Arrears (Custom)'] && $pos['Arrears (Custom)'] < $pos['Total Earnings'], 'custom earnings, then Total Earnings');
-        $this->assertSame($pos['Arrears (Custom)'] + 1, $pos['Total Earnings']);
-        $this->assertTrue($pos['Total Earnings'] < $pos['Income Tax'] && $pos['Other Deduction'] < $pos['Beta Ded'], 'fixed deductions, then custom deductions');
-        $this->assertSame($pos['Beta Ded'] + 1, $pos['Total Deductions'], 'custom deductions, then Total Deductions');
-        $this->assertSame('Net Salary', $headers[count($headers) - 1], 'net pay is last');
-        $this->assertSame($pos['Telephone Allowance'], array_search('Telephone Allowance', $headers, true), 'fixed columns stay where they are');
+        $this->assertSame('Gross Arrears', $headers[$pos['Transport Arrear'] + 1], 'the gross-arrears column is labelled Gross Arrears');
+        $this->assertTrue($pos['Reimbursement'] < $pos['Alpha Earn'] && $pos['Arrears'] === $pos['Alpha Earn'] + 1 && $pos['Arrears'] + 1 === $pos['Total Earnings'], 'custom earnings, then Total Earnings (no duplicate Arrears)');
+        $this->assertTrue($pos['Incentive'] < $pos['Total Earnings'], 'Incentive is an earning');
+        $this->assertArrayNotHasKey('Advance ', $pos);
+        $this->assertTrue($pos['CPF Arr'] < $pos['Beta Ded'] && $pos['Beta Ded'] < $pos['Advance'] && $pos['Advance'] + 1 === $pos['Total Deductions'], 'CPF Arr, custom deductions incl. Advance, then Total Deductions');
+        $this->assertSame($pos['Total Deductions'] + 1, $pos['Net Salary']);
+        $this->assertSame($pos['Net Salary'] + 1, $pos['Net Arrears'], 'Net Arrears is a memo column after Net Salary');
+        $this->assertSame($pos['Telephone Allowance'], array_search('Telephone Allowance', $headers, true), 'Telephone Allowance and GPF keep their fixed columns');
 
         $period = new HrmsPayrollPeriod;
         $period->id = 'p-may';
@@ -244,7 +270,7 @@ final class PeriodReportTest extends DatabaseTestCase
         $masters = ['u1' => ['employeeCode' => '001', 'name' => 'Emp 1']];
         $table = $svc->buildTable([$period], ['p-may' => [$gov]], $masters, [], [], $keys);
         $this->assertSame($headers, $table['headers'], 'preview headers are the shared column definition');
-
+        $this->assertSame($groups, $table['groups']);
         $sheet = $svc->buildSpreadsheet([$period], ['p-may' => [$gov]], $masters, [], [], $keys)->getActiveSheet();
         $excelHeaders = array_map('strval', $sheet->rangeToArray('A1:'.$sheet->getHighestColumn().'1', null, true, false)[0]);
         $this->assertSame($table['headers'], $excelHeaders, 'preview and Excel use exactly the same column order');
@@ -252,6 +278,56 @@ final class PeriodReportTest extends DatabaseTestCase
         $this->assertSame(10.0, (float) $table['rows'][0][$col['Alpha Earn']]);
         $this->assertSame(1010.0, (float) $table['rows'][0][$col['Total Earnings']]);
         $this->assertSame(1005.0, (float) $table['rows'][0][$col['Net Salary']]);
+    }
+
+    public function test_real_september_files_follow_the_column_groups(): void
+    {
+        $company = DB::table('cirt_monthly_payroll')->value('company_id');
+        $company !== null || $this->markTestSkipped('No generated payroll in this database.');
+        $company = (string) $company;
+        $periods = new PeriodReportService;
+        $month = $periods->periods($company)[0]['ym'];
+        $ids = $periods->periodIdsFor($company, [$month]);
+
+        // Export Employee Payroll: the real streamed file, parsed back.
+        $svc = app(EmployeePayrollExportService::class);
+        $table = $svc->previewTable($company, $ids);
+        $this->assertGroupOrder($table['headers'], $table['groups'], 'Export Employee Payroll (real data)');
+        ob_start();
+        $svc->export($company, $ids)->sendContent();
+        $path = tempnam(sys_get_temp_dir(), 'emp').'.xlsx';
+        file_put_contents($path, ob_get_clean());
+        $sheet = IOFactory::load($path)->getActiveSheet();
+        @unlink($path);
+        $excel = array_map('strval', $sheet->rangeToArray('A1:'.$sheet->getHighestColumn().'1', null, true, false)[0]);
+        $this->assertSame($table['headers'], $excel, 'preview headers equal the Excel headers');
+        $this->assertSame('Total', $sheet->getCell([1, $sheet->getHighestRow()])->getValue(), 'bottom totals row');
+
+        // TDS Data: the 44 legacy columns, then the grouped tail.
+        $tds = new PostPayrollDownloadService;
+        $rows = $tds->rowsForMonths($company, [$month]);
+        $extras = $periods->customColumns($company, array_map(fn ($r) => [$r['custom_earnings'], $r['custom_deductions']], $rows));
+        $t = $tds->tdsTable($rows, $extras);
+        $layout = PostPayrollDownloadService::tdsExtraLayout($extras);
+        $groups = array_merge(array_fill(0, 44, 'identity'), array_map(fn ($c) => match ($c['kind']) {
+            'month', 'year' => 'info', 'earning' => 'earning', 'total_earnings' => 'total_earnings',
+            'deduction' => 'deduction', 'total_deductions' => 'total_deductions', 'net' => 'net',
+        }, $layout));
+        $tail = array_slice($t['headers'], 44);
+        $tailGroups = array_slice($groups, 44);
+        $te = array_search('total_earnings', $tailGroups, true);
+        $td = array_search('total_deductions', $tailGroups, true);
+        foreach ($tailGroups as $i => $g) {
+            $this->assertContains($g, ['info', 'earning', 'total_earnings', 'deduction', 'total_deductions', 'net'], "unclassified TDS column {$tail[$i]}");
+            if ($g === 'earning') $this->assertLessThan($te, $i, "TDS earning {$tail[$i]} left of Total Earnings");
+            if ($g === 'deduction') $this->assertLessThan($td, $i, "TDS deduction {$tail[$i]} left of Total Deductions");
+        }
+        $this->assertSame('net', $tailGroups[$td + 1], 'TDS: Net Pay follows Total Deductions');
+        $this->assertSame(count($t['headers']), count(array_unique(array_map('strtolower', $t['headers']))), 'TDS: no duplicate header');
+        $path = $tds->save($tds->buildTds($rows, $extras));
+        $tsheet = IOFactory::load($path)->getActiveSheet();
+        @unlink($path);
+        $this->assertSame($t['headers'], array_map('strval', $tsheet->rangeToArray('A2:'.$tsheet->getHighestColumn().'2', null, true, false)[0]), 'TDS preview headers equal Excel headers');
     }
 
     public function test_real_september_preview_totals_reconcile_and_match_the_workbook(): void

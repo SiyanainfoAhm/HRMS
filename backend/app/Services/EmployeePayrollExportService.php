@@ -139,7 +139,7 @@ class EmployeePayrollExportService
     ): Spreadsheet {
         $table = $this->buildTable($periods, $monthlyByPeriod, $mastersByUser, $mastersById, $quartersById, $customKeys, $employeeUserIdSet);
         $headers = $table['headers'];
-        $amountColIndexes = $this->amountColumnIndexes($headers);
+        $amountColIndexes = $this->amountColumnIndexes($headers, $customKeys);
         $sheet = new Spreadsheet;
         $active = $sheet->getActiveSheet();
         $active->setTitle('Employee Payroll');
@@ -197,7 +197,7 @@ class EmployeePayrollExportService
      * @param  array<string, array{name: string, type: string}>  $quartersById
      * @param  array{earnings: list<string>, deductions: list<string>, labels?: array<string, string>}  $customKeys
      * @param  array<string, true>|null  $employeeUserIdSet
-     * @return array{headers: list<string>, rows: list<list<mixed>>, totals: list<mixed>, moneyColumns: list<int>}
+     * @return array{headers: list<string>, groups: list<string>, rows: list<list<mixed>>, totals: list<mixed>, moneyColumns: list<int>}
      */
     public function buildTable(
         array $periods,
@@ -210,7 +210,7 @@ class EmployeePayrollExportService
     ): array {
         $headers = $this->buildHeaders($customKeys);
         $skipSum = array_keys(array_intersect($headers, ['Electricity Units']));
-        $amountCols = array_values(array_diff($this->amountColumnIndexes($headers), $skipSum));
+        $amountCols = array_values(array_diff($this->amountColumnIndexes($headers, $customKeys), $skipSum));
         $items = [];
         foreach ($periods as $period) {
             foreach ($monthlyByPeriod[(string) $period->id] ?? [] as $gov) {
@@ -255,7 +255,7 @@ class EmployeePayrollExportService
             foreach ($sums as $i => $sum) $totals[$i] = round($sum, 2);
         }
 
-        return ['headers' => $headers, 'rows' => $rows, 'totals' => $totals, 'moneyColumns' => $amountCols];
+        return ['headers' => $headers, 'groups' => array_column($this->columnDefinitions($customKeys), 'group'), 'rows' => $rows, 'totals' => $totals, 'moneyColumns' => $amountCols];
     }
 
     /**
@@ -490,114 +490,143 @@ class EmployeePayrollExportService
     }
 
     /**
-     * @param  array{earnings: list<string>, deductions: list<string>}  $customKeys
+     * THE column definition of Export Employee Payroll (preview and Excel both read it): header, group and
+     * value of every column, in order. Groups: identity, info, earning, total_earnings, deduction,
+     * total_deductions, net. Nothing that is an earning sits after Total Earnings, nothing that is a
+     * deduction after Total Deductions, and Net Salary follows Total Deductions; memo columns come last.
+     * Custom fields land in the earning or deduction block by their Settings group.
+     *
+     * @param  array{earnings: list<string>, deductions: list<string>, labels?: array<string, string>}  $customKeys
+     * @return list<array{header: string, group: string, money: bool, value: callable}>
+     */
+    private function columnDefinitions(array $customKeys): array
+    {
+        $cols = [];
+        $text = function (string $h, string $g, callable $v) use (&$cols): void {
+            $cols[] = ['header' => $h, 'group' => $g, 'money' => false, 'value' => $v];
+        };
+        $money = function (string $h, string $g, callable $v) use (&$cols): void {
+            $cols[] = ['header' => $h, 'group' => $g, 'money' => true, 'value' => $v];
+        };
+        $col = fn (string $attr) => fn (array $c): float => $c['n']($c['gov']->{$attr});
+
+        // identity
+        $text('Employee Code', 'identity', fn (array $c) => (string) ($c['master']['employeeCode'] ?? ''));
+        $text('Name', 'identity', fn (array $c) => $c['master']['name'] ?? '');
+        $text('Email', 'identity', fn (array $c) => $c['master']['email'] ?? '');
+        $text('Phone', 'identity', fn (array $c) => $c['master']['phone'] ?? '');
+        $text('Designation', 'identity', fn (array $c) => $c['master']['designation'] ?? '');
+        $text('Department', 'identity', fn (array $c) => $c['master']['department'] ?? '');
+        $text('Division', 'identity', fn (array $c) => $c['master']['division'] ?? '');
+        $text('Pay Level', 'identity', fn (array $c) => $c['payLevel']);
+        $text('Status', 'identity', fn (array $c) => $c['master']['status'] ?? '');
+        $text('Date of Joining', 'identity', fn (array $c) => $c['master']['dateOfJoining'] ?? '');
+        $text('Date of Birth', 'identity', fn (array $c) => $c['master']['dateOfBirth'] ?? '');
+        $text('PAN', 'identity', fn (array $c) => $c['master']['pan'] ?? '');
+        $text('Aadhaar', 'identity', fn (array $c) => $c['master']['aadhaar'] ?? '');
+        $text('UAN', 'identity', fn (array $c) => $c['master']['uan'] ?? '');
+        $text('CPF No', 'identity', fn (array $c) => $c['master']['cpfNo'] ?? '');
+        $text('Bank Name', 'identity', fn (array $c) => $c['master']['bankName'] ?? '');
+        $text('Bank Account Number', 'identity', fn (array $c) => $c['master']['bankAccountNumber'] ?? '');
+        $text('IFSC', 'identity', fn (array $c) => $c['master']['bankIfsc'] ?? '');
+        // period / quarter context (info)
+        $text('Month', 'info', fn (array $c) => $this->monthLabel($c['period']));
+        $text('Year', 'info', fn (array $c) => $c['period']->period_start ? (int) $c['period']->period_start->format('Y') : '');
+        $text('Through Day', 'info', fn (array $c) => $this->throughDay($c['period'], $c['gov']));
+        $text('Quarter Assigned', 'info', fn (array $c) => ! empty($c['quarterMeta']['assigned']) ? 'Yes' : 'No');
+        $text('Quarter Name', 'info', fn (array $c) => (string) ($c['quarterMeta']['name'] ?? ''));
+        $text('Quarter Type', 'info', fn (array $c) => (string) ($c['quarterMeta']['type'] ?? ''));
+
+        // earnings
+        $money('Basic Paid', 'earning', $col('basic_paid'));
+        $money('DA Paid', 'earning', $col('da_paid'));
+        $money('HRA Paid', 'earning', $col('hra_paid'));
+        $money('Transport Paid', 'earning', $col('transport_paid'));
+        $money('Medical Paid', 'earning', $col('medical_paid'));
+        $money('Special Pay', 'earning', $col('sp_pay_paid'));
+        $money('Night Allowance', 'earning', fn (array $c): float => $c['n']($c['gov']->night_allowance_paid ?? $c['gov']->night_allowance_amount ?? 0));
+        $money('Education Allowance', 'earning', fn (array $c): float => $c['n']($c['gov']->education_allowance_paid ?? 0));
+        $money('Telephone Allowance', 'earning', fn (array $c): float => $c['n']($c['customEarnings']['telephone_allowance'] ?? 0));
+        $money('Encashment', 'earning', fn (array $c): float => $c['n']($c['gov']->encashment_paid ?? 0));
+        $money('Encashment DA', 'earning', fn (array $c): float => $c['n']($c['gov']->encashment_da_paid ?? 0));
+        $money('DA Arrear', 'earning', fn (array $c): float => $c['n']($c['gov']->da_arrears_paid ?? 0));
+        $money('Transport Arrear', 'earning', fn (array $c): float => $c['n']($c['gov']->transport_arrears_paid ?? 0));
+        $money(PayrollLabels::GROSS_ARREARS, 'earning', fn (array $c): float => $c['n']($c['gov']->gross_arrear ?? 0));
+        $money('Incentive', 'earning', fn (array $c): float => $c['n']($c['gov']->payslip?->incentive ?? 0));
+        $money('PR Bonus', 'earning', fn (array $c): float => $c['n']($c['gov']->payslip?->pr_bonus ?? 0));
+        $money('Reimbursement', 'earning', fn (array $c): float => $c['n']($c['gov']->payslip?->reimbursement ?? 0));
+        foreach ($customKeys['earnings'] as $key) {
+            $money($this->uniqueHeader(array_column($cols, 'header'), $this->customHeaderLabel($customKeys['labels'][$key] ?? $key)), 'earning',
+                fn (array $c) => isset($c['customEarnings'][$key]) ? $c['n']($c['customEarnings'][$key]) : '');
+        }
+        $money('Total Earnings', 'total_earnings', $col('total_earnings'));
+
+        // deductions
+        $money('Income Tax', 'deduction', fn (array $c): float => $c['n']($c['gov']->income_tax_amount ?? 0));
+        $money('Professional Tax', 'deduction', fn (array $c): float => $c['n']($c['gov']->pt_amount ?? 0));
+        $money('LIC', 'deduction', fn (array $c): float => $c['n']($c['gov']->lic_amount ?? 0));
+        $money('CPF', 'deduction', fn (array $c): float => $c['n']($c['gov']->cpf_amount ?? 0));
+        $money('DA CPF', 'deduction', fn (array $c): float => $c['n']($c['gov']->da_cpf_amount ?? 0));
+        $money('GPF', 'deduction', fn (array $c): float => $c['n']($c['customDeductions']['gpf'] ?? 0));
+        $money('VPF', 'deduction', fn (array $c): float => $c['n']($c['gov']->vpf_amount ?? 0));
+        $money('PF Loan', 'deduction', fn (array $c): float => $c['n']($c['gov']->pf_loan_amount ?? 0));
+        $money('Post Office', 'deduction', fn (array $c): float => $c['n']($c['gov']->post_office_amount ?? 0));
+        $money('Credit Society', 'deduction', fn (array $c): float => $c['n']($c['gov']->credit_society_amount ?? 0));
+        $money('Standard Licence Fee', 'deduction', fn (array $c): float => $c['n']($c['gov']->std_licence_fee_amount ?? 0));
+        $money('Electricity', 'deduction', fn (array $c): float => $c['n']($c['gov']->electricity_amount ?? $c['gov']->electricity_total ?? 0));
+        $money('Electricity Units', 'info', fn (array $c): float => $c['n']($c['gov']->electricity_units_consumed ?? 0));
+        $money('Water', 'deduction', fn (array $c): float => $c['n']($c['gov']->water_amount ?? 0));
+        $money('Mess', 'deduction', fn (array $c): float => $c['n']($c['gov']->mess_amount ?? 0));
+        $money('Bank / Loan Recovery', 'deduction', fn (array $c): float => $c['n']($c['gov']->loan_recovery_amount ?? 0));
+        $money('Welfare', 'deduction', fn (array $c): float => $c['n']($c['gov']->welfare_amount ?? 0));
+        $money('HPL', 'deduction', fn (array $c): float => $c['n']($c['gov']->hpl_amount ?? 0));
+        $money('EOL', 'deduction', fn (array $c): float => $c['n']($c['gov']->eol_amount ?? 0));
+        $money('Vehicle Charge', 'deduction', fn (array $c): float => $c['n']($c['gov']->veh_charge_amount ?? 0));
+        $money('Quarter Rent', 'deduction', fn (array $c): float => $c['n']($c['gov']->quarter_rent_amount ?? 0));
+        $money('Other Deduction', 'deduction', fn (array $c): float => $c['n']($c['gov']->other_deduction_amount ?? 0));
+        $money(PayrollLabels::CPF_ARREARS, 'deduction', fn (array $c): float => $c['n']($c['gov']->cpf_arrear ?? 0));
+        foreach ($customKeys['deductions'] as $key) {
+            $money($this->uniqueHeader(array_column($cols, 'header'), $this->customHeaderLabel($customKeys['labels'][$key] ?? $key)), 'deduction',
+                fn (array $c) => isset($c['customDeductions'][$key]) ? $c['n']($c['customDeductions'][$key]) : '');
+        }
+        $money('Total Deductions', 'total_deductions', $col('total_deductions'));
+
+        // net, then memo columns
+        $money('Net Salary', 'net', $col('net_salary'));
+        $money(PayrollLabels::NET_ARREARS, 'info', fn (array $c): float => $c['n']($c['gov']->net_arrear ?? 0));
+
+        return $cols;
+    }
+
+    /**
+     * @param  array{earnings: list<string>, deductions: list<string>, labels?: array<string, string>}  $customKeys
      * @return list<string>
      */
     public function buildHeaders(array $customKeys = ['earnings' => [], 'deductions' => []]): array
     {
-        $headers = [
-            'Employee Code',
-            'Name',
-            'Email',
-            'Phone',
-            'Designation',
-            'Department',
-            'Division',
-            'Pay Level',
-            'Status',
-            'Date of Joining',
-            'Date of Birth',
-            'PAN',
-            'Aadhaar',
-            'UAN',
-            'CPF No',
-            'Bank Name',
-            'Bank Account Number',
-            'IFSC',
-            'Month',
-            'Year',
-            'Through Day',
-            'Quarter Assigned',
-            'Quarter Name',
-            'Quarter Type',
-            'Basic Paid',
-            'DA Paid',
-            'HRA Paid',
-            'Transport Paid',
-            'Medical Paid',
-            'Special Pay',
-            'Night Allowance',
-            'Education Allowance',
-            'Telephone Allowance',
-            'Encashment',
-            'Encashment DA',
-            'DA Arrear',
-            'Transport Arrear',
-            'Arrears',
-            'Advance',
-            'PR Bonus',
-            'Reimbursement',
-        ];
-
-        foreach ($customKeys['earnings'] as $key) {
-            $headers[] = $this->uniqueHeader($headers, $this->customHeaderLabel($customKeys['labels'][$key] ?? $key));
-        }
-
-        $headers = array_merge($headers, [
-            'Total Earnings',
-            'Income Tax',
-            'Professional Tax',
-            'LIC',
-            'CPF',
-            'DA CPF',
-            'GPF',
-            'VPF',
-            'PF Loan',
-            'Post Office',
-            'Credit Society',
-            'Standard Licence Fee',
-            'Electricity',
-            'Electricity Units',
-            'Water',
-            'Mess',
-            'Bank / Loan Recovery',
-            'Welfare',
-            'HPL',
-            'EOL',
-            'Vehicle Charge',
-            'Quarter Rent',
-            'Other Deduction',
-        ]);
-
-        foreach ($customKeys['deductions'] as $key) {
-            $headers[] = $this->uniqueHeader($headers, $this->customHeaderLabel($customKeys['labels'][$key] ?? $key));
-        }
-
-        return array_merge($headers, [
-            'Total Deductions',
-            PayrollLabels::CPF_ARREARS,
-            PayrollLabels::NET_ARREARS,
-            'Net Salary',
-        ]);
+        return array_column($this->columnDefinitions($customKeys), 'header');
     }
 
     /**
-     * @param  list<string>  $headers
+     * Group of every column, in column order (same definition as the headers and the values).
+     *
+     * @param  array{earnings: list<string>, deductions: list<string>, labels?: array<string, string>}  $customKeys
+     * @return list<array{header: string, group: string}>
+     */
+    public function columnGroups(array $customKeys = ['earnings' => [], 'deductions' => []]): array
+    {
+        return array_map(fn (array $c) => ['header' => $c['header'], 'group' => $c['group']], $this->columnDefinitions($customKeys));
+    }
+
+    /**
+     * @param  array<string, mixed>  $customKeys
      * @return list<int> zero-based indexes of numeric payroll amount columns
      */
-    private function amountColumnIndexes(array $headers): array
+    private function amountColumnIndexes(array $headers, array $customKeys = ['earnings' => [], 'deductions' => []]): array
     {
-        $skip = [
-            'Employee Code', 'Name', 'Email', 'Phone', 'Designation', 'Department', 'Division',
-            'Pay Level', 'Status', 'Date of Joining', 'Date of Birth', 'PAN', 'Aadhaar', 'UAN',
-            'CPF No', 'Bank Name', 'Bank Account Number', 'IFSC', 'Month', 'Year', 'Through Day',
-            'Quarter Assigned', 'Quarter Name', 'Quarter Type',
-        ];
         $indexes = [];
-        foreach ($headers as $i => $label) {
-            if (! in_array($label, $skip, true)) {
-                $indexes[] = $i;
-            }
+        foreach ($this->columnDefinitions($customKeys) as $i => $c) {
+            if ($c['money'] && ($headers[$i] ?? null) === $c['header']) $indexes[] = $i;
         }
 
         return $indexes;
@@ -606,10 +635,8 @@ class EmployeePayrollExportService
     /**
      * @param  array<string, mixed>|null  $master
      * @param  array{earnings: list<string>, deductions: list<string>}  $customKeys
-     * @return list<string|int|float|null>
-     */
-    /**
      * @param  array{assigned?: bool, quarterId?: ?string, name?: string, type?: string}|null  $quarterMeta
+     * @return list<string|int|float|null>
      */
     public function buildDataRow(
         ?array $master,
@@ -618,100 +645,19 @@ class EmployeePayrollExportService
         array $customKeys = ['earnings' => [], 'deductions' => []],
         ?array $quarterMeta = null,
     ): array {
-        $n = static fn ($v): float => is_numeric($v) ? (float) $v : 0.0;
         $master = $master ?? [];
-        $quarterMeta ??= $this->resolveQuarterMeta($gov, $master);
-        $customEarnings = $this->normalizeCustomMap($gov->custom_earnings);
-        $customDeductions = $this->normalizeCustomMap($gov->custom_deductions);
-
-        $payLevel = $gov->pay_level !== null && $gov->pay_level !== ''
-            ? $gov->pay_level
-            : ($master['payLevel'] ?? '');
-
-        $row = [
-            (string) ($master['employeeCode'] ?? ''),
-            $master['name'] ?? '',
-            $master['email'] ?? '',
-            $master['phone'] ?? '',
-            $master['designation'] ?? '',
-            $master['department'] ?? '',
-            $master['division'] ?? '',
-            $payLevel,
-            $master['status'] ?? '',
-            $master['dateOfJoining'] ?? '',
-            $master['dateOfBirth'] ?? '',
-            $master['pan'] ?? '',
-            $master['aadhaar'] ?? '',
-            $master['uan'] ?? '',
-            $master['cpfNo'] ?? '',
-            $master['bankName'] ?? '',
-            $master['bankAccountNumber'] ?? '',
-            $master['bankIfsc'] ?? '',
-            $this->monthLabel($period),
-            $period->period_start ? (int) $period->period_start->format('Y') : '',
-            $this->throughDay($period, $gov),
-            ! empty($quarterMeta['assigned']) ? 'Yes' : 'No',
-            (string) ($quarterMeta['name'] ?? ''),
-            (string) ($quarterMeta['type'] ?? ''),
-            $n($gov->basic_paid),
-            $n($gov->da_paid),
-            $n($gov->hra_paid),
-            $n($gov->transport_paid),
-            $n($gov->medical_paid),
-            $n($gov->sp_pay_paid),
-            $n($gov->night_allowance_paid ?? $gov->night_allowance_amount ?? 0),
-            $n($gov->education_allowance_paid ?? 0),
-            $n($customEarnings['telephone_allowance'] ?? 0),
-            $n($gov->encashment_paid ?? 0),
-            $n($gov->encashment_da_paid ?? 0),
-            $n($gov->da_arrears_paid ?? 0),
-            $n($gov->transport_arrears_paid ?? 0),
-            $n($gov->gross_arrear ?? 0),
-            $n($gov->payslip?->incentive ?? 0),
-            $n($gov->payslip?->pr_bonus ?? 0),
-            $n($gov->payslip?->reimbursement ?? 0),
+        $c = [
+            'n' => static fn ($v): float => is_numeric($v) ? (float) $v : 0.0,
+            'master' => $master,
+            'period' => $period,
+            'gov' => $gov,
+            'quarterMeta' => $quarterMeta ?? $this->resolveQuarterMeta($gov, $master),
+            'customEarnings' => $this->normalizeCustomMap($gov->custom_earnings),
+            'customDeductions' => $this->normalizeCustomMap($gov->custom_deductions),
+            'payLevel' => $gov->pay_level !== null && $gov->pay_level !== '' ? $gov->pay_level : ($master['payLevel'] ?? ''),
         ];
 
-        foreach ($customKeys['earnings'] as $key) {
-            $row[] = isset($customEarnings[$key]) ? $n($customEarnings[$key]) : '';
-        }
-
-        $row = array_merge($row, [
-            $n($gov->total_earnings),
-            $n($gov->income_tax_amount ?? 0),
-            $n($gov->pt_amount ?? 0),
-            $n($gov->lic_amount ?? 0),
-            $n($gov->cpf_amount ?? 0),
-            $n($gov->da_cpf_amount ?? 0),
-            $n($customDeductions['gpf'] ?? 0),
-            $n($gov->vpf_amount ?? 0),
-            $n($gov->pf_loan_amount ?? 0),
-            $n($gov->post_office_amount ?? 0),
-            $n($gov->credit_society_amount ?? 0),
-            $n($gov->std_licence_fee_amount ?? 0),
-            $n($gov->electricity_amount ?? $gov->electricity_total ?? 0),
-            $n($gov->electricity_units_consumed ?? 0),
-            $n($gov->water_amount ?? 0),
-            $n($gov->mess_amount ?? 0),
-            $n($gov->loan_recovery_amount ?? 0),
-            $n($gov->welfare_amount ?? 0),
-            $n($gov->hpl_amount ?? 0),
-            $n($gov->eol_amount ?? 0),
-            $n($gov->veh_charge_amount ?? 0),
-            $n($gov->quarter_rent_amount ?? 0),
-            $n($gov->other_deduction_amount ?? 0),
-        ]);
-
-        foreach ($customKeys['deductions'] as $key) {
-            $row[] = isset($customDeductions[$key]) ? $n($customDeductions[$key]) : '';
-        }
-
-        return array_merge($row, [
-            $n($gov->total_deductions),
-            $n($gov->cpf_arrear ?? 0),
-            $n($gov->net_arrear ?? 0),
-            $n($gov->net_salary),
-        ]);
+        return array_map(fn (array $def) => ($def['value'])($c), $this->columnDefinitions($customKeys));
     }
 
     /**

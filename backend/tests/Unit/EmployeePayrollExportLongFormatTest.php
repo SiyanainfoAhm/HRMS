@@ -54,7 +54,7 @@ final class EmployeePayrollExportLongFormatTest extends TestCase
         $this->assertSame('Through Day', $headers[20]);
         $this->assertContains('Basic Paid', $headers);
         $this->assertContains('Telephone Allowance', $headers);
-        $this->assertContains('Advance', $headers);
+        $this->assertContains('Incentive', $headers);
         $this->assertContains('PR Bonus', $headers);
         $this->assertContains('Reimbursement', $headers);
         $this->assertContains('GPF', $headers);
@@ -184,7 +184,8 @@ final class EmployeePayrollExportLongFormatTest extends TestCase
         $this->assertSame(350.0, $map['Electricity Units']);
         $this->assertSame(2500.0, $map['Special Allowance']);
         $this->assertSame(350.0, $map['Telephone Allowance']);
-        $this->assertSame(125.0, $map['Advance']);
+        $this->assertSame(125.0, $map['Incentive'], 'the payslip incentive is an earning labelled Incentive, not Advance');
+        $this->assertArrayNotHasKey('Advance', $map);
         $this->assertSame(250.0, $map['PR Bonus']);
         $this->assertSame(375.0, $map['Reimbursement']);
         $this->assertSame(41666.0, $map['GPF']);
