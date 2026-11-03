@@ -53,6 +53,7 @@ import {
 import { PayrollPreviewToolbar } from "@/components/payroll/PayrollPreviewToolbar";
 import { EmployeePayrollExportButton, type EmployeePayrollExportHandle } from "@/components/payroll/EmployeePayrollExportButton";
 import { DownloadsMenu } from "@/components/payroll/DownloadsMenu";
+import { PostPayrollReportsMenu } from "@/components/payroll/PostPayrollReportsMenu";
 import { monthKey } from "@/lib/downloadsMenuModel";
 import { PrivateRunPreviewCards } from "@/components/payroll/PrivateRunPreviewCards";
 import { v as govPreviewV } from "@/components/payroll/payrollRunPreviewShared";
@@ -3835,16 +3836,16 @@ function PayrollPageContent() {
                   running={running || draftSaving || auditSaving}
                   exportDisabled={previewLoading || draftHydrationLoading || Boolean(draftLoadError) || (editableRows.length === 0 && !draftMeta && !preview?.alreadyRun)}
                   bankLetterLoading={bankLetterLoading}
-                  generated={
-                    Number(preview?.year) === Number(runYear) &&
-                    Number(preview?.month) === Number(runMonth) &&
-                    !previewLoading &&
-                    isGeneratedPayrollMonth(preview)
-                  }
                   onPreviewExcel={() => downloadRunExcel("detail")}
                   onExtract={() => downloadRunExcel("summary")}
                   onBankLetter={(format) => downloadBankLetter(format)}
                   onExportEmployeePayroll={() => employeeExportRef.current?.openDialog()}
+                />
+                <PostPayrollReportsMenu
+                  runMonth={runMonth}
+                  runYear={runYear}
+                  canManage={canManage}
+                  running={running || draftSaving || auditSaving}
                 />
                 {canManage ? (
                 <EmployeePayrollExportButton

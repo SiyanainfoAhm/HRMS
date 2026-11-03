@@ -2,8 +2,9 @@ import { formatMonthLabel, isValidYm } from "@/lib/dateInputs";
 import { POST_PAYROLL_REPORTS, type PostPayrollReportType } from "@/lib/postPayrollDownload";
 
 /**
- * Pure model of the Run Payroll "Downloads" menu: which items exist, whether each is enabled (and why not),
- * keyboard navigation, the TDS range rule and the phone layout switch. The React component only renders this.
+ * Pure model of the Run Payroll "Downloads" menu and the separate "Post-payroll reports" menu: which items exist,
+ * whether each is enabled (and why not), keyboard navigation and the phone layout switch. The React components
+ * only render this.
  */
 
 export type BankLetterFormatId = "docx" | "xlsx" | "pdf";
@@ -15,7 +16,7 @@ export type MenuItemId =
   | `bank-${BankLetterFormatId}`
   | `report-${PostPayrollReportType}`;
 
-export type MenuSubmenuId = "bank" | "reports";
+export type MenuSubmenuId = "bank";
 
 export type MenuContext = {
   /** Admin-only features (Export Employee Payroll, post-payroll reports), exactly as the old buttons/page. */
@@ -26,8 +27,6 @@ export type MenuContext = {
   exportDisabled: boolean;
   /** Bank letter is being built (existing flag). */
   bankLetterLoading: boolean;
-  /** The selected month's payroll is generated (and the loaded preview belongs to that month). */
-  generated: boolean;
   /** Selected month, "YYYY-MM" (read from the page selectors). */
   ym: string;
 };
@@ -45,10 +44,6 @@ export type MenuItem = {
 export type DownloadsMenuModel = {
   payroll: MenuItem[];
   bank: MenuItem[];
-  /** Only present for roles allowed to use the post-payroll reports. */
-  reports: MenuItem[] | null;
-  /** Shown above the reports when they are disabled. */
-  reportsHint: string | null;
 };
 
 export const REASON_NOTHING_TO_EXPORT = "Nothing to export yet. Calculate the payroll or save a draft first.";
@@ -71,7 +66,6 @@ export function monthKey(runYear: string | number, runMonth: string | number): s
 export function buildDownloadsMenu(ctx: MenuContext): DownloadsMenuModel {
   const exportReason = ctx.running ? REASON_BUSY : ctx.exportDisabled ? REASON_NOTHING_TO_EXPORT : null;
   const bankReason = ctx.running ? REASON_BUSY : ctx.exportDisabled ? REASON_NOTHING_TO_EXPORT : ctx.bankLetterLoading ? REASON_BANK_BUSY : null;
-  const reportReason = ctx.running ? REASON_BUSY : !ctx.generated ? REASON_NOT_GENERATED : null;
 
   const payroll: MenuItem[] = [
     { id: "preview-excel", label: "Preview Excel", description: "Current preview or saved draft", tag: "Excel", disabledReason: exportReason },
@@ -95,21 +89,68 @@ export function buildDownloadsMenu(ctx: MenuContext): DownloadsMenuModel {
     disabledReason: bankReason,
   }));
 
-  const reports: MenuItem[] | null = ctx.canManage
-    ? POST_PAYROLL_REPORTS.map((r) => ({
-        id: `report-${r.type}` as MenuItemId,
-        label: r.label,
-        description: r.description,
-        tag: "Excel" as const,
-        disabledReason: reportReason,
-      }))
-    : null;
+  return { payroll, bank };
+}
 
+// ---------------------------------------------------------------- Post-payroll reports menu
+
+export const REASON_NO_MONTH_GENERATED = "No payroll month has been generated yet. Generate payroll first.";
+
+export type PostPayrollMenuContext = {
+  canManage: boolean;
+  running: boolean;
+  /** Months ("YYYY-MM") with a generated/finalized run; null while the list is still loading. */
+  generatedMonths: string[] | null;
+  /** Month selected on the Run Payroll page. */
+  ym: string;
+};
+
+export type PostPayrollMenuItem = MenuItem & {
+  /** multi-month: opens the month picker (TDS Data); single-month: a month selector limited to generated months. */
+  flow: "multi-month" | "single-month";
+};
+
+export type PostPayrollMenuModel = {
+  items: PostPayrollMenuItem[];
+  /** Shown above the list only when no month has been generated at all. */
+  hint: string | null;
+};
+
+/**
+ * The Post-payroll reports menu. It stays usable whenever ANY month has a generated run (not only the month
+ * selected on the page); it is disabled only while busy, or when no month at all has been generated.
+ * Null for roles that may not use the reports.
+ */
+export function buildPostPayrollMenu(ctx: PostPayrollMenuContext): PostPayrollMenuModel | null {
+  if (!ctx.canManage) return null;
+  const none = ctx.generatedMonths !== null && ctx.generatedMonths.length === 0;
+  const reason = ctx.running ? REASON_BUSY : none ? REASON_NO_MONTH_GENERATED : null;
   return {
-    payroll,
-    bank,
-    reports,
-    reportsHint: ctx.canManage && reportReason ? `${formatMonthLabel(ctx.ym) || "This month"}: ${reportReason.toLowerCase()}` : null,
+    items: POST_PAYROLL_REPORTS.map((r) => ({
+      id: `report-${r.type}` as MenuItemId,
+      label: r.label,
+      description: r.description,
+      tag: "Excel" as const,
+      disabledReason: reason,
+      flow: r.type === "tds" ? ("multi-month" as const) : ("single-month" as const),
+    })),
+    hint: none ? REASON_NO_MONTH_GENERATED : null,
+  };
+}
+
+/**
+ * Month selector of a single-month report (CPF / VPF, Division-Wise, Paybill): only generated months can be
+ * chosen. The page month is preselected when it was generated; otherwise the latest generated month is, with a
+ * notice that the page month has no run. Nothing is selectable when no month has been generated.
+ */
+export function singleMonthChoice(ym: string, generatedMonths: readonly string[]): { options: string[]; selected: string; notice: string | null } {
+  const options = [...new Set(generatedMonths)].sort();
+  if (options.length === 0) return { options, selected: "", notice: REASON_NO_MONTH_GENERATED };
+  if (options.includes(ym)) return { options, selected: ym, notice: null };
+  return {
+    options,
+    selected: options[options.length - 1],
+    notice: `${formatMonthLabel(ym) || "This month"}: ${REASON_NOT_GENERATED.toLowerCase()}`,
   };
 }
 
