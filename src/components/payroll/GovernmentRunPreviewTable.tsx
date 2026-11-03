@@ -10,6 +10,13 @@ import type { ElectricityBillBreakdown } from "@/lib/electricityTariffCalculatio
 import { PayrollComponentScroller, type PayrollScrollerHandle } from "./PayrollComponentScroller";
 import { PayrollEmployeeCardHeader } from "./PayrollEmployeeCardHeader";
 import { PAYROLL_LABELS } from "@/lib/payrollLabels";
+import {
+  ARREAR_MIRROR_HINT,
+  isCustomEarningVisibleOnRow,
+  isMirroredArrearKey,
+  mirroredArrearValue,
+  resolveUnpaidArrears,
+} from "@/lib/payrollRunArrearMirror";
 import { calendarDaysInMonth, equivalentPayableDays, leaveSalaryAdjustment } from "@/lib/payrollLeaveDays";
 import {
   GOV_PREVIEW_CPF_ARREAR_LINE,
@@ -417,26 +424,6 @@ function StickyMiniSummary({
       <SummaryStat label="Net Pay" value={fmtIn(net)} emphasis />
     </div>
   );
-}
-
-function resolveUnpaidArrears(row: GovernmentRunPreviewRow) {
-  const g = row.governmentMonthly;
-  return {
-    daArrear: Math.round(Number(row.daArrear ?? g?.daArrearsPaid ?? 0) || 0),
-    trArrear: Math.round(Number(row.transportArrear ?? g?.transportArrearsPaid ?? 0) || 0),
-    grossArrear: Math.round(Number(row.grossArrear ?? g?.grossArrear ?? 0) || 0),
-    cpfArrear: Math.round(Number(row.cpfArrear ?? g?.cpfArrear ?? 0) || 0),
-    netArrear: Math.round(Number(row.netArrear ?? g?.netArrear ?? 0) || 0),
-  };
-}
-
-/** Value of an arrear-path line (grossArrear / cpfArrear / netArrear) for the preview chips. */
-function resolveUnpaidArrearValue(row: GovernmentRunPreviewRow, field: string): number {
-  const a = resolveUnpaidArrears(row);
-  if (field === "grossArrear") return a.grossArrear;
-  if (field === "cpfArrear") return a.cpfArrear;
-  if (field === "netArrear") return a.netArrear;
-  return 0;
 }
 
 function ArrearField({
@@ -881,24 +868,37 @@ function GovernmentEmployeeDetail({
             <PayrollComponentScroller ref={scrollerRef}>
               <div className="flex flex-col gap-2.5">
                 <PayrollSectionRow title="Earnings" titleClassName="text-emerald-900">
-                  {GOV_PREVIEW_EARNING_FIELDS.filter((field) => isVisibleConfiguredField(field.fieldKey)).map(({ key, label, arrearField, memo }) => (
-                    <FieldChip
-                      key={key}
-                      label={label}
-                      readOnly={readOnly || Boolean(memo)}
-                      value={arrearField ? resolveUnpaidArrearValue(row, arrearField) : v(g, key)}
-                      onChange={(n) => onUpdate(row.employeeUserId, arrearField ?? `govEarning_${key}`, n)}
-                    />
-                  ))}
-                  {customEarningFields.map((f) => (
-                    <FieldChip
-                      key={f.id}
-                      label={f.fieldLabel}
-                      readOnly={readOnly}
-                      value={customFieldAmount(g, row.govRecalc, f.fieldKey, "earnings")}
-                      onChange={(n) => onUpdate(row.employeeUserId, `govCustom_${f.fieldKey}`, n)}
-                    />
-                  ))}
+                  {GOV_PREVIEW_EARNING_FIELDS.filter((field) => isVisibleConfiguredField(field.fieldKey)).map(({ key, label }) =>
+                    isMirroredArrearKey(key) ? (
+                      <FieldChip
+                        key={key}
+                        label={label}
+                        readOnly
+                        mirrorHint={ARREAR_MIRROR_HINT}
+                        value={mirroredArrearValue(row, key)}
+                        onChange={() => {}}
+                      />
+                    ) : (
+                      <FieldChip
+                        key={key}
+                        label={label}
+                        readOnly={readOnly}
+                        value={v(g, key)}
+                        onChange={(n) => onUpdate(row.employeeUserId, `govEarning_${key}`, n)}
+                      />
+                    ),
+                  )}
+                  {customEarningFields
+                    .filter((f) => isCustomEarningVisibleOnRow(f.fieldKey, customFieldAmount(g, row.govRecalc, f.fieldKey, "earnings")))
+                    .map((f) => (
+                      <FieldChip
+                        key={f.id}
+                        label={f.fieldLabel}
+                        readOnly={readOnly}
+                        value={customFieldAmount(g, row.govRecalc, f.fieldKey, "earnings")}
+                        onChange={(n) => onUpdate(row.employeeUserId, `govCustom_${f.fieldKey}`, n)}
+                      />
+                    ))}
                 </PayrollSectionRow>
                 <PayrollSectionRow title="Deductions" titleClassName="text-rose-900">
                   {GOV_PREVIEW_DEDUCTION_FIELDS.filter((field) => isVisibleConfiguredField(field.fieldKey)).map(({ key, label }) => (
@@ -913,9 +913,10 @@ function GovernmentEmployeeDetail({
                   {isVisibleConfiguredField(GOV_PREVIEW_CPF_ARREAR_LINE.fieldKey) && (
                     <FieldChip
                       label={GOV_PREVIEW_CPF_ARREAR_LINE.label}
-                      readOnly={readOnly}
-                      value={resolveUnpaidArrearValue(row, GOV_PREVIEW_CPF_ARREAR_LINE.arrearField)}
-                      onChange={(n) => onUpdate(row.employeeUserId, GOV_PREVIEW_CPF_ARREAR_LINE.arrearField, n)}
+                      readOnly
+                      mirrorHint={ARREAR_MIRROR_HINT}
+                      value={mirroredArrearValue(row, "cpfArrear")}
+                      onChange={() => {}}
                     />
                   )}
                   {customDeductionFields.map((f) => (
