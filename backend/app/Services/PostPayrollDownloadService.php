@@ -472,9 +472,11 @@ final class PostPayrollDownloadService
 
     /**
      * TDS Data as data (preview and workbook). The 44 TDS columns are unchanged; with $extras the
-     * multi-period columns follow them: Month, Year, one column per custom earning / deduction, then
-     * Total Earnings, Total Deductions and Net Pay of the SAVED row, and a totals row. Every row's totals
-     * are cross-checked (422 when earnings - deductions is not net or the lines do not add up).
+     * multi-period columns follow them, each total beside the fields it sums:
+     * Month | Year | custom EARNINGS | Total Earnings | custom DEDUCTIONS | Total Deductions | Net Pay
+     * (the SAVED row's totals), and a totals row. tdsExtraLayout() is the one definition of that order for
+     * both the preview and the workbook. Every row's totals are cross-checked (422 when earnings -
+     * deductions is not net or the lines do not add up).
      *
      * @param  array{earnings: array<string, string>, deductions: array<string, string>}|null  $extras
      * @return array{headers: list<string>, rows: list<list<mixed>>, totals: list<mixed>, moneyColumns: list<int>}
@@ -483,8 +485,9 @@ final class PostPayrollDownloadService
     {
         $headers = self::TDS_COLUMNS;
         $money = range(18, 43);
+        $layout = $extras === null ? [] : self::tdsExtraLayout($extras);
         if ($extras !== null) {
-            $headers = array_merge($headers, ['Month', 'Year'], array_values($extras['earnings']), array_values($extras['deductions']), ['Total Earnings', 'Total Deductions', 'Net Pay']);
+            $headers = array_merge($headers, array_column($layout, 'label'));
             $money = array_merge($money, range(46, count($headers) - 1));
         }
         $table = [];
@@ -495,15 +498,19 @@ final class PostPayrollDownloadService
             }
             $values = $this->tdsValues($r);
             if ($extras !== null) {
-                $values[] = date('F Y', strtotime((string) $r['month_year']));
-                $values[] = (int) date('Y', strtotime((string) $r['month_year']));
                 $earn = self::customBag($r, 'custom_earnings');
                 $ded = self::customBag($r, 'custom_deductions');
-                foreach (array_keys($extras['earnings']) as $k) $values[] = array_key_exists($k, $earn) ? $earn[$k] : null;
-                foreach (array_keys($extras['deductions']) as $k) $values[] = array_key_exists($k, $ded) ? $ded[$k] : null;
-                $values[] = self::n($r, 'total_earnings');
-                $values[] = self::n($r, 'total_deductions');
-                $values[] = self::n($r, 'net_salary');
+                foreach ($layout as $col) {
+                    $values[] = match ($col['kind']) {
+                        'month' => date('F Y', strtotime((string) $r['month_year'])),
+                        'year' => (int) date('Y', strtotime((string) $r['month_year'])),
+                        'earning' => array_key_exists($col['key'], $earn) ? $earn[$col['key']] : null,
+                        'deduction' => array_key_exists($col['key'], $ded) ? $ded[$col['key']] : null,
+                        'total_earnings' => self::n($r, 'total_earnings'),
+                        'total_deductions' => self::n($r, 'total_deductions'),
+                        'net' => self::n($r, 'net_salary'),
+                    };
+                }
             }
             foreach ($money as $i) {
                 if (isset($values[$i]) && is_numeric($values[$i])) $sums[$i] += (float) $values[$i];
@@ -517,6 +524,32 @@ final class PostPayrollDownloadService
         }
 
         return ['headers' => $headers, 'rows' => $table, 'totals' => $totals, 'moneyColumns' => $money];
+    }
+
+    /**
+     * The one definition of the columns that follow the 44 TDS columns (preview and Excel both read it).
+     * A custom field named like a fixed column gets "(Custom)" so headers stay unambiguous.
+     *
+     * @param  array{earnings: array<string, string>, deductions: array<string, string>}  $extras  field_key => label
+     * @return list<array{label: string, kind: string, key?: string}>
+     */
+    public static function tdsExtraLayout(array $extras): array
+    {
+        $taken = array_merge(self::TDS_COLUMNS, ['Month', 'Year', 'Total Earnings', 'Total Deductions', 'Net Pay']);
+        $unique = function (string $label) use (&$taken): string {
+            if (in_array($label, $taken, true)) $label .= ' (Custom)';
+            $taken[] = $label;
+
+            return $label;
+        };
+        $layout = [['label' => 'Month', 'kind' => 'month'], ['label' => 'Year', 'kind' => 'year']];
+        foreach ($extras['earnings'] as $key => $label) $layout[] = ['label' => $unique((string) $label), 'kind' => 'earning', 'key' => (string) $key];
+        $layout[] = ['label' => 'Total Earnings', 'kind' => 'total_earnings'];
+        foreach ($extras['deductions'] as $key => $label) $layout[] = ['label' => $unique((string) $label), 'kind' => 'deduction', 'key' => (string) $key];
+        $layout[] = ['label' => 'Total Deductions', 'kind' => 'total_deductions'];
+        $layout[] = ['label' => 'Net Pay', 'kind' => 'net'];
+
+        return $layout;
     }
 
     /** @param array{earnings: array<string, string>, deductions: array<string, string>}|null $extras */

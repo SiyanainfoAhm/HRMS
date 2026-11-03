@@ -2,6 +2,8 @@
 
 namespace Tests\Database;
 
+use App\Models\HrmsGovernmentMonthlyPayroll;
+use App\Models\HrmsPayrollPeriod;
 use App\Services\EmployeePayrollExportService;
 use App\Services\PeriodReportService;
 use App\Services\PostPayrollDownloadService;
@@ -183,6 +185,73 @@ final class PeriodReportTest extends DatabaseTestCase
         ]);
         $this->assertContains('Brand New Earning', $headers);
         $this->assertContains('Brand New Recovery', $headers);
+    }
+
+    public function test_tds_columns_put_each_total_beside_the_fields_it_sums_and_preview_matches_excel(): void
+    {
+        $extras = [
+            'earnings' => ['tmp_a' => 'Alpha Earn', 'arrears' => 'Arrears', 'tmp_hra' => 'HRA'],
+            'deductions' => ['tmp_d' => 'Beta Ded', 'gpf' => 'GPF'],
+        ];
+        $rows = [$this->row('001', '2026-05', 1000, ['tmp_a' => 10.0]), $this->row('001', '2026-06', 1100)];
+        $t = $this->tds()->tdsTable($rows, $extras);
+
+        $this->assertSame(
+            ['Month', 'Year', 'Alpha Earn', 'Arrears', 'HRA (Custom)', 'Total Earnings', 'Beta Ded', 'GPF', 'Total Deductions', 'Net Pay'],
+            array_slice($t['headers'], 44),
+            'Month | Year | custom earnings | Total Earnings | custom deductions | Total Deductions | Net Pay',
+        );
+        $this->assertSame(PostPayrollDownloadService::TDS_COLUMNS, array_slice($t['headers'], 0, 44), 'the 44 TDS columns keep their order');
+        $h = array_flip($t['headers']);
+        $this->assertSame(1010.0, $t['rows'][0][$h['Total Earnings']]);
+        $this->assertSame(10.0, $t['rows'][0][$h['Alpha Earn']]);
+        $this->assertSame(810.0, $t['rows'][0][$h['Net Pay']]);
+
+        // The Excel header row is the preview's header row, cell for cell.
+        $path = $this->tds()->save($this->tds()->buildTds($rows, $extras));
+        $sheet = IOFactory::load($path)->getActiveSheet();
+        @unlink($path);
+        $excelHeaders = array_map('strval', $sheet->rangeToArray('A2:'.$sheet->getHighestColumn().'2', null, true, false)[0]);
+        $this->assertSame($t['headers'], $excelHeaders, 'preview and Excel use exactly the same column order');
+        $excelRow = $sheet->rangeToArray('A3:'.$sheet->getHighestColumn().'3', null, true, false)[0];
+        $this->assertSame(1010.0, (float) $excelRow[$h['Total Earnings']]);
+    }
+
+    public function test_employee_export_keeps_totals_beside_their_fields_and_preview_matches_excel(): void
+    {
+        $svc = app(EmployeePayrollExportService::class);
+        $keys = ['earnings' => ['tmp_a', 'arrears'], 'deductions' => ['tmp_d'], 'labels' => ['tmp_a' => 'Alpha Earn', 'arrears' => 'Arrears', 'tmp_d' => 'Beta Ded']];
+        $headers = $svc->buildHeaders($keys);
+        $pos = array_flip($headers);
+        $this->assertSame('Arrears (Custom)', $headers[$pos['Alpha Earn'] + 1], 'a custom field named like a fixed column keeps the (Custom) suffix');
+        $this->assertTrue($pos['Month'] + 1 === $pos['Year'], 'Month then Year');
+        $this->assertTrue($pos['Alpha Earn'] < $pos['Arrears (Custom)'] && $pos['Arrears (Custom)'] < $pos['Total Earnings'], 'custom earnings, then Total Earnings');
+        $this->assertSame($pos['Arrears (Custom)'] + 1, $pos['Total Earnings']);
+        $this->assertTrue($pos['Total Earnings'] < $pos['Income Tax'] && $pos['Other Deduction'] < $pos['Beta Ded'], 'fixed deductions, then custom deductions');
+        $this->assertSame($pos['Beta Ded'] + 1, $pos['Total Deductions'], 'custom deductions, then Total Deductions');
+        $this->assertSame('Net Salary', $headers[count($headers) - 1], 'net pay is last');
+        $this->assertSame($pos['Telephone Allowance'], array_search('Telephone Allowance', $headers, true), 'fixed columns stay where they are');
+
+        $period = new HrmsPayrollPeriod;
+        $period->id = 'p-may';
+        $period->period_name = 'May 2026 (through day 31)';
+        $period->period_start = \Illuminate\Support\Carbon::parse('2026-05-01');
+        $gov = new HrmsGovernmentMonthlyPayroll;
+        $gov->forceFill([
+            'employee_user_id' => 'u1', 'basic_paid' => 1000, 'total_earnings' => 1010, 'total_deductions' => 5, 'net_salary' => 1005,
+            'custom_earnings' => ['tmp_a' => 10], 'custom_deductions' => ['tmp_d' => 5],
+        ]);
+        $masters = ['u1' => ['employeeCode' => '001', 'name' => 'Emp 1']];
+        $table = $svc->buildTable([$period], ['p-may' => [$gov]], $masters, [], [], $keys);
+        $this->assertSame($headers, $table['headers'], 'preview headers are the shared column definition');
+
+        $sheet = $svc->buildSpreadsheet([$period], ['p-may' => [$gov]], $masters, [], [], $keys)->getActiveSheet();
+        $excelHeaders = array_map('strval', $sheet->rangeToArray('A1:'.$sheet->getHighestColumn().'1', null, true, false)[0]);
+        $this->assertSame($table['headers'], $excelHeaders, 'preview and Excel use exactly the same column order');
+        $col = array_flip($table['headers']);
+        $this->assertSame(10.0, (float) $table['rows'][0][$col['Alpha Earn']]);
+        $this->assertSame(1010.0, (float) $table['rows'][0][$col['Total Earnings']]);
+        $this->assertSame(1005.0, (float) $table['rows'][0][$col['Net Salary']]);
     }
 
     public function test_real_september_preview_totals_reconcile_and_match_the_workbook(): void
