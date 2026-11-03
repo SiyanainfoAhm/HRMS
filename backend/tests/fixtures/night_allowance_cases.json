@@ -1,0 +1,399 @@
+{
+ "anchors": {
+  "level1_120h": 2784
+ },
+ "cases": [
+  {
+   "slab": 1,
+   "level": 1,
+   "perDuty": 185.6,
+   "hours": 0,
+   "expected": 0
+  },
+  {
+   "slab": 1,
+   "level": 1,
+   "perDuty": 185.6,
+   "hours": 8,
+   "expected": 186
+  },
+  {
+   "slab": 1,
+   "level": 1,
+   "perDuty": 185.6,
+   "hours": 120,
+   "expected": 2784
+  },
+  {
+   "slab": 1,
+   "level": 1,
+   "perDuty": 185.6,
+   "hours": 8.5,
+   "expected": 197
+  },
+  {
+   "slab": 2,
+   "level": 2,
+   "perDuty": 208.8,
+   "hours": 0,
+   "expected": 0
+  },
+  {
+   "slab": 2,
+   "level": 2,
+   "perDuty": 208.8,
+   "hours": 8,
+   "expected": 209
+  },
+  {
+   "slab": 2,
+   "level": 2,
+   "perDuty": 208.8,
+   "hours": 120,
+   "expected": 3132
+  },
+  {
+   "slab": 2,
+   "level": 2,
+   "perDuty": 208.8,
+   "hours": 8.5,
+   "expected": 222
+  },
+  {
+   "slab": 3,
+   "level": 3,
+   "perDuty": 230.8,
+   "hours": 0,
+   "expected": 0
+  },
+  {
+   "slab": 3,
+   "level": 3,
+   "perDuty": 230.8,
+   "hours": 8,
+   "expected": 231
+  },
+  {
+   "slab": 3,
+   "level": 3,
+   "perDuty": 230.8,
+   "hours": 120,
+   "expected": 3462
+  },
+  {
+   "slab": 3,
+   "level": 3,
+   "perDuty": 230.8,
+   "hours": 8.5,
+   "expected": 245
+  },
+  {
+   "slab": 4,
+   "level": 4,
+   "perDuty": 261.2,
+   "hours": 0,
+   "expected": 0
+  },
+  {
+   "slab": 4,
+   "level": 4,
+   "perDuty": 261.2,
+   "hours": 8,
+   "expected": 261
+  },
+  {
+   "slab": 4,
+   "level": 4,
+   "perDuty": 261.2,
+   "hours": 120,
+   "expected": 3918
+  },
+  {
+   "slab": 4,
+   "level": 4,
+   "perDuty": 261.2,
+   "hours": 8.5,
+   "expected": 278
+  },
+  {
+   "slab": 5,
+   "level": 5,
+   "perDuty": 292.4,
+   "hours": 0,
+   "expected": 0
+  },
+  {
+   "slab": 5,
+   "level": 5,
+   "perDuty": 292.4,
+   "hours": 8,
+   "expected": 292
+  },
+  {
+   "slab": 5,
+   "level": 5,
+   "perDuty": 292.4,
+   "hours": 120,
+   "expected": 4386
+  },
+  {
+   "slab": 5,
+   "level": 5,
+   "perDuty": 292.4,
+   "hours": 8.5,
+   "expected": 311
+  },
+  {
+   "slab": 6,
+   "level": 5,
+   "perDuty": 304.4,
+   "hours": 0,
+   "expected": 0
+  },
+  {
+   "slab": 6,
+   "level": 5,
+   "perDuty": 304.4,
+   "hours": 8,
+   "expected": 304
+  },
+  {
+   "slab": 6,
+   "level": 5,
+   "perDuty": 304.4,
+   "hours": 120,
+   "expected": 4566
+  },
+  {
+   "slab": 6,
+   "level": 5,
+   "perDuty": 304.4,
+   "hours": 8.5,
+   "expected": 323
+  },
+  {
+   "slab": 7,
+   "level": 5,
+   "perDuty": 316.8,
+   "hours": 0,
+   "expected": 0
+  },
+  {
+   "slab": 7,
+   "level": 5,
+   "perDuty": 316.8,
+   "hours": 8,
+   "expected": 317
+  },
+  {
+   "slab": 7,
+   "level": 5,
+   "perDuty": 316.8,
+   "hours": 120,
+   "expected": 4752
+  },
+  {
+   "slab": 7,
+   "level": 5,
+   "perDuty": 316.8,
+   "hours": 8.5,
+   "expected": 337
+  },
+  {
+   "slab": 8,
+   "level": 5,
+   "perDuty": 330,
+   "hours": 0,
+   "expected": 0
+  },
+  {
+   "slab": 8,
+   "level": 5,
+   "perDuty": 330,
+   "hours": 8,
+   "expected": 330
+  },
+  {
+   "slab": 8,
+   "level": 5,
+   "perDuty": 330,
+   "hours": 120,
+   "expected": 4950
+  },
+  {
+   "slab": 8,
+   "level": 5,
+   "perDuty": 330,
+   "hours": 8.5,
+   "expected": 351
+  },
+  {
+   "slab": 9,
+   "level": 6,
+   "perDuty": 348,
+   "hours": 0,
+   "expected": 0
+  },
+  {
+   "slab": 9,
+   "level": 6,
+   "perDuty": 348,
+   "hours": 8,
+   "expected": 348
+  },
+  {
+   "slab": 9,
+   "level": 6,
+   "perDuty": 348,
+   "hours": 120,
+   "expected": 5220
+  },
+  {
+   "slab": 9,
+   "level": 6,
+   "perDuty": 348,
+   "hours": 8.5,
+   "expected": 370
+  },
+  {
+   "slab": 10,
+   "level": 6,
+   "perDuty": 368,
+   "hours": 0,
+   "expected": 0
+  },
+  {
+   "slab": 10,
+   "level": 6,
+   "perDuty": 368,
+   "hours": 8,
+   "expected": 368
+  },
+  {
+   "slab": 10,
+   "level": 6,
+   "perDuty": 368,
+   "hours": 120,
+   "expected": 5520
+  },
+  {
+   "slab": 10,
+   "level": 6,
+   "perDuty": 368,
+   "hours": 8.5,
+   "expected": 391
+  },
+  {
+   "slab": 11,
+   "level": 7,
+   "perDuty": 403.2,
+   "hours": 0,
+   "expected": 0
+  },
+  {
+   "slab": 11,
+   "level": 7,
+   "perDuty": 403.2,
+   "hours": 8,
+   "expected": 403
+  },
+  {
+   "slab": 11,
+   "level": 7,
+   "perDuty": 403.2,
+   "hours": 120,
+   "expected": 6048
+  },
+  {
+   "slab": 11,
+   "level": 7,
+   "perDuty": 403.2,
+   "hours": 8.5,
+   "expected": 428
+  },
+  {
+   "slab": 12,
+   "level": 8,
+   "perDuty": 443.6,
+   "hours": 0,
+   "expected": 0
+  },
+  {
+   "slab": 12,
+   "level": 8,
+   "perDuty": 443.6,
+   "hours": 8,
+   "expected": 444
+  },
+  {
+   "slab": 12,
+   "level": 8,
+   "perDuty": 443.6,
+   "hours": 120,
+   "expected": 6654
+  },
+  {
+   "slab": 12,
+   "level": 8,
+   "perDuty": 443.6,
+   "hours": 8.5,
+   "expected": 471
+  },
+  {
+   "slab": 13,
+   "level": 8,
+   "perDuty": 468.4,
+   "hours": 0,
+   "expected": 0
+  },
+  {
+   "slab": 13,
+   "level": 8,
+   "perDuty": 468.4,
+   "hours": 8,
+   "expected": 468
+  },
+  {
+   "slab": 13,
+   "level": 8,
+   "perDuty": 468.4,
+   "hours": 120,
+   "expected": 7026
+  },
+  {
+   "slab": 13,
+   "level": 8,
+   "perDuty": 468.4,
+   "hours": 8.5,
+   "expected": 498
+  },
+  {
+   "slab": 14,
+   "level": 9,
+   "perDuty": 508.8,
+   "hours": 0,
+   "expected": 0
+  },
+  {
+   "slab": 14,
+   "level": 9,
+   "perDuty": 508.8,
+   "hours": 8,
+   "expected": 509
+  },
+  {
+   "slab": 14,
+   "level": 9,
+   "perDuty": 508.8,
+   "hours": 120,
+   "expected": 7632
+  },
+  {
+   "slab": 14,
+   "level": 9,
+   "perDuty": 508.8,
+   "hours": 8.5,
+   "expected": 541
+  }
+ ]
+}

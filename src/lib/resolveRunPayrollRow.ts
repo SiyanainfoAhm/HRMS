@@ -22,6 +22,7 @@ import {
 import type { PayrollFieldDefinition } from "@/lib/payrollFieldTypes";
 import { hasOwn } from "@/lib/effectivePayrollValue";
 import type { ElectricityTariffConfig } from "@/lib/electricityTariffCalculation";
+import { calculateNightAllowanceAmount } from "@/lib/nightAllowanceCalculation";
 import { freshPayrollLeaveDefaults, payrollPeriodKey } from "@/lib/payrollPeriodIsolation";
 
 export type RunPayrollRowLike = Record<string, unknown> & {
@@ -296,7 +297,7 @@ function overlayAuthoritativeQuarterContext(
  * 2. Saved draft row_payload overlay
  * 3. Calculated row with governmentMonthly computed when missing
  */
-export function resolveRunPayrollRow(
+function resolveRunPayrollRowInner(
   r: RunPayrollRowLike,
   ctx: ResolveRunPayrollRowContext,
 ): RunPayrollRowLike {
@@ -392,4 +393,67 @@ export function isZeroStubPayrollRow(row: RunPayrollRowLike): boolean {
   const net = Number(row.netPay ?? 0);
   const ded = Number(row.deductions ?? 0);
   return gross === 0 && net === 0 && ded === 0 && Boolean(row.govRecalc);
+}
+
+/**
+ * Open (not generated) months are always duty-based: a draft saved before the per-duty
+ * rate (no basis, or 'hour' with an hourly rate such as 28.85) is moved to basis 'duty'
+ * with the rate re-resolved from the active slab for the employee's pay level and period
+ * (the fresh API row carries it). Typed hours and a typed NDA amount are kept; only a
+ * computed (non-override) amount can change, and gross/net move by exactly that delta.
+ * Generated/finalized months are never passed through here (ctx.alreadyRun).
+ */
+export function ensureOpenRowNightAllowanceDuty(result: RunPayrollRowLike, fresh: RunPayrollRowLike): RunPayrollRowLike {
+  if (result.payrollMode !== "government" || !result.govRecalc) return result;
+  const gr = result.govRecalc;
+  if (gr.nightAllowanceRateBasis === "duty") return result;
+  const freshGr = fresh.govRecalc;
+  const freshRate = Number(freshGr?.nightAllowanceRate) || 0;
+  if (freshGr?.nightAllowanceRateBasis !== "duty" || freshRate <= 0) return result; // no slab: keep stored values
+
+  const gm = (result.governmentMonthly ?? {}) as Record<string, unknown>;
+  const hours = Math.max(0, Number(gr.nightHours ?? gm.nightHours ?? 0) || 0);
+  const manual = Boolean(gr.nightAllowanceManualOverride ?? gm.nightAllowanceManualOverride);
+  const nextGr = {
+    ...gr,
+    nightAllowanceRate: freshRate,
+    nightAllowanceRateBasis: "duty" as const,
+    nightAllowanceSlabNo: freshGr.nightAllowanceSlabNo ?? null,
+    nightAllowanceWarning: freshGr.nightAllowanceWarning ?? undefined,
+  };
+  const nextGm: Record<string, unknown> = {
+    ...gm,
+    nightAllowanceRate: freshRate,
+    nightAllowanceRateBasis: "duty",
+    nightAllowanceSlabNo: freshGr.nightAllowanceSlabNo ?? null,
+  };
+  let out: RunPayrollRowLike = { ...result, govRecalc: nextGr, governmentMonthly: nextGm };
+
+  const oldAmount = Number(gm.nightAllowancePaid ?? 0) || 0;
+  const eligible = gm.nightAllowanceEligible !== false;
+  const newAmount = manual || !eligible ? oldAmount : calculateNightAllowanceAmount(hours, freshRate, "duty");
+  const delta = newAmount - oldAmount;
+  if (hours > 0 && Math.abs(delta) > 0.0001) {
+    const totalEarnings = (Number(gm.totalEarnings) || 0) + delta;
+    const netSalary = (Number(gm.netSalary) || 0) + delta;
+    Object.assign(nextGm, {
+      nightAllowancePaid: newAmount,
+      nightAllowanceAmount: newAmount,
+      nightAllowanceActual: newAmount,
+      totalEarnings,
+      netSalary,
+    });
+    out = {
+      ...out,
+      grossPay: (Number(out.grossPay) || 0) + delta,
+      netPay: (Number(out.netPay) || 0) + delta,
+      takeHome: (Number(out.takeHome) || 0) + delta,
+    };
+  }
+  return out;
+}
+
+export function resolveRunPayrollRow(r: RunPayrollRowLike, ctx: ResolveRunPayrollRowContext): RunPayrollRowLike {
+  const result = resolveRunPayrollRowInner(r, ctx);
+  return ctx.alreadyRun ? result : ensureOpenRowNightAllowanceDuty(result, r);
 }

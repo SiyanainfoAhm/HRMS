@@ -17,9 +17,9 @@ final class NightAllowanceDutyTest extends TestCase
         $this->assertSame(403.0, NightAllowanceRateService::allowanceAmount(8, self::RATE, $d));
         $this->assertSame(202.0, NightAllowanceRateService::allowanceAmount(4, self::RATE, $d));
         $this->assertSame(504.0, NightAllowanceRateService::allowanceAmount(10, self::RATE, $d));
-        $this->assertSame(252.0, NightAllowanceRateService::allowanceAmount(5, 400, $d), '0.625 duty -> 0.63 (2 decimals)');
-        $this->assertSame(379.0, NightAllowanceRateService::allowanceAmount(7.5, self::RATE, $d));
-        $this->assertSame(24.0, NightAllowanceRateService::allowanceAmount(0.5, self::RATE, $d));
+        $this->assertSame(250.0, NightAllowanceRateService::allowanceAmount(5, 400, $d), '5h x 400 / 8 = 250');
+        $this->assertSame(378.0, NightAllowanceRateService::allowanceAmount(7.5, self::RATE, $d));
+        $this->assertSame(25.0, NightAllowanceRateService::allowanceAmount(0.5, self::RATE, $d));
         $this->assertSame(0.0, NightAllowanceRateService::allowanceAmount(0, self::RATE, $d));
         $this->assertSame(0.0, NightAllowanceRateService::allowanceAmount(-3, self::RATE, $d));
         $this->assertSame(0.0, NightAllowanceRateService::allowanceAmount(24, -5, $d));
@@ -27,7 +27,7 @@ final class NightAllowanceDutyTest extends TestCase
 
     public function test_legacy_rows_keep_hours_times_rate(): void
     {
-        $this->assertSame(504.0, NightAllowanceRateService::allowanceAmount(10, 50.4));
+        $this->assertSame(63.0, NightAllowanceRateService::allowanceAmount(10, 50.4), 'default basis is per duty');
         $this->assertSame(504.0, NightAllowanceRateService::allowanceAmount(10, 50.4, NightAllowanceRateService::BASIS_HOUR));
         $this->assertSame(
             NightAllowanceRateService::allowanceAmount(16, 50.4, 'hour'),

@@ -10,6 +10,7 @@ import type { ElectricityBillBreakdown } from "@/lib/electricityTariffCalculatio
 import { PayrollComponentScroller, type PayrollScrollerHandle } from "./PayrollComponentScroller";
 import { PayrollEmployeeCardHeader } from "./PayrollEmployeeCardHeader";
 import { PAYROLL_LABELS } from "@/lib/payrollLabels";
+import { nightAllowanceRateLabel } from "@/lib/nightAllowanceCalculation";
 import {
   ARREAR_MIRROR_HINT,
   isCustomEarningVisibleOnRow,
@@ -774,7 +775,7 @@ function GovernmentEmployeeDetail({
                   />
                 )}
                 <p className="mt-0.5 text-[10px] tabular-nums text-slate-500">
-                  Rate ₹{(leave.nightAllowanceRate ?? 0).toFixed(2)}/{leave.nightAllowanceRateBasis === "duty" ? "duty" : "hr"}
+                  Rate {nightAllowanceRateLabel(leave.nightAllowanceRate, leave.nightAllowanceRateBasis)}
                 </p>
 
               </div>

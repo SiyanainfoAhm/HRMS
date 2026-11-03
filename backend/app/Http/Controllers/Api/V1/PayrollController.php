@@ -833,7 +833,7 @@ class PayrollController extends Controller
                         'electricityUnitsConsumed' => (float) ($gov->electricity_units_consumed ?? 0),
                         'nightHours' => (float) ($gov->night_hours ?? 0),
                         'nightAllowanceRate' => (float) ($gov->night_allowance_rate ?? $mergedRow['govRecalc']['nightAllowanceRate'] ?? 0),
-                        'nightAllowanceRateBasis' => (string) ($gov->night_allowance_rate_basis ?? 'hour'),
+                        'nightAllowanceRateBasis' => (string) ($gov->night_allowance_rate_basis ?? 'duty'),
                         'quarterRent' => (float) ($gov->quarter_rent_amount ?? $mergedRow['govRecalc']['quarterRent'] ?? 0),
                     ]);
                 }
@@ -2110,7 +2110,7 @@ class PayrollController extends Controller
                 'electricityUnitsConsumed' => (float) ($gov->electricity_units_consumed ?? 0),
                 'nightHours' => (float) ($gov->night_hours ?? 0),
                 'nightAllowanceRate' => (float) ($gov->night_allowance_rate ?? 0),
-                'nightAllowanceRateBasis' => (string) ($gov->night_allowance_rate_basis ?? 'hour'),
+                'nightAllowanceRateBasis' => (string) ($gov->night_allowance_rate_basis ?? 'duty'),
                 'nightAllowanceSlabNo' => $gov->night_allowance_slab_no,
                 'hasQuarter' => (bool) ($gov->has_quarter ?? false),
                 'quarterRent' => (float) ($gov->quarter_rent_amount ?? 0),
@@ -2285,7 +2285,7 @@ class PayrollController extends Controller
             'electricityMode' => (string) ($gov->electricity_mode ?? 'unit_based'),
             'nightHours' => $num($gov->night_hours ?? 0),
             'nightAllowanceRate' => $num($gov->night_allowance_rate ?? 0),
-            'nightAllowanceRateBasis' => (string) ($gov->night_allowance_rate_basis ?? 'hour'),
+            'nightAllowanceRateBasis' => (string) ($gov->night_allowance_rate_basis ?? 'duty'),
             'nightAllowanceAmount' => $num($gov->night_allowance_amount ?? 0),
             'nightAllowanceSlabNo' => $gov->night_allowance_slab_no ? (int) $gov->night_allowance_slab_no : null,
             'nightAllowanceManualOverride' => (bool) ($gov->night_allowance_manual_override ?? false),

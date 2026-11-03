@@ -466,6 +466,10 @@ class PayrollDraftService
             ->get(['field_key', 'field_group', 'field_type', 'include_in_total_earnings', 'include_in_total_deductions'])->all();
         $master = $this->resolvePayrollMasterForPeriod($companyId, (string) $row->employee_user_id, $year, $month);
         $after = $this->reconcileDraftElectricity($before, $companyId, $year, $month, [], $master, $definitions);
+        $nda = app(\App\Services\NightAllowanceRateService::class);
+        $periodEnd = \Illuminate\Support\Carbon::create($year, $month, 1)->endOfMonth()->toDateString();
+        $ndaFix = $nda->normalizeDraftPayloadToDuty($after, $nda->listForCompany($companyId, true), $periodEnd);
+        $after = $ndaFix['payload'];
 
         $gmBefore = $before['governmentMonthly'] ?? $before['government_monthly'];
         $gmAfter = $after['governmentMonthly'] ?? $after['government_monthly'];
@@ -475,6 +479,11 @@ class PayrollDraftService
             'totalDeductions' => [$gmBefore['totalDeductions'] ?? null, $gmAfter['totalDeductions'] ?? null],
             'netSalary' => [$gmBefore['netSalary'] ?? null, $gmAfter['netSalary'] ?? null],
         ];
+        if ($ndaFix['changed']) {
+            $watch['night_allowance_basis'] = [$ndaFix['from']['basis'] ?? 'hour', 'duty'];
+            $watch['night_allowance_rate'] = [$ndaFix['from']['rate'], $ndaFix['to']['rate']];
+            $watch['night_allowance_amount'] = [$ndaFix['from']['amount'], $ndaFix['to']['amount']];
+        }
         $arrears = \App\Support\PayrollTotals::arrearsTotal($gmAfter);
         $watch['total_arrears'] = [$row->total_arrears, $arrears];
         foreach ($watch as $name => [$from, $to]) {

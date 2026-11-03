@@ -451,7 +451,7 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
   const nightResolved = resolveNightAllowanceAmount({
     hours: nightHours,
     rate: nightRate,
-    rateBasis: input.nightAllowanceRateBasis === "duty" ? "duty" : "hour",
+    rateBasis: input.nightAllowanceRateBasis === "hour" ? "hour" : "duty",
     basicPay: basicForCeiling,
     ceiling: nightCeiling,
     manualOverride: input.nightAllowanceManualOverride,
@@ -659,7 +659,7 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
     electricityMode,
     nightHours,
     nightAllowanceRate: nightRate,
-    nightAllowanceRateBasis: input.nightAllowanceRateBasis === "duty" ? "duty" : "hour",
+    nightAllowanceRateBasis: input.nightAllowanceRateBasis === "hour" ? "hour" : "duty",
     nightAllowanceAmount: naF,
     nightAllowanceBasicCeiling: nightResolved.ceiling,
     nightAllowanceEligible: nightResolved.eligible,

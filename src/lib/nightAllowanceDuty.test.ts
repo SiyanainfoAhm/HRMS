@@ -2,13 +2,12 @@
  * Run: npx --yes tsx src/lib/nightAllowanceDuty.test.ts
  *
  * CIRT-08: Night Duty Allowance = (Total Night Duty Hours / 8) x rate for the Pay Level.
- * Rounding rules live in NIGHT_DUTY_UNITS_DECIMALS / NIGHT_ALLOWANCE_ROUND_TO_RUPEE (unconfirmed).
+ * NDA = (hours x perDuty) / 8, rounded once to the rupee.
  */
 import { readFileSync } from "node:fs";
 import {
   NIGHT_ALLOWANCE_ROUND_TO_RUPEE,
   NIGHT_DUTY_BASE_HOURS,
-  NIGHT_DUTY_UNITS_DECIMALS,
   calculateNightAllowanceAmount,
   resolveNightAllowanceAmount,
   resolveNightAllowanceRateByPayLevel,
@@ -20,7 +19,6 @@ function assertEq(a: unknown, b: unknown, msg: string) {
 }
 
 assertEq(NIGHT_DUTY_BASE_HOURS, 8, "base hours");
-assertEq(NIGHT_DUTY_UNITS_DECIMALS, 2, "default duty decimals");
 assertEq(NIGHT_ALLOWANCE_ROUND_TO_RUPEE, true, "previous code rounded to the rupee");
 
 // Example Pay Level 7 rate: 403.20 per 8-hour duty.
@@ -32,15 +30,15 @@ assertEq(calculateNightAllowanceAmount(10, RATE, "duty"), 504, "10h = 1.25 duty 
 // Fractional hours: duties are rounded to 2 decimals first (default), then the amount to the rupee.
 // 5h = 0.625 duty -> 0.63 -> 0.63 x 400 = 252 (exact arithmetic would give 250). This is the
 // unconfirmed rounding rule listed under Needs clarification.
-assertEq(calculateNightAllowanceAmount(5, 400, "duty"), 252, "5h at 400/duty with 2-decimal duties");
-assertEq(calculateNightAllowanceAmount(7.5, RATE, "duty"), 379, "7.5h = 0.9375 -> 0.94 x 403.20 = 379.01 -> 379");
-assertEq(calculateNightAllowanceAmount(0.5, RATE, "duty"), 24, "0.5h = 0.0625 -> 0.06 x 403.20 = 24.19 -> 24");
+assertEq(calculateNightAllowanceAmount(5, 400, "duty"), 250, "5h at 400/duty = 250 exactly");
+assertEq(calculateNightAllowanceAmount(7.5, RATE, "duty"), 378, "7.5h x 403.20 / 8 = 378.0");
+assertEq(calculateNightAllowanceAmount(0.5, RATE, "duty"), 25, "0.5h x 403.20 / 8 = 25.2 -> 25");
 assertEq(calculateNightAllowanceAmount(0, RATE, "duty"), 0, "no hours");
 assertEq(calculateNightAllowanceAmount(-3, RATE, "duty"), 0, "negative hours clamp");
 assertEq(calculateNightAllowanceAmount(24, -5, "duty"), 0, "negative rate clamps");
 
 // Legacy rows (stored per-hour rate, no basis) keep hours x rate, so generated payroll recomputes unchanged.
-assertEq(calculateNightAllowanceAmount(10, 50.4), 504, "legacy default basis");
+assertEq(calculateNightAllowanceAmount(10, 50.4), 63, "default basis is per duty (10h x 50.4 / 8)");
 assertEq(calculateNightAllowanceAmount(10, 50.4, "hour"), 504, "legacy hour basis");
 // Seeded per-duty rate (= hourly x 8) reproduces the previous amount for whole-duty hours.
 assertEq(calculateNightAllowanceAmount(16, 50.4 * 8, "duty"), calculateNightAllowanceAmount(16, 50.4, "hour"), "seed equivalence");
@@ -84,12 +82,12 @@ const none = run(gr({}));
 const duty = run(gr({ nightHours: 24, nightAllowanceRate: RATE, nightAllowanceRateBasis: "duty" }));
 assertEq(duty.nightAllowancePaid, 1210, "compute: 24h at 403.20/duty");
 assertEq(duty.totalEarnings - none.totalEarnings, 1210, "compute: gross rises by the allowance");
-const legacy = run(gr({ nightHours: 10, nightAllowanceRate: 50.4 }));
-assertEq(legacy.nightAllowancePaid, 504, "compute: legacy per-hour row unchanged");
+const legacy = run(gr({ nightHours: 10, nightAllowanceRate: 50.4, nightAllowanceRateBasis: "hour" }));
+assertEq(legacy.nightAllowancePaid, 504, "compute: explicit legacy per-hour row unchanged");
 
 // PHP mirror declares the same constants and the same rounding.
 const php = readFileSync(new URL("../../backend/app/Services/NightAllowanceRateService.php", import.meta.url), "utf8");
-for (const needle of ["DUTY_BASE_HOURS = 8", "DUTY_UNITS_DECIMALS = 2", "ROUND_AMOUNT_TO_RUPEE = true"]) {
+for (const needle of ["DUTY_BASE_HOURS = 8", "ROUND_AMOUNT_TO_RUPEE = true"]) {
   if (!php.includes(needle)) throw new Error(`PHP mirror missing ${needle}`);
 }
 

@@ -2,20 +2,18 @@
 export const DEFAULT_NIGHT_ALLOWANCE_BASIC_CEILING = 43600;
 
 /**
- * CIRT-08 — Night Duty Allowance = (Total Night Duty Hours / 8) x Night Allowance Rate for the
- * employee's Pay Level. The rate is per 8-hour duty (Settings > Night Allowance, per Pay Level).
- *
- * UNCONFIRMED rules, each behind ONE constant (mirror: NightAllowanceRateService.php):
- *  - NIGHT_DUTY_UNITS_DECIMALS: duties (hours / 8) are rounded to this many decimals;
- *  - NIGHT_ALLOWANCE_ROUND_TO_RUPEE: the final amount is rounded to the nearest rupee
- *    (the previous code already rounded to the rupee). If false it keeps 2 decimals.
+ * Night Duty Allowance = hours x hourly rate, where hourly = per-duty rate / 8 (Settings >
+ * Night Allowance stores the rate per 8-hour duty; the 7th CPC hourly rate is perDuty / 8).
+ * Computed as (hours x perDuty) / 8 and rounded ONCE, to the whole rupee, at the end
+ * (no rounded hourly rate or rounded duty count in between).
+ * Mirror: NightAllowanceRateService::allowanceAmount (shared cases in
+ * backend/tests/fixtures/night_allowance_cases.json).
  */
 export const NIGHT_DUTY_BASE_HOURS = 8;
-export const NIGHT_DUTY_UNITS_DECIMALS = 2;
 export const NIGHT_ALLOWANCE_ROUND_TO_RUPEE = true;
 
 /**
- * 'duty' = rate is per 8-hour duty (new formula). 'hour' = legacy rows whose stored rate is per
+ * 'duty' = rate is per 8-hour duty (all new rows). 'hour' = legacy rows whose stored rate is per
  * hour; they keep hours x rate so already generated payroll recomputes to the same amount.
  */
 export type NightAllowanceRateBasis = "duty" | "hour";
@@ -23,16 +21,26 @@ export type NightAllowanceRateBasis = "duty" | "hour";
 export function calculateNightAllowanceAmount(
   hours: number,
   rate: number,
-  basis: NightAllowanceRateBasis = "hour",
+  basis: NightAllowanceRateBasis = "duty",
 ): number {
   const h = Math.max(0, Number(hours) || 0);
   const r = Math.max(0, Number(rate) || 0);
   if (h <= 0) return 0;
-  if (basis !== "duty") return Math.round(h * r);
-  const scale = 10 ** NIGHT_DUTY_UNITS_DECIMALS;
-  const duties = Math.round((h / NIGHT_DUTY_BASE_HOURS) * scale) / scale;
-  const amount = duties * r;
+  if (basis === "hour") return Math.round(h * r);
+  const amount = (h * r) / NIGHT_DUTY_BASE_HOURS;
   return NIGHT_ALLOWANCE_ROUND_TO_RUPEE ? Math.round(amount) : Math.round(amount * 100) / 100;
+}
+
+/** Display-only hourly rate: per-duty rate / 8, 2 decimals (185.60 -> 23.20). Never used in the amount. */
+export function nightHourlyRateForDisplay(ratePerDuty: number): number {
+  return Math.round((Math.max(0, Number(ratePerDuty) || 0) / NIGHT_DUTY_BASE_HOURS) * 100) / 100;
+}
+
+/** Label under NIGHT HRS: "₹23.20/hr (₹185.60/duty)"; legacy hourly rows show their hourly rate. */
+export function nightAllowanceRateLabel(rate: number | null | undefined, basis: NightAllowanceRateBasis | undefined): string {
+  const r = Math.max(0, Number(rate) || 0);
+  if (basis !== "duty") return `₹${r.toFixed(2)}/hr`;
+  return `₹${nightHourlyRateForDisplay(r).toFixed(2)}/hr (₹${r.toFixed(2)}/duty)`;
 }
 
 import { isValidGovernmentPayLevel } from "./payLevel";
@@ -156,7 +164,7 @@ export function resolveNightAllowanceAmount(params: {
     };
   }
 
-  let amount = hours > 0 ? calculateNightAllowanceAmount(hours, rate, params.rateBasis ?? "hour") : 0;
+  let amount = hours > 0 ? calculateNightAllowanceAmount(hours, rate, params.rateBasis ?? "duty") : 0;
   if (
     params.manualOverride &&
     params.manualAmount != null &&
