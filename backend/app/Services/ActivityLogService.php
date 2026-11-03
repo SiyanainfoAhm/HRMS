@@ -10,6 +10,7 @@ use App\Models\HrmsPayrollPeriod;
 use App\Models\HrmsPayrollFieldDefinition;
 use App\Models\HrmsPayrollDraft;
 use App\Models\HrmsPayrollDraftEmployee;
+use App\Services\Concerns\AuditsRequests;
 use App\Services\Concerns\WritesActivityEntries;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -19,6 +20,7 @@ use Symfony\Component\HttpFoundation\Response;
 final class ActivityLogService
 {
     use WritesActivityEntries;
+    use AuditsRequests;
 
     /** Record only actions that materially change payroll, identity, or exported payroll data. */
     public function captureConfigurationSnapshot(Request $request): ?array
@@ -86,12 +88,25 @@ final class ActivityLogService
         ])->all();
     }
 
-    public function recordRequest(Request $request, Response $response, ?array $configurationBefore = null, ?array $draftBefore = null): void
+    public function recordRequest(Request $request, Response $response, ?array $configurationBefore = null, ?array $draftBefore = null, ?array $auditBefore = null): void
     {
         $route = ltrim($request->path(), '/');
         $method = strtoupper($request->method());
+
+        // Table-driven audited records (settings, quarters, payroll fields, users, ...): one entry, field-level old -> new.
+        if ($auditBefore !== null && isset($auditBefore['match'])) {
+            try {
+                $this->recordAudited($request, $response, $auditBefore);
+            } catch (\Throwable $exception) {
+                report($exception);
+            }
+
+            return;
+        }
+
         $action = $this->actionFor($method, $route);
         if ($action === null) return;
+        if ($this->isPreviewRequest($request)) return;
 
         $user = $request->user();
         $loginAttempt = str_ends_with($route, 'auth/login');
@@ -103,6 +118,7 @@ final class ActivityLogService
                 ? \App\Models\HrmsUser::query()->whereRaw('LOWER(email) = ?', [mb_strtolower($identity)])->first()
                 : null);
         $success = $response->getStatusCode() < 400;
+        if (in_array($action, ['payroll.excel.exported', 'payroll.bank_letter.downloaded'], true) && ! $success) return;
         $companyId = $user?->company_id ?? ($success ? $knownUser?->company_id : null) ?? $knownUser?->company_id;
         if (! $companyId && ($loginAttempt || $signupAttempt)) {
             // This deployment has one fixed CIRT company. Failed unknown identifiers are still audited there.
@@ -169,7 +185,20 @@ final class ActivityLogService
 
         if ($this->usesEntryModel($action)) {
             try {
-                $this->writeEntry([
+                $extra = [];
+                if ($action === 'payroll.excel.exported' || $action === 'payroll.bank_letter.downloaded') {
+                    if (! $success) return;
+                    $extra = ['details' => $this->changesToDetails($this->reportChanges($request), null), 'skipWhenEmpty' => false,
+                        'summary' => ['report' => $this->reportChanges($request)[0]['new'] ?? null]];
+                } elseif (in_array($action, ['payroll_master.bulk', 'master.increment.applied'], true)) {
+                    $counts = $this->bulkChanges($request, $responseData);
+                    $extra = ['details' => $this->changesToDetails($counts, null), 'skipWhenEmpty' => false,
+                        'summary' => ['counts' => collect($counts)->mapWithKeys(fn ($c) => [$c['key'] => $c['new']])->all()]];
+                } elseif ($action === 'payroll.generated' && $success) {
+                    [$gDetails, $gSummary] = $this->generatedSummary($companyId, $year, $month, $periodId, $request);
+                    $extra = ['details' => $gDetails, 'summary' => $gSummary, 'skipWhenEmpty' => false];
+                }
+                $this->writeEntry($extra + [
                     'action' => $action, 'success' => $success, 'companyId' => $companyId, 'actor' => $actor,
                     'year' => $year, 'month' => $month, 'periodId' => $periodId, 'monthly' => $monthly,
                     'targets' => $targets === [] && is_string($configurationBefore['__employee'] ?? $configurationAfter['__employee'] ?? null)
@@ -253,6 +282,27 @@ final class ActivityLogService
         }
     }
 
+    /** Generate payroll: period, employee count and totals of the run, read back from what was saved. @return array{0: list<array<string, mixed>>, 1: array<string, mixed>} */
+    private function generatedSummary(string $companyId, int $year, int $month, ?string $periodId, Request $request): array
+    {
+        $periodId ??= $this->periodId($request, $companyId, $year, $month);
+        $totals = $periodId
+            ? DB::table('cirt_monthly_payroll')->where('company_id', $companyId)->where('payroll_period_id', $periodId)
+                ->selectRaw('COUNT(*) as employees, COALESCE(SUM(total_earnings),0) as gross, COALESCE(SUM(total_deductions),0) as deductions, COALESCE(SUM(net_salary),0) as net')->first()
+            : null;
+        $summary = ['period' => sprintf('%02d/%04d', $month, $year), 'employees' => (int) ($totals->employees ?? 0),
+            'totalGross' => (float) ($totals->gross ?? 0), 'totalDeductions' => (float) ($totals->deductions ?? 0), 'totalNet' => (float) ($totals->net ?? 0)];
+        $changes = [
+            $this->change('period', 'Payroll period', null, $summary['period'], 'text'),
+            $this->change('employees', 'Employees', null, $summary['employees'], 'text'),
+            $this->change('total_gross', 'Total gross', null, $summary['totalGross'], 'money'),
+            $this->change('total_deductions', 'Total deductions', null, $summary['totalDeductions'], 'money'),
+            $this->change('total_net', 'Total net pay', null, $summary['totalNet'], 'money'),
+        ];
+
+        return [$this->changesToDetails($changes, null), $summary];
+    }
+
     private function actionFor(string $method, string $route): ?string
     {
         if (str_ends_with($route, 'auth/login')) return 'auth.login';
@@ -271,7 +321,9 @@ final class ActivityLogService
         if (str_ends_with($route, 'payroll/run/audit') || preg_match('~payroll/monthly/[^/]+/audit$~', $route)) return 'payroll.generated.amended';
         if (str_ends_with($route, 'payroll/run') && $method === 'POST') return 'payroll.generated';
         if (str_ends_with($route, 'payroll/payslips') && $method === 'POST') return 'payslip.generated';
-        if ($method === 'GET' && (str_ends_with($route, 'payroll/export') || str_contains($route, 'payroll/post-downloads/') || str_ends_with($route, 'payroll/master/export') || str_ends_with($route, 'payroll/master/export-employee-payroll'))) return 'payroll.excel.exported';
+        if (str_ends_with($route, 'payroll/bank-letter') && $method === 'POST') return 'payroll.bank_letter.downloaded';
+        if ($method === 'GET' && (str_ends_with($route, 'payroll/export') || str_contains($route, 'payroll/post-downloads/') || str_contains($route, 'payroll/period-report/') || str_ends_with($route, 'payroll/master/export') || str_ends_with($route, 'payroll/master/export-employee-payroll'))) return 'payroll.excel.exported';
+        if (str_ends_with($route, 'settings/salary-increment/apply') && $method === 'POST') return 'master.increment.applied';
         if ($method === 'GET' && str_ends_with($route, 'payslips/employee')) return 'payslip.viewed';
         if (preg_match('~(?:users/[^/]+|users)$~', $route) && in_array($method, ['POST', 'PUT'], true)) return 'user.access.changed';
         if (preg_match('~(?:company/(?:me|setup)|settings/(?:salary-increment/apply|payroll-fields(?:/[^/]+)?(?:/deactivate)?|payroll-calculation-settings))$~', $route) && in_array($method, ['POST', 'PUT', 'DELETE'], true)) return 'payroll.configuration.changed';

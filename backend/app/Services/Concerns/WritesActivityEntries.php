@@ -7,6 +7,7 @@ use App\Models\HrmsActivityLogEntry;
 use App\Models\HrmsMonthlyPayrollAudit;
 use App\Models\HrmsUser;
 use App\Support\ActivityChangeLabels;
+use App\Support\ActivityDiff;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -29,6 +30,9 @@ trait WritesActivityEntries
         'payroll.quarters.changed' => ['Quarter / Rent Change', 'Master'],
         'payroll.configuration.changed' => ['Earnings and Deductions Configuration Change', 'Configuration'],
         'payroll.rates.changed' => ['Payroll Rates / Tariff Change', 'Configuration'],
+        'payroll.excel.exported' => ['Report Downloaded', 'Reports'],
+        'payroll.bank_letter.downloaded' => ['Bank Letter Downloaded', 'Reports'],
+        'master.increment.applied' => ['Salary Increment Applied', 'Master'],
     ];
 
     private const MAX_DETAIL_ROWS = 500;
@@ -43,21 +47,27 @@ trait WritesActivityEntries
      */
     private function writeEntry(array $c): ?HrmsActivityLogEntry
     {
-        [$label, $module] = self::ENTRY_ACTIONS[$c['action']];
-        $details = $c['success'] ? $this->entryDetails($c) : [];
+        [$label, $module] = [$c['label'] ?? null, $c['module'] ?? null];
+        if ($label === null || $module === null) [$label, $module] = self::ENTRY_ACTIONS[$c['action']];
+        $details = array_key_exists('details', $c) ? (array) $c['details'] : ($c['success'] ? $this->entryDetails($c) : []);
 
         // Autosaves and no-op saves that change nothing relevant are not activity.
-        if ($c['success'] && $details === [] && in_array($c['action'], ['payroll.draft.saved', 'payroll_master.changed', 'payroll.configuration.changed', 'payroll.generated.amended'], true)) {
+        if ($c['success'] && $details === [] && ($c['skipWhenEmpty'] ?? in_array($c['action'], ['payroll.draft.saved', 'payroll_master.changed', 'payroll.configuration.changed', 'payroll.generated.amended'], true))) {
             return null;
         }
 
         $actor = $c['actor'];
         $employeeCount = in_array($c['action'], ['payroll.draft.saved', 'payroll.draft.discarded', 'payroll.generated', 'payroll.generated.amended', 'payslip.generated'], true)
-            ? max(count($c['targets']), (int) ($c['metadata']['employeeCount'] ?? 0))
+            ? max(count($c['targets']), (int) ($c['metadata']['employeeCount'] ?? 0), (int) ($c['employeeCount'] ?? 0))
             : (int) ($c['action'] === 'payroll_master.changed' && $c['targets'] !== [] ? count($c['targets']) : 0);
 
         return DB::transaction(function () use ($c, $label, $module, $details, $actor, $employeeCount): HrmsActivityLogEntry {
-            $entry = HrmsActivityLogEntry::query()->create([
+            $extra = [];
+            if (\Illuminate\Support\Facades\Schema::hasColumn('cirt_activity_log_entries', 'summary')) {
+                $extra['summary'] = isset($c['summary']) && $c['summary'] !== [] ? \App\Support\ActivityDiff::scrub($c['summary']) : null;
+                $extra['subject'] = isset($c['subject']) ? mb_substr((string) $c['subject'], 0, 200) : null;
+            }
+            $entry = HrmsActivityLogEntry::query()->create($extra + [
                 'company_id' => $c['companyId'],
                 'action_code' => $c['action'],
                 'action_label' => $label,
@@ -73,14 +83,19 @@ trait WritesActivityEntries
                 'request_id' => $c['requestId'],
                 'metadata' => $c['metadata'] ?: null,
             ]);
-            $now = now();
+            $withDiff = \Illuminate\Support\Facades\Schema::hasColumn('cirt_activity_log_details', 'diff');
             foreach (array_chunk($details, 200) as $chunk) {
                 DB::table('cirt_activity_log_details')->insert(array_map(static fn (array $d) => [
                     'id' => (string) Str::uuid(), 'entry_id' => $entry->id,
                     'employee_user_id' => $d['employeeId'], 'employee_label' => $d['employee'],
                     'changed_item' => mb_substr($d['item'], 0, 200),
-                    'previous_value' => $d['previous'], 'updated_value' => $d['updated'], 'sort_order' => $d['order'],
-                ], $chunk));
+                    'previous_value' => $d['previous'] === null ? null : mb_substr((string) $d['previous'], 0, 500),
+                    'updated_value' => $d['updated'] === null ? null : mb_substr((string) $d['updated'], 0, 500),
+                    'sort_order' => $d['order'],
+                ] + ($withDiff ? [
+                    'diff' => isset($d['diff']) ? json_encode($d['diff'], JSON_UNESCAPED_UNICODE) : null,
+                    'change_kind' => $d['kind'] ?? 'typed',
+                ] : []), $chunk));
             }
 
             return $entry;
@@ -103,6 +118,16 @@ trait WritesActivityEntries
                 'order' => count($details),
             ];
         };
+        $addChange = function (?string $employeeId, string $item, mixed $previous, mixed $updated, string $type, string $kind, string $field) use (&$details, $names): void {
+            if (count($details) >= self::MAX_DETAIL_ROWS) return;
+            $empty = fn ($v) => $v === null || $v === '';
+            $details[] = [
+                'employeeId' => $employeeId, 'employee' => $employeeId ? ($names[$employeeId] ?? null) : null, 'item' => $item,
+                'previous' => $empty($previous) ? null : ActivityDiff::format($previous, $type), 'updated' => $empty($updated) ? null : ActivityDiff::format($updated, $type),
+                'order' => count($details), 'kind' => $kind,
+                'diff' => ['field' => $field, 'old' => $previous, 'new' => $updated, 'type' => $type],
+            ];
+        };
         $rows = is_array($c['rows']) ? $c['rows'] : [];
 
         switch ($c['action']) {
@@ -111,8 +136,39 @@ trait WritesActivityEntries
                     $row = collect($rows)->first(fn ($r) => is_array($r) && (string) ($r['employeeUserId'] ?? $r['employee_user_id'] ?? '') === $targetId);
                     if (! is_array($row)) continue;
                     [$fields, $previous, $updated] = $this->changedPayloadValues(($c['draftBefore'] ?? [])[$targetId] ?? [], $this->draftRowValues($row));
+                    // The operator's own edits come with the row ("changedFields"); anything else that moved is a recalculation.
+                    $tokens = $row['changedFields'] ?? $row['changed_fields'] ?? null;
+                    $typed = is_array($tokens) && $tokens !== []
+                        ? array_flip(array_map(fn ($t) => lcfirst((string) preg_replace('/^gov(?:Earning|Deduction|CustomDeduction|Custom)_/', '', (string) $t)), $tokens))
+                        : null;
+                    $totalLines = [];
+                    $startCount = count($details);
                     foreach ($fields as $field) {
-                        if (ActivityChangeLabels::isRelevant($field)) $add($targetId, ActivityChangeLabels::label($field), $previous[$field] ?? null, $updated[$field] ?? null);
+                        $last = str_contains($field, '.') ? substr($field, (int) strrpos($field, '.') + 1) : $field;
+                        $old = $previous[$field] ?? null;
+                        $new = $updated[$field] ?? null;
+                        if (ActivityChangeLabels::isRelevant($field)) {
+                            $isTyped = $typed === null || isset($typed[$last]) || isset($typed[lcfirst(str_replace('_', '', ucwords($last, '_')))]);
+                            $addChange($targetId, ActivityChangeLabels::label($field).($isTyped ? '' : ' (recalculated)'), $old, $new, ActivityDiff::type($last, $new ?? $old), $isTyped ? 'typed' : 'recalculated', $field);
+                        } elseif (in_array($field, ['totalEarnings', 'totalDeductions', 'netPay'], true)) {
+                            $totalLines[$field] = [$old, $new];
+                        }
+                    }
+                    // Derived totals: one compact line, only when something else changed (never a full dump).
+                    if ($totalLines !== [] && count($details) > $startCount) {
+                        $labels = ['totalEarnings' => 'Gross', 'totalDeductions' => 'Deductions', 'netPay' => 'Net pay'];
+                        $prev = $new = [];
+                        foreach ($totalLines as $f => [$o, $n]) {
+                            $prev[] = $labels[$f].' '.ActivityDiff::format($o, 'money');
+                            $new[] = $labels[$f].' '.ActivityDiff::format($n, 'money');
+                        }
+                        if (count($details) < self::MAX_DETAIL_ROWS) {
+                            $details[] = [
+                                'employeeId' => $targetId, 'employee' => $names[$targetId] ?? null, 'item' => 'Totals recalculated',
+                                'previous' => implode(' · ', $prev), 'updated' => implode(' · ', $new), 'order' => count($details), 'kind' => 'recalculated',
+                                'diff' => ['field' => 'totals', 'old' => array_map(fn ($v) => $v[0], $totalLines), 'new' => array_map(fn ($v) => $v[1], $totalLines), 'type' => 'money'],
+                            ];
+                        }
                     }
                 }
                 break;
@@ -142,13 +198,15 @@ trait WritesActivityEntries
                 $after = (array) ($c['after'] ?? []);
                 $employeeId = is_string($before['__employee'] ?? $after['__employee'] ?? null) ? ($before['__employee'] ?? $after['__employee']) : null;
                 $context = (string) ($after['field_label'] ?? $before['field_label'] ?? '');
+                // Status, role and reference changes (quarter, division...) are real changes even though other ids are not.
+                $always = ['status', 'quarter_id', 'division_id', 'department_id', 'designation_id', 'role_id', 'employment_status', 'is_active'];
                 foreach (array_unique([...array_keys($before), ...array_keys($after)]) as $key) {
-                    if (! is_string($key) || str_starts_with($key, '__') || ! ActivityChangeLabels::isRelevant($key)) continue;
-                    $old = $before[$key] ?? null;
-                    $new = $after[$key] ?? null;
-                    if ((is_numeric($old) && is_numeric($new)) ? (float) $old === (float) $new : $old === $new) continue;
-                    $item = ActivityChangeLabels::label($key);
-                    $add($employeeId, $c['action'] === 'payroll.configuration.changed' && $context !== '' && $key !== 'field_label' ? "{$context}: {$item}" : $item, $old, $new);
+                    if (! is_string($key) || str_starts_with($key, '__') || ActivityDiff::isSecretKey($key)) continue;
+                    if (! in_array($key, $always, true) && ! ActivityChangeLabels::isRelevant($key)) continue;
+                    foreach (ActivityDiff::diff([$key => $before[$key] ?? null], [$key => $after[$key] ?? null], ['resolve' => true]) as $ch) {
+                        $item = in_array($key, $always, true) && ! in_array($key, ['status'], true) ? ActivityDiff::label($key) : ActivityChangeLabels::label($key);
+                        $addChange($employeeId, $c['action'] === 'payroll.configuration.changed' && $context !== '' && $key !== 'field_label' ? "{$context}: {$item}" : $item, $ch['old'], $ch['new'], $ch['type'], 'typed', $key);
+                    }
                 }
                 break;
 
