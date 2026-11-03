@@ -19,20 +19,18 @@ function assertEq(a: unknown, b: unknown, msg: string) {
 }
 
 assertEq(NIGHT_DUTY_BASE_HOURS, 8, "base hours");
-assertEq(NIGHT_ALLOWANCE_ROUND_TO_RUPEE, true, "previous code rounded to the rupee");
+assertEq(NIGHT_ALLOWANCE_ROUND_TO_RUPEE, false, "NDA keeps 2 decimals (paise), rounded once");
 
 // Example Pay Level 7 rate: 403.20 per 8-hour duty.
 const RATE = 403.2;
-assertEq(calculateNightAllowanceAmount(24, RATE, "duty"), 1210, "24h = 3 duties x 403.20 = 1209.60 -> 1210");
-assertEq(calculateNightAllowanceAmount(8, RATE, "duty"), 403, "8h = 1 duty");
-assertEq(calculateNightAllowanceAmount(4, RATE, "duty"), 202, "4h = 0.5 duty = 201.6 -> 202");
+assertEq(calculateNightAllowanceAmount(24, RATE, "duty"), 1209.6, "24h = 3 duties x 403.20 = 1209.60");
+assertEq(calculateNightAllowanceAmount(8, RATE, "duty"), 403.2, "8h = 1 duty");
+assertEq(calculateNightAllowanceAmount(4, RATE, "duty"), 201.6, "4h = 0.5 duty = 201.60");
 assertEq(calculateNightAllowanceAmount(10, RATE, "duty"), 504, "10h = 1.25 duty = 504.0");
-// Fractional hours: duties are rounded to 2 decimals first (default), then the amount to the rupee.
-// 5h = 0.625 duty -> 0.63 -> 0.63 x 400 = 252 (exact arithmetic would give 250). This is the
-// unconfirmed rounding rule listed under Needs clarification.
+// Fractional hours: no intermediate rounding; the amount is rounded once, to 2 decimals (paise).
 assertEq(calculateNightAllowanceAmount(5, 400, "duty"), 250, "5h at 400/duty = 250 exactly");
 assertEq(calculateNightAllowanceAmount(7.5, RATE, "duty"), 378, "7.5h x 403.20 / 8 = 378.0");
-assertEq(calculateNightAllowanceAmount(0.5, RATE, "duty"), 25, "0.5h x 403.20 / 8 = 25.2 -> 25");
+assertEq(calculateNightAllowanceAmount(0.5, RATE, "duty"), 25.2, "0.5h x 403.20 / 8 = 25.20");
 assertEq(calculateNightAllowanceAmount(0, RATE, "duty"), 0, "no hours");
 assertEq(calculateNightAllowanceAmount(-3, RATE, "duty"), 0, "negative hours clamp");
 assertEq(calculateNightAllowanceAmount(24, -5, "duty"), 0, "negative rate clamps");
@@ -41,7 +39,7 @@ assertEq(calculateNightAllowanceAmount(24, -5, "duty"), 0, "negative rate clamps
 assertEq(calculateNightAllowanceAmount(10, 50.4), 63, "default basis is per duty (10h x 50.4 / 8)");
 assertEq(calculateNightAllowanceAmount(10, 50.4, "hour"), 504, "legacy hour basis");
 // Seeded per-duty rate (= hourly x 8) reproduces the previous amount for whole-duty hours.
-assertEq(calculateNightAllowanceAmount(16, 50.4 * 8, "duty"), calculateNightAllowanceAmount(16, 50.4, "hour"), "seed equivalence");
+assertEq(Math.abs(calculateNightAllowanceAmount(16, 50.4 * 8, "duty") - calculateNightAllowanceAmount(16, 50.4, "hour")) < 0.5, true, "legacy hour basis stays whole-rupee; duty basis keeps paise");
 
 // Rate table: per-Pay-Level, per-duty rate; falls back to hourly x 8 only when a row has no per-duty rate.
 const rates = [
@@ -80,14 +78,14 @@ const run = (g: GovRecalcPayload) =>
     .comp as unknown as Record<string, number>;
 const none = run(gr({}));
 const duty = run(gr({ nightHours: 24, nightAllowanceRate: RATE, nightAllowanceRateBasis: "duty" }));
-assertEq(duty.nightAllowancePaid, 1210, "compute: 24h at 403.20/duty");
-assertEq(duty.totalEarnings - none.totalEarnings, 1210, "compute: gross rises by the allowance");
+assertEq(duty.nightAllowancePaid, 1209.6, "compute: 24h at 403.20/duty");
+assertEq(Math.round((duty.totalEarnings - none.totalEarnings) * 100) / 100, 1209.6, "compute: gross rises by the allowance");
 const legacy = run(gr({ nightHours: 10, nightAllowanceRate: 50.4, nightAllowanceRateBasis: "hour" }));
 assertEq(legacy.nightAllowancePaid, 504, "compute: explicit legacy per-hour row unchanged");
 
 // PHP mirror declares the same constants and the same rounding.
 const php = readFileSync(new URL("../../backend/app/Services/NightAllowanceRateService.php", import.meta.url), "utf8");
-for (const needle of ["DUTY_BASE_HOURS = 8", "ROUND_AMOUNT_TO_RUPEE = true"]) {
+for (const needle of ["DUTY_BASE_HOURS = 8", "ROUND_AMOUNT_TO_RUPEE = false"]) {
   if (!php.includes(needle)) throw new Error(`PHP mirror missing ${needle}`);
 }
 

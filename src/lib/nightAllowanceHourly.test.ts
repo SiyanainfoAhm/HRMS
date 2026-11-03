@@ -72,10 +72,10 @@ const fgm = fixed.governmentMonthly as Record<string, number>;
 assertEq(fixed.govRecalc?.nightAllowanceRateBasis, "duty", "basis forced to duty");
 assertEq(fixed.govRecalc?.nightAllowanceRate, 28.85, "rate from the slab");
 assertEq(fixed.govRecalc?.nightHours, 15, "typed hours kept");
-assertEq(fgm.nightAllowancePaid, 54, "15h / 8 x 28.85 = 54.09 -> 54");
-assertEq(fgm.totalEarnings, 50000 - 433 + 54, "gross moves by exactly the NDA change");
-assertEq(fgm.netSalary, 40000 - 433 + 54, "net moves by exactly the NDA change");
-assertEq(fixed.grossPay, 50000 - 433 + 54, "row gross");
+assertEq(fgm.nightAllowancePaid, 54.09, "15h / 8 x 28.85 = 54.09375 -> 54.09 (paise, not rupee)");
+assertEq(Math.round(fgm.totalEarnings * 100) / 100, 50000 - 433 + 54.09, "gross moves by exactly the NDA change");
+assertEq(Math.round(fgm.netSalary * 100) / 100, 40000 - 433 + 54.09, "net moves by exactly the NDA change");
+assertEq(Math.round(Number(fixed.grossPay) * 100) / 100, 50000 - 433 + 54.09, "row gross");
 assertEq(ensureOpenRowNightAllowanceDuty(fixed, fresh), fixed, "idempotent");
 
 // A row saved on 'duty' while the slabs were 8x too high (230.80) is corrected; a rate that is not 8x is left alone.
@@ -86,7 +86,7 @@ const eight = {
 } as unknown as RunPayrollRowLike;
 const eightFixed = ensureOpenRowNightAllowanceDuty(eight, fresh);
 assertEq(eightFixed.govRecalc?.nightAllowanceRate, 28.85, "8x rate corrected");
-assertEq((eightFixed.governmentMonthly as Record<string, number>).nightAllowancePaid, 54, "8x amount recalculated");
+assertEq((eightFixed.governmentMonthly as Record<string, number>).nightAllowancePaid, 54.09, "8x amount recalculated");
 const custom = { ...eight, govRecalc: { ...eight.govRecalc, nightAllowanceRate: 100 } } as unknown as RunPayrollRowLike;
 assertEq(ensureOpenRowNightAllowanceDuty(custom, fresh), custom, "a duty row that is not exactly 8x the slab is untouched (no threshold)");
 
@@ -132,7 +132,7 @@ assertEq(run(gr({ nightHours: 120, nightAllowanceRate: 23.2 })).nightAllowancePa
 // Draft save/reload keeps the typed hours exactly.
 const payload = {
   govRecalc: { nightHours: 8.5, nightAllowanceRate: 23.2, nightAllowanceRateBasis: "duty" },
-  governmentMonthly: { nightHours: 8.5, nightAllowanceRate: 23.2, nightAllowanceRateBasis: "duty", nightAllowancePaid: 25 },
+  governmentMonthly: { nightHours: 8.5, nightAllowanceRate: 23.2, nightAllowanceRateBasis: "duty", nightAllowancePaid: 25.2 },
 };
 const reloaded = deserializePayrollDraftEmployee(
   { employeeUserId: "u", rowPayload: JSON.parse(JSON.stringify(payload)) } as never,

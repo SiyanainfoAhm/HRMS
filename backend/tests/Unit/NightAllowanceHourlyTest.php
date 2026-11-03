@@ -61,10 +61,10 @@ final class NightAllowanceHourlyTest extends TestCase
         $this->assertSame('duty', $r['payload']['govRecalc']['nightAllowanceRateBasis']);
         $this->assertSame(28.85, $r['payload']['govRecalc']['nightAllowanceRate']);
         $this->assertEquals(15, $r['payload']['govRecalc']['nightHours'], 'typed hours kept');
-        $this->assertEquals(54, $r['payload']['governmentMonthly']['nightAllowancePaid'], '15h / 8 x 28.85 = 54.09');
-        $this->assertEquals(50000 - 433 + 54, $r['payload']['governmentMonthly']['totalEarnings']);
-        $this->assertEquals(40000 - 433 + 54, $r['payload']['governmentMonthly']['netSalary']);
-        $this->assertEquals(50000 - 433 + 54, $r['payload']['grossPay']);
+        $this->assertEqualsWithDelta(54.09, $r['payload']['governmentMonthly']['nightAllowancePaid'], 0.0001, '15h / 8 x 28.85 = 54.09375 -> 54.09');
+        $this->assertEqualsWithDelta(50000 - 433 + 54.09, $r['payload']['governmentMonthly']['totalEarnings'], 0.0001);
+        $this->assertEqualsWithDelta(40000 - 433 + 54.09, $r['payload']['governmentMonthly']['netSalary'], 0.0001);
+        $this->assertEqualsWithDelta(50000 - 433 + 54.09, $r['payload']['grossPay'], 0.0001);
 
         $again = $svc->normalizeDraftPayloadToDuty($r['payload'], $rates, '2026-10-31');
         $this->assertFalse($again['changed'], 'idempotent');
@@ -76,7 +76,7 @@ final class NightAllowanceHourlyTest extends TestCase
         $fixed = $svc->normalizeDraftPayloadToDuty($eight, $rates, '2026-10-31');
         $this->assertTrue($fixed['changed']);
         $this->assertSame(28.85, $fixed['payload']['govRecalc']['nightAllowanceRate']);
-        $this->assertEquals(54, $fixed['payload']['governmentMonthly']['nightAllowancePaid']);
+        $this->assertEqualsWithDelta(54.09, $fixed['payload']['governmentMonthly']['nightAllowancePaid'], 0.0001);
         $custom = $payload;
         $custom['govRecalc']['nightAllowanceRate'] = 100.0;
         $custom['govRecalc']['nightAllowanceRateBasis'] = 'duty';

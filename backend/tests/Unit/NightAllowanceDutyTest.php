@@ -13,13 +13,13 @@ final class NightAllowanceDutyTest extends TestCase
     public function test_allowance_is_hours_over_eight_times_rate(): void
     {
         $d = NightAllowanceRateService::BASIS_DUTY;
-        $this->assertSame(1210.0, NightAllowanceRateService::allowanceAmount(24, self::RATE, $d), '24h = 3 duties');
-        $this->assertSame(403.0, NightAllowanceRateService::allowanceAmount(8, self::RATE, $d));
-        $this->assertSame(202.0, NightAllowanceRateService::allowanceAmount(4, self::RATE, $d));
+        $this->assertSame(1209.6, NightAllowanceRateService::allowanceAmount(24, self::RATE, $d), '24h = 3 duties');
+        $this->assertSame(403.2, NightAllowanceRateService::allowanceAmount(8, self::RATE, $d));
+        $this->assertSame(201.6, NightAllowanceRateService::allowanceAmount(4, self::RATE, $d));
         $this->assertSame(504.0, NightAllowanceRateService::allowanceAmount(10, self::RATE, $d));
         $this->assertSame(250.0, NightAllowanceRateService::allowanceAmount(5, 400, $d), '5h x 400 / 8 = 250');
         $this->assertSame(378.0, NightAllowanceRateService::allowanceAmount(7.5, self::RATE, $d));
-        $this->assertSame(25.0, NightAllowanceRateService::allowanceAmount(0.5, self::RATE, $d));
+        $this->assertSame(25.2, NightAllowanceRateService::allowanceAmount(0.5, self::RATE, $d));
         $this->assertSame(0.0, NightAllowanceRateService::allowanceAmount(0, self::RATE, $d));
         $this->assertSame(0.0, NightAllowanceRateService::allowanceAmount(-3, self::RATE, $d));
         $this->assertSame(0.0, NightAllowanceRateService::allowanceAmount(24, -5, $d));
@@ -29,10 +29,9 @@ final class NightAllowanceDutyTest extends TestCase
     {
         $this->assertSame(63.0, NightAllowanceRateService::allowanceAmount(10, 50.4), 'default basis is per duty');
         $this->assertSame(504.0, NightAllowanceRateService::allowanceAmount(10, 50.4, NightAllowanceRateService::BASIS_HOUR));
-        $this->assertSame(
-            NightAllowanceRateService::allowanceAmount(16, 50.4, 'hour'),
-            NightAllowanceRateService::allowanceAmount(16, 50.4 * 8, 'duty'),
-            'seeded per-duty rate (hourly x 8) reproduces the old amount',
+        $this->assertTrue(
+            abs(NightAllowanceRateService::allowanceAmount(16, 50.4, 'hour') - NightAllowanceRateService::allowanceAmount(16, 50.4 * 8, 'duty')) < 0.5,
+            'legacy hour basis stays whole-rupee; duty basis keeps paise',
         );
     }
 
@@ -41,8 +40,8 @@ final class NightAllowanceDutyTest extends TestCase
         $svc = new NightAllowanceRateService;
         $gm = ['basicPaid' => 30000, 'nightHours' => 24, 'nightAllowanceRate' => self::RATE, 'nightAllowanceRateBasis' => 'duty', 'totalEarnings' => 50000, 'netSalary' => 40000];
         $svc->enforceCeilingOnGovernmentMonthly($gm, 43600);
-        $this->assertSame(1210.0, $gm['nightAllowancePaid']);
-        $this->assertSame(51210.0, (float) $gm['totalEarnings']);
+        $this->assertSame(1209.6, $gm['nightAllowancePaid']);
+        $this->assertEqualsWithDelta(51209.6, (float) $gm['totalEarnings'], 0.001);
 
         $legacy = ['basicPaid' => 30000, 'nightHours' => 10, 'nightAllowanceRate' => 50.4, 'totalEarnings' => 50000, 'netSalary' => 40000];
         $svc->enforceCeilingOnGovernmentMonthly($legacy, 43600);

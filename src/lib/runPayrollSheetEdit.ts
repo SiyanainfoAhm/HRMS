@@ -572,7 +572,8 @@ export function applyFrozenSheetOverridesToComputed(
     for (const key of SHEET_EARNING_KEYS) {
       if (hasOwn(eo, key)) {
         const v = Number((eo as Record<string, number>)[key]);
-        if (Number.isFinite(v)) gm[key] = Math.max(0, Math.round(v));
+        // Night allowance keeps paise (a typed 54.09 stays 54.09); other lines stay whole-rupee.
+        if (Number.isFinite(v)) gm[key] = Math.max(0, key === "nightAllowancePaid" ? roundRupees(v) : Math.round(v));
       }
     }
   }

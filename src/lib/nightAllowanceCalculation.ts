@@ -4,13 +4,13 @@ export const DEFAULT_NIGHT_ALLOWANCE_BASIC_CEILING = 43600;
 /**
  * Night Duty Allowance = hours / 8 x rate. The rate (Settings > Night Allowance, 7th CPC table:
  * Level 1 = 23.20) is the amount per DUTY of 8 hours and is stored exactly as typed.
- * Computed as (hours x rate) / 8 and rounded ONCE, to the whole rupee, at the end
+ * Computed as (hours x rate) / 8 and rounded ONCE, to 2 decimals (paise), at the end
  * (no rounded duty count in between).
  * Mirror: NightAllowanceRateService::allowanceAmount (shared cases in
  * backend/tests/fixtures/night_allowance_cases.json).
  */
 export const NIGHT_DUTY_BASE_HOURS = 8;
-export const NIGHT_ALLOWANCE_ROUND_TO_RUPEE = true;
+export const NIGHT_ALLOWANCE_ROUND_TO_RUPEE = false;
 
 /**
  * 'duty' = rate is per 8-hour duty (all new rows). 'hour' = legacy rows whose stored rate is per
@@ -164,7 +164,7 @@ export function resolveNightAllowanceAmount(params: {
     params.manualAmount != null &&
     Number.isFinite(Number(params.manualAmount))
   ) {
-    amount = Math.round(Math.max(0, Number(params.manualAmount)));
+    amount = Math.round(Math.max(0, Number(params.manualAmount)) * 100) / 100;
   }
 
   return {
