@@ -47,7 +47,7 @@ assertEq(isCustomEarningVisibleOnRow("arrears", 22636), true, "generic Arrears s
 assertEq(isCustomEarningVisibleOnRow("arrears", -50), true, "generic Arrears shown when negative");
 
 // 4. The table renders mirrors without any write path to onUpdate.
-const src = readFileSync(new URL("../components/payroll/GovernmentRunPreviewTable.tsx", import.meta.url), "utf8");
+const src = readFileSync(new URL("../components/payroll/GovernmentRunPreviewTable.tsx", import.meta.url), "utf8").split(String.fromCharCode(13)).join("");
 const mirrorBlocks = src.split("<FieldChip").filter((b) => b.includes("mirrorHint={ARREAR_MIRROR_HINT}"));
 assertEq(mirrorBlocks.length, 2, "two mirror chip sites (earnings + CPF Arr)");
 for (const b of mirrorBlocks) {

@@ -25,12 +25,13 @@ final class PayrollTotalsTest extends TestCase
         $this->assertSame([], PayrollTotals::reconcile($this->gm()));
     }
 
-    public function test_gross_arrear_is_not_double_counted_when_it_equals_da_plus_tr(): void
+    public function test_gross_arrear_is_da_plus_tr_and_never_added_again(): void
     {
-        $this->assertSame(0.0, PayrollTotals::supplementalGrossArrear($this->gm()));
+        $this->assertSame(1200.0, PayrollTotals::arrearsTotal($this->gm()));
         $gm = $this->gm();
-        $gm['grossArrear'] = 1500; // 300 recorded only as gross arrear
-        $this->assertSame(300.0, PayrollTotals::supplementalGrossArrear($gm));
+        $gm["grossArrear"] = 1500; // a stored gross is not trusted: Gross Arrears = DA + TR
+        $this->assertSame(1200.0, PayrollTotals::arrearsTotal($gm));
+        $this->assertSame([], PayrollTotals::reconcile($gm), "a wrong stored gross arrear does not change the totals check");
     }
 
     public function test_net_must_equal_gross_minus_deductions(): void

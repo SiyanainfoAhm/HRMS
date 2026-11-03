@@ -29,36 +29,44 @@ final class PayrollTotals
         return is_numeric($value) ? max(0.0, Money::roundMoney((float) $value)) : 0.0;
     }
 
-    /** Gross arrear only counts for the part not already in the DA/TR arrear lines. */
-    public static function supplementalGrossArrear(array $gm): float
+    /**
+     * THE arrears chain (mirror: arrearChain in src/lib/payrollArrearCalc.ts, shared fixture
+     * tests/fixtures/arrear_chain_cases.json). DA, TR and CPF Arrears are the inputs; Gross Arrears = DA + TR
+     * and Net Arrears = Gross - CPF Arrears are always derived, never typed. Gross Arrears is already inside the
+     * DA and TR earning lines, so it is a memo (never added again); Net Arrears is a memo too.
+     *
+     * @return array{grossArrear: float, netArrear: float}
+     */
+    public static function arrearChain(mixed $da, mixed $tr, mixed $cpf): array
     {
-        $gross = self::amount($gm['grossArrear'] ?? $gm['gross_arrear'] ?? 0);
-        $detailed = self::amount($gm['daArrearsPaid'] ?? $gm['da_arrears_paid'] ?? 0)
-            + self::amount($gm['transportArrearsPaid'] ?? $gm['transport_arrears_paid'] ?? 0);
+        $n = static fn (mixed $v): float => Money::roundMoney(is_numeric($v) ? (float) $v : 0.0);
+        $gross = Money::roundMoney($n($da) + $n($tr));
 
-        return max(0.0, Money::roundMoney($gross - $detailed));
+        return ['grossArrear' => $gross, 'netArrear' => Money::roundMoney($gross - $n($cpf))];
     }
 
-    /**
-     * Total arrears in a month. Gross arrear already contains DA + transport, so
-     * only the remainder not covered by those lines is added (see totalArrearsPaid
-     * in src/lib/payrollArrearCalc.ts).
-     */
+    /** DA, TR and CPF Arrears of a monthly snapshot (camel or snake keys). */
+    private static function arrearInputs(array $gm): array
+    {
+        return [
+            self::amount($gm['daArrearsPaid'] ?? $gm['da_arrears_paid'] ?? 0),
+            self::amount($gm['transportArrearsPaid'] ?? $gm['transport_arrears_paid'] ?? 0),
+            self::amount($gm['cpfArrear'] ?? $gm['cpf_arrear'] ?? ($gm['arrearDeductions']['cpfArrear'] ?? 0)),
+        ];
+    }
+
+    /** Total arrears in a month = Gross Arrears = DA + TR, counted once. */
     public static function arrearsTotal(array $gm): float
     {
-        $da = self::amount($gm['daArrearsPaid'] ?? $gm['da_arrears_paid'] ?? 0);
-        $tr = self::amount($gm['transportArrearsPaid'] ?? $gm['transport_arrears_paid'] ?? 0);
+        [$da, $tr] = self::arrearInputs($gm);
 
-        return Money::roundMoney($da + $tr + self::supplementalGrossArrear($gm));
+        return self::arrearChain($da, $tr, 0)['grossArrear'];
     }
 
-    /** Net Arrears memo = Gross Arrears - CPF Arr (floored at 0). Not part of any total. */
+    /** Net Arrears memo = Gross Arrears - CPF Arr (Gross = DA + TR). Not part of any total. */
     public static function netArrear(array $gm): float
     {
-        $gross = self::amount($gm['grossArrear'] ?? $gm['gross_arrear'] ?? 0);
-        $cpf = self::amount($gm['cpfArrear'] ?? $gm['cpf_arrear'] ?? ($gm['arrearDeductions']['cpfArrear'] ?? 0));
-
-        return max(0.0, Money::roundMoney($gross - $cpf));
+        return self::arrearChain(...self::arrearInputs($gm))['netArrear'];
     }
 
     /** Sum of the fixed (non-custom) earning lines. */
@@ -67,7 +75,7 @@ final class PayrollTotals
         $sum = 0.0;
         foreach (self::EARNING_KEYS as $key) $sum += self::amount($gm[$key] ?? 0);
 
-        return Money::roundMoney($sum + self::supplementalGrossArrear($gm));
+        return Money::roundMoney($sum);
     }
 
     /** Sum of the fixed (non-custom) deduction lines incl. CPF arrear. */

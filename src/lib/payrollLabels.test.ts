@@ -24,11 +24,11 @@ assertEq(phpConst("NET_ARREARS"), PAYROLL_LABELS.netArrears, "Net label");
 assertEq(phpConst("CPF_ARREARS"), PAYROLL_LABELS.cpfArrears, "CPF Arr label");
 assertEq(phpConst("PAST_ARREARS_FIELD_KEY"), PAYROLL_LABELS.pastArrearsFieldKey, "Past key");
 
-// 2. Net Arrears is derived: a defaulted 0 next to a positive gross is not kept (Sept 2026 emp 037: gross 22636, net 0).
+// 2. Gross = DA + TR and Net = Gross - CPF Arr are derived: a defaulted 0 gross/net next to DA + TR is not kept (Sept 2026 emp 037: gross 22636, net 0).
 const comp = { totalEarnings: 91785, totalDeductions: 15395, netSalary: 76390 };
-const out = applyAutoArrearsToGovernmentMonthly(comp, { grossArrear: 22636, cpfArrear: 0, netArrear: 0 });
+const out = applyAutoArrearsToGovernmentMonthly(comp, { daArrear: 20000, transportArrear: 2636, grossArrear: 0, cpfArrear: 0, netArrear: 0 });
 assertEq(out.netArrear, 22636, "net arrear derived from gross - cpf");
-const out2 = applyAutoArrearsToGovernmentMonthly(comp, { grossArrear: 1200, cpfArrear: 144, netArrear: 999 });
+const out2 = applyAutoArrearsToGovernmentMonthly(comp, { daArrear: 1000, transportArrear: 200, grossArrear: 1200, cpfArrear: 144, netArrear: 999 });
 assertEq(out2.netArrear, 1056, "stale net arrear replaced by gross - cpf");
 assertEq(out2.cpfArrear, 144, "cpf arr kept");
 // CPF Arr is a deduction, Net Arrears never changes totals.

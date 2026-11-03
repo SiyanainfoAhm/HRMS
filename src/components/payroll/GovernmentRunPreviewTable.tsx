@@ -436,16 +436,29 @@ function ArrearField({
   value,
   readOnly,
   onChange,
+  derivedHint,
 }: {
   label: string;
   value: number;
   readOnly: boolean;
   onChange?: (n: number) => void;
+  /** Set for a calculated, read-only result (Gross / Net Arrears): styled like the Earnings mirrors. */
+  derivedHint?: string;
 }) {
   return (
-    <div className="flex min-w-[4.5rem] flex-1 flex-col items-center gap-0.5">
+    <div className="flex min-w-[4.5rem] flex-1 flex-col items-center gap-0.5" data-arrear-derived={derivedHint ? "true" : undefined}>
       <span className="text-center text-[9px] font-medium uppercase tracking-wide text-slate-600">{label}</span>
-      {readOnly || !onChange ? (
+      {derivedHint ? (
+        <>
+          <span
+            className="payroll-amount-value w-full rounded border border-dashed border-slate-300 bg-slate-50 text-slate-700"
+            aria-readonly="true"
+          >
+            {fmtIn(value)}
+          </span>
+          <span className="w-full truncate text-center text-[8px] italic text-slate-500">{derivedHint}</span>
+        </>
+      ) : readOnly || !onChange ? (
         <span className="text-center text-[13px] tabular-nums text-slate-900">{fmtIn(value)}</span>
       ) : (
         <MoneyInput value={value} onChange={onChange} className={inpWide} />
@@ -482,24 +495,14 @@ function ArrearsUnpaidSection({
           readOnly={readOnly}
           onChange={(n) => onUpdate(row.employeeUserId, "transportArrear", n)}
         />
-        <ArrearField
-          label={PAYROLL_LABELS.grossArrears}
-          value={arrears.grossArrear}
-          readOnly={readOnly}
-          onChange={(n) => onUpdate(row.employeeUserId, "grossArrear", n)}
-        />
+        <ArrearField label={PAYROLL_LABELS.grossArrears} value={arrears.grossArrear} readOnly derivedHint="= DA + TR" />
         <ArrearField
           label={PAYROLL_LABELS.cpfArrears}
           value={arrears.cpfArrear}
           readOnly={readOnly}
           onChange={(n) => onUpdate(row.employeeUserId, "cpfArrear", n)}
         />
-        <ArrearField
-          label={PAYROLL_LABELS.netArrears}
-          value={arrears.netArrear}
-          readOnly={readOnly}
-          onChange={(n) => onUpdate(row.employeeUserId, "netArrear", n)}
-        />
+        <ArrearField label={PAYROLL_LABELS.netArrears} value={arrears.netArrear} readOnly derivedHint="= Gross - CPF Arr" />
       </div>
     </section>
   );

@@ -4,6 +4,7 @@
  * recompute that would overwrite other components.
  */
 import { roundMoney } from "./money";
+import { arrearChain } from "./payrollArrearCalc";
 import type {
   GovernmentDeductionDefaults,
   GovernmentEarningPaidOverrides,
@@ -107,20 +108,6 @@ function asRecord(v: unknown): Record<string, unknown> {
     : {};
 }
 
-/**
- * `grossArrear` is the reported total of DA and Transport arrears in the
- * normal arrear workflow.  A manually-recorded historical arrear can instead
- * exist only in `grossArrear`.  Include only the part not already represented
- * by the two earning lines, so either form affects pay exactly once.
- */
-function supplementalGrossArrear(gm: Record<string, unknown>): number {
-  const gross = amount(gm.grossArrear ?? gm.gross_arrear);
-  const detailed =
-    amount(gm.daArrearsPaid ?? gm.da_arrears_paid) +
-    amount(gm.transportArrearsPaid ?? gm.transport_arrears_paid);
-  return Math.max(0, roundMoney(gross - detailed));
-}
-
 /** Sum current earning paid lines + custom earnings included in totals. */
 export function sumSheetEarnings(
   gm: Record<string, unknown>,
@@ -135,7 +122,6 @@ export function sumSheetEarnings(
   for (const key of SHEET_SETTLEMENT_EARNING_KEYS) {
     sum += amount(gm[key]);
   }
-  sum += supplementalGrossArrear(gm);
   const custom = asRecord(gm.customEarnings ?? gm.custom_earnings) as Record<string, number>;
   sum += sumCustomBagForTotal(custom, payrollFieldDefs, "earnings");
   return roundMoney(sum);
@@ -318,9 +304,10 @@ export function applyGovernmentSheetMonetaryEdit<T extends GovernmentSheetRow>(
   let gr: GovRecalcPayload = { ...gr0 };
   let daArrear = amount(row.daArrear ?? gm.daArrearsPaid ?? gm.da_arrears_paid);
   let transportArrear = amount(row.transportArrear ?? gm.transportArrearsPaid ?? gm.transport_arrears_paid);
-  let grossArrear = amount(row.grossArrear ?? gm.grossArrear ?? gm.gross_arrear);
+  let grossArrear = 0;
   let cpfArrear = amount(row.cpfArrear ?? gm.cpfArrear ?? gm.cpf_arrear);
-  let netArrear = amount(row.netArrear ?? gm.netArrear ?? gm.net_arrear);
+  let netArrear = 0;
+  ({ grossArrear, netArrear } = arrearChain(daArrear, transportArrear, cpfArrear));
 
   if (field.startsWith("govEarning_")) {
     const key = field.slice("govEarning_".length) as SheetEarningKey;
@@ -390,36 +377,13 @@ export function applyGovernmentSheetMonetaryEdit<T extends GovernmentSheetRow>(
     row = { ...row, [key]: value } as T;
   } else if ((SHEET_ARREAR_KEYS as readonly string[]).includes(field)) {
     const arrearKey = field as SheetArrearKey;
-    const next = {
-      daArrear,
-      transportArrear,
-      grossArrear,
-      cpfArrear,
-      netArrear,
-      [arrearKey]: value,
-    };
-    if (arrearKey === "daArrear" || arrearKey === "transportArrear") {
-      const prevAuto = amount(row.grossArrear) === amount(row.daArrear) + amount(row.transportArrear);
-      if (prevAuto) {
-        next.grossArrear = roundMoney(next.daArrear + next.transportArrear);
-      }
-    }
-    if (arrearKey === "netArrear") {
-      // Net arrear is a derived amount.  Editing it changes only the matching
-      // CPF-arrear deduction, never adds a second earnings line.
-      next.cpfArrear = Math.max(0, roundMoney(next.grossArrear - next.netArrear));
-    } else if (arrearKey === "grossArrear" || arrearKey === "cpfArrear") {
-      const prevAutoNet =
-        amount(row.netArrear) === Math.max(0, amount(row.grossArrear) - amount(row.cpfArrear));
-      if (prevAutoNet) {
-        next.netArrear = Math.max(0, roundMoney(next.grossArrear - next.cpfArrear));
-      }
-    }
-    daArrear = next.daArrear;
-    transportArrear = next.transportArrear;
-    grossArrear = next.grossArrear;
-    cpfArrear = next.cpfArrear;
-    netArrear = next.netArrear;
+    // Only DA, TR and CPF Arrears are inputs. Gross Arrears (= DA + TR) and Net Arrears (= Gross - CPF Arr)
+    // are read-only results of arrearChain, so an edit of either is ignored.
+    if (arrearKey === "grossArrear" || arrearKey === "netArrear") return row;
+    if (arrearKey === "daArrear") daArrear = value;
+    else if (arrearKey === "transportArrear") transportArrear = value;
+    else cpfArrear = value;
+    ({ grossArrear, netArrear } = arrearChain(daArrear, transportArrear, cpfArrear));
     gm = {
       ...gm,
       daArrearsPaid: daArrear,
@@ -439,6 +403,14 @@ export function applyGovernmentSheetMonetaryEdit<T extends GovernmentSheetRow>(
     return row;
   }
 
+  // One arrears chain for every edit: Gross Arrears = DA + TR, Net Arrears = Gross - CPF Arr.
+  gm = {
+    ...gm,
+    grossArrear,
+    gross_arrear: grossArrear,
+    netArrear,
+    net_arrear: netArrear,
+  };
   gm = recalculateGovernmentSheetTotals(gm, opts?.payrollFieldDefs);
   const nextRow = syncRowAggregatesFromGm(
     {

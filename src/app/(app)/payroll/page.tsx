@@ -45,7 +45,7 @@ import {
   referenceSalaryFromGovRecalc,
 } from "@/lib/hplEolDeductions";
 import { customRunFieldsForPreview, type PayrollConfig, type PayrollFieldDefinition } from "@/lib/payrollFieldTypes";
-import { applyAutoArrearsToGovernmentMonthly, totalArrearsPaid } from "@/lib/payrollArrearCalc";
+import { applyAutoArrearsToGovernmentMonthly, arrearChain, totalArrearsPaid } from "@/lib/payrollArrearCalc";
 import {
   GovernmentRunPreviewTable,
   type GovernmentPreviewMonthly,
@@ -323,6 +323,10 @@ function governmentRowFromCompute<T extends {
   const totalDeductions = Number(gm.totalDeductions ?? comp.totalDeductions) || 0;
   const netSalary = Number(gm.netSalary ?? comp.netSalary) || 0;
   const ded = (gm.deductions ?? comp.deductions) as GovernmentDeductionDefaults;
+  const rowDaArrear = arrear?.daArrear ?? (Number(gm.daArrearsPaid ?? comp.daArrearsPaid) || 0);
+  const rowTrArrear = arrear?.transportArrear ?? (Number(gm.transportArrearsPaid ?? comp.transportArrearsPaid) || 0);
+  const rowCpfArrear = arrear?.cpfArrear ?? (Number(gm.cpfArrear ?? comp.cpfArrear) || 0);
+  const rowArrearChain = arrearChain(rowDaArrear, rowTrArrear, rowCpfArrear);
 
   return {
     ...row,
@@ -333,12 +337,11 @@ function governmentRowFromCompute<T extends {
       ...gm,
       leaveRemarks: gr.leaveRemarks ?? (row.governmentMonthly as { leaveRemarks?: string | null } | null | undefined)?.leaveRemarks ?? null,
     },
-    daArrear: arrear?.daArrear ?? (Number(gm.daArrearsPaid ?? comp.daArrearsPaid) || 0),
-    transportArrear:
-      arrear?.transportArrear ?? (Number(gm.transportArrearsPaid ?? comp.transportArrearsPaid) || 0),
-    grossArrear: arrear?.grossArrear ?? (Number(gm.grossArrear ?? comp.grossArrear) || 0),
-    cpfArrear: arrear?.cpfArrear ?? (Number(gm.cpfArrear ?? comp.cpfArrear) || 0),
-    netArrear: arrear?.netArrear ?? (Number(gm.netArrear ?? comp.netArrear) || 0),
+    daArrear: rowDaArrear,
+    transportArrear: rowTrArrear,
+    grossArrear: rowArrearChain.grossArrear,
+    cpfArrear: rowCpfArrear,
+    netArrear: rowArrearChain.netArrear,
     grossPay: totalEarnings,
     deductions: totalDeductions,
     netPay: netSalary,
@@ -418,13 +421,10 @@ function arrearSnapshotFromRow(row: {
   governmentMonthly?: GovernmentPreviewMonthly | GovMonthlyWithArrear | null | unknown;
 }) {
   const g = row.governmentMonthly as GovernmentPreviewMonthly | GovMonthlyWithArrear | null | undefined;
-  return {
-    daArrear: roundMoney(Number(row.daArrear ?? g?.daArrearsPaid ?? 0) || 0),
-    transportArrear: roundMoney(Number(row.transportArrear ?? g?.transportArrearsPaid ?? 0) || 0),
-    grossArrear: roundMoney(Number(row.grossArrear ?? g?.grossArrear ?? 0) || 0),
-    cpfArrear: roundMoney(Number(row.cpfArrear ?? g?.cpfArrear ?? 0) || 0),
-    netArrear: roundMoney(Number(row.netArrear ?? g?.netArrear ?? 0) || 0),
-  };
+  const daArrear = roundMoney(Number(row.daArrear ?? g?.daArrearsPaid ?? 0) || 0);
+  const transportArrear = roundMoney(Number(row.transportArrear ?? g?.transportArrearsPaid ?? 0) || 0);
+  const cpfArrear = roundMoney(Number(row.cpfArrear ?? g?.cpfArrear ?? 0) || 0);
+  return { daArrear, transportArrear, cpfArrear, ...arrearChain(daArrear, transportArrear, cpfArrear) };
 }
 
 function govDeductionDefaultsFromMasterRow(row: MasterGridRow): GovernmentDeductionDefaults {

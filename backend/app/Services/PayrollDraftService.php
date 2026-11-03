@@ -578,6 +578,14 @@ class PayrollDraftService
         foreach (['deductions', 'customEarnings', 'custom_earnings', 'customDeductions', 'custom_deductions'] as $bag) {
             if (is_array($gm[$bag] ?? null)) $gm[$bag] = $this->roundNumericBag($gm[$bag]);
         }
+        // The one arrears chain: Gross Arrears = DA + TR, Net Arrears = Gross - CPF Arr (a stored value is replaced).
+        $chain = \App\Support\PayrollTotals::arrearChain(
+            $gm['daArrearsPaid'] ?? $gm['da_arrears_paid'] ?? 0,
+            $gm['transportArrearsPaid'] ?? $gm['transport_arrears_paid'] ?? 0,
+            $gm['cpfArrear'] ?? $gm['cpf_arrear'] ?? 0,
+        );
+        $gm['grossArrear'] = $gm['gross_arrear'] = $chain['grossArrear'];
+        $gm['netArrear'] = $gm['net_arrear'] = $chain['netArrear'];
 
         return $gm;
     }
@@ -606,9 +614,7 @@ class PayrollDraftService
         $earningKeys = ['basicPaid', 'spPayPaid', 'daPaid', 'transportPaid', 'hraPaid', 'medicalPaid', 'extraWorkAllowancePaid', 'nightAllowancePaid', 'uniformAllowancePaid', 'educationAllowancePaid', 'daArrearsPaid', 'transportArrearsPaid', 'encashmentPaid', 'encashmentDaPaid', 'incentive', 'prBonus', 'reimbursement'];
         $earningTotal = 0.0;
         foreach ($earningKeys as $key) $earningTotal += $amount($gm[$key] ?? 0);
-        $grossArrear = $amount($gm['grossArrear'] ?? $gm['gross_arrear'] ?? 0);
-        $detailedArrear = $amount($gm['daArrearsPaid'] ?? $gm['da_arrears_paid'] ?? 0) + $amount($gm['transportArrearsPaid'] ?? $gm['transport_arrears_paid'] ?? 0);
-        $earningTotal += max(0, \App\Support\Money::roundMoney($grossArrear - $detailedArrear));
+        // Gross Arrears = DA + TR is already inside the two arrear earning lines above: counted once.
 
         $ded = $gm['deductions'] ?? [];
         $deductionKeys = ['incomeTax', 'pt', 'lic', 'cpf', 'daCpf', 'vpf', 'pfLoan', 'postOffice', 'creditSociety', 'stdLicenceFee', 'electricity', 'water', 'mess', 'loanRecovery', 'welfare', 'hpl', 'eol', 'vehCharge', 'other', 'quarterRent'];

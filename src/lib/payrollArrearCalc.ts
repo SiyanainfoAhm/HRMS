@@ -60,6 +60,19 @@ function r2(n: number): number {
   return roundMoney(n);
 }
 
+/**
+ * THE arrears chain (mirror: PayrollTotals::arrearChain in PHP, shared fixture
+ * backend/tests/fixtures/arrear_chain_cases.json). DA, TR and CPF Arrears are the inputs;
+ * Gross Arrears = DA + TR and Net Arrears = Gross - CPF Arrears are always derived, never typed.
+ * Gross Arrears is already inside the DA and TR earning lines, so it is a memo (never added again);
+ * Net Arrears is a memo too (Net Pay = Gross - Total Deductions, which holds CPF Arr once).
+ */
+export function arrearChain(da: unknown, tr: unknown, cpf: unknown): { grossArrear: number; netArrear: number } {
+  const n = (v: unknown) => r2(Number.isFinite(Number(v)) ? Number(v) : 0);
+  const grossArrear = r2(n(da) + n(tr));
+  return { grossArrear, netArrear: r2(grossArrear - n(cpf)) };
+}
+
 /** A present number (including an entered 0); undefined for null/blank/NaN. */
 function presentNumber(v: unknown): number | undefined {
   if (v === null || v === undefined || v === "") return undefined;
@@ -88,11 +101,8 @@ export function applyAutoArrearsToGovernmentMonthly<T extends Record<string, unk
   const daA = presentNumber(arrear?.daArrear) ?? 0;
   const trA = presentNumber(arrear?.transportArrear) ?? 0;
   const cpfA = presentNumber(arrear?.cpfArrear) ?? 0;
-  const grossA = presentNumber(arrear?.grossArrear) ?? r2(daA + trA);
-  // Net Arrears is a derived memo (Gross Arrears - CPF Arr). A passed-in value is
-  // never trusted: UI rows default it to 0, which used to be stored next to a
-  // positive Gross Arrears (CIRT-07).
-  const netA = r2(Math.max(0, grossA - cpfA));
+  // Gross Arrears = DA + TR and Net Arrears = Gross - CPF Arr, always derived (a passed-in gross/net is ignored).
+  const { grossArrear: grossA, netArrear: netA } = arrearChain(daA, trA, cpfA);
 
   // Arrear already inside the snapshot totals.
   const daIn = presentNumber(comp.daArrearsPaid) ?? 0;
@@ -120,10 +130,8 @@ export function applyAutoArrearsToGovernmentMonthly<T extends Record<string, unk
     };
   }
 
-  // DA and transport arrears are their own earning lines; a gross arrear larger
-  // than their sum is the remainder recorded only as gross.
-  const supplemental = Math.max(0, r2(grossA - (daA + trA)));
-  const totalEarnings = r2(baseEarnings + daA + trA + supplemental);
+  // DA and transport arrears are the only arrear earning lines; Gross Arrears is their sum, counted once.
+  const totalEarnings = r2(baseEarnings + daA + trA);
   const totalDeductions = r2(baseDeductions + cpfA);
   const netSalary = r2(totalEarnings - totalDeductions);
 
@@ -143,14 +151,10 @@ export function applyAutoArrearsToGovernmentMonthly<T extends Record<string, unk
 }
 
 /**
- * Total arrears paid in a month. Gross arrear is the aggregate that already
- * contains DA + transport arrear, so only the part not covered by those two
- * lines is added (same rule as the sheet totals and the PHP PayrollTotals).
+ * Total arrears paid in a month = Gross Arrears = DA + TR (the chain above). The gross argument is kept for
+ * old callers and ignored: Gross Arrears is never an independent amount.
  */
-export function totalArrearsPaid(daArrear: unknown, transportArrear: unknown, grossArrear: unknown): number {
+export function totalArrearsPaid(daArrear: unknown, transportArrear: unknown, _grossArrear?: unknown): number {
   const nonNegative = (v: unknown) => Math.max(0, r2(presentNumber(v) ?? 0));
-  const da = nonNegative(daArrear);
-  const tr = nonNegative(transportArrear);
-  const gross = nonNegative(grossArrear);
-  return r2(da + tr + Math.max(0, r2(gross - (da + tr))));
+  return r2(nonNegative(daArrear) + nonNegative(transportArrear));
 }

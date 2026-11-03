@@ -49,7 +49,6 @@ final class PayrollExportTotals
     {
         $sum = 0.0;
         foreach (self::EARNING_COLUMNS as $column) $sum += self::n($row, $column);
-        $sum += max(0.0, self::n($row, 'gross_arrear') - self::n($row, 'da_arrears_paid') - self::n($row, 'transport_arrears_paid'));
         $sum += array_sum(self::bag($row['custom_earnings'] ?? null));
 
         return round($sum, 2);

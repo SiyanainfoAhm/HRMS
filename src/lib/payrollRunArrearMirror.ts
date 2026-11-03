@@ -1,4 +1,5 @@
 import { roundMoney } from "./money";
+import { arrearChain } from "./payrollArrearCalc";
 /**
  * Run Payroll: the Arrears (UNPAID) section is the only editable place for the
  * statutory arrears. The same figures shown in the Earnings / Deductions rows are
@@ -24,13 +25,11 @@ export const ARREAR_MIRROR_HINT = "edit in Arrears (Unpaid)";
 
 export function resolveUnpaidArrears(row: UnpaidArrearsSource) {
   const g = row.governmentMonthly;
-  return {
-    daArrear: roundMoney(Number(row.daArrear ?? g?.daArrearsPaid ?? 0) || 0),
-    trArrear: roundMoney(Number(row.transportArrear ?? g?.transportArrearsPaid ?? 0) || 0),
-    grossArrear: roundMoney(Number(row.grossArrear ?? g?.grossArrear ?? 0) || 0),
-    cpfArrear: roundMoney(Number(row.cpfArrear ?? g?.cpfArrear ?? 0) || 0),
-    netArrear: roundMoney(Number(row.netArrear ?? g?.netArrear ?? 0) || 0),
-  };
+  const daArrear = roundMoney(Number(row.daArrear ?? g?.daArrearsPaid ?? 0) || 0);
+  const trArrear = roundMoney(Number(row.transportArrear ?? g?.transportArrearsPaid ?? 0) || 0);
+  const cpfArrear = roundMoney(Number(row.cpfArrear ?? g?.cpfArrear ?? 0) || 0);
+  // Gross Arrears = DA + TR and Net Arrears = Gross - CPF Arr are derived live, never read as typed values.
+  return { daArrear, trArrear, cpfArrear, ...arrearChain(daArrear, trArrear, cpfArrear) };
 }
 
 /** Earnings / deductions line keys that only mirror the unpaid section. */

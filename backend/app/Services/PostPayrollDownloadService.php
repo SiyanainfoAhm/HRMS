@@ -178,7 +178,7 @@ final class PostPayrollDownloadService
         $da = self::n($row, 'da_arrears_paid');
         $tr = self::n($row, 'transport_arrears_paid');
 
-        return $da + $tr + max(0.0, self::n($row, 'gross_arrear') - $da - $tr);
+        return \App\Support\PayrollTotals::arrearChain($da, $tr, 0)['grossArrear'];
     }
 
     private static function sum(array $row, array $keys): float
@@ -446,7 +446,7 @@ final class PostPayrollDownloadService
         [$f, $mid, $l] = self::splitName((string) ($m['name'] ?? $u['name'] ?? ''));
         // Whole-day serial built in UTC: strtotime() under Asia/Kolkata gave a fractional serial that displayed a day early.
         $date = fn ($d) => SpreadsheetLayout::toExcelDate($d);
-        $remainderGross = max(0.0, self::n($r, 'gross_arrear') - self::n($r, 'da_arrears_paid') - self::n($r, 'transport_arrears_paid'));
+        $remainderGross = 0.0; // Gross Arrears = DA + TR: nothing is recorded beyond the two arrear lines
         $custom = array_fill_keys(array_values(self::TDS_CUSTOM_COLUMNS) + [self::TDS_CUSTOM_FALLBACK => self::TDS_CUSTOM_FALLBACK], 0.0);
         foreach (self::customBag($r, 'custom_earnings') as $key => $value) {
             $custom[self::TDS_CUSTOM_COLUMNS[$key] ?? self::TDS_CUSTOM_FALLBACK] = ($custom[self::TDS_CUSTOM_COLUMNS[$key] ?? self::TDS_CUSTOM_FALLBACK] ?? 0.0) + $value;
