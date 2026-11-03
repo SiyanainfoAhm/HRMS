@@ -171,12 +171,12 @@ final class PeriodReportTest extends DatabaseTestCase
         $path = $this->tds()->save($this->tds()->buildTds($rows, $all));
         $sheet = IOFactory::load($path)->getActiveSheet();
         @unlink($path);
-        $headerRow = $sheet->rangeToArray('A2:'.$sheet->getHighestColumn().'2', null, true, false)[0];
+        $headerRow = $sheet->rangeToArray('A1:'.$sheet->getHighestColumn().'1', null, true, false)[0];
         $this->assertContains('Brand New Earning', $headerRow);
         $col = array_search('Brand New Earning', $headerRow, true);
-        $this->assertSame(40.0, (float) $sheet->getCell([$col + 1, 3])->getValue(), 'a real numeric cell');
-        $this->assertSame('TOTAL', $sheet->getCell([1, 4])->getValue(), 'totals row');
-        $this->assertSame('B3', $sheet->getFreezePane());
+        $this->assertSame(40.0, (float) $sheet->getCell([$col + 1, 2])->getValue(), 'a real numeric cell');
+        $this->assertSame('TOTAL', $sheet->getCell([1, 3])->getValue(), 'totals row');
+        $this->assertSame('E2', $sheet->getFreezePane());
 
         // Export Employee Payroll: header row.
         $headers = app(EmployeePayrollExportService::class)->buildHeaders([
@@ -211,9 +211,9 @@ final class PeriodReportTest extends DatabaseTestCase
         $path = $this->tds()->save($this->tds()->buildTds($rows, $extras));
         $sheet = IOFactory::load($path)->getActiveSheet();
         @unlink($path);
-        $excelHeaders = array_map('strval', $sheet->rangeToArray('A2:'.$sheet->getHighestColumn().'2', null, true, false)[0]);
+        $excelHeaders = array_map('strval', $sheet->rangeToArray('A1:'.$sheet->getHighestColumn().'1', null, true, false)[0]);
         $this->assertSame($t['headers'], $excelHeaders, 'preview and Excel use exactly the same column order');
-        $excelRow = $sheet->rangeToArray('A3:'.$sheet->getHighestColumn().'3', null, true, false)[0];
+        $excelRow = $sheet->rangeToArray('A2:'.$sheet->getHighestColumn().'2', null, true, false)[0];
         $this->assertSame(1010.0, (float) $excelRow[$h['Total Earnings']]);
     }
 
@@ -327,7 +327,7 @@ final class PeriodReportTest extends DatabaseTestCase
         $path = $tds->save($tds->buildTds($rows, $extras));
         $tsheet = IOFactory::load($path)->getActiveSheet();
         @unlink($path);
-        $this->assertSame($t['headers'], array_map('strval', $tsheet->rangeToArray('A2:'.$tsheet->getHighestColumn().'2', null, true, false)[0]), 'TDS preview headers equal Excel headers');
+        $this->assertSame($t['headers'], array_map('strval', $tsheet->rangeToArray('A1:'.$tsheet->getHighestColumn().'1', null, true, false)[0]), 'TDS preview headers equal Excel headers');
     }
 
     public function test_real_september_preview_totals_reconcile_and_match_the_workbook(): void

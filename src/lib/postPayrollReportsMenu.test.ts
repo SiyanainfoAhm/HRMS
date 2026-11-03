@@ -37,7 +37,7 @@ const reasons = (ctx: Partial<PostPayrollMenuContext>) =>
   assertEq(m.items.map((i) => i.id), ["report-tds", "report-cpf", "report-division-wise", "report-paybill", "bank-letter"], "ids");
   assertEq(m.items.slice(0, 4).every((i) => i.tag === "Excel"), true, "EXCEL badge on every report");
   assertEq(m.items.every((i) => Boolean(i.description)), true, "every item keeps its description");
-  assertEq(m.items.map((i) => i.flow), ["multi-month", "single-month", "single-month", "single-month", "bank-letter"], "TDS uses the multi-month picker, the others a single month, Bank Letter its formats");
+  assertEq(m.items.map((i) => i.flow), ["multi-month", "single-month", "multi-month", "single-month", "bank-letter"], "TDS and Division-Wise use the multi-month picker, CPF and Paybill a single month, Bank Letter its formats");
   assertEq(m.bankFormats.map((i) => i.label), ["Word document", "Excel workbook", "PDF letter"], "bank letter formats, same as before");
   assertEq(m.bankFormats.map((i) => i.id), ["bank-docx", "bank-xlsx", "bank-pdf"], "format ids");
   assertEq(buildPostPayrollMenu({ ...base, canManage: false }), null, "no menu without admin rights");
@@ -131,6 +131,10 @@ const render = (props: Partial<Parameters<typeof PostPayrollReportsMenu>[0]>) =>
   assertEq(tds.includes('aria-label="Search months"'), true, "TDS Data opens the searchable multi-month picker");
   assertEq(tds.includes("This FY") && tds.includes("Last 3 months"), true, "quick options");
   assertEq(tds.includes("Preview"), true, "TDS Data keeps its preview");
+
+  const division = render({ defaultOpen: true, forceLayout: "popover", defaultReport: "division-wise" });
+  assertEq(division.includes('aria-label="Search months"'), true, "Division-Wise Salary opens the same multi-month picker as TDS Data");
+  assertEq(division.includes("Preview") && !division.includes('id="post-payroll-month"'), true, "Division-Wise Salary has a preview and no single-month selector");
 
   const sheet = render({ defaultOpen: true, forceLayout: "sheet" });
   assertEq(sheet.includes('aria-label="Close post-payroll reports"'), true, "phone sheet has a close button");

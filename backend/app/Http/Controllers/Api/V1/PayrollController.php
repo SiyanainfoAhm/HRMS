@@ -2547,6 +2547,8 @@ class PayrollController extends Controller
             'quarter_id' => $gm['quarterId'] ?? $gm['quarter_id'] ?? null,
             'quarter_name' => $gm['quarterName'] ?? $gm['quarter_name'] ?? null,
             'quarter_type' => $gm['quarterType'] ?? $gm['quarter_type'] ?? null,
+            // Division / designation as they are for this month (reports must not follow a later Settings rename).
+            ...\App\Support\OrgNameSnapshot::forMaster((string) $masterId),
         ]);
 
         return (string) $record->id;

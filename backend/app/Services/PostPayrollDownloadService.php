@@ -28,21 +28,14 @@ final class PostPayrollDownloadService
 
     public const DEFAULT_CATEGORY = 'CIRT';
 
-    /** Report division => lower-case keywords found in the Master division name. UNCONFIRMED mapping; first match wins. */
-    public const DIVISION_KEYWORDS = [
-        'BNCAP' => ['ncap'],
-        'CYBERSECURITY' => ['cyber'],
-        'SHD' => ['safety', 'saftey', 'homolog'],
-        'TRNG/MDC' => ['developement', 'development', 'training', 'mdc'],
-        'CONSULTANCY' => ['consultancy'],
-        'ERC' => ['automotive testing', 'erc', 'technical directorate'],
-        'ADMINSTRAION' => ['admin', 'accounts', "director's office", 'ministry', 'utility', 'vehicle maint', 'horticulture', 'road safety cell'],
-    ];
+    /** Division shown for a payroll row that has no usable division name (blank, an id or a code). Always listed last. */
+    public const UNASSIGNED = 'Unassigned';
 
-    /** Row order and spelling of the Division sheet in the sample (including its own spellings). */
-    public const DIVISION_ROWS = ['ERC', 'SHD', 'BNCAP', 'CYBERSECURITY', 'TRNG/MDC', 'CONSULTANCY', 'ADMINSTRAION'];
+    /** Division-Wise Salary detail sheet (preview and Excel share these): one row per employee per month, grouped by division. */
+    public const DIVISION_WISE_HEADERS = ['Division', 'Employee Code', 'Name', 'Designation', 'Pay Level', 'Month', 'Year', 'Category', 'Gross Salary', 'Total Deductions', 'Net Pay', 'CPF Employer Contr.'];
 
-    public const UNMAPPED = 'OTHER / UNMAPPED';
+    /** 0-based money columns of DIVISION_WISE_HEADERS. */
+    public const DIVISION_WISE_MONEY = [8, 9, 10, 11];
 
     /** Pay level groups of the Pay Level sheet. */
     public const PAY_GROUPS = ['A Pay Leave 10 - 18' => [10, 18], 'B Pay Leavel 6-9' => [6, 9], 'C Pay Level 1 -5' => [1, 5]];
@@ -189,18 +182,6 @@ final class PostPayrollDownloadService
         return array_sum(array_map(fn ($k) => self::n($row, $k), $keys));
     }
 
-    public static function reportDivision(?string $masterDivision): string
-    {
-        $name = mb_strtolower(trim((string) $masterDivision));
-        foreach (self::DIVISION_KEYWORDS as $division => $words) {
-            foreach ($words as $w) {
-                if ($name !== '' && str_contains($name, $w)) return $division;
-            }
-        }
-
-        return self::UNMAPPED;
-    }
-
     public static function category(array $row): string
     {
         return self::DEFAULT_CATEGORY;
@@ -321,28 +302,217 @@ final class PostPayrollDownloadService
 
     // ---------------------------------------------------------------- Division-wise
 
-    public function buildDivisionWise(array $rows, int $ym): Spreadsheet
+    /** A division / designation name as text: trimmed, inner whitespace collapsed; an id, a code or a blank is no name. */
+    private static function cleanName(mixed $value): string
+    {
+        $text = trim((string) preg_replace('/\s+/u', ' ', (string) $value));
+        if ($text === '' || is_numeric($text) || preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $text)) {
+            return '';
+        }
+
+        return $text;
+    }
+
+    /** Division name of a payroll row: the name saved with the row for its month, else the Master division; '' when neither is a name. */
+    public static function divisionName(array $row): string
+    {
+        $saved = self::cleanName($row['division_name'] ?? null);
+
+        return $saved !== '' ? $saved : self::cleanName($row['_master']['division'] ?? null);
+    }
+
+    /** Case- and whitespace-insensitive identity of a division, so "Accounts " and "accounts" are one division. */
+    public static function divisionKey(string $name): string
+    {
+        return mb_strtolower(self::cleanName($name));
+    }
+
+    /** @return list<string> the company's division names from Settings (their spelling is used when a saved name matches one) */
+    public function settingsDivisionNames(string $companyId): array
+    {
+        return DB::table('cirt_divisions')->where('company_id', $companyId)->pluck('name')->map(fn ($n) => (string) $n)->all();
+    }
+
+    /**
+     * Rows grouped by division: alphabetical (Unassigned last), spelling from Settings when it matches, else the first
+     * saved spelling. Employees inside a division are in employee-code order, months chronological.
+     *
+     * @param  list<array<string, mixed>>  $rows
+     * @param  list<string>  $settingsNames
+     * @return list<array{name: string, rows: list<array<string, mixed>>}>
+     */
+    private function divisionGroups(array $rows, array $settingsNames = []): array
+    {
+        $display = [];
+        foreach ($settingsNames as $n) {
+            $k = self::divisionKey($n);
+            if ($k !== '') $display[$k] ??= self::cleanName($n);
+        }
+        $groups = [];
+        foreach ($rows as $r) {
+            $name = self::divisionName($r);
+            $key = $name === '' ? '' : self::divisionKey($name);
+            if ($key !== '') $display[$key] ??= $name;
+            $groups['k'.$key][] = $r;
+        }
+        uksort($groups, fn ($a, $b) => ($a === 'k') <=> ($b === 'k') ?: strcmp($a, $b));
+        $out = [];
+        foreach ($groups as $key => $set) {
+            usort($set, fn ($a, $b) => strnatcasecmp((string) ($a['_master']['employee_code'] ?? ''), (string) ($b['_master']['employee_code'] ?? ''))
+                ?: strcmp((string) ($a['employee_user_id'] ?? ''), (string) ($b['employee_user_id'] ?? ''))
+                ?: ($a['_ym'] ?? 0) <=> ($b['_ym'] ?? 0));
+            $out[] = ['name' => $key === 'k' ? self::UNASSIGNED : $display[substr($key, 1)], 'rows' => $set];
+        }
+
+        return $out;
+    }
+
+    /**
+     * Division-Wise Salary as data (preview and workbook read the same table): per division the employees, a subtotal row,
+     * then a grand total. Whole rupees; every sum is an exact sum of the rounded lines. Fails loudly when the divisions do
+     * not add up to the total of the rows given (gross, deductions, net, CPF, row count).
+     *
+     * @param  list<array<string, mixed>>  $rows  saved monthly payroll rows with _master / _user attached
+     * @param  list<string>  $settingsNames  division names from Settings
+     * @return array{headers: list<string>, rows: list<list<mixed>>, totals: list<mixed>, moneyColumns: list<int>, kinds: list<string>, divisions: array<string, array<string, float|int>>}
+     */
+    public function divisionWiseTable(array $rows, array $settingsNames = []): array
+    {
+        $headers = self::DIVISION_WISE_HEADERS;
+        SpreadsheetLayout::assertHeaders($headers, 'Division-Wise Salary');
+        $metrics = fn (array $r): array => [
+            'gross' => self::n($r, 'total_earnings'), 'ded' => self::n($r, 'total_deductions'),
+            'net' => self::n($r, 'net_salary'), 'cpf' => self::n($r, 'cpf_amount'),
+        ];
+        $countText = function (array $set): string {
+            $people = count(array_unique(array_map(fn ($r) => (string) ($r['employee_user_id'] ?? ''), $set)));
+            $months = count(array_unique(array_map(fn ($r) => $r['_ym'] ?? 0, $set)));
+
+            $who = $people === 1 ? '1 employee' : "{$people} employees";
+
+            return $months > 1 ? "{$who}, ".count($set).' employee-months' : $who;
+        };
+        $out = [];
+        $kinds = [];
+        $divisions = [];
+        $grand = ['gross' => 0.0, 'ded' => 0.0, 'net' => 0.0, 'cpf' => 0.0, 'rows' => 0];
+        foreach ($this->divisionGroups($rows, $settingsNames) as $g) {
+            $sum = ['gross' => 0.0, 'ded' => 0.0, 'net' => 0.0, 'cpf' => 0.0];
+            foreach ($g['rows'] as $r) {
+                $m = $r['_master'] ?? [];
+                $u = $r['_user'] ?? [];
+                $x = $metrics($r);
+                foreach ($x as $k => $v) $sum[$k] += $v;
+                $level = $r['pay_level'] ?? $m['pay_level'] ?? null;
+                $designation = self::cleanName($r['designation_name'] ?? null) ?: self::cleanName($m['designation'] ?? null) ?: self::cleanName($u['designation'] ?? null);
+                $ts = strtotime((string) ($r['month_year'] ?? ''));
+                $out[] = [
+                    $g['name'], (string) ($m['employee_code'] ?? ''), (string) ($m['name'] ?? $u['name'] ?? ''), $designation,
+                    is_numeric($level) ? (int) $level : null, $ts ? date('F Y', $ts) : '', $ts ? (int) date('Y', $ts) : null, self::category($r),
+                    $x['gross'], $x['ded'], $x['net'], $x['cpf'],
+                ];
+                $kinds[] = 'detail';
+            }
+            $out[] = [$g['name'].' - Subtotal', '', $countText($g['rows']), '', null, '', null, '', $sum['gross'], $sum['ded'], $sum['net'], $sum['cpf']];
+            $kinds[] = 'subtotal';
+            $divisions[$g['name']] = $sum + ['rows' => count($g['rows'])];
+            foreach ($sum as $k => $v) $grand[$k] += $v;
+            $grand['rows'] += count($g['rows']);
+        }
+
+        // The divisions must add up to the month total, taken straight from the rows (not from the groups).
+        $direct = ['gross' => 0.0, 'ded' => 0.0, 'net' => 0.0, 'cpf' => 0.0];
+        foreach ($rows as $r) foreach ($metrics($r) as $k => $v) $direct[$k] += $v;
+        foreach ($direct as $k => $v) {
+            if (abs($v - $grand[$k]) > 0.004) {
+                throw new \LogicException(sprintf('Division-Wise totals do not add up: divisions sum to %.2f but the payroll total is %.2f (%s).', $grand[$k], $v, $k));
+            }
+        }
+        if ($grand['rows'] !== count($rows)) {
+            throw new \LogicException("Division-Wise headcount does not add up: divisions list {$grand['rows']} rows but the payroll has ".count($rows).'.');
+        }
+
+        $totals = $rows === [] ? array_fill(0, count($headers), null)
+            : ['Grand Total', '', $countText($rows), '', null, '', null, '', $grand['gross'], $grand['ded'], $grand['net'], $grand['cpf']];
+
+        return ['headers' => $headers, 'rows' => $out, 'totals' => $totals, 'moneyColumns' => self::DIVISION_WISE_MONEY, 'kinds' => $kinds, 'divisions' => $divisions];
+    }
+
+    /**
+     * Division-Wise Salary workbook. Sheet 1 lists the employees under each real division (subtotals, grand total).
+     * A single-month download also carries the monthly Division / Count / Pay Level summaries, with the real division names.
+     *
+     * @param  list<string>  $settingsNames
+     */
+    public function buildDivisionWise(array $rows, ?int $ym = null, array $settingsNames = []): Spreadsheet
+    {
+        $t = $this->divisionWiseTable($rows, $settingsNames);
+        $wb = new Spreadsheet;
+        $ws = $wb->getActiveSheet()->setTitle('Division-Wise');
+        foreach ($t['headers'] as $i => $label) $ws->setCellValue([$i + 1, 1], $label);
+        $line = 2;
+        foreach ($t['rows'] as $n => $values) {
+            $this->writeDivisionWiseRow($ws, $line, $values);
+            if ($t['kinds'][$n] === 'subtotal') {
+                $ws->getStyle("A{$line}:L{$line}")->getFont()->setBold(true);
+                $ws->getStyle("A{$line}:L{$line}")->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setRGB('F2F2F2');
+            }
+            $line++;
+        }
+        if ($rows !== []) {
+            $this->writeDivisionWiseRow($ws, $line, $t['totals']);
+            $ws->getStyle("A{$line}:L{$line}")->getFont()->setBold(true);
+            $ws->getStyle("A{$line}:L{$line}")->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setRGB('D9D9D9');
+        }
+        SpreadsheetLayout::finish($ws, [
+            'header_row' => 1, 'freeze' => 'D2', 'landscape' => true, 'fit_width' => true,
+            'text_columns' => ['B'], 'amount_columns' => array_map(fn ($i) => Coordinate::stringFromColumnIndex($i + 1), $t['moneyColumns']),
+            'wrap_columns' => ['A', 'D'],
+        ]);
+
+        $months = array_values(array_unique(array_map(fn ($r) => $r['_ym'] ?? 0, $rows)));
+        if (count($months) === 1) {
+            $this->divisionSummarySheets($wb, $rows, $ym ?? $months[0], $settingsNames);
+        }
+
+        return $wb;
+    }
+
+    /** @param list<mixed> $values */
+    private function writeDivisionWiseRow(Worksheet $ws, int $line, array $values): void
+    {
+        foreach ($values as $i => $v) {
+            if ($v === null || $v === '') continue;
+            if ($i === 1) $ws->setCellValueExplicit([$i + 1, $line], (string) $v, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
+            else $ws->setCellValue([$i + 1, $line], $v);
+        }
+    }
+
+    /**
+     * The monthly Division / Count / Pay Level statements, one row per real division.
+     *
+     * @param  list<string>  $settingsNames
+     */
+    private function divisionSummarySheets(Spreadsheet $wb, array $rows, int $ym, array $settingsNames): void
     {
         $month = self::monthName($ym);
         $gross = $count = $cpf = $level = [];
-        $unmapped = [];
-        foreach ($rows as $r) {
-            $mDiv = (string) ($r['_master']['division'] ?? '');
-            $div = self::reportDivision($mDiv);
-            if ($div === self::UNMAPPED) $unmapped[$mDiv === '' ? '(blank)' : $mDiv] = true;
-            $cat = self::category($r);
-            $gross[$div][$cat] = ($gross[$div][$cat] ?? 0) + self::n($r, 'total_earnings');
-            $count[$div][$cat] = ($count[$div][$cat] ?? 0) + 1;
-            $cpf[$div][$cat === 'CONTRACT' ? 'CONTRACT' : 'CIRT'] = ($cpf[$div][$cat === 'CONTRACT' ? 'CONTRACT' : 'CIRT'] ?? 0) + self::n($r, 'cpf_amount');
-            $grp = self::payGroup((int) ($r['pay_level'] ?? 0));
-            if ($grp !== null) $level[$div][$grp][$cat] = ($level[$div][$grp][$cat] ?? 0) + self::n($r, 'total_earnings');
+        $divisions = [];
+        foreach ($this->divisionGroups($rows, $settingsNames) as $g) {
+            $div = $g['name'];
+            $divisions[] = $div;
+            foreach ($g['rows'] as $r) {
+                $cat = self::category($r);
+                $gross[$div][$cat] = ($gross[$div][$cat] ?? 0) + self::n($r, 'total_earnings');
+                $count[$div][$cat] = ($count[$div][$cat] ?? 0) + 1;
+                $cpf[$div][$cat === 'CONTRACT' ? 'CONTRACT' : 'CIRT'] = ($cpf[$div][$cat === 'CONTRACT' ? 'CONTRACT' : 'CIRT'] ?? 0) + self::n($r, 'cpf_amount');
+                $grp = self::payGroup((int) ($r['pay_level'] ?? 0));
+                if ($grp !== null) $level[$div][$grp][$cat] = ($level[$div][$grp][$cat] ?? 0) + self::n($r, 'total_earnings');
+            }
         }
-        $divisions = self::DIVISION_ROWS;
-        if ($unmapped !== []) $divisions[] = self::UNMAPPED;
 
-        $wb = new Spreadsheet;
-        // Sheet 1: Division
-        $ws = $wb->getActiveSheet()->setTitle('Division');
+        // Sheet 2: Division (gross by category)
+        $ws = $wb->createSheet()->setTitle('Division');
         $ws->setCellValue('A1', 'Salary Details for '.$month)->setCellValue('A2', 'Gross Salary');
         $this->sheetHeader($ws, 3, ['PARTICULAR', ...self::CATEGORIES, 'CPF EMPLOYER CONTR.']);
         $ws->setCellValue('H4', 'CIRT')->setCellValue('I4', 'CONTRACT');
@@ -363,38 +533,31 @@ final class PostPayrollDownloadService
         $ws->setCellValue('A'.($tot + 1), 'GRAND TOTAL')->setCellValue('B'.($tot + 1), "=B{$tot}+C{$tot}+D{$tot}+E{$tot}+F{$tot}+G{$tot}");
         $ws->getStyle("A{$tot}:I".($tot + 1))->getFont()->setBold(true);
         $ws->getStyle("B{$r0}:I".($tot + 1))->getNumberFormat()->setFormatCode('#,##0');
-        if ($unmapped !== []) {
-            $ws->setCellValue('A'.($tot + 3), 'Unmapped Master divisions (no report group configured): '.implode('; ', array_keys($unmapped)));
-        }
-        SpreadsheetLayout::finish($ws, ['header_row' => 3, 'last_header_row' => 4, 'freeze' => 'B5', 'landscape' => true, 'fit_width' => true]);
+        SpreadsheetLayout::finish($ws, ['header_row' => 3, 'last_header_row' => 4, 'freeze' => 'B5', 'landscape' => true, 'fit_width' => true, 'wrap_columns' => ['A']]);
 
-        // Sheet 2: Count
+        // Sheet 3: Count
         $cs = $wb->createSheet()->setTitle('Count');
         $cs->setCellValue('A2', 'NO OF EMPLOYEES WORKING IN CIRT FOR THE MONTH OF '.$month);
         $countCats = ['CIRT', 'ITI', 'CONSULTANT', 'CONTRACT'];
         $this->sheetHeader($cs, 4, ['PARTICULAR', 'CIRT', 'ITI/BOAT', 'CONSULTANT', 'CONTRACT']);
-        $countDivs = ['ERC', 'SHD', 'BNCAP', 'TRNG/MDC', 'CONSULTANCY', 'ADMINSTRAION', 'CYBERSECURITY'];
-        if ($unmapped !== []) $countDivs[] = self::UNMAPPED;
-        foreach ($countDivs as $i => $div) {
+        foreach ($divisions as $i => $div) {
             $row = 5 + $i;
             $cs->setCellValue("A{$row}", $div);
             foreach ($countCats as $c => $cat) $cs->setCellValue(Coordinate::stringFromColumnIndex($c + 2).$row, $count[$div][$cat] ?? 0);
         }
-        $cl = 4 + count($countDivs);
+        $cl = 4 + count($divisions);
         $cs->setCellValue('A'.($cl + 2), 'TOTAL');
         foreach (['B', 'C', 'D', 'E'] as $col) $cs->setCellValue("{$col}".($cl + 2), "=SUM({$col}5:{$col}{$cl})");
         $cs->getStyle('A'.($cl + 2).':E'.($cl + 2))->getFont()->setBold(true);
-        SpreadsheetLayout::finish($cs, ['header_row' => 4, 'freeze' => 'B5', 'landscape' => true, 'fit_width' => true]);
+        SpreadsheetLayout::finish($cs, ['header_row' => 4, 'freeze' => 'B5', 'landscape' => true, 'fit_width' => true, 'wrap_columns' => ['A']]);
 
-        // Sheet 3: Pay Level
+        // Sheet 4: Pay Level
         $ps = $wb->createSheet()->setTitle('Pay Level');
         $ps->setCellValue('A2', 'Salary Details for '.$month)->setCellValue('A4', 'Gross Salary');
         $this->sheetHeader($ps, 6, ['DIVISION', 'Group', ...array_slice(self::CATEGORIES, 0, 6)]);
-        $plDivs = ['ERC', 'SHD', 'TRNG/MDC', 'CONSULTANCY', 'ADMINSTRAION', 'BNCAP', 'CYBERSECURITY'];
-        if ($unmapped !== []) $plDivs[] = self::UNMAPPED;
         $row = 8;
         $divTotals = [];
-        foreach ($plDivs as $div) {
+        foreach ($divisions as $div) {
             $ps->setCellValue("A{$row}", $div);
             $firstRow = $row;
             foreach (array_keys(self::PAY_GROUPS) as $grp) {
@@ -409,14 +572,13 @@ final class PostPayrollDownloadService
             $row++;
         }
         $ps->setCellValue("A{$row}", 'TOTAL');
-        foreach (range('C', 'H') as $col) $ps->setCellValue("{$col}{$row}", '='.implode('+', array_map(fn ($t) => "{$col}{$t}", $divTotals)));
+        foreach (range('C', 'H') as $col) $ps->setCellValue("{$col}{$row}", $divTotals === [] ? 0 : '='.implode('+', array_map(fn ($t) => "{$col}{$t}", $divTotals)));
         $ps->setCellValue('A'.($row + 1), 'GRAND TOTAL')->setCellValue('C'.($row + 1), "=C{$row}+D{$row}+E{$row}+F{$row}+G{$row}+H{$row}");
         $ps->getStyle("A{$row}:H".($row + 1))->getFont()->setBold(true);
         $ps->getStyle("C8:H".($row + 1))->getNumberFormat()->setFormatCode('#,##0');
-        SpreadsheetLayout::finish($ps, ['header_row' => 6, 'last_header_row' => 7, 'freeze' => 'C8', 'landscape' => true, 'fit_width' => true]);
-
-        return $wb;
+        SpreadsheetLayout::finish($ps, ['header_row' => 6, 'last_header_row' => 7, 'freeze' => 'C8', 'landscape' => true, 'fit_width' => true, 'wrap_columns' => ['A']]);
     }
+
 
     // ---------------------------------------------------------------- TDS
 
