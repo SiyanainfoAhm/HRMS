@@ -332,6 +332,43 @@ final class EmployeePayrollExportLongFormatTest extends TestCase
         $this->assertSame(2, $selected->getActiveSheet()->getHighestDataRow() - 2); // two rows plus the totals row
     }
 
+    public function test_year_and_day_counts_have_no_thousands_separator_and_headers_match_the_preview(): void
+    {
+        $period = $this->period('june', '2026-06-01', 'June 2026 (through day 30)');
+        $gov = $this->snapshot('employee-1', 1, [], []);
+        $gov->forceFill(['pay_level' => 10, 'days_in_month' => 30]);
+        $masters = ['employee-1' => ['employeeCode' => '001', 'name' => 'Ram', 'dateOfJoining' => '2012-07-01', 'dateOfBirth' => '1990-05-15']];
+        $custom = ['earnings' => ['', '0'], 'deductions' => []]; // blank / numeric custom labels must not become headers
+
+        $svc = $this->service();
+        $table = $svc->buildTable([$period], ['june' => [$gov]], $masters, [], [], $custom);
+        $sheet = $svc->buildSpreadsheet([$period], ['june' => [$gov]], $masters, [], [], $custom);
+        $path = tempnam(sys_get_temp_dir(), 'cirt-export-');
+        try {
+            (new Xlsx($sheet))->save($path);
+            $ws = IOFactory::load($path)->getActiveSheet();
+        } finally {
+            @unlink($path);
+        }
+
+        $row1 = [];
+        for ($c = 1, $max = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::columnIndexFromString($ws->getHighestDataColumn()); $c <= $max; $c++) {
+            $row1[] = $ws->getCell([$c, 1])->getValue();
+        }
+        $this->assertSame($table['headers'], $row1, 'the preview headers are exactly the Excel headers');
+        $this->assertSame([], SpreadsheetLayout::badHeaders($row1), 'no blank, null, 0 or numeric header');
+        $this->assertSame([], SpreadsheetLayout::auditHeaders($ws->getParent(), ['Employee Payroll' => 1]));
+
+        foreach (['Year' => '2026', 'Pay Level' => '10', 'Through Day' => '30'] as $header => $shown) {
+            $coord = SpreadsheetLayout::columnsByHeader($ws, 1, [$header])[0].'2';
+            $this->assertSame('0', $ws->getStyle($coord)->getNumberFormat()->getFormatCode(), "{$header} format");
+            $this->assertSame($shown, $ws->getCell($coord)->getFormattedValue(), $header);
+        }
+        $this->assertSame(2026, (int) $ws->getCell(SpreadsheetLayout::columnsByHeader($ws, 1, ['Year'])[0].'2')->getValue());
+        // Money columns keep their format.
+        $this->assertSame(SpreadsheetLayout::FORMAT_AMOUNT, $ws->getStyle(SpreadsheetLayout::columnsByHeader($ws, 1, ['Basic Paid'])[0].'2')->getNumberFormat()->getFormatCode());
+    }
+
     public function test_service_source_no_longer_builds_wide_month_headers(): void
     {
         $path = dirname(__DIR__, 2).'/app/Services/EmployeePayrollExportService.php';

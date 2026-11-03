@@ -209,6 +209,7 @@ class EmployeePayrollExportService
         ?array $employeeUserIdSet = null,
     ): array {
         $headers = $this->buildHeaders($customKeys);
+        SpreadsheetLayout::assertHeaders($headers, 'Export Employee Payroll');
         $skipSum = array_keys(array_intersect($headers, ['Electricity Units']));
         $amountCols = array_values(array_diff($this->amountColumnIndexes($headers, $customKeys), $skipSum));
         $items = [];
@@ -743,9 +744,9 @@ class EmployeePayrollExportService
 
     private function customHeaderLabel(string $key): string
     {
-        $key = trim($key);
-        if ($key === '') {
-            return 'Custom Field';
+        $key = SpreadsheetLayout::safeHeader($key, 'Custom Field'); // blank or numeric labels never become a header
+        if ($key === 'Custom Field') {
+            return $key;
         }
         // Avoid recreating month-prefixed headers.
         if (preg_match('/^.+\s+-\s+.+$/', $key)) {

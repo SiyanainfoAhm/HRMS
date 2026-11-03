@@ -15,10 +15,12 @@ import {
   type PayrollRunExportRow,
 } from "@/lib/payrollRunWorkbook";
 import * as XLSX from "xlsx-js-style";
+import { assertExportHeaders } from "@/lib/exportHeaderGuard";
 import {
   applyBodyCellStyle,
   applyColumnHeaderStyle,
   applyCurrencyCellStyle,
+  applyIdentifierCellStyle,
   applyIntegerCellStyle,
   applyMetaStyle,
   applyReportTitleStyle,
@@ -159,6 +161,7 @@ function buildFinalizedDetailSheet(opts: {
   status: "Finalized" | "Draft";
 }): XLSX.WorkSheet {
   const { excelHeaders: headers, rowObjects, month, year } = opts;
+  assertExportHeaders(headers, "Run Payroll finalized export");
   const amountCols = new Set(payrollExcelAmountColumnIndices(headers));
   const ws = XLSX.utils.aoa_to_sheet([]) as XLSX.WorkSheet;
   const merges: Array<{ s: { r: number; c: number }; e: { r: number; c: number } }> = [];
@@ -220,7 +223,9 @@ function buildFinalizedDetailSheet(opts: {
         const style = applyBodyCellStyle({ align: "left", alt });
         style.numFmt = "@";
         write(excelRow, c, acct, style);
-      } else if (h === "PayDays" || h === "PayLevel" || h === "NightHours" || h === "ElectricityUnits") {
+      } else if (h === "PayDays" || h === "PayLevel") {
+        write(excelRow, c, num(raw), applyIdentifierCellStyle()); // day count / level: format '0', no thousands separator
+      } else if (h === "NightHours" || h === "ElectricityUnits") {
         write(excelRow, c, num(raw), applyIntegerCellStyle());
       } else {
         write(excelRow, c, value, applyBodyCellStyle({ align: "left", alt }));

@@ -317,7 +317,10 @@ function customAmount(raw: unknown, key: string): number {
 }
 
 /** A custom column named like a fixed column or another custom column gets "(Custom)" so no two headers match. */
-function uniqueExcelLabel(label: string, cols: DynamicPayrollExcelColumn[]): string {
+function uniqueExcelLabel(rawLabel: string, cols: DynamicPayrollExcelColumn[]): string {
+  // A blank or numeric label (e.g. "0") must never become a header: see exportHeaderGuard.
+  const trimmed = String(rawLabel ?? "").trim();
+  const label = trimmed === "" || Number.isFinite(Number(trimmed)) ? "Custom Field" : trimmed;
   const taken = new Set([...PAYROLL_EXCEL_HEADER, ...cols.map((c) => c.label)].map((h) => String(h).toLowerCase()));
   return taken.has(label.toLowerCase()) ? `${label} (Custom)` : label;
 }

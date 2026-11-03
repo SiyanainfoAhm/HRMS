@@ -218,12 +218,13 @@ final class PostPayrollDownloadService
 
     // ---------------------------------------------------------------- helpers
 
-    private function sheetHeader(Worksheet $ws, int $row, array $headers): void
+    private function sheetHeader(Worksheet $ws, int $row, array $headers, int $startCol = 1): void
     {
+        SpreadsheetLayout::assertHeaders($headers, $ws->getTitle().' row '.$row);
         foreach ($headers as $i => $h) {
-            $ws->setCellValue([$i + 1, $row], $h);
+            $ws->setCellValue([$startCol + $i, $row], $h);
         }
-        $range = 'A'.$row.':'.Coordinate::stringFromColumnIndex(count($headers)).$row;
+        $range = Coordinate::stringFromColumnIndex($startCol).$row.':'.Coordinate::stringFromColumnIndex($startCol + count($headers) - 1).$row;
         $ws->getStyle($range)->getFont()->setBold(true);
         $ws->getStyle($range)->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setRGB('D9D9D9');
         $ws->getStyle($range)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER)->setWrapText(true);
@@ -300,7 +301,7 @@ final class PostPayrollDownloadService
         }
         $ws->getStyle("A{$grand}:P{$grand}")->getFont()->setBold(true);
         $s = $grand + 3;
-        $this->sheetHeader($ws, $s, ['', 'SL', 'PARTICULAR', 'AMOUNT']);
+        $this->sheetHeader($ws, $s, ['SL', 'PARTICULAR', 'AMOUNT'], 2); // the summary table starts in column B: no blank header cell in A
         $ws->setCellValue('B'.($s + 1), 1)->setCellValue('C'.($s + 1), 'Employers P F Contribution')->setCellValue('D'.($s + 1), "=M{$grand}");
         $ws->setCellValue('B'.($s + 2), 2)->setCellValue('C'.($s + 2), 'CPF Recovery')->setCellValue('D'.($s + 2), "=O{$grand}+P{$grand}");
         $ws->setCellValue('B'.($s + 3), 3)->setCellValue('C'.($s + 3), 'VPF Recovery')->setCellValue('D'.($s + 3), "=N{$grand}");
@@ -309,6 +310,7 @@ final class PostPayrollDownloadService
         $ws->getStyle('C'.($s + 5).':D'.($s + 5))->getFont()->setBold(true);
         $ws->setCellValue('A'.($s + 7), 'Put up for approval for remittance to ASRTU CPF Trust')->getStyle('A'.($s + 7))->getFont()->setBold(true);
         $ws->getStyle("E5:P{$grand}")->getNumberFormat()->setFormatCode('#,##0');
+        $ws->getStyle("F5:F{$grand}")->getNumberFormat()->setFormatCode(SpreadsheetLayout::FORMAT_ID); // NCP DAYS: a day count, no separator
         SpreadsheetLayout::finish($ws, [
             'header_row' => 4, 'last_header_row' => $s, 'freeze' => 'D5', 'autofilter' => 'A4:P'.($grand - 1),
             'landscape' => true, 'fit_width' => true,
@@ -344,6 +346,7 @@ final class PostPayrollDownloadService
         $ws->setCellValue('A1', 'Salary Details for '.$month)->setCellValue('A2', 'Gross Salary');
         $this->sheetHeader($ws, 3, ['PARTICULAR', ...self::CATEGORIES, 'CPF EMPLOYER CONTR.']);
         $ws->setCellValue('H4', 'CIRT')->setCellValue('I4', 'CONTRACT');
+        $ws->mergeCells('H3:I3'); // "CPF EMPLOYER CONTR." spans both sub-columns, so I3 is not a blank header
         $r0 = 5;
         foreach ($divisions as $i => $div) {
             $row = $r0 + $i;
@@ -420,14 +423,14 @@ final class PostPayrollDownloadService
     public const TDS_COLUMNS = [
         'EX_CODE', 'First Name', 'Middel Name', 'Last Name', 'PAN', 'Birth Date', 'Sex', 'Date of Joining', 'Designation',
         'Address1', 'Address2', 'Address3', 'Address4', 'Address5', 'Pin', 'State', 'Telephone no.', 'YYYYMM',
-        'BASIC+DP', 'DA+DA ARRS', 'MEDICAL REIMBURSEMENT', 'SP PAY', 'FP PAY', 'MEDICAL', 'OT ALLOWANCE', '0',
+        'BASIC+DP', 'DA+DA ARRS', 'MEDICAL REIMBURSEMENT', 'SP PAY', 'FP PAY', 'MEDICAL', 'OT ALLOWANCE',
         'ENCASHMENT+ENCA DA', 'EX-GRATIA', 'HON+TUITION FEE+CASH', 'PERKS', 'WASH ALLOW', 'GRATUITY', 'INCENTIVE',
         'Total Arrears', 'HRA', 'Conveyance(Taxable)', 'Professional Tax', 'Provident Fund', 'Tax Deducted', 'Insurance',
         'Group Insurance', 'Conveyance', 'Washing Allowance', 'Leave Encashment',
     ];
 
-    /** Row-1 labels over columns S.. (ADD1..ADD15, TR, HRA, CT, PT, PF, TDS, DED1, GI, US101, US102, US103). */
-    public const TDS_TOP = ['ADD1', 'ADD2', 'ADD3', 'ADD4', 'ADD5', 'ADD6', 'ADD7', 'ADD8', 'ADD9', 'ADD10', 'ADD11', 'ADD12', 'ADD13', 'ADD14', 'ADD15', 'TR', 'HRA', 'CT', 'PT', 'PF', 'TDS', 'DED1', 'GI', 'US101', 'US102', 'US103'];
+    /** Index of the first money column (BASIC+DP); the identity columns A..R (through YYYYMM) come before it. */
+    public const TDS_FIRST_MONEY = 18;
 
     /** @return array{0: string, 1: string, 2: string} first, middle, last */
     public static function splitName(string $full): array
@@ -438,7 +441,7 @@ final class PostPayrollDownloadService
         return [$parts[0], implode(' ', array_slice($parts, 1, -1)), $parts[count($parts) - 1]];
     }
 
-    /** @return list<float|string|null> the 44 TDS values of one monthly row */
+    /** @return list<float|string|null> the 43 TDS values of one monthly row (same order as TDS_COLUMNS) */
     public function tdsValues(array $r): array
     {
         $m = $r['_master'];
@@ -459,7 +462,7 @@ final class PostPayrollDownloadService
             $u['current_state'] ?? '', $u['current_country'] ?? '', $u['current_postal_code'] ?? '', $u['current_state'] ?? '',
             $m['phone'] ?? $u['phone'] ?? '', $r['_ym'],
             self::n($r, 'basic_paid'), self::n($r, 'da_paid') + self::n($r, 'da_arrears_paid'), null, self::n($r, 'sp_pay_paid'), null,
-            self::n($r, 'medical_paid'), self::n($r, 'extra_work_allowance_paid') + $custom['OT ALLOWANCE'], 0.0,
+            self::n($r, 'medical_paid'), self::n($r, 'extra_work_allowance_paid') + $custom['OT ALLOWANCE'],
             self::n($r, 'encashment_paid') + self::n($r, 'encashment_da_paid') + $custom['ENCASHMENT+ENCA DA'], null, self::n($r, 'education_allowance_paid'), $custom[self::TDS_CUSTOM_FALLBACK] ?: null,
             self::n($r, 'uniform_allowance_paid'), null, null,
             // DA arrears already sit in DA+DA ARRS, so Total Arrears = transport arrears + the gross-only remainder.
@@ -484,12 +487,14 @@ final class PostPayrollDownloadService
     public function tdsTable(array $rows, ?array $extras = null): array
     {
         $headers = self::TDS_COLUMNS;
-        $money = range(18, 43);
+        $base = count(self::TDS_COLUMNS);
+        $money = range(self::TDS_FIRST_MONEY, $base - 1);
         $layout = $extras === null ? [] : self::tdsExtraLayout($extras);
         if ($extras !== null) {
             $headers = array_merge($headers, array_column($layout, 'label'));
-            $money = array_merge($money, range(46, count($headers) - 1));
+            $money = array_merge($money, range($base + 2, count($headers) - 1)); // after Month and Year
         }
+        SpreadsheetLayout::assertHeaders($headers, 'TDS Data');
         $table = [];
         $sums = array_fill_keys($money, 0.0);
         foreach ($rows as $r) {
@@ -537,6 +542,7 @@ final class PostPayrollDownloadService
     {
         $taken = array_merge(self::TDS_COLUMNS, ['Month', 'Year', 'Total Earnings', 'Total Deductions', 'Net Pay']);
         $unique = function (string $label) use (&$taken): string {
+            $label = SpreadsheetLayout::safeHeader($label, 'Custom Field');
             if (in_array($label, $taken, true)) $label .= ' (Custom)';
             $taken[] = $label;
 
@@ -558,15 +564,15 @@ final class PostPayrollDownloadService
         $t = $this->tdsTable($rows, $extras);
         $wb = new Spreadsheet;
         $ws = $wb->getActiveSheet()->setTitle('TDS_DATA');
-        foreach (self::TDS_TOP as $i => $label) $ws->setCellValue([19 + $i, 1], $label);
-        foreach ($t['headers'] as $i => $label) $ws->setCellValue([$i + 1, 2], $label);
+        // Row 1 is the header row (the old ADD1..US103 code row is gone); data starts in row 2.
+        foreach ($t['headers'] as $i => $label) $ws->setCellValue([$i + 1, 1], $label);
         $lastCol = Coordinate::stringFromColumnIndex(count($t['headers']));
-        $ws->getStyle('A1:'.$lastCol.'2')->getFont()->setBold(true);
-        $line = 3;
+        $ws->getStyle('A1:'.$lastCol.'1')->getFont()->setBold(true);
+        $line = 2;
         foreach ($t['rows'] as $values) {
             foreach ($values as $i => $v) {
                 if ($v === null || $v === '') continue;
-                if (in_array($i, [4, 14, 16], true)) {
+                if (in_array($i, [0, 4, 14, 16], true)) { // EX_CODE, PAN, Pin, Telephone: identifiers stay text
                     $ws->setCellValueExplicit([$i + 1, $line], (string) $v, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
                 } else {
                     $ws->setCellValue([$i + 1, $line], $v);
@@ -575,7 +581,7 @@ final class PostPayrollDownloadService
             $line++;
         }
         $lastData = $line - 1;
-        if ($line > 3) $ws->getStyle('R3:R'.$lastData)->getNumberFormat()->setFormatCode('0'); // YYYYMM: no thousands separator
+        // YYYYMM and Year get format '0' from SpreadsheetLayout::finish() (header-based identifier rule): no thousands separator.
         if ($extras !== null && $t['rows'] !== []) {
             // Totals row: real numeric cells, bold, outside the filter range so sorting never moves it.
             foreach ($t['totals'] as $i => $v) {
@@ -585,9 +591,10 @@ final class PostPayrollDownloadService
             $ws->getStyle('A'.$line.':'.$lastCol.$line)->getFont()->setBold(true);
         }
         SpreadsheetLayout::finish($ws, [
-            'header_row' => 2, 'freeze' => 'B3', 'autofilter' => $extras === null ? true : 'A2:'.$lastCol.max(2, $lastData),
+            // Freeze the header row and the identity columns A..D (EX_CODE + the three name columns).
+            'header_row' => 1, 'freeze' => 'E2', 'autofilter' => $extras === null ? true : 'A1:'.$lastCol.max(1, $lastData),
             'date_columns' => ['F' => SpreadsheetLayout::FORMAT_DATE_US, 'H' => SpreadsheetLayout::FORMAT_DATE_US],
-            'text_columns' => ['E', 'O', 'Q'], 'amount_columns' => array_map(fn ($i) => Coordinate::stringFromColumnIndex($i + 1), $t['moneyColumns']),
+            'text_columns' => ['A', 'E', 'O', 'Q'], 'amount_columns' => array_map(fn ($i) => Coordinate::stringFromColumnIndex($i + 1), $t['moneyColumns']),
             'wrap_columns' => ['I', 'J', 'K', 'L', 'M', 'N'],
         ]);
 
@@ -614,7 +621,7 @@ final class PostPayrollDownloadService
             array_push($vals, self::n($r, 'total_earnings'), self::n($r, 'total_deductions'), self::n($r, 'net_salary'), $r['leave_remarks'] ?? '');
             foreach ($vals as $c => $v) {
                 if ($v === null || $v === '') continue;
-                if ($c === 3) $ws->setCellValueExplicit([$c + 1, $line], (string) $v, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING); // CPF No. stays text
+                if ($c === 2 || $c === 3) $ws->setCellValueExplicit([$c + 1, $line], (string) $v, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING); // Emp.Code and CPF No. stay text
                 else $ws->setCellValue([$c + 1, $line], $v);
             }
             $line++;

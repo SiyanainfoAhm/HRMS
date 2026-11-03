@@ -6,6 +6,7 @@ import * as XLSX from "xlsx-js-style";
 import type { BankLetterEmployeePayload } from "@/lib/payrollBankLetter";
 import { formatPayrollMonthYear } from "@/lib/payrollDownloadFilenames";
 import { contentColumnWidths } from "@/lib/payrollExcelStyles";
+import { assertExportHeaders } from "@/lib/exportHeaderGuard";
 
 export type BankLetterExportFormat = "docx" | "xlsx" | "pdf";
 
@@ -104,12 +105,14 @@ export function buildBankLetterExcelBlob(
     alignment: { horizontal: "right", vertical: "center" },
   };
 
+  const headerLabels = ["Sr No", "Employee ID", "Employee Name", "Account Number", "Amount (Rs.)"];
+  assertExportHeaders(headerLabels, "Bank Letter");
   const rows: unknown[][] = [
     ["BANK SALARY LETTER"],
     [`DATE: ${letterDate}`],
     [`Salary for the month of ${salaryMonth}`],
     [],
-    ["Sr No", "Employee ID", "Employee Name", "Account Number", "Amount (Rs.)"],
+    headerLabels,
   ];
 
   employees.forEach((e, i) => {
@@ -152,6 +155,9 @@ export function buildBankLetterExcelBlob(
         const cell = ws[`${col}${r}`];
         if (cell && typeof cell === "object") Object.assign(cell, { s: textStyle });
       }
+      // Sr No is a plain serial: format '0', never a thousands separator.
+      const sr = ws[`A${r}`];
+      if (sr && typeof sr === "object") Object.assign(sr, { t: "n", z: "0" });
       const amt = ws[`E${r}`];
       if (amt && typeof amt === "object") Object.assign(amt, { t: "n", z: INDIAN_AMOUNT_FORMAT, s: amountStyle });
     });

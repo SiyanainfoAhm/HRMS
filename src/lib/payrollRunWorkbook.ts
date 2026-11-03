@@ -12,12 +12,14 @@ import {
   type GovernmentMonthlyRow,
 } from "@/lib/payrollExcelExport";
 import type { GovernmentMonthlyComputed } from "@/lib/governmentPayroll";
+import { assertExportHeaders } from "@/lib/exportHeaderGuard";
 import {
   applyBodyCellStyle,
   applyColumnHeaderStyle,
   applyCurrencyCellStyle,
   applyFinalNetCurrencyStyle,
   applyFinalNetRowStyle,
+  applyIdentifierCellStyle,
   applyIntegerCellStyle,
   applyMetaStyle,
   applyReportTitleStyle,
@@ -699,6 +701,7 @@ export function buildEmployeeDetailSheet(
     fieldGroupByKey,
   );
   const headers = buildPayrollExcelHeaders(dynamicCols);
+  assertExportHeaders(headers, "Run Payroll Preview Excel / Extract");
   const amountCols = new Set(payrollExcelAmountColumnIndices(headers));
 
   const banner =
@@ -804,7 +807,9 @@ export function buildEmployeeDetailSheet(
         const style = applyBodyCellStyle({ align: "left", alt });
         style.numFmt = "@";
         cell(ws, excelRow, c, acct, style);
-      } else if (h === "PayDays" || h === "PayLevel" || h === "NightHours" || h === "ElectricityUnits") {
+      } else if (h === "PayDays" || h === "PayLevel") {
+        cell(ws, excelRow, c, num(raw), applyIdentifierCellStyle()); // day count / level: format '0', no thousands separator
+      } else if (h === "NightHours" || h === "ElectricityUnits") {
         cell(ws, excelRow, c, num(raw), applyIntegerCellStyle());
       } else {
         cell(ws, excelRow, c, value, applyBodyCellStyle({ align: "left", alt }));

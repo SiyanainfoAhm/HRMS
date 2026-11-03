@@ -47,7 +47,10 @@ export const PAYROLL_EXCEL_FONT = "Calibri";
 
 /** Numeric rupee format. Excel applies locale grouping; Indian grouping is not portable. */
 export const INR_NUM_FMT = `"₹"${MONEY_EXCEL_FORMAT}`;
+/** Counts / quantities that may be large: grouped, no decimals. */
 export const INT_NUM_FMT = "#,##0";
+/** Plain whole-number identifiers (Year, YYYYMM, codes, pay days, pay level): never a thousands separator. */
+export const ID_NUM_FMT = "0";
 
 export const COLORS = {
   black: "000000",
@@ -213,6 +216,11 @@ export function applyIntegerCellStyle(opts?: { bold?: boolean; fill?: string }):
       ? { fill: { patternType: "solid" as const, fgColor: { rgb: opts.fill } } }
       : {}),
   };
+}
+
+/** Like applyIntegerCellStyle but for identifiers and day counts: format '0', so 2026 is never "2,026". */
+export function applyIdentifierCellStyle(opts?: { bold?: boolean; fill?: string }): XlsxCellStyle {
+  return { ...applyIntegerCellStyle(opts), numFmt: ID_NUM_FMT };
 }
 
 export function applyStatusBannerStyle(kind: "preview" | "draft" | "final"): XlsxCellStyle {

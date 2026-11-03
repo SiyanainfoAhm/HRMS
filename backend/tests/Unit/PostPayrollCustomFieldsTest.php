@@ -65,7 +65,7 @@ final class PostPayrollCustomFieldsTest extends TestCase
         $this->assertSame(869.0, $col('ENCASHMENT+ENCA DA'));
         $this->assertSame(100.0, $col('OT ALLOWANCE'));
         $this->assertSame(200.0, $col('PERKS'), 'unmapped custom earning (special_allowance) is kept, not dropped');
-        $earnings = ['BASIC+DP', 'DA+DA ARRS', 'MEDICAL REIMBURSEMENT', 'SP PAY', 'FP PAY', 'MEDICAL', 'OT ALLOWANCE', '0', 'ENCASHMENT+ENCA DA', 'EX-GRATIA', 'HON+TUITION FEE+CASH', 'PERKS', 'WASH ALLOW', 'GRATUITY', 'INCENTIVE', 'Total Arrears', 'HRA', 'Conveyance(Taxable)'];
+        $earnings = ['BASIC+DP', 'DA+DA ARRS', 'MEDICAL REIMBURSEMENT', 'SP PAY', 'FP PAY', 'MEDICAL', 'OT ALLOWANCE', 'ENCASHMENT+ENCA DA', 'EX-GRATIA', 'HON+TUITION FEE+CASH', 'PERKS', 'WASH ALLOW', 'GRATUITY', 'INCENTIVE', 'Total Arrears', 'HRA', 'Conveyance(Taxable)'];
         $sum = 0.0;
         foreach ($earnings as $name) $sum += (float) ($values[array_search($name, PostPayrollDownloadService::TDS_COLUMNS, false)] ?? 0);
         $this->assertEqualsWithDelta((float) $row['total_earnings'], $sum, 0.01, 'TDS earning columns = total earnings');

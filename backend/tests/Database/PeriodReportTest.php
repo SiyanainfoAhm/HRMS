@@ -103,12 +103,12 @@ final class PeriodReportTest extends DatabaseTestCase
         $rows = [$this->row('001', '2026-05', 1000), $this->row('002', '2026-05', 2000)];
         $before = $this->tds()->tdsTable($rows, null);
         $after = $this->tds()->tdsTable($rows, $this->extras());
-        $this->assertCount(44, $before['headers']);
-        $this->assertSame($before['headers'], array_slice($after['headers'], 0, 44));
+        $this->assertCount(43, $before['headers']);
+        $this->assertSame($before['headers'], array_slice($after['headers'], 0, 43));
         foreach ($rows as $i => $_) {
-            $this->assertSame($before['rows'][$i], array_slice($after['rows'][$i], 0, 44), 'the 44 TDS values are unchanged');
+            $this->assertSame($before['rows'][$i], array_slice($after['rows'][$i], 0, 43), 'the 43 TDS values are unchanged');
         }
-        $this->assertSame(['Month', 'Year'], array_slice($after['headers'], 44, 2));
+        $this->assertSame(['Month', 'Year'], array_slice($after['headers'], 43, 2));
     }
 
     public function test_month_list_parsing_and_file_name_range(): void
@@ -198,10 +198,10 @@ final class PeriodReportTest extends DatabaseTestCase
 
         $this->assertSame(
             ['Month', 'Year', 'Alpha Earn', 'Arrears', 'HRA (Custom)', 'Total Earnings', 'Beta Ded', 'GPF', 'Total Deductions', 'Net Pay'],
-            array_slice($t['headers'], 44),
+            array_slice($t['headers'], 43),
             'Month | Year | custom earnings | Total Earnings | custom deductions | Total Deductions | Net Pay',
         );
-        $this->assertSame(PostPayrollDownloadService::TDS_COLUMNS, array_slice($t['headers'], 0, 44), 'the 44 TDS columns keep their order');
+        $this->assertSame(PostPayrollDownloadService::TDS_COLUMNS, array_slice($t['headers'], 0, 43), 'the 43 TDS columns keep their order');
         $h = array_flip($t['headers']);
         $this->assertSame(1010.0, $t['rows'][0][$h['Total Earnings']]);
         $this->assertSame(10.0, $t['rows'][0][$h['Alpha Earn']]);
@@ -303,18 +303,18 @@ final class PeriodReportTest extends DatabaseTestCase
         $this->assertSame($table['headers'], $excel, 'preview headers equal the Excel headers');
         $this->assertSame('Total', $sheet->getCell([1, $sheet->getHighestRow()])->getValue(), 'bottom totals row');
 
-        // TDS Data: the 44 legacy columns, then the grouped tail.
+        // TDS Data: the 43 legacy columns, then the grouped tail.
         $tds = new PostPayrollDownloadService;
         $rows = $tds->rowsForMonths($company, [$month]);
         $extras = $periods->customColumns($company, array_map(fn ($r) => [$r['custom_earnings'], $r['custom_deductions']], $rows));
         $t = $tds->tdsTable($rows, $extras);
         $layout = PostPayrollDownloadService::tdsExtraLayout($extras);
-        $groups = array_merge(array_fill(0, 44, 'identity'), array_map(fn ($c) => match ($c['kind']) {
+        $groups = array_merge(array_fill(0, 43, 'identity'), array_map(fn ($c) => match ($c['kind']) {
             'month', 'year' => 'info', 'earning' => 'earning', 'total_earnings' => 'total_earnings',
             'deduction' => 'deduction', 'total_deductions' => 'total_deductions', 'net' => 'net',
         }, $layout));
-        $tail = array_slice($t['headers'], 44);
-        $tailGroups = array_slice($groups, 44);
+        $tail = array_slice($t['headers'], 43);
+        $tailGroups = array_slice($groups, 43);
         $te = array_search('total_earnings', $tailGroups, true);
         $td = array_search('total_deductions', $tailGroups, true);
         foreach ($tailGroups as $i => $g) {

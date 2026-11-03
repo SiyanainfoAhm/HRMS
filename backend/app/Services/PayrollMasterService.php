@@ -1593,7 +1593,8 @@ final class PayrollMasterService
         $activeSheet = $sheet->getActiveSheet();
         $activeSheet->setTitle('Payroll Master');
         $columns = $this->masterExportColumnDefs();
-        $headers = array_map(fn (array $col) => $col['header'], $columns);
+        $headers = array_map(fn (array $col) => SpreadsheetLayout::safeHeader($col['header'], 'Field '.$col['key']), $columns);
+        SpreadsheetLayout::assertHeaders($headers, 'Export Master');
         $activeSheet->fromArray($headers, null, 'A1');
         $lastCol = Coordinate::stringFromColumnIndex(max(1, count($headers)));
         $activeSheet->getStyle('A1:'.$lastCol.'1')->getFont()->setBold(true);
