@@ -10,18 +10,22 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-import { ArrowLeft, ChevronDown, ClipboardList, Download, FileSpreadsheet, X } from "lucide-react";
+import { ArrowLeft, ChevronDown, ClipboardList, Download, FileSpreadsheet, FileText, Landmark, X } from "lucide-react";
 import { useToast } from "@/components/ToastProvider";
 import { PeriodMultiSelect } from "@/components/payroll/PeriodMultiSelect";
 import { PeriodReportPreview } from "@/components/payroll/PeriodReportPreview";
 import { cn } from "@/lib/cn";
 import { formatMonthLabel } from "@/lib/dateInputs";
 import {
+  bankFormatOf,
   buildPostPayrollMenu,
   menuKeyAction,
   monthKey,
   reportTypeOf,
   singleMonthChoice,
+  type BankLetterFormatId,
+  type MenuItem,
+  type MenuItemId,
   type MenuLayout,
   type PostPayrollMenuItem,
 } from "@/lib/downloadsMenuModel";
@@ -45,24 +49,30 @@ type Props = {
   runYear: string;
   canManage: boolean;
   running: boolean;
-  /** Test hooks: render open, force a layout, supply the generated months, pre-open one report's form. */
+  /** Nothing to export yet for the page month (the Bank Letter is built from the page month's payroll). */
+  exportDisabled?: boolean;
+  bankLetterLoading?: boolean;
+  /** Existing page function. It toasts its own result and resolves true when a file was saved. */
+  onBankLetter?: (format: BankLetterFormatId) => Promise<boolean>;
+  /** Test hooks: render open, force a layout, supply the generated months, pre-open one report's form or the bank formats. */
   defaultOpen?: boolean;
   forceLayout?: MenuLayout;
   initialPeriods?: ReportPeriod[];
   defaultReport?: PostPayrollReportType | null;
+  defaultBankFormats?: boolean;
   /** Render panels in place instead of a portal (server-render tests). */
   renderInline?: boolean;
 };
 
 /**
  * Run Payroll "Post-payroll reports" button + dropdown (next to Downloads): TDS Data, CPF / VPF Statement,
- * Division-Wise Salary and Paybill, listed directly. TDS Data opens the multi-month picker (with preview);
- * the single-month reports offer a month selector limited to generated months. Usable whenever ANY month has
- * a generated run.
+ * Division-Wise Salary, Paybill and Bank Letter, listed directly. TDS Data opens the multi-month picker (with
+ * preview); the single-month reports offer a month selector limited to generated months; Bank Letter offers its
+ * three formats for the page month. The reports are usable whenever ANY month has a generated run.
  */
 export function PostPayrollReportsMenu({
-  runMonth, runYear, canManage, running,
-  defaultOpen = false, forceLayout, initialPeriods, defaultReport = null, renderInline = false,
+  runMonth, runYear, canManage, running, exportDisabled = false, bankLetterLoading = false, onBankLetter,
+  defaultOpen = false, forceLayout, initialPeriods, defaultReport = null, defaultBankFormats = false, renderInline = false,
 }: Props) {
   const { showToast } = useToast();
   const ym = monthKey(runYear, runMonth);
@@ -72,6 +82,8 @@ export function PostPayrollReportsMenu({
   const [open, setOpen] = useState(defaultOpen);
   const [periods, setPeriods] = useState<ReportPeriod[] | null>(initialPeriods ?? null);
   const [report, setReport] = useState<PostPayrollReportType | null>(defaultReport);
+  const [bankView, setBankView] = useState(defaultBankFormats);
+  const [bankBusy, setBankBusy] = useState<MenuItemId | null>(null);
   const [singleYm, setSingleYm] = useState("");
   const [tdsMonths, setTdsMonths] = useState<string[]>([]);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -85,8 +97,8 @@ export function PostPayrollReportsMenu({
 
   const generatedMonths = useMemo(() => (periods ? periods.map((p) => p.ym) : null), [periods]);
   const model = useMemo(
-    () => buildPostPayrollMenu({ canManage, running, generatedMonths, ym }),
-    [canManage, running, generatedMonths, ym],
+    () => buildPostPayrollMenu({ canManage, running, exportDisabled, bankLetterLoading, generatedMonths, ym }),
+    [canManage, running, exportDisabled, bankLetterLoading, generatedMonths, ym],
   );
 
   const loadPeriods = useCallback(async () => {
@@ -112,6 +124,7 @@ export function PostPayrollReportsMenu({
   const closeAll = useCallback((returnFocus: boolean) => {
     setOpen(false);
     setReport(null);
+    setBankView(false);
     if (returnFocus) triggerRef.current?.focus();
   }, []);
 
@@ -119,6 +132,7 @@ export function PostPayrollReportsMenu({
     window.dispatchEvent(new CustomEvent(TOOLBAR_MENU_EVENT, { detail: MENU_ID }));
     setOpen(true);
     setReport(null);
+    setBankView(false);
     if (!initialPeriods) void loadPeriods();
   }, [initialPeriods, loadPeriods]);
 
@@ -152,20 +166,37 @@ export function PostPayrollReportsMenu({
   // Focus: the first report when the list opens, the Back button when a form opens.
   useEffect(() => {
     if (!open) return;
-    if (report) backRef.current?.focus();
+    if (report || bankView) backRef.current?.focus();
     else if (model) rowRefs.current.get(focusId ?? model.items[0].id)?.focus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, report]);
+  }, [open, report, bankView]);
 
   const choice = useMemo(() => singleMonthChoice(ym, generatedMonths ?? []), [ym, generatedMonths]);
 
   function chooseReport(item: PostPayrollMenuItem) {
     if (item.disabledReason) return;
+    if (item.flow === "bank-letter") {
+      setBankView(true);
+      return;
+    }
     const type = reportTypeOf(item.id);
     if (!type) return;
     if (item.flow === "multi-month") setTdsMonths(periods ? defaultSelection(periods, ym) : []);
     else setSingleYm(choice.selected);
     setReport(type);
+  }
+
+  async function runBank(item: MenuItem) {
+    const format = bankFormatOf(item.id);
+    if (!format || item.disabledReason || bankBusy || !onBankLetter) return;
+    setBankBusy(item.id);
+    try {
+      if (await onBankLetter(format)) closeAll(true);
+    } catch (err) {
+      showToast("error", err instanceof Error ? err.message : "Download failed.");
+    } finally {
+      setBankBusy(null);
+    }
   }
 
   async function download() {
@@ -199,7 +230,7 @@ export function PostPayrollReportsMenu({
       closeAll(true);
       return;
     }
-    if (report) return; // the form uses normal tab order
+    if (report || bankView) return; // the form and the bank formats use normal tab order
     const idx = rows.findIndex((r) => r.id === document.activeElement?.getAttribute("data-row-id"));
     const result = menuKeyAction("root", "item", rows.length, idx, e.key);
     if (result.type === "none") return;
@@ -216,7 +247,11 @@ export function PostPayrollReportsMenu({
 
   if (!model) return null;
 
-  const title = report ? rows.find((r) => r.id === `report-${report}`)?.label ?? "Report" : "Post-payroll reports";
+  const title = report
+    ? rows.find((r) => r.id === `report-${report}`)?.label ?? "Report"
+    : bankView
+      ? "Bank Letter"
+      : "Post-payroll reports";
   const inline = layout === "sheet";
 
   const list = (
@@ -229,8 +264,8 @@ export function PostPayrollReportsMenu({
           id={item.id}
           label={item.label}
           description={item.description}
-          tag="Excel"
-          icon={FileSpreadsheet}
+          tag={item.tag}
+          icon={item.flow === "bank-letter" ? Landmark : FileSpreadsheet}
           disabledReason={item.disabledReason}
           focusId={focusId ?? rows[0].id}
           inlineReason={inline}
@@ -241,6 +276,40 @@ export function PostPayrollReportsMenu({
       ))}
     </>
   );
+
+  const bankForm = bankView ? (
+    <div className="space-y-1 px-1 pb-2 pt-1">
+      <div className="flex items-center gap-2">
+        <button
+          ref={backRef}
+          type="button"
+          aria-label="Back to reports"
+          className="flex h-8 w-8 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-blue"
+          onClick={() => setBankView(false)}
+        >
+          <ArrowLeft className="h-4 w-4" aria-hidden />
+        </button>
+        <p className="text-[13px] font-semibold text-slate-800">Bank Letter · choose format</p>
+      </div>
+      {model?.bankFormats.map((item) => (
+        <MenuRow
+          key={item.id}
+          id={item.id}
+          label={item.label}
+          description={item.description}
+          tag={item.tag}
+          icon={item.tag === "Letter" ? FileText : FileSpreadsheet}
+          disabledReason={item.disabledReason}
+          busy={bankBusy === item.id}
+          focusId={null}
+          inlineReason={inline}
+          registerRef={registerRef}
+          onFocusRow={setFocusId}
+          onActivate={() => void runBank(item)}
+        />
+      ))}
+    </div>
+  ) : null;
 
   const form = report ? (
     <div className="space-y-3 px-1 pb-2 pt-1">
@@ -342,7 +411,7 @@ export function PostPayrollReportsMenu({
               className={cn(PANEL_BASE, "fixed z-[9990] max-h-[calc(100dvh-16px)] w-[320px] max-w-[calc(100vw-16px)] overflow-y-auto")}
               style={{ top: pos?.top ?? -9999, left: pos?.left ?? -9999 }}
             >
-              {report ? form : list}
+              {report ? form : bankView ? bankForm : list}
             </div>,
           )
         : null}
@@ -364,7 +433,7 @@ export function PostPayrollReportsMenu({
                     <X className="h-5 w-5" aria-hidden />
                   </button>
                 </div>
-                {report ? form : list}
+                {report ? form : bankView ? bankForm : list}
               </div>
             </div>,
           )

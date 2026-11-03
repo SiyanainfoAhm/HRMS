@@ -3833,20 +3833,19 @@ function PayrollPageContent() {
                 <DownloadsMenu
                   runMonth={runMonth}
                   runYear={runYear}
-                  canManage={canManage}
                   running={running || draftSaving || auditSaving}
                   exportDisabled={previewLoading || draftHydrationLoading || Boolean(draftLoadError) || (editableRows.length === 0 && !draftMeta && !preview?.alreadyRun)}
-                  bankLetterLoading={bankLetterLoading}
                   onPreviewExcel={() => downloadRunExcel("detail")}
                   onExtract={() => downloadRunExcel("summary")}
-                  onBankLetter={(format) => downloadBankLetter(format)}
-                  onExportEmployeePayroll={() => employeeExportRef.current?.openDialog()}
                 />
                 <PostPayrollReportsMenu
                   runMonth={runMonth}
                   runYear={runYear}
                   canManage={canManage}
                   running={running || draftSaving || auditSaving}
+                  exportDisabled={previewLoading || draftHydrationLoading || Boolean(draftLoadError) || (editableRows.length === 0 && !draftMeta && !preview?.alreadyRun)}
+                  bankLetterLoading={bankLetterLoading}
+                  onBankLetter={(format) => downloadBankLetter(format)}
                 />
                 {canManage ? (
                 <EmployeePayrollExportButton
