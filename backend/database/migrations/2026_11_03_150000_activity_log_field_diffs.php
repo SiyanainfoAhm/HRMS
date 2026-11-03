@@ -18,8 +18,8 @@ return new class extends Migration
                 if (! Schema::hasColumn('cirt_activity_log_entries', 'subject')) $table->string('subject', 200)->nullable();
             });
             Schema::table('cirt_activity_log_entries', function ($table) {
-                $table->index(['company_id', 'payroll_year', 'payroll_month'], 'cirt_ale_company_period_idx');
-                $table->index(['company_id', 'performed_by_name'], 'cirt_ale_company_actor_idx');
+                if (! Schema::hasIndex('cirt_activity_log_entries', 'cirt_ale_company_period_idx')) $table->index(['company_id', 'payroll_year', 'payroll_month'], 'cirt_ale_company_period_idx');
+                if (! Schema::hasIndex('cirt_activity_log_entries', 'cirt_ale_company_actor_idx')) $table->index(['company_id', 'performed_by_name'], 'cirt_ale_company_actor_idx');
             });
         }
         if (Schema::hasTable('cirt_activity_log_details')) {
@@ -28,7 +28,7 @@ return new class extends Migration
                 if (! Schema::hasColumn('cirt_activity_log_details', 'change_kind')) $table->string('change_kind', 12)->nullable();
             });
             Schema::table('cirt_activity_log_details', function ($table) {
-                $table->index('employee_user_id', 'cirt_ald_employee_idx');
+                if (! Schema::hasIndex('cirt_activity_log_details', 'cirt_ald_employee_idx')) $table->index('employee_user_id', 'cirt_ald_employee_idx');
             });
         }
     }

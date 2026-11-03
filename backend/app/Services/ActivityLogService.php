@@ -190,7 +190,9 @@ final class ActivityLogService
                     if (! $success) return;
                     $extra = ['details' => $this->changesToDetails($this->reportChanges($request), null), 'skipWhenEmpty' => false,
                         'summary' => ['report' => $this->reportChanges($request)[0]['new'] ?? null]];
-                } elseif (in_array($action, ['payroll_master.bulk', 'master.increment.applied'], true)) {
+                } elseif ($action === 'master.increment.applied') {
+                    $extra = $this->incrementEntry($request, $responseData);
+                } elseif ($action === 'payroll_master.bulk') {
                     $counts = $this->bulkChanges($request, $responseData);
                     $extra = ['details' => $this->changesToDetails($counts, null), 'skipWhenEmpty' => false,
                         'summary' => ['counts' => collect($counts)->mapWithKeys(fn ($c) => [$c['key'] => $c['new']])->all()]];

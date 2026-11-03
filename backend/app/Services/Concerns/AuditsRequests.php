@@ -256,6 +256,50 @@ trait AuditsRequests
         return $changes;
     }
 
+    /**
+     * Salary increment: the effective date, then per employee Gross basic pay old -> new (compact diff rows).
+     * The list view shows the first few names and "and N more"; View Details holds the full list (up to the detail cap).
+     *
+     * @return array<string, mixed> extra context for writeEntry()
+     */
+    private function incrementEntry(Request $request, mixed $data): array
+    {
+        $results = is_array($data['results'] ?? null) ? $data['results'] : [];
+        $applied = array_values(array_filter($results, fn ($r) => is_array($r) && ($r['status'] ?? '') === 'applied'));
+        $effective = $request->input('effective_start_date') ?? $request->input('effectiveStartDate');
+        $pct = $request->input('default_increment_percentage') ?? $request->input('defaultIncrementPercentage');
+        $ids = array_values(array_filter(array_map(fn ($r) => $r['employeeUserId'] ?? null, $applied)));
+        $names = $this->entryEmployeeLabels($ids);
+        $details = [];
+        $order = 0;
+        $head = [];
+        if (is_string($effective) && $effective !== '') $head[] = $this->change('effective_start_date', 'Effective from', null, $effective, 'date');
+        if (is_numeric($pct)) $head[] = $this->change('default_increment_percentage', 'Default increment', null, $pct, 'percent');
+        $head[] = $this->change('applied', 'Employees incremented', null, count($applied), 'text');
+        if (($data['skipped'] ?? 0) > 0) $head[] = $this->change('skipped', 'Skipped', null, (int) $data['skipped'], 'text');
+        if (($data['failed'] ?? 0) > 0) $head[] = $this->change('failed', 'Failed', null, (int) $data['failed'], 'text');
+        $details = $this->changesToDetails($head, null);
+        $order = count($details);
+        foreach ($applied as $r) {
+            if (count($details) >= self::MAX_DETAIL_ROWS) break;
+            $id = $r['employeeUserId'] ?? null;
+            $pctEach = isset($r['incrementPercentage']) ? ActivityDiff::format($r['incrementPercentage'], 'percent') : null;
+            $row = $this->changesToDetails([$this->change('gross_basic_pay', 'Basic pay'.($pctEach ? " (+{$pctEach})" : ''), $r['oldGrossBasic'] ?? null, $r['newGrossBasic'] ?? null, 'money')],
+                is_string($id) ? $id : null, is_string($id) ? ($names[$id] ?? ($r['employeeCode'] ?? null)) : ($r['employeeCode'] ?? null), $order);
+            $details[] = $row[0];
+            $order++;
+        }
+        $labels = array_values(array_map(fn ($r) => $names[$r['employeeUserId'] ?? ''] ?? ($r['employeeCode'] ?? 'Employee'), $applied));
+        $more = count($labels) - 3;
+        $subject = $labels === [] ? null : implode(', ', array_slice($labels, 0, 3)).($more > 0 ? " and {$more} more" : '');
+
+        return [
+            'details' => $details, 'skipWhenEmpty' => true, 'subject' => $subject, 'employeeCount' => count($applied),
+            'summary' => ['effectiveFrom' => $effective, 'applied' => count($applied), 'skipped' => (int) ($data['skipped'] ?? 0), 'failed' => (int) ($data['failed'] ?? 0),
+                'detailsListed' => min(count($applied), max(0, self::MAX_DETAIL_ROWS - count($head)))],
+        ];
+    }
+
     /** Who downloaded which report for which periods (no file content). @return list<array<string, mixed>> */
     private function reportChanges(Request $request): array
     {

@@ -300,6 +300,7 @@ final class PayrollArrearService
         $employeeIds = $this->collectEmployeeUserIdsForArrearCalculation($companyId, $eligiblePeriods);
         $newDaPercent = (float) $event->new_da_percent;
         $revisionOldDa = (float) $event->old_da_percent;
+        $this->beginReadCache($companyId, $eligiblePeriods, array_map('strval', $employeeIds));
 
         foreach ($employeeIds as $employeeUserId) {
             foreach ($eligiblePeriods as $payrollPeriod) {
@@ -316,7 +317,7 @@ final class PayrollArrearService
                 }
 
                 if ($this->isArrearMonthSettled($companyId, (string) $employeeUserId, $y, $m, $newDaPercent)) {
-                    $this->debugArrear('skip settled calendar month', [
+                    $this->traceArrear('skip settled calendar month', [
                         'payroll_run' => sprintf('%04d-%02d', $runYear, $runMonth),
                         'employee_user_id' => $employeeUserId,
                         'arrear_year' => $y,
@@ -357,7 +358,7 @@ final class PayrollArrearService
 
                 $oldDa = (float) ($source['old_da_percent'] ?? $effectiveOldDa);
                 if ($oldDa >= $newDaPercent - 0.001) {
-                    $this->debugArrear('skip month already paid at target DA', [
+                    $this->traceArrear('skip month already paid at target DA', [
                         'payroll_run' => sprintf('%04d-%02d', $runYear, $runMonth),
                         'employee_user_id' => $employeeUserId,
                         'arrear_year' => $y,
@@ -401,7 +402,7 @@ final class PayrollArrearService
                     );
                 }
 
-                $this->debugArrear('include arrear month', [
+                $this->traceArrear('include arrear month', [
                     'payroll_run' => sprintf('%04d-%02d', $runYear, $runMonth),
                     'employee_user_id' => $employeeUserId,
                     'arrear_year' => $y,
@@ -420,6 +421,8 @@ final class PayrollArrearService
                 $totals['total_net_arrear'] += $calc['net_arrear'];
             }
         }
+
+        $this->endReadCache();
 
         return ['lines' => $lines, 'warnings' => $warnings, 'totals' => $totals];
     }
@@ -1289,13 +1292,20 @@ final class PayrollArrearService
             return null;
         }
 
-        $topPaid = HrmsPayrollArrearLine::query()
+        $topQuery = fn () => HrmsPayrollArrearLine::query()
             ->where('employee_user_id', $employeeUserId)
             ->where('arrear_month', $month)
             ->where('arrear_year', $year)
             ->where(fn ($q) => $this->applyPaidLineScope($q))
             ->orderByDesc('new_da_percent')
             ->first();
+        if ($this->readCacheOn) {
+            $tk = $employeeUserId.'|'.$year.'|'.$month;
+            if (! array_key_exists($tk, $this->readCache['top'])) $this->readCache['top'][$tk] = $topQuery();
+            $topPaid = $this->readCache['top'][$tk];
+        } else {
+            $topPaid = $topQuery();
+        }
 
         if ($topPaid && (float) $topPaid->new_da_percent >= $newDaPercent - 0.001) {
             return null;
@@ -1393,13 +1403,17 @@ final class PayrollArrearService
         int $arrearMonth,
         float $targetDaPercent,
     ): bool {
-        return HrmsPayrollArrearLine::query()
+        $query = fn () => HrmsPayrollArrearLine::query()
             ->where('employee_user_id', $employeeUserId)
             ->where('arrear_month', $arrearMonth)
             ->where('arrear_year', $arrearYear)
             ->where(fn ($q) => $this->applyPaidLineScope($q))
             ->where('new_da_percent', '>=', $targetDaPercent - 0.001)
             ->exists();
+        if (! $this->readCacheOn) return $query();
+        $k = $employeeUserId.'|'.$arrearYear.'|'.$arrearMonth.'|'.$targetDaPercent;
+
+        return $this->readCache['paid'][$k] ??= $query();
     }
 
     private function isSalaryMonthPaidAtTargetDa(
@@ -1409,29 +1423,17 @@ final class PayrollArrearService
         int $arrearMonth,
         float $targetDaPercent,
     ): bool {
-        $period = HrmsPayrollPeriod::query()
-            ->where('company_id', $companyId)
-            ->whereYear('period_start', $arrearYear)
-            ->whereMonth('period_start', $arrearMonth)
-            ->first();
+        $period = $this->periodFor($companyId, $arrearYear, $arrearMonth);
 
         if ($period === null) {
             return false;
         }
 
-        $hasPayslip = HrmsPayslip::query()
-            ->where('payroll_period_id', $period->id)
-            ->where('employee_user_id', $employeeUserId)
-            ->exists();
-
-        if (! $hasPayslip) {
+        if (! $this->payslipExists((string) $period->id, $employeeUserId)) {
             return false;
         }
 
-        $gov = HrmsGovernmentMonthlyPayroll::query()
-            ->where('payroll_period_id', $period->id)
-            ->where('employee_user_id', $employeeUserId)
-            ->first();
+        $gov = $this->monthlyFor((string) $period->id, $employeeUserId);
 
         if ($gov === null) {
             return false;
@@ -1465,7 +1467,7 @@ final class PayrollArrearService
                         (int) $line->arrear_month,
                         (float) $line->new_da_percent,
                     )) {
-                        $this->debugArrear('purge orphan unpaid line for settled month', [
+                        $this->traceArrear('purge orphan unpaid line for settled month', [
                             'arrear_line_id' => $line->id,
                             'employee_user_id' => $line->employee_user_id,
                             'arrear_year' => $line->arrear_year,
@@ -1567,12 +1569,85 @@ final class PayrollArrearService
         return abs($newDa - $targetDa) < 0.001;
     }
 
-    /** @param  array<string, mixed>  $context */
+    /** One summary line per calculation (only with APP_DEBUG=true and a debug log level). @param  array<string, mixed>  $context */
     private function debugArrear(string $message, array $context = []): void
     {
         if (config('app.debug')) {
             Log::debug('[PayrollArrear] '.$message, $context);
         }
+    }
+
+    /**
+     * Per employee x month lines (tens of thousands per Run Payroll preview): off unless PAYROLL_TRACE=true
+     * is set on purpose while diagnosing, in addition to APP_DEBUG.
+     *
+     * @param  array<string, mixed>  $context
+     */
+    private function traceArrear(string $message, array $context = []): void
+    {
+        if (config('app.debug') && config('logging.payroll_trace')) {
+            Log::debug('[PayrollArrear] '.$message, $context);
+        }
+    }
+
+    // ---- read cache: active only inside calculateDaArrearsForRevision (no writes happen there), so nothing is ever stale.
+
+    /** @var array<string, mixed> */
+    private array $readCache = [];
+
+    private bool $readCacheOn = false;
+
+    /** @param  list<HrmsPayrollPeriod>  $periods  @param  list<string>  $employeeIds */
+    private function beginReadCache(string $companyId, array $periods, array $employeeIds): void
+    {
+        $this->readCache = ['period' => [], 'payslip' => null, 'gov' => null, 'paid' => [], 'top' => [], 'masterDate' => [], 'masterId' => [], 'warm' => []];
+        $this->readCacheOn = true;
+        $ids = array_values(array_unique(array_map(fn ($p) => (string) $p->id, $periods)));
+        if ($ids === [] || $employeeIds === []) return;
+        // Two queries for the whole matrix instead of one per employee and month.
+        $this->readCache['payslip'] = [];
+        foreach (DB::table('cirt_payslips')->whereIn('payroll_period_id', $ids)->get(['payroll_period_id', 'employee_user_id']) as $r) {
+            $this->readCache['payslip'][$r->payroll_period_id.'|'.$r->employee_user_id] = true;
+        }
+        $this->readCache['gov'] = [];
+        foreach (HrmsGovernmentMonthlyPayroll::query()->whereIn('payroll_period_id', $ids)->get() as $g) {
+            $this->readCache['gov'][$g->payroll_period_id.'|'.$g->employee_user_id] ??= $g;
+        }
+        $this->readCache['warm'] = array_flip($ids);
+    }
+
+    private function endReadCache(): void
+    {
+        $this->readCacheOn = false;
+        $this->readCache = [];
+    }
+
+    private function periodFor(string $companyId, int $year, int $month): ?HrmsPayrollPeriod
+    {
+        $q = fn () => HrmsPayrollPeriod::query()->where('company_id', $companyId)->whereYear('period_start', $year)->whereMonth('period_start', $month)->first();
+        if (! $this->readCacheOn) return $q();
+        $k = $companyId.'|'.$year.'|'.$month;
+        if (! array_key_exists($k, $this->readCache['period'])) $this->readCache['period'][$k] = $q();
+
+        return $this->readCache['period'][$k];
+    }
+
+    private function payslipExists(string $periodId, string $employeeUserId): bool
+    {
+        if ($this->readCacheOn && isset($this->readCache['warm'][$periodId]) && $this->readCache['payslip'] !== null) {
+            return isset($this->readCache['payslip'][$periodId.'|'.$employeeUserId]);
+        }
+
+        return HrmsPayslip::query()->where('payroll_period_id', $periodId)->where('employee_user_id', $employeeUserId)->exists();
+    }
+
+    private function monthlyFor(string $periodId, string $employeeUserId): ?HrmsGovernmentMonthlyPayroll
+    {
+        if ($this->readCacheOn && isset($this->readCache['warm'][$periodId]) && $this->readCache['gov'] !== null) {
+            return $this->readCache['gov'][$periodId.'|'.$employeeUserId] ?? null;
+        }
+
+        return HrmsGovernmentMonthlyPayroll::query()->where('payroll_period_id', $periodId)->where('employee_user_id', $employeeUserId)->first();
     }
 
     /**
@@ -1631,19 +1706,11 @@ final class PayrollArrearService
             return null;
         }
 
-        $hasPayslip = HrmsPayslip::query()
-            ->where('payroll_period_id', $payrollPeriod->id)
-            ->where('employee_user_id', $employeeUserId)
-            ->exists();
-
-        if (! $hasPayslip) {
+        if (! $this->payslipExists((string) $payrollPeriod->id, $employeeUserId)) {
             return null;
         }
 
-        $gov = HrmsGovernmentMonthlyPayroll::query()
-            ->where('payroll_period_id', $payrollPeriod->id)
-            ->where('employee_user_id', $employeeUserId)
-            ->first();
+        $gov = $this->monthlyFor((string) $payrollPeriod->id, $employeeUserId);
 
         $historicalMaster = null;
         if ($gov?->payroll_master_id) {
@@ -1770,7 +1837,13 @@ final class PayrollArrearService
 
     private function masterForDate(string $employeeUserId, string $companyId, string $date): ?HrmsPayrollMaster
     {
-        return $this->masterService->getPayrollMasterForDate($companyId, $employeeUserId, $date);
+        if (! $this->readCacheOn) return $this->masterService->getPayrollMasterForDate($companyId, $employeeUserId, $date);
+        $k = $companyId.'|'.$employeeUserId.'|'.$date;
+        if (! array_key_exists($k, $this->readCache['masterDate'])) {
+            $this->readCache['masterDate'][$k] = $this->masterService->getPayrollMasterForDate($companyId, $employeeUserId, $date);
+        }
+
+        return $this->readCache['masterDate'][$k];
     }
 
     private function findMasterOrHistoryById(?string $masterId): ?HrmsPayrollMaster
@@ -1779,7 +1852,12 @@ final class PayrollArrearService
             return null;
         }
 
-        return $this->masterService->findMasterOrHistoryById($masterId);
+        if (! $this->readCacheOn) return $this->masterService->findMasterOrHistoryById($masterId);
+        if (! array_key_exists($masterId, $this->readCache['masterId'])) {
+            $this->readCache['masterId'][$masterId] = $this->masterService->findMasterOrHistoryById($masterId);
+        }
+
+        return $this->readCache['masterId'][$masterId];
     }
 
     private function transportBaseFromPayLevel(int $payLevel, ?HrmsPayrollMaster $master, string $employeeUserId, ?string $companyId = null): float

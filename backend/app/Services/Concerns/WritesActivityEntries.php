@@ -57,7 +57,7 @@ trait WritesActivityEntries
         }
 
         $actor = $c['actor'];
-        $employeeCount = in_array($c['action'], ['payroll.draft.saved', 'payroll.draft.discarded', 'payroll.generated', 'payroll.generated.amended', 'payslip.generated'], true)
+        $employeeCount = in_array($c['action'], ['payroll.draft.saved', 'payroll.draft.discarded', 'payroll.generated', 'payroll.generated.amended', 'payslip.generated', 'master.increment.applied'], true)
             ? max(count($c['targets']), (int) ($c['metadata']['employeeCount'] ?? 0), (int) ($c['employeeCount'] ?? 0))
             : (int) ($c['action'] === 'payroll_master.changed' && $c['targets'] !== [] ? count($c['targets']) : 0);
 

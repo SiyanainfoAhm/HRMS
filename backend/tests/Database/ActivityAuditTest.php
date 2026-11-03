@@ -300,6 +300,35 @@ final class ActivityAuditTest extends DatabaseTestCase
         $this->assertSame($admin->name ?? $admin->email, $entry->performed_by_name, 'who did it');
     }
 
+    public function test_salary_increment_logs_per_employee_old_new_basic_pay_and_the_effective_date(): void
+    {
+        $admin = $this->admin();
+        $users = $this->sampleEmployees(5)['users'];
+        $results = [];
+        foreach ($users as $i => $id) {
+            $results[] = ['employeeUserId' => $id, 'employeeCode' => 'E'.$i, 'status' => 'applied', 'oldGrossBasic' => 30000 + $i * 1000, 'newGrossBasic' => 31200 + $i * 1000, 'incrementPercentage' => 4];
+        }
+        $results[] = ['employeeUserId' => $users[0], 'status' => 'skipped'];
+        $count = $this->entryCount();
+        (new ActivityLogService)->recordRequest(
+            $this->request('POST', 'api/v1/settings/salary-increment/apply', ['effective_start_date' => '2026-07-01', 'default_increment_percentage' => 4, 'year' => 2026, 'increment_month' => 'July'], $admin),
+            new JsonResponse(['applied' => 5, 'skipped' => 1, 'failed' => 0, 'results' => $results], 200),
+        );
+        $this->assertSame($count + 1, $this->entryCount());
+        $entry = $this->latest();
+        $this->assertSame(['Salary Increment Applied', 'Master', 5], [$entry->action_label, $entry->module, (int) $entry->employee_count]);
+        $rows = $this->rows($entry);
+        $this->assertSame('Effective from', $rows[0]['item']);
+        $this->assertSame('01/07/2026', $rows[0]['new']);
+        $pay = array_values(array_filter($rows, fn ($r) => str_starts_with($r['item'], 'Basic pay')));
+        $this->assertCount(5, $pay, 'View Details lists every employee');
+        $this->assertSame(['Basic pay (+4%)', '30,000', '31,200'], [$pay[0]['item'], $pay[0]['old'], $pay[0]['new']]);
+        $this->assertSame(['gross_basic_pay', 30000, 31200, 'money'], [$pay[0]['diff']['field'], $pay[0]['diff']['old'], $pay[0]['diff']['new'], $pay[0]['diff']['type']]);
+        $this->assertNotNull($pay[0]['employee']);
+        // The list view caps the names: first three and "and N more".
+        $this->assertMatchesRegularExpression('/^[^,]+, [^,]+, [^,]+ and 2 more$/', (string) $entry->subject);
+    }
+
     public function test_report_download_is_one_record_with_report_and_periods_only(): void
     {
         $admin = $this->admin();
