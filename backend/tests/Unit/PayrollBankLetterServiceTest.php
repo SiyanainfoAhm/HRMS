@@ -61,9 +61,9 @@ final class PayrollBankLetterServiceTest extends TestCase
 
     public function test_format_amount_indian_grouping(): void
     {
-        $this->assertSame('1,27,858.00', $this->service->formatAmount(127858));
-        $this->assertSame('21,39,931.00', $this->service->formatAmount(2139931));
-        $this->assertSame('0.00', $this->service->formatAmount(0));
+        $this->assertSame('1,27,858', $this->service->formatAmount(127858));
+        $this->assertSame('21,39,931', $this->service->formatAmount(2139931));
+        $this->assertSame('0', $this->service->formatAmount(0));
     }
 
     public function test_missing_account_number_rejected(): void

@@ -1228,9 +1228,8 @@ class PayrollController extends Controller
         $previousElectricity = $num($deductions['electricity'] ?? 0);
         $deductions['electricity'] = $bill['total'];
         $previousDeductions = $num($monthly['totalDeductions'] ?? $monthly['total_deductions'] ?? 0);
-        // Money is held at 2 decimals everywhere (same as the TypeScript sheet
-        // totals); rounding totals to whole rupees made net != gross - deductions.
-        $totalDeductions = round(max(0, $previousDeductions - $previousElectricity + $bill['total']), 2);
+        // Every line is a whole rupee (App\Support\Money), so totals are exact sums and net = gross - deductions.
+        $totalDeductions = \App\Support\Money::roundMoney(max(0, $previousDeductions - $previousElectricity + $bill['total']));
 
         $monthly = array_merge($monthly, [
             'deductions' => $deductions,
@@ -1253,14 +1252,14 @@ class PayrollController extends Controller
         // payable HRA for this period; do not mutate the underlying entitlement.
         if ((bool) ($master->has_quarter ?? false) || $master->quarter_id) {
             $previousHra = $num($monthly['hraPaid'] ?? $monthly['hra_paid'] ?? 0);
-            $totalEarnings = round(max(0, $num($monthly['totalEarnings'] ?? $monthly['total_earnings'] ?? 0) - $previousHra), 2);
+            $totalEarnings = \App\Support\Money::roundMoney(max(0, $num($monthly['totalEarnings'] ?? $monthly['total_earnings'] ?? 0) - $previousHra));
             $monthly['hraActual'] = 0.0;
             $monthly['hraPaid'] = 0.0;
             $monthly['totalEarnings'] = $totalEarnings;
         }
 
         $totalEarnings = $num($monthly['totalEarnings'] ?? $monthly['total_earnings'] ?? 0);
-        $monthly['netSalary'] = round($totalEarnings - $totalDeductions, 2);
+        $monthly['netSalary'] = \App\Support\Money::roundMoney($totalEarnings - $totalDeductions);
         $monthly['totalEarnings'] = $totalEarnings;
         $monthly['totalDeductions'] = $totalDeductions;
 
@@ -2078,15 +2077,15 @@ class PayrollController extends Controller
             'payrollMode' => 'government',
             'payDays' => (int) round((float) ($gov->paid_days ?? 0)),
             'unpaidLeaveDays' => (int) ($gov->unpaid_days ?? 0),
-            'grossPay' => \App\Support\Money::round2($gross),
-            'deductions' => \App\Support\Money::round2($deductions),
-            'netPay' => \App\Support\Money::round2($net),
-            'takeHome' => \App\Support\Money::round2($net),
+            'grossPay' => \App\Support\Money::roundMoney($gross),
+            'deductions' => \App\Support\Money::roundMoney($deductions),
+            'netPay' => \App\Support\Money::roundMoney($net),
+            'takeHome' => \App\Support\Money::roundMoney($net),
             'pfEmployee' => \App\Support\Money::sum($gov->cpf_amount ?? 0, $gov->da_cpf_amount ?? 0, $gov->vpf_amount ?? 0, $gov->pf_loan_amount ?? 0),
             'pfEmployer' => 0,
             'esicEmployee' => 0,
             'esicEmployer' => 0,
-            'profTax' => \App\Support\Money::round2((float) ($gov->pt_amount ?? 0)),
+            'profTax' => \App\Support\Money::roundMoney((float) ($gov->pt_amount ?? 0)),
             'tds' => (float) ($gov->income_tax_amount ?? 0),
             'governmentMonthly' => $governmentMonthly,
             // Generated payroll is a historical snapshot: use the quarter
@@ -2185,20 +2184,20 @@ class PayrollController extends Controller
                 ? (int) round((float) ($gov->paid_days ?? $payslip->pay_days ?? 0))
                 : (int) ($payslip->pay_days ?? 0),
             'unpaidLeaveDays' => $gov ? (int) ($gov->unpaid_days ?? 0) : 0,
-            'grossPay' => \App\Support\Money::round2((float) ($gov->total_earnings ?? $payslip->gross_pay ?? 0)),
-            'pfEmployee' => \App\Support\Money::round2((float) ($payslip->pf_employee ?? 0)),
-            'pfEmployer' => \App\Support\Money::round2((float) ($payslip->pf_employer ?? 0)),
-            'esicEmployee' => \App\Support\Money::round2((float) ($payslip->esic_employee ?? 0)),
-            'esicEmployer' => \App\Support\Money::round2((float) ($payslip->esic_employer ?? 0)),
-            'profTax' => \App\Support\Money::round2((float) ($payslip->professional_tax ?? 0)),
-            'deductions' => \App\Support\Money::round2((float) ($gov->total_deductions ?? $payslip->deductions ?? 0)),
-            'netPay' => \App\Support\Money::round2((float) ($gov->net_salary ?? $net)),
+            'grossPay' => \App\Support\Money::roundMoney((float) ($gov->total_earnings ?? $payslip->gross_pay ?? 0)),
+            'pfEmployee' => \App\Support\Money::roundMoney((float) ($payslip->pf_employee ?? 0)),
+            'pfEmployer' => \App\Support\Money::roundMoney((float) ($payslip->pf_employer ?? 0)),
+            'esicEmployee' => \App\Support\Money::roundMoney((float) ($payslip->esic_employee ?? 0)),
+            'esicEmployer' => \App\Support\Money::roundMoney((float) ($payslip->esic_employer ?? 0)),
+            'profTax' => \App\Support\Money::roundMoney((float) ($payslip->professional_tax ?? 0)),
+            'deductions' => \App\Support\Money::roundMoney((float) ($gov->total_deductions ?? $payslip->deductions ?? 0)),
+            'netPay' => \App\Support\Money::roundMoney((float) ($gov->net_salary ?? $net)),
             'incentive' => $inc,
             'prBonus' => $bonus,
             'reimbursement' => $reimb,
             'tds' => $tds,
-            'takeHome' => \App\Support\Money::round2($takeHome),
-            'ctc' => \App\Support\Money::round2((float) ($payslip->ctc ?? 0)),
+            'takeHome' => \App\Support\Money::roundMoney($takeHome),
+            'ctc' => \App\Support\Money::roundMoney((float) ($payslip->ctc ?? 0)),
             'payrollMode' => $isGov ? 'government' : 'private',
             'governmentMonthly' => $this->governmentMonthlyPreviewFromDb($gov),
             'monthlyPayrollId' => $gov?->id,
@@ -2619,11 +2618,11 @@ class PayrollController extends Controller
             }
 
             return array_merge($row, [
-                'daArrear' => round((float) $totals['daArrear'], 2),
-                'transportArrear' => round((float) $totals['transportArrear'], 2),
-                'grossArrear' => round((float) $totals['grossArrear'], 2),
-                'cpfArrear' => round((float) $totals['cpfArrear'], 2),
-                'netArrear' => round((float) $totals['netArrear'], 2),
+                'daArrear' => \App\Support\Money::roundMoney($totals['daArrear']),
+                'transportArrear' => \App\Support\Money::roundMoney($totals['transportArrear']),
+                'grossArrear' => \App\Support\Money::roundMoney($totals['grossArrear']),
+                'cpfArrear' => \App\Support\Money::roundMoney($totals['cpfArrear']),
+                'netArrear' => \App\Support\Money::roundMoney($totals['netArrear']),
                 'arrearLines' => array_map(static fn (array $line): array => [
                     'id' => $line['id'] ?? null,
                     'arrearYear' => (int) ($line['arrear_year'] ?? 0),
@@ -2977,8 +2976,8 @@ class PayrollController extends Controller
         $hraPct = (float) ($master->hra_percent ?? 0);
         $med = (float) ($master->medical ?? 0);
         $hasQuarter = (bool) ($master->has_quarter ?? false);
-        $hra = $hasQuarter ? 0.0 : round($gb * $hraPct / 100);
-        $da = round($gb * $daPct / 100);
+        $hra = $hasQuarter ? 0.0 : \App\Support\Money::percentOf($gb, $hraPct);
+        $da = \App\Support\Money::percentOf($gb, $daPct);
 
         return response()->json([
             'basic' => $gb,

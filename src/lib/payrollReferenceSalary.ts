@@ -1,3 +1,4 @@
+import { roundMoney } from "./money";
 import { daysInCalendarMonth, type EolHplReferenceSalary } from "./hplEolDeductions";
 
 export type ReferenceSalaryResult = {
@@ -29,10 +30,10 @@ export async function fetchReferenceSalary(
     throw new Error(data?.error || "Failed to load reference salary");
   }
   return {
-    basic: Math.round(Number(data.basic) || 0),
-    da: Math.round(Number(data.da) || 0),
-    hra: Math.round(Number(data.hra) || 0),
-    medical: Math.round(Number(data.medical) || 0),
+    basic: roundMoney(Number(data.basic) || 0),
+    da: roundMoney(Number(data.da) || 0),
+    hra: roundMoney(Number(data.hra) || 0),
+    medical: roundMoney(Number(data.medical) || 0),
     daysInMonth: Math.max(1, Math.floor(Number(data.daysInMonth) || daysInCalendarMonth(year, month))),
     source: data.source === "monthly_payroll" ? "monthly_payroll" : "payroll_master",
     warning: data.warning,

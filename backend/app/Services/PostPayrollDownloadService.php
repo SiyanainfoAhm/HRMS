@@ -148,7 +148,7 @@ final class PostPayrollDownloadService
 
     public static function n(array $row, string $key): float
     {
-        return is_numeric($row[$key] ?? null) ? (float) $row[$key] : 0.0;
+        return is_numeric($row[$key] ?? null) ? \App\Support\Money::roundMoney($row[$key]) : 0.0;
     }
 
     /** Custom (company-defined) field amounts of a monthly row; the bag is JSON text, [] or an object. @return array<string, float> */
@@ -158,7 +158,7 @@ final class PostPayrollDownloadService
         if (is_string($bag)) $bag = json_decode($bag, true);
         $out = [];
         foreach (is_array($bag) ? $bag : [] as $key => $value) {
-            if (is_string($key) && is_numeric($value)) $out[$key] = (float) $value;
+            if (is_string($key) && is_numeric($value)) $out[$key] = \App\Support\Money::roundMoney($value);
         }
 
         return $out;
@@ -619,7 +619,7 @@ final class PostPayrollDownloadService
             }
             $line++;
         }
-        $ws->getStyle('F4:'.Coordinate::stringFromColumnIndex(count($headers) - 1).($line))->getNumberFormat()->setFormatCode('#,##0.00');
+        $ws->getStyle('F4:'.Coordinate::stringFromColumnIndex(count($headers) - 1).($line))->getNumberFormat()->setFormatCode(SpreadsheetLayout::FORMAT_AMOUNT);
         SpreadsheetLayout::finish($ws, [
             'header_row' => 3, 'freeze' => 'C4', 'autofilter' => true, 'landscape' => true, 'fit_width' => true,
             'wrap_columns' => [Coordinate::stringFromColumnIndex(count($headers))],

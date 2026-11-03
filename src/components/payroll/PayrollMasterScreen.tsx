@@ -1,5 +1,6 @@
 "use client";
 
+import { formatMoney } from "@/lib/money";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/cn";
@@ -780,7 +781,7 @@ function payrollStructureChanged(form: MasterFormState, baseline: MasterFormStat
 
 function fmt(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return "—";
-  return n.toLocaleString("en-IN", { maximumFractionDigits: 2 });
+  return formatMoney(n);
 }
 
 async function downloadFromApi(path: string, fallbackName: string) {
@@ -3022,7 +3023,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                         ) : null}
                       </FormField>
                       <FormField label="Gross Basic Pay" required error={showError("grossBasicPay")}>
-                        <Input
+                        <Input money
                           id={fieldDomId("grossBasicPay")}
                           type="number"
                           min={0}
@@ -3077,7 +3078,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                               />
                             </FormField>
                             <FormField label="Quarter Rent">
-                              <Input
+                              <Input money
                                 type="number"
                                 numeric
                                 min={0}
@@ -3119,7 +3120,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                         />
                       </FormField>
                       <FormField label="DA Amount">
-                        <Input
+                        <Input money
                           type="number"
                           numeric
                           value={form.daAmount}
@@ -3138,7 +3139,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                         />
                       </FormField>
                       <FormField label="HRA Amount">
-                        <Input
+                        <Input money
                           type="number"
                           numeric
                           value={form.hasQuarter ? "0" : form.hraAmount}
@@ -3147,7 +3148,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                         />
                       </FormField>
                       <FormField label="Medical" error={showError("medical")}>
-                        <Input
+                        <Input money
                           id={fieldDomId("medical")}
                           type="number"
                           numeric
@@ -3158,7 +3159,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                         />
                       </FormField>
                       <FormField label="Transport Base">
-                        <Input
+                        <Input money
                           type="number"
                           numeric
                           value={form.transportBase}
@@ -3166,7 +3167,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                         />
                       </FormField>
                       <FormField label="Transport DA">
-                        <Input
+                        <Input money
                           type="number"
                           numeric
                           value={form.transportDa}
@@ -3174,7 +3175,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                         />
                       </FormField>
                       <FormField label="Transport Total">
-                        <Input
+                        <Input money
                           type="number"
                           numeric
                           min={0}
@@ -3339,7 +3340,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                     )}
                     {DEFAULT_DEDUCTION_FIELDS.map(([key, label]) => (
                       <FormField key={key} label={label} error={showError(key)}>
-                        <Input
+                        <Input money
                           id={fieldDomId(key)}
                           type="number"
                           min={0}

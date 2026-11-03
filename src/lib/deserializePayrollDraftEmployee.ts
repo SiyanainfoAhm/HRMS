@@ -3,7 +3,7 @@
  * Accepts snake_case payloads (apiProxy deep-transform on save) and camelCase.
  */
 
-import { fromPaise, round2, sumMoney, toPaise } from "./money";
+import { fromPaise, roundMoney, sumMoney, toPaise } from "./money";
 import { canonicalizeDynamicFieldKey, normalizeDynamicFieldBag } from "@/lib/payrollFieldTypes";
 import { totalArrearsPaid } from "@/lib/payrollArrearCalc";
 
@@ -479,16 +479,16 @@ export function deserializePayrollDraftEmployee(
   const resolvedTotalDeductions =
     savedTotalDeductions ??
     (Object.keys(effectiveDed).length > 0
-      ? round2(sumDed)
-      : round2(
+      ? roundMoney(sumDed)
+      : roundMoney(
           firstDefined(totalDeductions, numOrUndef(gm.totalDeductions), numOrUndef(calcGm.totalDeductions)) ?? 0,
         ));
   const savedNetPay = firstDefined(numOrUndef(gm.netSalary), numOrUndef(gm.net_salary), netPay);
   const resolvedNetPay =
     savedNetPay ??
     (Object.keys(effectiveDed).length > 0
-      ? round2(earnForNet - sumDed)
-      : round2(
+      ? roundMoney(earnForNet - sumDed)
+      : roundMoney(
           firstDefined(netPay, numOrUndef(gm.netSalary), numOrUndef(calcGm.netSalary), earnForNet - resolvedTotalDeductions) ??
             earnForNet - resolvedTotalDeductions,
         ));
@@ -627,10 +627,10 @@ export function sumResolvedPayrollTotals(rows: Array<Record<string, unknown>>) {
     const daArr = firstDefined(numOrUndef(r.daArrear), numOrUndef(gm?.daArrearsPaid)) ?? 0;
     const trArr = firstDefined(numOrUndef(r.transportArrear), numOrUndef(gm?.transportArrearsPaid)) ?? 0;
     const grossArr = firstDefined(numOrUndef(r.grossArrear), numOrUndef(gm?.grossArrear)) ?? 0;
-    gross += toPaise(gEarn);
-    deductions += toPaise(gDed);
-    net += toPaise(gNet);
-    arrears += toPaise(totalArrearsPaid(daArr, trArr, grossArr));
+    gross += toPaise(roundMoney(gEarn));
+    deductions += toPaise(roundMoney(gDed));
+    net += toPaise(roundMoney(gNet));
+    arrears += toPaise(roundMoney(totalArrearsPaid(daArr, trArr, grossArr)));
   }
   return {
     employees: rows.length,

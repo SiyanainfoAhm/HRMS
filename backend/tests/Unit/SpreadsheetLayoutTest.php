@@ -151,7 +151,7 @@ final class SpreadsheetLayoutTest extends TestCase
         $pay = $this->roundTrip($svc->buildPaybill($this->rows(), 202609))->getSheetByName('Paybill');
         $cell = $pay->getCell('G4'); // Basic
         $this->assertTrue(is_float($cell->getValue()) || is_int($cell->getValue()));
-        $this->assertSame('#,##0.00', $pay->getStyle('G4')->getNumberFormat()->getFormatCode());
+        $this->assertSame(SpreadsheetLayout::FORMAT_AMOUNT, $pay->getStyle('G4')->getNumberFormat()->getFormatCode());
         $this->assertSame('right', $pay->getStyle('G4')->getAlignment()->getHorizontal());
         $this->assertSame('C4', $pay->getFreezePane());
         $this->assertSame('landscape', $pay->getPageSetup()->getOrientation());

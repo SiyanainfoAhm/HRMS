@@ -1,3 +1,4 @@
+import { roundMoney } from "./money";
 export const RETIRED_PAYROLL_FIELD_KEYS = new Set([
   "pf_loan",
   "standard_licence_fee",
@@ -145,7 +146,7 @@ export function normalizeDynamicFieldBag(
       (k) => k === key || k === snake || canonicalizeDynamicFieldKey(k) === snake,
     );
     const canonical = knownMatch ?? snake;
-    const rounded = Math.round(n * 100) / 100;
+    const rounded = roundMoney(n);
     if (key === canonical || key.includes("_")) {
       preferred[canonical] = rounded;
     } else {
@@ -270,7 +271,7 @@ export function sumCustomBagForTotal(
     }
     sum += n;
   }
-  return Math.round(sum * 100) / 100;
+  return roundMoney(sum);
 }
 
 export function customNumericBagFromValues(

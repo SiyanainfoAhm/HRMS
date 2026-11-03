@@ -31,7 +31,7 @@ final class SpreadsheetLayout
     public const PADDING = 2;
 
     /** Default formats; a cell that already carries an explicit (non-General) format keeps it. */
-    public const FORMAT_AMOUNT = '#,##0.00';
+    public const FORMAT_AMOUNT = Money::WHOLE_RUPEES ? '#,##0' : '#,##0.00';
 
     public const FORMAT_INTEGER = '#,##0';
 

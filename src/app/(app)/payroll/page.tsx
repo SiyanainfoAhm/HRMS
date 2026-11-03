@@ -1,6 +1,7 @@
 "use client";
 
-import { proportion, round2, sumMoney } from "@/lib/money";
+import { formatMoney } from "@/lib/money";
+import { proportion, roundMoney, sumMoney } from "@/lib/money";
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
@@ -347,7 +348,7 @@ function governmentRowFromCompute<T extends {
     pfEmployer: 0,
     esicEmployee: 0,
     esicEmployer: 0,
-    takeHome: round2(netSalary),
+    takeHome: roundMoney(netSalary),
   };
 }
 
@@ -418,11 +419,11 @@ function arrearSnapshotFromRow(row: {
 }) {
   const g = row.governmentMonthly as GovernmentPreviewMonthly | GovMonthlyWithArrear | null | undefined;
   return {
-    daArrear: round2(Number(row.daArrear ?? g?.daArrearsPaid ?? 0) || 0),
-    transportArrear: round2(Number(row.transportArrear ?? g?.transportArrearsPaid ?? 0) || 0),
-    grossArrear: round2(Number(row.grossArrear ?? g?.grossArrear ?? 0) || 0),
-    cpfArrear: round2(Number(row.cpfArrear ?? g?.cpfArrear ?? 0) || 0),
-    netArrear: round2(Number(row.netArrear ?? g?.netArrear ?? 0) || 0),
+    daArrear: roundMoney(Number(row.daArrear ?? g?.daArrearsPaid ?? 0) || 0),
+    transportArrear: roundMoney(Number(row.transportArrear ?? g?.transportArrearsPaid ?? 0) || 0),
+    grossArrear: roundMoney(Number(row.grossArrear ?? g?.grossArrear ?? 0) || 0),
+    cpfArrear: roundMoney(Number(row.cpfArrear ?? g?.cpfArrear ?? 0) || 0),
+    netArrear: roundMoney(Number(row.netArrear ?? g?.netArrear ?? 0) || 0),
   };
 }
 
@@ -1805,10 +1806,10 @@ function PayrollPageContent() {
             next.profTax = row.profTaxMonthly ?? companyPt;
           }
           const ratio = row.payDays > 0 && newPayDays > 0 ? newPayDays / row.payDays : newPayDays === 0 ? 0 : 1;
-          next.pfEmployee = round2(row.pfEmployee * ratio);
-          next.pfEmployer = round2(row.pfEmployer * ratio);
-          next.esicEmployee = round2(row.esicEmployee * ratio);
-          next.esicEmployer = round2(row.esicEmployer * ratio);
+          next.pfEmployee = roundMoney(row.pfEmployee * ratio);
+          next.pfEmployer = roundMoney(row.pfEmployer * ratio);
+          next.esicEmployee = roundMoney(row.esicEmployee * ratio);
+          next.esicEmployer = roundMoney(row.esicEmployer * ratio);
           next.deductions = next.pfEmployee + next.esicEmployee + next.profTax;
           next.netPay = next.grossPay - next.deductions;
           recalcTakeHome();
@@ -4095,12 +4096,12 @@ function PayrollPageContent() {
                   })
                 : "—";
 
-              const n = (x: number) => (x ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+              const n = (x: number) => formatMoney(x ?? 0);
               const totalPerf = slip.incentive + slip.prBonus + slip.reimbursement;
               // Bank credit: salary after statutory deductions, minus TDS, plus variable pay (aligned with payroll preview).
               // Do not use slip.netPay alone — it may already equal take-home in some runs, which would double-count bonus/reimbursement.
               const salaryAfterDeductions = slip.grossPay - slip.deductions;
-              const takeHome = round2(
+              const takeHome = roundMoney(
                 salaryAfterDeductions - slip.tds + slip.incentive + slip.prBonus + slip.reimbursement
               );
 

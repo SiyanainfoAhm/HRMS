@@ -26,7 +26,7 @@ assertEq(daysInCalendarMonth(2026, 12), 31, "Dec");
 assertEq(calendarDaysInMonth(2026, 13), 0, "invalid month");
 
 // One EOL day is 1/dim of the basis, for each month length.
-for (const [dim, expected] of [[28, 1960.71], [29, 1893.1], [30, 1830], [31, 1770.97]] as const) {
+for (const [dim, expected] of [[28, 1961], [29, 1893], [30, 1830], [31, 1771]] as const) {
   assertEq(computeEolHplDeductions({ referenceSalary: salary, daysInReferenceMonth: dim, eolDays: 1 }).eolDeduction, expected, `EOL 1 day in ${dim}-day month`);
 }
 
@@ -37,7 +37,7 @@ assertEq(computeEolHplDeductions({ referenceSalary: salary, daysInReferenceMonth
 // Leave charged to a prior month uses THAT month's length (Feb reference used in March).
 const fromFeb = computeEolHplDeductions({ referenceSalary: salary, daysInReferenceMonth: 28, eolDays: 3 }).eolDeduction;
 const fromMar = computeEolHplDeductions({ referenceSalary: salary, daysInReferenceMonth: 31, eolDays: 3 }).eolDeduction;
-assertEq(fromFeb, 5882.14, "Feb reference");
+assertEq(fromFeb, 5882, "Feb reference (5,882.14 rounded once to the rupee)");
 assertEq(fromFeb > fromMar, true, "shorter reference month costs more per day");
 
 // Boundaries: zero, negative, fractional, more than the month, whole month.
@@ -52,7 +52,7 @@ assertEq(computeEolHplDeductions({ referenceSalary: { basic: 1e9, da: 1e9, hra: 
 
 // The earnings cut never exceeds what is paid and keeps the cut total exactly.
 const cut = applyProportionalEarningsCut({ basic: 30000, da: 15900, hra: 9000, medical: 0 }, 1830);
-assertEq(Math.abs(30000 + 15900 + 9000 - (cut.basic + cut.da + cut.hra + cut.medical) - 1830) <= 2, true, "cut total preserved within rounding");
+assertEq(Math.abs(30000 + 15900 + 9000 - (cut.basic + cut.da + cut.hra + cut.medical) - 1830) === 0, true, "cut total preserved exactly (whole rupees)");
 const overCut = applyProportionalEarningsCut({ basic: 100, da: 0, hra: 0, medical: 0 }, 5000);
 assertEq(overCut.basic, 0, "cut larger than pay clamps at zero");
 const hplCut = applyBasicDaEarningsCut({ basic: 30000, da: 15900, hra: 9000, medical: 500 }, 765);

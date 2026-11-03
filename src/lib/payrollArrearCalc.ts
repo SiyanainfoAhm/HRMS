@@ -1,4 +1,5 @@
 /** Excel-style DA + transport DA arrear math (mirrors PayrollArrearService). */
+import { percentOf, roundMoney } from "./money";
 
 export type ArrearMonthCalc = {
   basic: number;
@@ -24,17 +25,17 @@ export function calculateMonthDaArrear(
   newDaPercent: number,
   cpfRate = 0.12,
 ): ArrearMonthCalc {
-  const oldDa = Math.round((basic * oldDaPercent) / 100);
-  const newDa = Math.round((basic * newDaPercent) / 100);
+  const oldDa = percentOf(basic, oldDaPercent);
+  const newDa = percentOf(basic, newDaPercent);
   const daArrear = newDa - oldDa;
 
-  const oldTrpt = Math.round(transportBase + (transportBase * oldDaPercent) / 100);
-  const newTrpt = Math.round(transportBase + (transportBase * newDaPercent) / 100);
+  const oldTrpt = roundMoney(transportBase + percentOf(transportBase, oldDaPercent));
+  const newTrpt = roundMoney(transportBase + percentOf(transportBase, newDaPercent));
   const transportArrear = newTrpt - oldTrpt;
 
   const grossArrear = daArrear + transportArrear;
-  const cpfArrear = Math.round(grossArrear * cpfRate * 100) / 100;
-  const netArrear = Math.round((grossArrear - cpfArrear) * 100) / 100;
+  const cpfArrear = percentOf(grossArrear, cpfRate * 100);
+  const netArrear = roundMoney(grossArrear - cpfArrear);
 
   return {
     basic,
@@ -54,8 +55,9 @@ export function calculateMonthDaArrear(
   };
 }
 
+/** Arrear amounts follow the money rule (whole rupees). */
 function r2(n: number): number {
-  return Math.round((Number.isFinite(n) ? n : 0) * 100) / 100;
+  return roundMoney(n);
 }
 
 /** A present number (including an entered 0); undefined for null/blank/NaN. */

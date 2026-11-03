@@ -60,11 +60,11 @@ const grossOnly = applyAutoArrearsToGovernmentMonthly(base, { grossArrear: 500, 
 assertEq(grossOnly.totalEarnings, base.totalEarnings + 500, "gross-only arrear");
 assertEq(grossOnly.netSalary, base.netSalary + 440, "gross-only net");
 
-// Month arrear arithmetic: whole-rupee DA/TR, CPF rounded to 2dp (no float drift).
+// Month arrear arithmetic: every arrear line is a whole rupee (CPF arrear 12% of gross, rounded once, no float drift).
 const m = calculateMonthDaArrear(34590, 3600, 50, 53);
 assertEq(m.grossArrear, m.daArrear + m.transportArrear, "gross = DA + TR");
-assertEq(m.cpfArrear, Math.round(m.grossArrear * 12) / 100, "cpf arrear rounded to 2dp");
-assertEq(m.netArrear, Math.round((m.grossArrear - m.cpfArrear) * 100) / 100, "net = gross - cpf");
+assertEq(m.cpfArrear, Math.round(m.grossArrear * 12 / 100), "cpf arrear is a whole rupee");
+assertEq(m.netArrear, m.grossArrear - m.cpfArrear, "net = gross - cpf");
 assertEq(calculateMonthDaArrear(0, 0, 50, 53).grossArrear, 0, "zero basic");
 assertEq(calculateMonthDaArrear(34590, 3600, 53, 53).grossArrear, 0, "no DA change");
 assertEq(calculateMonthDaArrear(34590, 3600, 53, 50).daArrear < 0, true, "DA decrease is a negative arrear (recovery)");

@@ -1,5 +1,6 @@
 "use client";
 
+import { formatMoney } from "@/lib/money";
 import { Pencil, UserMinus } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -17,7 +18,7 @@ import type { PayrollMasterRecord } from "./PayrollMasterScreen";
 
 function fmt(n: number | null | undefined) {
   if (n == null || Number.isNaN(n)) return "—";
-  return n.toLocaleString("en-IN", { maximumFractionDigits: 2 });
+  return formatMoney(n);
 }
 
 function earningAmount(basic: number | null | undefined, percent: number | string | null | undefined) {

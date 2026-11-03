@@ -1,3 +1,4 @@
+import { MONEY_EXCEL_FORMAT } from "./money";
 /**
  * Shared Excel styling for CIRT Payroll workbooks (xlsx-js-style).
  * Presentation only — does not affect payroll totals.
@@ -45,7 +46,7 @@ export type XlsxCellStyle = {
 export const PAYROLL_EXCEL_FONT = "Calibri";
 
 /** Numeric rupee format. Excel applies locale grouping; Indian grouping is not portable. */
-export const INR_NUM_FMT = '"₹"#,##0.00';
+export const INR_NUM_FMT = `"₹"${MONEY_EXCEL_FORMAT}`;
 export const INT_NUM_FMT = "#,##0";
 
 export const COLORS = {

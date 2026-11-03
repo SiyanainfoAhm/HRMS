@@ -1,3 +1,4 @@
+import { roundMoney } from "./money";
 import {
   computeGovernmentMonthlyPayroll,
   deriveTransportSlabFromLevel,
@@ -40,32 +41,32 @@ export function resolveConvertPayrollMasterInput(
   },
 ): ResolvedConvertPayroll {
   const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
-  const grossBasic = Math.max(0, Math.round(pickNum(o, ["gross_basic", "grossBasic"], base.grossBasic)));
+  const grossBasic = Math.max(0, roundMoney(pickNum(o, ["gross_basic", "grossBasic"], base.grossBasic)));
   const daPercent = pickNum(o, ["da_percent", "daPercent"], 53);
   const hraPercent = pickNum(o, ["hra_percent", "hraPercent"], 30);
-  const medicalFixed = Math.max(0, Math.round(pickNum(o, ["medical_fixed", "medicalFixed"], 3000)));
-  const tdsMonthly = Math.max(0, Math.round(pickNum(o, ["tds", "income_tax_default"], base.tdsMonthly)));
-  const ptDefault = Math.max(0, Math.round(pickNum(o, ["pt_default", "pt"], base.ptMonthly)));
-  const advanceBonus = Math.max(0, Math.round(pickNum(o, ["advance_bonus", "advanceBonus"], 0)));
+  const medicalFixed = Math.max(0, roundMoney(pickNum(o, ["medical_fixed", "medicalFixed"], 3000)));
+  const tdsMonthly = Math.max(0, roundMoney(pickNum(o, ["tds", "income_tax_default"], base.tdsMonthly)));
+  const ptDefault = Math.max(0, roundMoney(pickNum(o, ["pt_default", "pt"], base.ptMonthly)));
+  const advanceBonus = Math.max(0, roundMoney(pickNum(o, ["advance_bonus", "advanceBonus"], 0)));
 
   const dedRow: Record<string, unknown> = {
     income_tax_default: tdsMonthly,
     pt_default: ptDefault,
-    lic_default: Math.max(0, Math.round(pickNum(o, ["lic_default", "licDefault"], 0))),
-    cpf_default: Math.max(0, Math.round(pickNum(o, ["cpf_default", "cpfDefault"], 0))),
-    da_cpf_default: Math.max(0, Math.round(pickNum(o, ["da_cpf_default", "daCpfDefault"], 0))),
-    vpf_default: Math.max(0, Math.round(pickNum(o, ["vpf_default", "vpfDefault"], 0))),
-    pf_loan_default: Math.max(0, Math.round(pickNum(o, ["pf_loan_default", "pfLoanDefault"], 0))),
-    post_office_default: Math.max(0, Math.round(pickNum(o, ["post_office_default", "postOfficeDefault"], 0))),
-    credit_society_default: Math.max(0, Math.round(pickNum(o, ["credit_society_default", "creditSocietyDefault"], 0))),
-    std_licence_fee_default: Math.max(0, Math.round(pickNum(o, ["std_licence_fee_default", "stdLicenceFeeDefault"], 0))),
-    electricity_default: Math.max(0, Math.round(pickNum(o, ["electricity_default", "electricityDefault"], 0))),
-    water_default: Math.max(0, Math.round(pickNum(o, ["water_default", "waterDefault"], 0))),
-    mess_default: Math.max(0, Math.round(pickNum(o, ["mess_default", "messDefault"], 0))),
-    loan_recovery_default: Math.max(0, Math.round(pickNum(o, ["loan_recovery_default", "loanRecoveryDefault", "horticulture_default", "horticultureDefault"], 0))),
-    welfare_default: Math.max(0, Math.round(pickNum(o, ["welfare_default", "welfareDefault"], 0))),
-    veh_charge_default: Math.max(0, Math.round(pickNum(o, ["veh_charge_default", "vehChargeDefault"], 0))),
-    other_deduction_default: Math.max(0, Math.round(pickNum(o, ["other_deduction_default", "otherDeductionDefault"], 0))),
+    lic_default: Math.max(0, roundMoney(pickNum(o, ["lic_default", "licDefault"], 0))),
+    cpf_default: Math.max(0, roundMoney(pickNum(o, ["cpf_default", "cpfDefault"], 0))),
+    da_cpf_default: Math.max(0, roundMoney(pickNum(o, ["da_cpf_default", "daCpfDefault"], 0))),
+    vpf_default: Math.max(0, roundMoney(pickNum(o, ["vpf_default", "vpfDefault"], 0))),
+    pf_loan_default: Math.max(0, roundMoney(pickNum(o, ["pf_loan_default", "pfLoanDefault"], 0))),
+    post_office_default: Math.max(0, roundMoney(pickNum(o, ["post_office_default", "postOfficeDefault"], 0))),
+    credit_society_default: Math.max(0, roundMoney(pickNum(o, ["credit_society_default", "creditSocietyDefault"], 0))),
+    std_licence_fee_default: Math.max(0, roundMoney(pickNum(o, ["std_licence_fee_default", "stdLicenceFeeDefault"], 0))),
+    electricity_default: Math.max(0, roundMoney(pickNum(o, ["electricity_default", "electricityDefault"], 0))),
+    water_default: Math.max(0, roundMoney(pickNum(o, ["water_default", "waterDefault"], 0))),
+    mess_default: Math.max(0, roundMoney(pickNum(o, ["mess_default", "messDefault"], 0))),
+    loan_recovery_default: Math.max(0, roundMoney(pickNum(o, ["loan_recovery_default", "loanRecoveryDefault", "horticulture_default", "horticultureDefault"], 0))),
+    welfare_default: Math.max(0, roundMoney(pickNum(o, ["welfare_default", "welfareDefault"], 0))),
+    veh_charge_default: Math.max(0, roundMoney(pickNum(o, ["veh_charge_default", "vehChargeDefault"], 0))),
+    other_deduction_default: Math.max(0, roundMoney(pickNum(o, ["other_deduction_default", "otherDeductionDefault"], 0))),
   };
 
   const preview = computeGovernmentMonthlyPayroll({

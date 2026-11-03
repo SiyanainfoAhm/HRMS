@@ -104,7 +104,7 @@ const expected: Record<string, string | number> = {
   ProfessionalTax: 135, QuarterAssigned: "Yes", QuarterName: "Q-1", QuarterType: "Type-A",
   QuarterRent: 138, QuarterRentDeduction: 138, NetPay: -17,
   CalendarDays: 31, EOLDays: 1, HPLDays: 2, EquivalentPayableDays: 29,
-  EOLSalaryAdjustment: 3.23, HPLSalaryAdjustment: 3.23,
+  EOLSalaryAdjustment: 3, HPLSalaryAdjustment: 3,
 };
 
 for (const [field, value] of Object.entries(expected)) {

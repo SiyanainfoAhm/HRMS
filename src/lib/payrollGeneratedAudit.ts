@@ -1,3 +1,4 @@
+import { roundMoney } from "./money";
 import { PAYROLL_LABELS } from "./payrollLabels";
 
 /**
@@ -66,7 +67,7 @@ export type PayrollAuditSnapshot = Record<string, unknown>;
 
 function amount(v: unknown): number {
   const n = typeof v === "number" ? v : Number(v);
-  return Number.isFinite(n) ? Math.max(0, Math.round(n)) : 0;
+  return Number.isFinite(n) ? Math.max(0, roundMoney(n)) : 0;
 }
 
 function asRecord(v: unknown): Record<string, unknown> {

@@ -283,8 +283,8 @@ class ElectricityTariffService
 
     public function roundDeduction(float $n): float
     {
-        // The final electricity deduction is the exact bill to 2 decimals (paise), no whole-rupee rounding.
-        return \App\Support\Money::round2(max(0, $n));
+        // The tariff build-up keeps paise; the final electricity deduction is rounded ONCE to the money rule (whole rupee).
+        return \App\Support\Money::roundMoney(max(0, $n));
     }
 
     /**

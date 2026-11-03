@@ -1,5 +1,6 @@
 "use client";
 
+import { formatMoney } from "@/lib/money";
 import { forwardRef } from "react";
 import {
   governmentPayslipPeriodTitle,
@@ -79,7 +80,7 @@ function fmtSalaryDate(iso: string) {
 
 export const GovernmentPayslipPrint = forwardRef<HTMLDivElement, GovernmentPayslipPrintProps>(
   function GovernmentPayslipPrint({ company, user, slip, gov, leavePayslip, payrollFieldDefs }, ref) {
-    const n = (x: number) => (Number(x) || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const n = (x: number) => formatMoney(Number(x) || 0);
     const cellClass = "border border-black px-2 py-1.5 align-top text-sm";
     const thClass = "border border-black px-2 py-1.5 text-left text-xs font-semibold uppercase tracking-wide";
 

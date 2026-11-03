@@ -1,5 +1,7 @@
 "use client";
 
+import { formatMoney, roundMoney } from "@/lib/money";
+import { MoneyInput } from "@/components/ui/MoneyInput";
 import type { ReactNode } from "react";
 import type { GovernmentPreviewMonthly } from "./GovernmentRunPreviewTable";
 import { PAYROLL_LABELS } from "@/lib/payrollLabels";
@@ -63,16 +65,16 @@ export const inpWide = payrollAmountInputClass;
 
 export function d(m: GovernmentPreviewMonthly | null | undefined, k: keyof GovernmentPreviewMonthly["deductions"]): number {
   const value = Number(m?.deductions?.[k] ?? 0);
-  return Number.isFinite(value) ? Math.round(value * 100) / 100 : 0;
+  return Number.isFinite(value) ? roundMoney(value) : 0;
 }
 
 export function v(m: GovernmentPreviewMonthly | null | undefined, k: keyof GovernmentPreviewMonthly): number {
   const value = Number((m as Record<string, unknown>)?.[k as string] ?? 0);
-  return Number.isFinite(value) ? Math.round(value * 100) / 100 : 0;
+  return Number.isFinite(value) ? roundMoney(value) : 0;
 }
 
 export function fmtIn(n: number): string {
-  return n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return formatMoney(n);
 }
 
 function lookupDynamicFieldAmount(
@@ -153,22 +155,7 @@ export function FieldChip({
       {readOnly ? (
         <span className="payroll-amount-value">{fmtIn(value)}</span>
       ) : (
-        <input
-          type="number"
-          min={0}
-          step="0.01"
-          value={value}
-          onChange={(e) => {
-            const raw = e.target.value;
-            if (raw === "") {
-              onChange(0);
-              return;
-            }
-            const n = Number(raw);
-            onChange(Number.isFinite(n) ? Math.max(0, n) : 0);
-          }}
-          className={payrollAmountInputClass}
-        />
+        <MoneyInput value={value} onChange={onChange} className={payrollAmountInputClass} />
       )}
     </div>
   );

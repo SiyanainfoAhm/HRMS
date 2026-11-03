@@ -4,19 +4,20 @@
  * HPL basis: Basic + DA only (HRA and medical are not reduced).
  */
 
-import { divRoundHalfUp, fromPaise, percentOf, proportion, round2, sumMoney, toPaise } from "./money";
+import { divRoundHalfUp, fromSteps, percentOf, proportion, roundMoney, sumMoney, toSteps } from "./money";
 
 /**
- * Splits `cut` over the amounts in proportion to each amount, in integer paise; the last non-zero
- * amount absorbs the remainder so the shares add up to the cut exactly.
+ * Splits `cut` over the amounts in proportion to each amount, in whole money steps (rupees); the last
+ * non-zero amount absorbs the remainder so the shares add up to the cut exactly.
  */
 function allocateCut(amounts: number[], cut: number): number[] {
-  const total = amounts.reduce((s, a) => s + toPaise(a), 0);
-  const cutPaise = toPaise(cut);
-  const shares = amounts.map((a) => (total > 0 ? divRoundHalfUp(toPaise(a) * cutPaise, total) : 0));
-  const last = amounts.map((a) => toPaise(a)).reduce((idx, p, i) => (p > 0 ? i : idx), -1);
-  if (last >= 0) shares[last] += cutPaise - shares.reduce((s, v) => s + v, 0);
-  return shares.map((share, i) => fromPaise(toPaise(amounts[i]) - share));
+  const steps = amounts.map((a) => toSteps(a));
+  const total = steps.reduce((s, a) => s + a, 0);
+  const cutSteps = toSteps(cut);
+  const shares = steps.map((a) => (total > 0 ? divRoundHalfUp(a * cutSteps, total) : 0));
+  const last = steps.reduce((idx, p, i) => (p > 0 ? i : idx), -1);
+  if (last >= 0) shares[last] += cutSteps - shares.reduce((s, v) => s + v, 0);
+  return shares.map((share, i) => fromSteps(steps[i] - share));
 }
 
 export type EolHplReferenceSalary = {
@@ -64,8 +65,8 @@ export function computeEolHplDeductions(input: EolHplDeductionInput): EolHplDedu
   const hplDays = Math.min(dim, Math.max(0, Math.floor(Number(input.hplDays) || 0)));
   const eolBasisTotal = referenceSalaryBasisTotal(input.referenceSalary);
   const hplBasisTotal = referenceSalaryHplBasisTotal(input.referenceSalary);
-  const dailyEolBasis = dim > 0 ? round2(eolBasisTotal / dim) : 0;
-  const dailyHplBasis = dim > 0 ? round2(hplBasisTotal / dim) : 0;
+  const dailyEolBasis = dim > 0 ? roundMoney(eolBasisTotal / dim) : 0;
+  const dailyHplBasis = dim > 0 ? roundMoney(hplBasisTotal / dim) : 0;
 
   // Exact: basis x days / days-in-month in integer paise, rounded once (not daily rate x days).
   const eolDeduction = proportion(eolBasisTotal, eolDays, dim);
@@ -97,10 +98,10 @@ export function referenceSalaryFromGovRecalc(gr: {
   medicalFixed: number;
   hasQuarter?: boolean;
 }): EolHplReferenceSalary {
-  const gb = Math.max(0, round2(Number(gr.grossBasic) || 0));
+  const gb = Math.max(0, roundMoney(Number(gr.grossBasic) || 0));
   const daPct = Number(gr.daPercent) || 0;
   const hraPct = Number(gr.hraPercent) || 0;
-  const medical = Math.max(0, round2(Number(gr.medicalFixed) || 0));
+  const medical = Math.max(0, roundMoney(Number(gr.medicalFixed) || 0));
   const da = percentOf(gb, daPct);
   const hra = gr.hasQuarter ? 0 : percentOf(gb, hraPct);
   return { basic: gb, da, hra, medical };
@@ -125,9 +126,9 @@ export function applyProportionalEarningsCut(
     Math.max(0, amounts.da) +
     Math.max(0, amounts.hra) +
     Math.max(0, amounts.medical);
-  const cut = Math.max(0, round2(Number(cutTotal) || 0));
+  const cut = Math.max(0, roundMoney(Number(cutTotal) || 0));
   if (cut <= 0 || total <= 0) return amounts;
-  const applied = Math.min(cut, round2(total));
+  const applied = Math.min(cut, roundMoney(total));
   const [basic, da, hra, medical] = allocateCut([amounts.basic, amounts.da, amounts.hra, amounts.medical].map((a) => Math.max(0, a)), applied);
   return { basic, da, hra, medical };
 }
@@ -138,9 +139,9 @@ export function applyBasicDaEarningsCut(
   cutTotal: number,
 ): EolHplReferenceSalary {
   const basicDaTotal = Math.max(0, amounts.basic) + Math.max(0, amounts.da);
-  const cut = Math.max(0, round2(Number(cutTotal) || 0));
+  const cut = Math.max(0, roundMoney(Number(cutTotal) || 0));
   if (cut <= 0 || basicDaTotal <= 0) return amounts;
-  const applied = Math.min(cut, round2(basicDaTotal));
+  const applied = Math.min(cut, roundMoney(basicDaTotal));
   const [basic, da] = allocateCut([Math.max(0, amounts.basic), Math.max(0, amounts.da)], applied);
   return { basic, da, hra: amounts.hra, medical: amounts.medical };
 }

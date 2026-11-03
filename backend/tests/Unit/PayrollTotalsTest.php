@@ -10,13 +10,13 @@ final class PayrollTotalsTest extends TestCase
     private function gm(): array
     {
         return [
-            'basicPaid' => 34590, 'daPaid' => 18332.7, 'hraPaid' => 0, 'transportPaid' => 3600,
+            'basicPaid' => 34590, 'daPaid' => 18333, 'hraPaid' => 0, 'transportPaid' => 3600,
             'daArrearsPaid' => 1000, 'transportArrearsPaid' => 200, 'grossArrear' => 1200,
             'deductions' => ['pt' => 200, 'cpf' => 5000, 'electricity' => 98, 'water' => 314, 'mess' => 25, 'quarterRent' => 138],
             'cpfArrear' => 50,
-            'totalEarnings' => 57722.7,
+            'totalEarnings' => 57723,
             'totalDeductions' => 5825,
-            'netSalary' => 51897.7,
+            'netSalary' => 51898,
         ];
     }
 
@@ -53,7 +53,8 @@ final class PayrollTotalsTest extends TestCase
         $this->assertArrayHasKey('totals', PayrollTotals::reconcile(['totalEarnings' => 'x', 'totalDeductions' => 0, 'netSalary' => 0]));
         $this->assertArrayHasKey('totals', PayrollTotals::reconcile([]));
         $this->assertSame(0.0, PayrollTotals::amount(-5));
-        $this->assertSame(1.01, PayrollTotals::amount('1.005')); // 2-dp half-up
+        $this->assertSame(1.0, PayrollTotals::amount('1.005')); // whole rupee, half up
+        $this->assertSame(2.0, PayrollTotals::amount('1.5'));
     }
 
     public function test_custom_fields_are_bounded_by_their_values(): void

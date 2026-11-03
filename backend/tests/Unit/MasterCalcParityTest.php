@@ -21,10 +21,8 @@ final class MasterCalcParityTest extends TestCase
                 'total_deductions' => $out['total_deductions'], 'take_home' => $out['take_home'],
             ];
             foreach ($case['expected'] as $key => $expected) {
-                // KNOWN, UNRESOLVED BUSINESS DECISION: the Master screen (TypeScript) keeps
-                // paise while the server stores whole rupees for DA/HRA/transport, so the
-                // saved figure can differ by up to the sum of those roundings. Anything
-                // larger than that is a real calculation difference.
+                // One money rule (whole rupee, App Support Money = src/lib/money.ts): the Master screen (TypeScript) and
+                // the server must agree to the rupee; zero tolerance.
                 $tolerance = 0.0;
                 $this->assertEqualsWithDelta($expected, (float) $actual[$key], $tolerance, "{$case['name']}: {$key}");
             }

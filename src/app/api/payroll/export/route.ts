@@ -29,6 +29,7 @@ import {
   contentColumnWidths,
   mergeCells,
   writeStyledCell,
+  INR_NUM_FMT,
 } from "@/lib/payrollExcelStyles";
 
 import { getApiBaseUrl } from "@/lib/apiBase";
@@ -254,7 +255,7 @@ function buildFinalizedDetailSheet(opts: {
       t: "n",
       f: `SUM(${start}:${end})`,
       s: applyTotalCurrencyStyle("gross"),
-      z: '"₹"#,##0.00',
+      z: INR_NUM_FMT,
     };
   }
 

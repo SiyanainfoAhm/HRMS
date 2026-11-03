@@ -1,3 +1,4 @@
+import { MONEY_DECIMALS, roundMoney, sumMoney } from "./money";
 /**
  * Bank Letter exports: Word (server template), Excel + PDF (client).
  */
@@ -24,19 +25,19 @@ const MONTH_NAMES = [
   "December",
 ] as const;
 
-/** Indian grouping with 2 decimal places, e.g. 1,27,858.00 */
+/** Indian grouping, whole rupees (money rule), e.g. 1,27,858 */
 export function formatBankLetterAmount(amount: number): string {
-  const n = Math.round((Number(amount) || 0) * 100) / 100;
+  const n = roundMoney(Number(amount) || 0);
   const negative = n < 0;
   const abs = Math.abs(n);
-  const [intRaw, dec = "00"] = abs.toFixed(2).split(".");
+  const [intRaw, dec = ""] = abs.toFixed(MONEY_DECIMALS).split(".");
   const last3 = intRaw.slice(-3);
   let rest = intRaw.slice(0, -3);
   if (rest) {
     rest = rest.replace(/\B(?=(\d{2})+(?!\d))/g, ",");
-    return `${negative ? "-" : ""}${rest},${last3}.${dec}`;
+    return `${negative ? "-" : ""}${rest},${last3}${dec ? `.${dec}` : ""}`;
   }
-  return `${negative ? "-" : ""}${last3}.${dec}`;
+  return `${negative ? "-" : ""}${last3}${dec ? `.${dec}` : ""}`;
 }
 
 export function bankLetterSalaryMonthLabel(month: number | string, year: number | string): string {
@@ -67,11 +68,14 @@ export function payrollBankLetterFilenameForFormat(
 }
 
 function totalAmount(employees: BankLetterEmployeePayload[]): number {
-  return Math.round(employees.reduce((s, e) => s + (Number(e.netPay) || 0), 0) * 100) / 100;
+  return sumMoney(...employees.map((e) => Number(e.netPay) || 0));
 }
 
 /** Indian lakh/crore grouping for a numeric cell, e.g. 1,27,858.00. */
-const INDIAN_AMOUNT_FORMAT = "[>=10000000]##\\,##\\,##\\,##0.00;[>=100000]##\\,##\\,##0.00;##,##0.00";
+const INDIAN_AMOUNT_FORMAT =
+  MONEY_DECIMALS === 0
+    ? "[>=10000000]##\\,##\\,##\\,##0;[>=100000]##\\,##\\,##0;##,##0"
+    : "[>=10000000]##\\,##\\,##\\,##0.00;[>=100000]##\\,##\\,##0.00;##,##0.00";
 
 /** Build HDFC-style bank letter Excel workbook. */
 export function buildBankLetterExcelBlob(
@@ -114,7 +118,7 @@ export function buildBankLetterExcelBlob(
       e.employeeCode,
       e.employeeName,
       e.bankAccountNumber,
-      Math.round((Number(e.netPay) || 0) * 100) / 100,
+      roundMoney(Number(e.netPay) || 0),
     ]);
   });
 

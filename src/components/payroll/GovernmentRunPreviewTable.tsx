@@ -1,6 +1,8 @@
 "use client";
 
-import { round2 } from "@/lib/money";
+import { formatMoney, roundMoney } from "@/lib/money";
+import { MoneyInput } from "@/components/ui/MoneyInput";
+
 import { useRef, useState } from "react";
 import type { PayrollFieldDefinition } from "@/lib/payrollFieldTypes";
 import { cn } from "@/lib/cn";
@@ -337,7 +339,7 @@ function ElectricityBreakdownButton({ row }: { row: GovernmentRunPreviewRow }) {
   const bill = electricityBillFromRow(row);
   if (!bill) return null;
   const money = (value: number) =>
-    `₹${Number(value || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    `₹${formatMoney(value)}`;
   return (
     <>
       <button
@@ -428,11 +430,6 @@ function StickyMiniSummary({
   );
 }
 
-/** A typed amount, exactly as typed (to 2 decimals); blank or invalid is 0. */
-function parseAmount(raw: string): number {
-  const n = Number(raw);
-  return Number.isFinite(n) ? round2(Math.max(0, n)) : 0;
-}
 
 function ArrearField({
   label,
@@ -451,14 +448,7 @@ function ArrearField({
       {readOnly || !onChange ? (
         <span className="text-center text-[13px] tabular-nums text-slate-900">{fmtIn(value)}</span>
       ) : (
-        <input
-          type="number"
-          min={0}
-          step="0.01"
-          value={value}
-          onChange={(e) => onChange(parseAmount(e.target.value))}
-          className={inpWide}
-        />
+        <MoneyInput value={value} onChange={onChange} className={inpWide} />
       )}
     </div>
   );
@@ -548,8 +538,8 @@ function GovernmentEmployeeDetail({
   const eolRefYear = leave.eolReferenceYear ?? runYear;
   const hplRefMonth = leave.hplReferenceMonth ?? runMonth;
   const hplRefYear = leave.hplReferenceYear ?? runYear;
-  const eolBasis = round2(Number(gRecord?.eolBasisAmount ?? 0) || 0);
-  const hplBasis = round2(Number(gRecord?.hplBasisAmount ?? 0) || 0);
+  const eolBasis = roundMoney(Number(gRecord?.eolBasisAmount ?? 0) || 0);
+  const hplBasis = roundMoney(Number(gRecord?.hplBasisAmount ?? 0) || 0);
   const activeFieldKeys = new Set(payrollFieldDefs?.filter((field) => field.isActive).map((field) => field.fieldKey));
   const isVisibleConfiguredField = (fieldKey?: string) =>
     preserveSavedFields || !fieldKey || activeFieldKeys.has(fieldKey);
@@ -791,14 +781,7 @@ function GovernmentEmployeeDetail({
                 {readOnly ? (
                   <p className="text-[13px] tabular-nums">{fmtIn(row.incentive ?? 0)}</p>
                 ) : (
-                  <input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={row.incentive ?? 0}
-                    onChange={(e) => onUpdate(row.employeeUserId, "incentive", parseAmount(e.target.value))}
-                    className={inpWide}
-                  />
+                  <MoneyInput value={row.incentive ?? 0} onChange={(n) => onUpdate(row.employeeUserId, "incentive", n)} className={inpWide} />
                 )}
               </div>
               <div>
@@ -806,14 +789,7 @@ function GovernmentEmployeeDetail({
                 {readOnly ? (
                   <p className="text-[13px] tabular-nums">{fmtIn(row.prBonus ?? 0)}</p>
                 ) : (
-                  <input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={row.prBonus ?? 0}
-                    onChange={(e) => onUpdate(row.employeeUserId, "prBonus", parseAmount(e.target.value))}
-                    className={inpWide}
-                  />
+                  <MoneyInput value={row.prBonus ?? 0} onChange={(n) => onUpdate(row.employeeUserId, "prBonus", n)} className={inpWide} />
                 )}
               </div>
               <div>
@@ -821,16 +797,7 @@ function GovernmentEmployeeDetail({
                 {readOnly ? (
                   <p className="text-[13px] tabular-nums">{fmtIn(v(g, "encashmentPaid"))}</p>
                 ) : (
-                  <input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={v(g, "encashmentPaid")}
-                    onChange={(e) =>
-                      onUpdate(row.employeeUserId, "govEarning_encashmentPaid", parseAmount(e.target.value))
-                    }
-                    className={inpWide}
-                  />
+                  <MoneyInput value={v(g, "encashmentPaid")} onChange={(n) => onUpdate(row.employeeUserId, "govEarning_encashmentPaid", n)} className={inpWide} />
                 )}
               </div>
               <div>
@@ -838,16 +805,7 @@ function GovernmentEmployeeDetail({
                 {readOnly ? (
                   <p className="text-[13px] tabular-nums">{fmtIn(v(g, "encashmentDaPaid"))}</p>
                 ) : (
-                  <input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={v(g, "encashmentDaPaid")}
-                    onChange={(e) =>
-                      onUpdate(row.employeeUserId, "govEarning_encashmentDaPaid", parseAmount(e.target.value))
-                    }
-                    className={inpWide}
-                  />
+                  <MoneyInput value={v(g, "encashmentDaPaid")} onChange={(n) => onUpdate(row.employeeUserId, "govEarning_encashmentDaPaid", n)} className={inpWide} />
                 )}
               </div>
               <div>
@@ -855,14 +813,7 @@ function GovernmentEmployeeDetail({
                 {readOnly ? (
                   <p className="text-[13px] tabular-nums">{fmtIn(row.reimbursement ?? 0)}</p>
                 ) : (
-                  <input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={row.reimbursement ?? 0}
-                    onChange={(e) => onUpdate(row.employeeUserId, "reimbursement", parseAmount(e.target.value))}
-                    className={inpWide}
-                  />
+                  <MoneyInput value={row.reimbursement ?? 0} onChange={(n) => onUpdate(row.employeeUserId, "reimbursement", n)} className={inpWide} />
                 )}
               </div>
             </div>

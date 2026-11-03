@@ -237,20 +237,19 @@ final class PayrollArrearService
         float $newDaPercent,
         float $cpfRate = self::DEFAULT_CPF_RATE,
     ): array {
-        // Same rounding as calculateMonthDaArrear() in src/lib/payrollArrearCalc.ts:
-        // whole-rupee DA/transport (half up, like Math.round), CPF/net at 2 decimals.
-        $rupee = static fn (float $v): float => floor($v + 0.5);
-        $oldDa = $rupee($basic * $oldDaPercent / 100);
-        $newDa = $rupee($basic * $newDaPercent / 100);
+        // Same rounding as calculateMonthDaArrear() in src/lib/payrollArrearCalc.ts: every arrear line is a
+        // whole rupee, rounded once, half up (App\Support\Money).
+        $oldDa = \App\Support\Money::percentOf($basic, $oldDaPercent);
+        $newDa = \App\Support\Money::percentOf($basic, $newDaPercent);
         $daArrear = $newDa - $oldDa;
 
-        $oldTrpt = $rupee($transportBase + ($transportBase * $oldDaPercent / 100));
-        $newTrpt = $rupee($transportBase + ($transportBase * $newDaPercent / 100));
+        $oldTrpt = \App\Support\Money::roundMoney($transportBase + \App\Support\Money::percentOf($transportBase, $oldDaPercent));
+        $newTrpt = \App\Support\Money::roundMoney($transportBase + \App\Support\Money::percentOf($transportBase, $newDaPercent));
         $trptArrear = $newTrpt - $oldTrpt;
 
         $grossArrear = $daArrear + $trptArrear;
-        $cpfArrear = $rupee($grossArrear * $cpfRate * 100) / 100;
-        $netArrear = $rupee(($grossArrear - $cpfArrear) * 100) / 100;
+        $cpfArrear = \App\Support\Money::percentOf($grossArrear, $cpfRate * 100);
+        $netArrear = \App\Support\Money::roundMoney($grossArrear - $cpfArrear);
 
         return [
             'basic' => $basic,

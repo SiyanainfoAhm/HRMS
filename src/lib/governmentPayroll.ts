@@ -1,4 +1,4 @@
-import { percentOf, proportion, round2, sumMoney } from "./money";
+import { percentOf, proportion, roundMoney, sumMoney } from "./money";
 import {
   calculateCpfFromBasis,
   DEFAULT_CPF_BASIS_KEYS,
@@ -297,7 +297,7 @@ export type GovernmentMonthlyComputed = {
 };
 
 export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): GovernmentMonthlyComputed {
-  const gb = Number(input.grossBasic) || 0;
+  const gb = roundMoney(Number(input.grossBasic) || 0);
   const slab = deriveTransportSlabFromLevel(
     input.payLevel,
     gb,
@@ -305,12 +305,12 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
   );
   const daPctForTransport = Number(input.daPercent) || 0;
   const transportDa = percentOf(slab.transportBase, daPctForTransport);
-  const transportActual = round2(slab.transportBase + transportDa);
+  const transportActual = roundMoney(slab.transportBase + transportDa);
   const transportPaid = transportActual;
 
   const daPct = Number(input.daPercent) || 0;
   const hraPct = Number(input.hraPercent) || 0;
-  const medFixed = Number(input.medicalFixed) || 0;
+  const medFixed = roundMoney(Number(input.medicalFixed) || 0);
 
   const basicActual = gb;
   const daActual = percentOf(gb, daPct);
@@ -327,19 +327,19 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
   const medicalPaid = paidAfterUnpaidDays(medicalActual, dim, unpaid);
 
   const opt = input.optionalEarnings ?? {};
-  const sp = Number(opt.spPay) || 0;
-  const ewa = Number(opt.extraWorkAllowance) || 0;
-  const ua = Number(opt.uniformAllowance) || 0;
-  const eda = Number(opt.educationAllowance) || 0;
-  const daa = Number(opt.daArrears) || 0;
-  const tra = Number(opt.transportArrears) || 0;
-  const enc = Number(opt.encashment) || 0;
-  const encDa = Number(opt.encashmentDa) || 0;
+  const sp = roundMoney(Number(opt.spPay) || 0);
+  const ewa = roundMoney(Number(opt.extraWorkAllowance) || 0);
+  const ua = roundMoney(Number(opt.uniformAllowance) || 0);
+  const eda = roundMoney(Number(opt.educationAllowance) || 0);
+  const daa = roundMoney(Number(opt.daArrears) || 0);
+  const tra = roundMoney(Number(opt.transportArrears) || 0);
+  const enc = roundMoney(Number(opt.encashment) || 0);
+  const encDa = roundMoney(Number(opt.encashmentDa) || 0);
 
   const eo = input.earningPaidOverrides ?? {};
   const pickPaid = (computed: number, key: keyof GovernmentEarningPaidOverrides): number => {
     const v = eo[key];
-    if (v != null && Number.isFinite(Number(v))) return round2(Number(v));
+    if (v != null && Number.isFinite(Number(v))) return roundMoney(Number(v));
     return computed;
   };
 
@@ -404,10 +404,10 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
   // show the cut in Earnings. Auto HPL/EOL deduction lines stay 0 to avoid double-counting;
   // manual HPL/EOL overrides skip the earnings cut and use the typed deduction amounts.
   let eolDeduction = input.eolDeductionManualOverride
-    ? round2(d.eol)
+    ? roundMoney(d.eol)
     : eolLeave.eolDeduction;
   let hplDeduction = input.hplDeductionManualOverride
-    ? round2(d.hpl)
+    ? roundMoney(d.hpl)
     : hplLeave.hplDeduction;
 
   let basicOut = basicPaidF;
@@ -498,7 +498,7 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
   const cpfFixedRaw = input.cpfConfig?.cpfFixedAmount;
   const cpfFixed =
     cpfFixedRaw !== undefined && cpfFixedRaw !== null
-      ? Math.round(Number(cpfFixedRaw))
+      ? roundMoney(Number(cpfFixedRaw))
       : 0;
   // Prefer explicit CPF config from master resolve over stale deductionDefaults.cpf —
   // unless admin set a Run Payroll CPF override (0 is valid).
@@ -506,7 +506,7 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
   if (input.cpfManualOverride) {
     const raw = d.cpf;
     const n = Number(raw);
-    cpfAmount = Number.isFinite(n) ? Math.max(0, round2(n)) : 0;
+    cpfAmount = Number.isFinite(n) ? Math.max(0, roundMoney(n)) : 0;
   } else if (cpfMode === "fixed_amount") {
     // Explicit fixed amount — including intentional ₹0.
     cpfAmount = Number.isFinite(cpfFixed) ? cpfFixed : 0;
@@ -536,7 +536,7 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
 
   // Priority: run/input rent → deduction default → 0. Explicit 0 stays 0.
   const quarterRentAmount = hasQuarter
-    ? round2(
+    ? roundMoney(
         (() => {
           const raw = input.quarterRent ?? d.quarterRent;
           if (raw === null || raw === undefined) return 0;
@@ -547,25 +547,25 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
     : 0;
 
   const deductions: GovernmentDeductionDefaults = {
-    incomeTax: round2(d.incomeTax),
-    pt: round2(d.pt),
-    lic: round2(d.lic),
+    incomeTax: roundMoney(d.incomeTax),
+    pt: roundMoney(d.pt),
+    lic: roundMoney(d.lic),
     cpf: cpfAmount,
-    daCpf: round2(d.daCpf),
-    vpf: round2(d.vpf),
-    pfLoan: round2(d.pfLoan),
-    postOffice: round2(d.postOffice),
-    creditSociety: round2(d.creditSociety),
-    stdLicenceFee: round2(d.stdLicenceFee),
+    daCpf: roundMoney(d.daCpf),
+    vpf: roundMoney(d.vpf),
+    pfLoan: roundMoney(d.pfLoan),
+    postOffice: roundMoney(d.postOffice),
+    creditSociety: roundMoney(d.creditSociety),
+    stdLicenceFee: roundMoney(d.stdLicenceFee),
     electricity: electricityAmount,
-    water: round2(d.water),
-    mess: round2(d.mess),
-    loanRecovery: round2(d.loanRecovery),
-    welfare: round2(d.welfare),
+    water: roundMoney(d.water),
+    mess: roundMoney(d.mess),
+    loanRecovery: roundMoney(d.loanRecovery),
+    welfare: roundMoney(d.welfare),
     hpl: hplDeduction,
     eol: eolDeduction,
-    vehCharge: round2(d.vehCharge),
-    other: round2(d.other),
+    vehCharge: roundMoney(d.vehCharge),
+    other: roundMoney(d.other),
     quarterRent: quarterRentAmount,
   };
 
@@ -593,7 +593,7 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
     customDeductionsTotal,
   );
 
-  const netSalary = round2(totalEarnings - totalDeductions);
+  const netSalary = roundMoney(totalEarnings - totalDeductions);
 
   return {
     transportSlab: slab,

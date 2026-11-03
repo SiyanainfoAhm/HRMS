@@ -85,15 +85,16 @@ class PayrollBankLetterService
         return 'Bank Letter '.self::SHORT_MONTHS[$month].' '.$year.'.docx';
     }
 
-    /** Indian grouping with 2 decimal places, e.g. 21,39,931.00 */
+    /** Indian grouping, whole rupees (App\Support\Money), e.g. 21,39,931 */
     public function formatAmount(float|int|string $amount): string
     {
-        $n = round((float) $amount, 2);
+        $n = \App\Support\Money::roundMoney($amount);
         $negative = $n < 0;
         $n = abs($n);
-        $parts = explode('.', number_format($n, 2, '.', ''));
+        $decimals = \App\Support\Money::WHOLE_RUPEES ? 0 : 2;
+        $parts = explode('.', number_format($n, $decimals, '.', ''));
         $int = $parts[0];
-        $dec = $parts[1] ?? '00';
+        $dec = $parts[1] ?? '';
         $last3 = substr($int, -3);
         $rest = substr($int, 0, -3);
         if ($rest !== '' && $rest !== false) {
@@ -103,7 +104,7 @@ class PayrollBankLetterService
             $int = $last3;
         }
 
-        return ($negative ? '-' : '').$int.'.'.$dec;
+        return ($negative ? '-' : '').$int.($dec !== '' ? '.'.$dec : '');
     }
 
     /**
@@ -183,7 +184,7 @@ class PayrollBankLetterService
                 $missingAmount[] = $name !== '' ? $name : ($code !== '' ? $code : $uid);
                 $amount = null;
             } else {
-                $amount = round((float) $amountRaw, 2);
+                $amount = \App\Support\Money::roundMoney($amountRaw);
                 if (! is_finite($amount) || $amount < 0) {
                     $invalidAmount[] = $name !== '' ? $name : $uid;
                 }
@@ -235,7 +236,7 @@ class PayrollBankLetterService
 
         return [
             'rows' => $normalized,
-            'total' => round($total, 2),
+            'total' => \App\Support\Money::roundMoney($total),
         ];
     }
 

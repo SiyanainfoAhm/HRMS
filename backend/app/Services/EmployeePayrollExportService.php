@@ -155,7 +155,7 @@ class EmployeePayrollExportService
                     $active->setCellValueExplicit($coord, (string) $value, DataType::TYPE_STRING);
                 } elseif (in_array($colIndex0, $amountColIndexes, true) && $value !== '' && $value !== null && is_numeric($value)) {
                     $active->setCellValue($coord, 0 + $value);
-                    $active->getStyle($coord)->getNumberFormat()->setFormatCode('#,##0.00');
+                    $active->getStyle($coord)->getNumberFormat()->setFormatCode(\App\Support\SpreadsheetLayout::FORMAT_AMOUNT);
                 } else {
                     $active->setCellValue($coord, $value);
                 }
@@ -169,7 +169,7 @@ class EmployeePayrollExportService
             $coord = $this->colLetter($colIndex0 + 1).$rowNum;
             if (is_numeric($value) && $colIndex0 !== 0) {
                 $active->setCellValue($coord, 0 + $value);
-                $active->getStyle($coord)->getNumberFormat()->setFormatCode('#,##0.00');
+                $active->getStyle($coord)->getNumberFormat()->setFormatCode(\App\Support\SpreadsheetLayout::FORMAT_AMOUNT);
             } else {
                 $active->setCellValue($coord, $value);
             }
@@ -246,7 +246,11 @@ class EmployeePayrollExportService
                 $this->resolveQuarterMeta($gov, $mastersByUser[$it['uid']] ?? null, $mastersById, $quartersById),
             );
             foreach ($amountCols as $i) {
-                if (isset($values[$i]) && is_numeric($values[$i])) $sums[$i] += (float) $values[$i];
+                if (isset($values[$i]) && is_numeric($values[$i])) {
+                    // Every amount shown is a whole rupee, so the Total row is the exact sum of the rows above it.
+                    $values[$i] = \App\Support\Money::roundMoney($values[$i]);
+                    $sums[$i] += $values[$i];
+                }
             }
             $rows[] = $values;
         }

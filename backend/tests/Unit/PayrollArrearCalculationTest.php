@@ -40,8 +40,8 @@ final class PayrollArrearCalculationTest extends TestCase
         $this->assertSame(5760.0, $result['new_transport_amount']);
         $this->assertSame(72.0, $result['transport_arrear']);
         $this->assertSame(1744.0, $result['gross_arrear']);
-        $this->assertEqualsWithDelta(209.28, $result['cpf_arrear'], 0.01);
-        $this->assertEqualsWithDelta(1534.72, $result['net_arrear'], 0.01);
+        $this->assertSame(209.0, $result['cpf_arrear']);
+        $this->assertSame(1535.0, $result['net_arrear']);
     }
 
     public function test_arrear_period_jan_to_mar_for_april_run(): void
@@ -65,14 +65,14 @@ final class PayrollArrearCalculationTest extends TestCase
         $this->assertSame(1672.0, $oneMonth['da_arrear']);
         $this->assertSame(72.0, $oneMonth['transport_arrear']);
         $this->assertSame(1744.0, $oneMonth['gross_arrear']);
-        $this->assertEqualsWithDelta(209.28, $oneMonth['cpf_arrear'], 0.01);
-        $this->assertEqualsWithDelta(1534.72, $oneMonth['net_arrear'], 0.01);
+        $this->assertSame(209.0, $oneMonth['cpf_arrear']);
+        $this->assertSame(1535.0, $oneMonth['net_arrear']);
 
         $this->assertSame(5016.0, $oneMonth['da_arrear'] * 3);
         $this->assertSame(216.0, $oneMonth['transport_arrear'] * 3);
         $this->assertSame(5232.0, $oneMonth['gross_arrear'] * 3);
-        $this->assertEqualsWithDelta(627.84, $oneMonth['cpf_arrear'] * 3, 0.01);
-        $this->assertEqualsWithDelta(4604.16, $oneMonth['net_arrear'] * 3, 0.01);
+        $this->assertSame(627.0, $oneMonth['cpf_arrear'] * 3);
+        $this->assertSame(4605.0, $oneMonth['net_arrear'] * 3);
     }
 
     public function test_arrear_period_march_only_for_april_run(): void
@@ -152,7 +152,7 @@ final class PayrollArrearCalculationTest extends TestCase
     public function test_cpf_arrear_uses_custom_rate(): void
     {
         $result = $this->service->calculateMonthArrear(83600, 3600, 58, 60, 0.10);
-        $this->assertEqualsWithDelta(174.4, $result['cpf_arrear'], 0.01);
+        $this->assertSame(174.0, $result['cpf_arrear']);
     }
 
     public function test_dedupe_revision_events_keeps_latest_per_transition(): void

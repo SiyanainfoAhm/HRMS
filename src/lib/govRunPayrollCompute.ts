@@ -1,4 +1,4 @@
-import { round2 } from "./money";
+import { roundMoney } from "./money";
 import {
   computeGovernmentMonthlyPayroll,
   governmentMonthlyExtras,
@@ -21,7 +21,7 @@ function mergeDeductionDefaultsForCompute(
   for (const [key, raw] of Object.entries(paidOverrides)) {
     if (!hasOwn(paidOverrides, key)) continue;
     const n = Number(raw);
-    if (Number.isFinite(n)) (out as Record<string, number>)[key] = Math.max(0, round2(n));
+    if (Number.isFinite(n)) (out as Record<string, number>)[key] = Math.max(0, roundMoney(n));
   }
   return out;
 }

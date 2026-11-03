@@ -1,4 +1,4 @@
-import { round2 } from "./money";
+import { roundMoney } from "./money";
 import { PAYROLL_LABELS } from "./payrollLabels";
 import * as XLSX from "xlsx-js-style";
 import { calendarDaysInMonth, equivalentPayableDays } from "@/lib/payrollLeaveDays";
@@ -32,6 +32,7 @@ import {
   pairItems,
   writeStyledCell,
   type XlsxCellStyle,
+  INR_NUM_FMT,
 } from "@/lib/payrollExcelStyles";
 import {
   payrollDetailWorkbookFilename,
@@ -297,11 +298,11 @@ export function aggregatePayrollSummary(rows: PayrollRunExportRow[]) {
     earnings,
     arrears,
     deductions,
-    totalEarnings: round2(totalEarnings),
-    totalArrears: round2(totalArrears),
-    totalDeductions: round2(totalDeductions),
-    netPayable: round2(totalNet),
-    earningsExcludingArrears: round2(totalEarnings - totalArrears),
+    totalEarnings: roundMoney(totalEarnings),
+    totalArrears: roundMoney(totalArrears),
+    totalDeductions: roundMoney(totalDeductions),
+    netPayable: roundMoney(totalNet),
+    earningsExcludingArrears: roundMoney(totalEarnings - totalArrears),
   };
 }
 
@@ -841,7 +842,7 @@ export function buildEmployeeDetailSheet(
       t: "n",
       f: `SUM(${start}:${end})`,
       s: applyTotalCurrencyStyle("gross"),
-      z: '"₹"#,##0.00',
+      z: INR_NUM_FMT,
     };
   }
 
