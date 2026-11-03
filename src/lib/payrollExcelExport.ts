@@ -1,3 +1,4 @@
+import { round2 } from "./money";
 import type { GovernmentMonthlyComputed } from "@/lib/governmentPayroll";
 import { calendarDaysInMonth, equivalentPayableDays, leaveSalaryAdjustment } from "@/lib/payrollLeaveDays";
 
@@ -550,7 +551,7 @@ export function buildPayrollExcelRow(
     VehCharge: 0,
     OtherDeduction: 0,
     TotalDeductions: n(p.deductions),
-    NetSalary: Math.round(n(p.gross_pay) - n(p.deductions)),
+    NetSalary: round2(n(p.gross_pay) - n(p.deductions)),
     CTC: n(p.ctc),
     Incentive: n(p.incentive),
     PRBonus: n(p.pr_bonus),

@@ -19,7 +19,7 @@ function assertEq(a: unknown, b: unknown, msg: string) {
 const tariff = DEFAULT_APRIL_2026_ELECTRICITY_TARIFF;
 const MASTER_FIXED = 49;
 
-/** Hand-computed from the April 2026 tariff: round(1.16 * (130 + slabs + 1.6u + fuel)). */
+/** Hand-computed from the April 2026 tariff: 1.16 * (130 + slabs + 1.6u + fuel), to paise. */
 function expectedBill(units: number): number {
   const slab = (from: number, to: number, rate: number, fuel: number) => {
     const n = Math.max(0, Math.min(units, to) - from + 1);
@@ -27,7 +27,7 @@ function expectedBill(units: number): number {
   };
   const energy =
     slab(1, 100, 3.96, 0.35) + slab(101, 300, 10.8, 0.65) + slab(301, 500, 15.03, 0.85);
-  return Math.round((130 + energy + units * 1.6) * 1.16);
+  return Math.round((130 + energy + units * 1.6) * 1.16 * 100) / 100;
 }
 
 for (const units of [10, 11, 40, 80, 301]) {
@@ -35,7 +35,7 @@ for (const units of [10, 11, 40, 80, 301]) {
   const unitMode = calculateElectricityBill({ units, tariff, mode: "unit_based", fixedAmount: MASTER_FIXED });
   assertEq(fixedMode.total, unitMode.total, `units ${units}: stored mode must not change the bill`);
   assertEq(fixedMode.mode, "unit_based", `units ${units}: effective mode`);
-  assertEq(Math.abs(fixedMode.total - expectedBill(units)) <= 1, true, `units ${units}: ${fixedMode.total} vs ${expectedBill(units)}`);
+  assertEq(Math.abs(fixedMode.total - expectedBill(units)) <= 0.02, true, `units ${units}: ${fixedMode.total} vs ${expectedBill(units)}`);
   assertEq(fixedMode.total === MASTER_FIXED, false, `units ${units}: must not equal master default`);
 }
 

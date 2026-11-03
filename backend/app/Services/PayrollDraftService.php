@@ -850,7 +850,7 @@ class PayrollDraftService
         ])['hra_amount'];
         $daysInMonth = Carbon::create($year, $month, 1)->daysInMonth;
         $payDays = max(0, min($daysInMonth, (int) ($payload['payDays'] ?? $payload['pay_days'] ?? $daysInMonth)));
-        $hraPaid = $hasQuarter ? 0.0 : round((float) $fullHra - ((float) $fullHra / $daysInMonth) * ($daysInMonth - $payDays));
+        $hraPaid = $hasQuarter ? 0.0 : \App\Support\Money::proportion((float) $fullHra, $payDays, $daysInMonth);
         // HRA is only re-derived when the quarter state changes (or was never
         // stored). Otherwise the stored figures stand: they already include leave
         // cuts and anything the operator typed, which this pro-rata would discard.

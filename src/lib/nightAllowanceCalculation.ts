@@ -27,8 +27,9 @@ export function calculateNightAllowanceAmount(
   const r = Math.max(0, Number(rate) || 0);
   if (h <= 0) return 0;
   if (basis === "hour") return Math.round(h * r);
-  const amount = (h * r) / NIGHT_DUTY_BASE_HOURS;
-  return NIGHT_ALLOWANCE_ROUND_TO_RUPEE ? Math.round(amount) : Math.round(amount * 100) / 100;
+  // hours x rate / 8 in integer paise (src/lib/money.ts), rounded once, half up, to paise.
+  const amount = proportion(r, h, NIGHT_DUTY_BASE_HOURS);
+  return NIGHT_ALLOWANCE_ROUND_TO_RUPEE ? Math.round(amount) : amount;
 }
 
 /** Label under NIGHT HRS: "₹23.20/duty"; legacy 'hour'-basis rows (hours x rate) show "/hr". */
@@ -37,6 +38,7 @@ export function nightAllowanceRateLabel(rate: number | null | undefined, basis: 
   return `₹${r.toFixed(2)}/${basis === "duty" ? "duty" : "hr"}`;
 }
 
+import { proportion } from "./money";
 import { isValidGovernmentPayLevel } from "./payLevel";
 
 export function formatNightAllowanceSlabLabel(slabNo: number, payLevel: number, ratePerDuty: number): string {

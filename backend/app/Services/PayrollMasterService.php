@@ -1695,7 +1695,7 @@ final class PayrollMasterService
         $basic = (float) ($m->gross_basic_pay ?? $m->gross_basic ?? $m->gross_salary ?? 0);
         $percent = (float) ($m->da_percent ?? PayrollCalculationService::DEFAULT_DA_PERCENT);
 
-        return floor($basic * $percent / 100 * 100 + 0.5) / 100;
+        return \App\Support\Money::percentOf($basic, $percent);
     }
 
     private function roundHraAmount(HrmsPayrollMaster $m): float
@@ -1703,7 +1703,7 @@ final class PayrollMasterService
         $basic = (float) ($m->gross_basic_pay ?? $m->gross_basic ?? $m->gross_salary ?? 0);
         $percent = (float) ($m->hra_percent ?? PayrollCalculationService::DEFAULT_HRA_PERCENT);
 
-        return floor($basic * $percent / 100 * 100 + 0.5) / 100;
+        return \App\Support\Money::percentOf($basic, $percent);
     }
 
     /** @param  array<string, mixed>  $payload */

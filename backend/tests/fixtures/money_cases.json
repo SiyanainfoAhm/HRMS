@@ -1,0 +1,793 @@
+{
+ "percent": [
+  {
+   "amount": 0,
+   "percent": 0,
+   "expected": 0
+  },
+  {
+   "amount": 0,
+   "percent": 12,
+   "expected": 0
+  },
+  {
+   "amount": 0,
+   "percent": 12.5,
+   "expected": 0
+  },
+  {
+   "amount": 0,
+   "percent": 30,
+   "expected": 0
+  },
+  {
+   "amount": 0,
+   "percent": 53,
+   "expected": 0
+  },
+  {
+   "amount": 0,
+   "percent": 53.5,
+   "expected": 0
+  },
+  {
+   "amount": 0,
+   "percent": 100,
+   "expected": 0
+  },
+  {
+   "amount": 0.01,
+   "percent": 0,
+   "expected": 0
+  },
+  {
+   "amount": 0.01,
+   "percent": 12,
+   "expected": 0
+  },
+  {
+   "amount": 0.01,
+   "percent": 12.5,
+   "expected": 0
+  },
+  {
+   "amount": 0.01,
+   "percent": 30,
+   "expected": 0
+  },
+  {
+   "amount": 0.01,
+   "percent": 53,
+   "expected": 0.01
+  },
+  {
+   "amount": 0.01,
+   "percent": 53.5,
+   "expected": 0.01
+  },
+  {
+   "amount": 0.01,
+   "percent": 100,
+   "expected": 0.01
+  },
+  {
+   "amount": 1,
+   "percent": 0,
+   "expected": 0
+  },
+  {
+   "amount": 1,
+   "percent": 12,
+   "expected": 0.12
+  },
+  {
+   "amount": 1,
+   "percent": 12.5,
+   "expected": 0.13
+  },
+  {
+   "amount": 1,
+   "percent": 30,
+   "expected": 0.3
+  },
+  {
+   "amount": 1,
+   "percent": 53,
+   "expected": 0.53
+  },
+  {
+   "amount": 1,
+   "percent": 53.5,
+   "expected": 0.54
+  },
+  {
+   "amount": 1,
+   "percent": 100,
+   "expected": 1
+  },
+  {
+   "amount": 99.99,
+   "percent": 0,
+   "expected": 0
+  },
+  {
+   "amount": 99.99,
+   "percent": 12,
+   "expected": 12
+  },
+  {
+   "amount": 99.99,
+   "percent": 12.5,
+   "expected": 12.5
+  },
+  {
+   "amount": 99.99,
+   "percent": 30,
+   "expected": 30
+  },
+  {
+   "amount": 99.99,
+   "percent": 53,
+   "expected": 52.99
+  },
+  {
+   "amount": 99.99,
+   "percent": 53.5,
+   "expected": 53.49
+  },
+  {
+   "amount": 99.99,
+   "percent": 100,
+   "expected": 99.99
+  },
+  {
+   "amount": 1234.56,
+   "percent": 0,
+   "expected": 0
+  },
+  {
+   "amount": 1234.56,
+   "percent": 12,
+   "expected": 148.15
+  },
+  {
+   "amount": 1234.56,
+   "percent": 12.5,
+   "expected": 154.32
+  },
+  {
+   "amount": 1234.56,
+   "percent": 30,
+   "expected": 370.37
+  },
+  {
+   "amount": 1234.56,
+   "percent": 53,
+   "expected": 654.32
+  },
+  {
+   "amount": 1234.56,
+   "percent": 53.5,
+   "expected": 660.49
+  },
+  {
+   "amount": 1234.56,
+   "percent": 100,
+   "expected": 1234.56
+  },
+  {
+   "amount": 15000,
+   "percent": 0,
+   "expected": 0
+  },
+  {
+   "amount": 15000,
+   "percent": 12,
+   "expected": 1800
+  },
+  {
+   "amount": 15000,
+   "percent": 12.5,
+   "expected": 1875
+  },
+  {
+   "amount": 15000,
+   "percent": 30,
+   "expected": 4500
+  },
+  {
+   "amount": 15000,
+   "percent": 53,
+   "expected": 7950
+  },
+  {
+   "amount": 15000,
+   "percent": 53.5,
+   "expected": 8025
+  },
+  {
+   "amount": 15000,
+   "percent": 100,
+   "expected": 15000
+  },
+  {
+   "amount": 30200,
+   "percent": 0,
+   "expected": 0
+  },
+  {
+   "amount": 30200,
+   "percent": 12,
+   "expected": 3624
+  },
+  {
+   "amount": 30200,
+   "percent": 12.5,
+   "expected": 3775
+  },
+  {
+   "amount": 30200,
+   "percent": 30,
+   "expected": 9060
+  },
+  {
+   "amount": 30200,
+   "percent": 53,
+   "expected": 16006
+  },
+  {
+   "amount": 30200,
+   "percent": 53.5,
+   "expected": 16157
+  },
+  {
+   "amount": 30200,
+   "percent": 100,
+   "expected": 30200
+  },
+  {
+   "amount": 33333,
+   "percent": 0,
+   "expected": 0
+  },
+  {
+   "amount": 33333,
+   "percent": 12,
+   "expected": 3999.96
+  },
+  {
+   "amount": 33333,
+   "percent": 12.5,
+   "expected": 4166.63
+  },
+  {
+   "amount": 33333,
+   "percent": 30,
+   "expected": 9999.9
+  },
+  {
+   "amount": 33333,
+   "percent": 53,
+   "expected": 17666.49
+  },
+  {
+   "amount": 33333,
+   "percent": 53.5,
+   "expected": 17833.16
+  },
+  {
+   "amount": 33333,
+   "percent": 100,
+   "expected": 33333
+  },
+  {
+   "amount": 45900,
+   "percent": 0,
+   "expected": 0
+  },
+  {
+   "amount": 45900,
+   "percent": 12,
+   "expected": 5508
+  },
+  {
+   "amount": 45900,
+   "percent": 12.5,
+   "expected": 5737.5
+  },
+  {
+   "amount": 45900,
+   "percent": 30,
+   "expected": 13770
+  },
+  {
+   "amount": 45900,
+   "percent": 53,
+   "expected": 24327
+  },
+  {
+   "amount": 45900,
+   "percent": 53.5,
+   "expected": 24556.5
+  },
+  {
+   "amount": 45900,
+   "percent": 100,
+   "expected": 45900
+  },
+  {
+   "amount": 54900,
+   "percent": 0,
+   "expected": 0
+  },
+  {
+   "amount": 54900,
+   "percent": 12,
+   "expected": 6588
+  },
+  {
+   "amount": 54900,
+   "percent": 12.5,
+   "expected": 6862.5
+  },
+  {
+   "amount": 54900,
+   "percent": 30,
+   "expected": 16470
+  },
+  {
+   "amount": 54900,
+   "percent": 53,
+   "expected": 29097
+  },
+  {
+   "amount": 54900,
+   "percent": 53.5,
+   "expected": 29371.5
+  },
+  {
+   "amount": 54900,
+   "percent": 100,
+   "expected": 54900
+  },
+  {
+   "amount": 100000.5,
+   "percent": 0,
+   "expected": 0
+  },
+  {
+   "amount": 100000.5,
+   "percent": 12,
+   "expected": 12000.06
+  },
+  {
+   "amount": 100000.5,
+   "percent": 12.5,
+   "expected": 12500.06
+  },
+  {
+   "amount": 100000.5,
+   "percent": 30,
+   "expected": 30000.15
+  },
+  {
+   "amount": 100000.5,
+   "percent": 53,
+   "expected": 53000.27
+  },
+  {
+   "amount": 100000.5,
+   "percent": 53.5,
+   "expected": 53500.27
+  },
+  {
+   "amount": 100000.5,
+   "percent": 100,
+   "expected": 100000.5
+  },
+  {
+   "amount": 1234567.89,
+   "percent": 0,
+   "expected": 0
+  },
+  {
+   "amount": 1234567.89,
+   "percent": 12,
+   "expected": 148148.15
+  },
+  {
+   "amount": 1234567.89,
+   "percent": 12.5,
+   "expected": 154320.99
+  },
+  {
+   "amount": 1234567.89,
+   "percent": 30,
+   "expected": 370370.37
+  },
+  {
+   "amount": 1234567.89,
+   "percent": 53,
+   "expected": 654320.98
+  },
+  {
+   "amount": 1234567.89,
+   "percent": 53.5,
+   "expected": 660493.82
+  },
+  {
+   "amount": 1234567.89,
+   "percent": 100,
+   "expected": 1234567.89
+  }
+ ],
+ "proportion": [
+  {
+   "amount": 15000,
+   "numerator": 30,
+   "denominator": 31,
+   "expected": 14516.13
+  },
+  {
+   "amount": 15000,
+   "numerator": 28,
+   "denominator": 30,
+   "expected": 14000
+  },
+  {
+   "amount": 15000,
+   "numerator": 1,
+   "denominator": 28,
+   "expected": 535.71
+  },
+  {
+   "amount": 15000,
+   "numerator": 1,
+   "denominator": 31,
+   "expected": 483.87
+  },
+  {
+   "amount": 15000,
+   "numerator": 2,
+   "denominator": 30,
+   "expected": 1000
+  },
+  {
+   "amount": 15000,
+   "numerator": 1.5,
+   "denominator": 30,
+   "expected": 750
+  },
+  {
+   "amount": 15000,
+   "numerator": 8.5,
+   "denominator": 8,
+   "expected": 15937.5
+  },
+  {
+   "amount": 15000,
+   "numerator": 15,
+   "denominator": 31,
+   "expected": 7258.06
+  },
+  {
+   "amount": 15000,
+   "numerator": 0,
+   "denominator": 30,
+   "expected": 0
+  },
+  {
+   "amount": 15000,
+   "numerator": 30,
+   "denominator": 30,
+   "expected": 15000
+  },
+  {
+   "amount": 30200,
+   "numerator": 30,
+   "denominator": 31,
+   "expected": 29225.81
+  },
+  {
+   "amount": 30200,
+   "numerator": 28,
+   "denominator": 30,
+   "expected": 28186.67
+  },
+  {
+   "amount": 30200,
+   "numerator": 1,
+   "denominator": 28,
+   "expected": 1078.57
+  },
+  {
+   "amount": 30200,
+   "numerator": 1,
+   "denominator": 31,
+   "expected": 974.19
+  },
+  {
+   "amount": 30200,
+   "numerator": 2,
+   "denominator": 30,
+   "expected": 2013.33
+  },
+  {
+   "amount": 30200,
+   "numerator": 1.5,
+   "denominator": 30,
+   "expected": 1510
+  },
+  {
+   "amount": 30200,
+   "numerator": 8.5,
+   "denominator": 8,
+   "expected": 32087.5
+  },
+  {
+   "amount": 30200,
+   "numerator": 15,
+   "denominator": 31,
+   "expected": 14612.9
+  },
+  {
+   "amount": 30200,
+   "numerator": 0,
+   "denominator": 30,
+   "expected": 0
+  },
+  {
+   "amount": 30200,
+   "numerator": 30,
+   "denominator": 30,
+   "expected": 30200
+  },
+  {
+   "amount": 54900,
+   "numerator": 30,
+   "denominator": 31,
+   "expected": 53129.03
+  },
+  {
+   "amount": 54900,
+   "numerator": 28,
+   "denominator": 30,
+   "expected": 51240
+  },
+  {
+   "amount": 54900,
+   "numerator": 1,
+   "denominator": 28,
+   "expected": 1960.71
+  },
+  {
+   "amount": 54900,
+   "numerator": 1,
+   "denominator": 31,
+   "expected": 1770.97
+  },
+  {
+   "amount": 54900,
+   "numerator": 2,
+   "denominator": 30,
+   "expected": 3660
+  },
+  {
+   "amount": 54900,
+   "numerator": 1.5,
+   "denominator": 30,
+   "expected": 2745
+  },
+  {
+   "amount": 54900,
+   "numerator": 8.5,
+   "denominator": 8,
+   "expected": 58331.25
+  },
+  {
+   "amount": 54900,
+   "numerator": 15,
+   "denominator": 31,
+   "expected": 26564.52
+  },
+  {
+   "amount": 54900,
+   "numerator": 0,
+   "denominator": 30,
+   "expected": 0
+  },
+  {
+   "amount": 54900,
+   "numerator": 30,
+   "denominator": 30,
+   "expected": 54900
+  },
+  {
+   "amount": 45900,
+   "numerator": 30,
+   "denominator": 31,
+   "expected": 44419.35
+  },
+  {
+   "amount": 45900,
+   "numerator": 28,
+   "denominator": 30,
+   "expected": 42840
+  },
+  {
+   "amount": 45900,
+   "numerator": 1,
+   "denominator": 28,
+   "expected": 1639.29
+  },
+  {
+   "amount": 45900,
+   "numerator": 1,
+   "denominator": 31,
+   "expected": 1480.65
+  },
+  {
+   "amount": 45900,
+   "numerator": 2,
+   "denominator": 30,
+   "expected": 3060
+  },
+  {
+   "amount": 45900,
+   "numerator": 1.5,
+   "denominator": 30,
+   "expected": 2295
+  },
+  {
+   "amount": 45900,
+   "numerator": 8.5,
+   "denominator": 8,
+   "expected": 48768.75
+  },
+  {
+   "amount": 45900,
+   "numerator": 15,
+   "denominator": 31,
+   "expected": 22209.68
+  },
+  {
+   "amount": 45900,
+   "numerator": 0,
+   "denominator": 30,
+   "expected": 0
+  },
+  {
+   "amount": 45900,
+   "numerator": 30,
+   "denominator": 30,
+   "expected": 45900
+  },
+  {
+   "amount": 33333,
+   "numerator": 30,
+   "denominator": 31,
+   "expected": 32257.74
+  },
+  {
+   "amount": 33333,
+   "numerator": 28,
+   "denominator": 30,
+   "expected": 31110.8
+  },
+  {
+   "amount": 33333,
+   "numerator": 1,
+   "denominator": 28,
+   "expected": 1190.46
+  },
+  {
+   "amount": 33333,
+   "numerator": 1,
+   "denominator": 31,
+   "expected": 1075.26
+  },
+  {
+   "amount": 33333,
+   "numerator": 2,
+   "denominator": 30,
+   "expected": 2222.2
+  },
+  {
+   "amount": 33333,
+   "numerator": 1.5,
+   "denominator": 30,
+   "expected": 1666.65
+  },
+  {
+   "amount": 33333,
+   "numerator": 8.5,
+   "denominator": 8,
+   "expected": 35416.31
+  },
+  {
+   "amount": 33333,
+   "numerator": 15,
+   "denominator": 31,
+   "expected": 16128.87
+  },
+  {
+   "amount": 33333,
+   "numerator": 0,
+   "denominator": 30,
+   "expected": 0
+  },
+  {
+   "amount": 33333,
+   "numerator": 30,
+   "denominator": 30,
+   "expected": 33333
+  },
+  {
+   "amount": 1234.56,
+   "numerator": 30,
+   "denominator": 31,
+   "expected": 1194.74
+  },
+  {
+   "amount": 1234.56,
+   "numerator": 28,
+   "denominator": 30,
+   "expected": 1152.26
+  },
+  {
+   "amount": 1234.56,
+   "numerator": 1,
+   "denominator": 28,
+   "expected": 44.09
+  },
+  {
+   "amount": 1234.56,
+   "numerator": 1,
+   "denominator": 31,
+   "expected": 39.82
+  },
+  {
+   "amount": 1234.56,
+   "numerator": 2,
+   "denominator": 30,
+   "expected": 82.3
+  },
+  {
+   "amount": 1234.56,
+   "numerator": 1.5,
+   "denominator": 30,
+   "expected": 61.73
+  },
+  {
+   "amount": 1234.56,
+   "numerator": 8.5,
+   "denominator": 8,
+   "expected": 1311.72
+  },
+  {
+   "amount": 1234.56,
+   "numerator": 15,
+   "denominator": 31,
+   "expected": 597.37
+  },
+  {
+   "amount": 1234.56,
+   "numerator": 0,
+   "denominator": 30,
+   "expected": 0
+  },
+  {
+   "amount": 1234.56,
+   "numerator": 30,
+   "denominator": 30,
+   "expected": 1234.56
+  }
+ ],
+ "named": {
+  "nda_8_5h_at_23_20": 24.65,
+  "nda_120h_at_23_20": 348,
+  "hra_33333_at_30": 9999.9,
+  "hra_15000_30_of_31_days": 14516.13,
+  "eol_54900_1_of_28": 1960.71
+ }
+}

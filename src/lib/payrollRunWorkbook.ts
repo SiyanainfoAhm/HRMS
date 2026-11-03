@@ -1,3 +1,4 @@
+import { round2 } from "./money";
 import { PAYROLL_LABELS } from "./payrollLabels";
 import * as XLSX from "xlsx-js-style";
 import { calendarDaysInMonth, equivalentPayableDays } from "@/lib/payrollLeaveDays";
@@ -296,11 +297,11 @@ export function aggregatePayrollSummary(rows: PayrollRunExportRow[]) {
     earnings,
     arrears,
     deductions,
-    totalEarnings: Math.round(totalEarnings),
-    totalArrears: Math.round(totalArrears),
-    totalDeductions: Math.round(totalDeductions),
-    netPayable: Math.round(totalNet),
-    earningsExcludingArrears: Math.round(totalEarnings - totalArrears),
+    totalEarnings: round2(totalEarnings),
+    totalArrears: round2(totalArrears),
+    totalDeductions: round2(totalDeductions),
+    netPayable: round2(totalNet),
+    earningsExcludingArrears: round2(totalEarnings - totalArrears),
   };
 }
 

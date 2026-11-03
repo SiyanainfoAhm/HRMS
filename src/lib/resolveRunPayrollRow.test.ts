@@ -301,7 +301,7 @@ function testDraftElectricityUnitsRecalculateInsteadOfRestoringStaleBill() {
       netSalary: number;
     };
     assertEq(gm.deductions.electricity, expected, `draft electricity at ${units} units`);
-    assertEq(gm.netSalary, Math.round(gm.totalEarnings - gm.totalDeductions), `draft net at ${units} units`);
+    assertEq(gm.netSalary, Math.round((gm.totalEarnings - gm.totalDeductions) * 100) / 100, `draft net at ${units} units`);
     electricityTotals.set(units, [...(electricityTotals.get(units) ?? []), gm.deductions.electricity]);
   }
   assert(electricityTotals.get(11)![0] !== electricityTotals.get(10)![0], "11 units changes the deduction");
@@ -350,7 +350,7 @@ function testSavedUnitBillOutranksMasterManualFixedDefaultAcrossReloadAndExport(
   assertEq(expectedBill.subtotal, 612.8, "fixture tariff subtotal");
   assertEq(expectedBill.dutyAmount, 98.05, "fixture tariff duty rounds to paisa");
   assertEq(expectedBill.totalExact, 710.85, "fixture tariff exact total");
-  assertEq(expectedBill.total, 711, "configured tariff rounds final deduction to ₹711");
+  assertEq(expectedBill.total, 710.85, "configured tariff gives the exact bill to paise (₹710.85)");
 
   const masterRow = stubApiRow("subhash");
   masterRow.govRecalc = {
@@ -370,7 +370,7 @@ function testSavedUnitBillOutranksMasterManualFixedDefaultAcrossReloadAndExport(
         electricityMode: "unit_based",
         electricityTariffId: tariff.id,
         electricityBill: expectedBill,
-        electricityTotal: 711,
+        electricityTotal: 710.85,
         hasQuarter: true,
         quarterRent: 400,
         totalEarnings: 100000,
@@ -398,8 +398,8 @@ function testSavedUnitBillOutranksMasterManualFixedDefaultAcrossReloadAndExport(
   });
   const gm = firstLoad.governmentMonthly as Record<string, unknown>;
   const ded = gm.deductions as Record<string, number>;
-  assertEq(ded.electricity, 711, "saved unit-based October bill beats Master fixed ₹49");
-  assertEq((gm.electricityBill as { total: number }).total, 711, "display breakdown and deduction agree");
+  assertEq(ded.electricity, 710.85, "saved unit-based October bill beats Master fixed ₹49");
+  assertEq((gm.electricityBill as { total: number }).total, 710.85, "display breakdown and deduction agree");
   assertEq(Number(gm.totalDeductions), Object.values(ded).reduce((sum, value) => sum + Number(value || 0), 0), "deduction total includes Electricity once");
   assertEq(Number(gm.netSalary), Number(gm.totalEarnings) - Number(gm.totalDeductions), "net salary matches total deductions");
   assertEq(ded.mess, 650, "Mess preserved");
@@ -415,7 +415,7 @@ function testSavedUnitBillOutranksMasterManualFixedDefaultAcrossReloadAndExport(
     total_deductions: Number(gm.totalDeductions),
     net_salary: Number(gm.netSalary),
   } });
-  assertEq(excelRow.Electricity, 711, "Excel uses saved/reconciled bill amount");
+  assertEq(excelRow.Electricity, 710.85, "Excel uses saved/reconciled bill amount");
   assertEq(excelRow.ElectricityUnits, 80, "Excel uses saved units");
 
   const otherEmployee = stubApiRow("other");
@@ -434,7 +434,7 @@ function testSavedUnitBillOutranksMasterManualFixedDefaultAcrossReloadAndExport(
     denom: 30, runYear: 2026, runMonth: 10, payrollConfig: config,
     alreadyRun: false, draftDirty: false, draftStored: savedDraft,
   });
-  assertEq((repeatedLoad.governmentMonthly as { deductions: { electricity: number } }).deductions.electricity, 711, "repeated reload remains stable");
+  assertEq((repeatedLoad.governmentMonthly as { deductions: { electricity: number } }).deductions.electricity, 710.85, "repeated reload remains stable");
 }
 
 function testManyEmployeesResolveWithoutPageBias() {

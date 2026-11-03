@@ -283,9 +283,8 @@ class ElectricityTariffService
 
     public function roundDeduction(float $n): float
     {
-        // Payroll deduction fields are stored in whole rupees. Keep the
-        // bill breakdown in paisa and round only the final deduction.
-        return (float) round(max(0, $n), 0);
+        // The final electricity deduction is the exact bill to 2 decimals (paise), no whole-rupee rounding.
+        return \App\Support\Money::round2(max(0, $n));
     }
 
     /**

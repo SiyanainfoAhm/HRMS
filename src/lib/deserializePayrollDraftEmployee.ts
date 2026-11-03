@@ -3,6 +3,7 @@
  * Accepts snake_case payloads (apiProxy deep-transform on save) and camelCase.
  */
 
+import { fromPaise, round2, sumMoney, toPaise } from "./money";
 import { canonicalizeDynamicFieldKey, normalizeDynamicFieldBag } from "@/lib/payrollFieldTypes";
 import { totalArrearsPaid } from "@/lib/payrollArrearCalc";
 
@@ -478,16 +479,16 @@ export function deserializePayrollDraftEmployee(
   const resolvedTotalDeductions =
     savedTotalDeductions ??
     (Object.keys(effectiveDed).length > 0
-      ? Math.round(sumDed)
-      : Math.round(
+      ? round2(sumDed)
+      : round2(
           firstDefined(totalDeductions, numOrUndef(gm.totalDeductions), numOrUndef(calcGm.totalDeductions)) ?? 0,
         ));
   const savedNetPay = firstDefined(numOrUndef(gm.netSalary), numOrUndef(gm.net_salary), netPay);
   const resolvedNetPay =
     savedNetPay ??
     (Object.keys(effectiveDed).length > 0
-      ? Math.round(earnForNet - sumDed)
-      : Math.round(
+      ? round2(earnForNet - sumDed)
+      : round2(
           firstDefined(netPay, numOrUndef(gm.netSalary), numOrUndef(calcGm.netSalary), earnForNet - resolvedTotalDeductions) ??
             earnForNet - resolvedTotalDeductions,
         ));
@@ -503,7 +504,7 @@ export function deserializePayrollDraftEmployee(
   const takeHome = firstDefined(
     numOrUndef(payload.takeHome),
     numOrUndef(calc.takeHome),
-    Math.round(resolvedNet) + Math.round(incentive) + Math.round(prBonus) + Math.round(reimbursement),
+    sumMoney(resolvedNet, incentive, prBonus, reimbursement),
   );
 
   const {
@@ -551,12 +552,11 @@ export function deserializePayrollDraftEmployee(
     takeHome: firstDefined(
       numOrUndef(payload.takeHome),
       numOrUndef(calc.takeHome),
-      Math.round(
-        (firstDefined(numOrUndef(draftEmployee.netPay), numOrUndef(draftEmployee.net_pay), resolvedNetPay) ??
-          resolvedNetPay) +
-          Math.round(incentive) +
-          Math.round(prBonus) +
-          Math.round(reimbursement),
+      sumMoney(
+        firstDefined(numOrUndef(draftEmployee.netPay), numOrUndef(draftEmployee.net_pay), resolvedNetPay) ?? resolvedNetPay,
+        incentive,
+        prBonus,
+        reimbursement,
       ),
     ),
     ctc: firstDefined(numOrUndef(payload.ctc), numOrUndef(calc.ctc)) ?? 0,
@@ -614,6 +614,7 @@ export function deserializePayrollDraftEmployee(
 
 /** Sum header totals from the same resolved rows the UI renders. */
 export function sumResolvedPayrollTotals(rows: Array<Record<string, unknown>>) {
+  // Integer paise: the header total is exactly the sum of the rows' 2-decimal amounts.
   let gross = 0;
   let deductions = 0;
   let arrears = 0;
@@ -626,16 +627,16 @@ export function sumResolvedPayrollTotals(rows: Array<Record<string, unknown>>) {
     const daArr = firstDefined(numOrUndef(r.daArrear), numOrUndef(gm?.daArrearsPaid)) ?? 0;
     const trArr = firstDefined(numOrUndef(r.transportArrear), numOrUndef(gm?.transportArrearsPaid)) ?? 0;
     const grossArr = firstDefined(numOrUndef(r.grossArrear), numOrUndef(gm?.grossArrear)) ?? 0;
-    gross += gEarn;
-    deductions += gDed;
-    net += gNet;
-    arrears += totalArrearsPaid(daArr, trArr, grossArr);
+    gross += toPaise(gEarn);
+    deductions += toPaise(gDed);
+    net += toPaise(gNet);
+    arrears += toPaise(totalArrearsPaid(daArr, trArr, grossArr));
   }
   return {
     employees: rows.length,
-    gross: Math.round(gross),
-    deductions: Math.round(deductions),
-    arrears: Math.round(arrears),
-    net: Math.round(net),
+    gross: fromPaise(gross),
+    deductions: fromPaise(deductions),
+    arrears: fromPaise(arrears),
+    net: fromPaise(net),
   };
 }

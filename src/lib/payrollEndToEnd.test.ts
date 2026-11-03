@@ -152,10 +152,10 @@ const exportRows: PayrollRunExportRow[] = outputs.map(({ name, row }) => ({
   governmentMonthly: row.governmentMonthly as Record<string, unknown>,
 }));
 const summary = aggregatePayrollSummary(exportRows);
-assertEq(summary.totalEarnings, Math.round(sumGross), "workbook gross");
-assertEq(summary.totalDeductions, Math.round(sumDed), "workbook deductions");
-assertEq(summary.netPayable, Math.round(sumNet), "workbook net");
-assertClose(summary.totalEarnings - summary.totalDeductions, summary.netPayable, "workbook gross - deductions = net", 1.01);
+assertEq(summary.totalEarnings, Math.round(sumGross * 100) / 100, "workbook gross");
+assertEq(summary.totalDeductions, Math.round(sumDed * 100) / 100, "workbook deductions");
+assertEq(summary.netPayable, Math.round(sumNet * 100) / 100, "workbook net");
+assertEq(Math.round((summary.totalEarnings - summary.totalDeductions) * 100) / 100, summary.netPayable, "workbook gross - deductions = net (zero tolerance)");
 // Arrears are counted once: 1200 for Subhash, not 2400.
 assertEq(summary.totalArrears, 1200, "workbook total arrears counted once");
 

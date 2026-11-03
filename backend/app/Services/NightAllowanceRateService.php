@@ -34,9 +34,10 @@ final class NightAllowanceRateService
         if ($basis === self::BASIS_HOUR) {
             return (float) round($hours * $rate);
         }
-        $amount = ($hours * $rate) / self::DUTY_BASE_HOURS;
+        // hours x rate / 8 in integer paise (App\Support\Money), rounded once, half up, to paise.
+        $amount = \App\Support\Money::proportion($rate, $hours, self::DUTY_BASE_HOURS);
 
-        return self::ROUND_AMOUNT_TO_RUPEE ? (float) round($amount) : round($amount, 2);
+        return self::ROUND_AMOUNT_TO_RUPEE ? (float) round($amount) : $amount;
     }
 
     /**

@@ -1,3 +1,4 @@
+import { proportion } from "./money";
 /** Calendar-based leave day display used by previews, workbooks, and payslips. */
 export function equivalentPayableDays(calendarDays: number, eolDays: number, hplDays: number): number {
   const calendar = Number.isFinite(Number(calendarDays)) ? Math.max(0, Number(calendarDays)) : 0;
@@ -17,7 +18,7 @@ export function leaveSalaryAdjustment(
   const calendarDays = Number.isFinite(Number(referenceCalendarDays))
     ? Math.max(1, Number(referenceCalendarDays))
     : 1;
-  return Math.round((basis / calendarDays) * days * perDayFactor);
+  return proportion(basis, days * perDayFactor, calendarDays);
 }
 
 export function calendarDaysInMonth(year: number, month: number): number {

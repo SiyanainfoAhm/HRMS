@@ -26,7 +26,7 @@ assertEq(daysInCalendarMonth(2026, 12), 31, "Dec");
 assertEq(calendarDaysInMonth(2026, 13), 0, "invalid month");
 
 // One EOL day is 1/dim of the basis, for each month length.
-for (const [dim, expected] of [[28, Math.round(54900 / 28)], [29, Math.round(54900 / 29)], [30, 1830], [31, Math.round(54900 / 31)]] as const) {
+for (const [dim, expected] of [[28, 1960.71], [29, 1893.1], [30, 1830], [31, 1770.97]] as const) {
   assertEq(computeEolHplDeductions({ referenceSalary: salary, daysInReferenceMonth: dim, eolDays: 1 }).eolDeduction, expected, `EOL 1 day in ${dim}-day month`);
 }
 
@@ -37,7 +37,7 @@ assertEq(computeEolHplDeductions({ referenceSalary: salary, daysInReferenceMonth
 // Leave charged to a prior month uses THAT month's length (Feb reference used in March).
 const fromFeb = computeEolHplDeductions({ referenceSalary: salary, daysInReferenceMonth: 28, eolDays: 3 }).eolDeduction;
 const fromMar = computeEolHplDeductions({ referenceSalary: salary, daysInReferenceMonth: 31, eolDays: 3 }).eolDeduction;
-assertEq(fromFeb, Math.round((54900 / 28) * 3), "Feb reference");
+assertEq(fromFeb, 5882.14, "Feb reference");
 assertEq(fromFeb > fromMar, true, "shorter reference month costs more per day");
 
 // Boundaries: zero, negative, fractional, more than the month, whole month.

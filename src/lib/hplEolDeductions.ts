@@ -4,8 +4,19 @@
  * HPL basis: Basic + DA only (HRA and medical are not reduced).
  */
 
-function roundRupees(n: number): number {
-  return Math.round(Number(n) || 0);
+import { divRoundHalfUp, fromPaise, percentOf, proportion, round2, sumMoney, toPaise } from "./money";
+
+/**
+ * Splits `cut` over the amounts in proportion to each amount, in integer paise; the last non-zero
+ * amount absorbs the remainder so the shares add up to the cut exactly.
+ */
+function allocateCut(amounts: number[], cut: number): number[] {
+  const total = amounts.reduce((s, a) => s + toPaise(a), 0);
+  const cutPaise = toPaise(cut);
+  const shares = amounts.map((a) => (total > 0 ? divRoundHalfUp(toPaise(a) * cutPaise, total) : 0));
+  const last = amounts.map((a) => toPaise(a)).reduce((idx, p, i) => (p > 0 ? i : idx), -1);
+  if (last >= 0) shares[last] += cutPaise - shares.reduce((s, v) => s + v, 0);
+  return shares.map((share, i) => fromPaise(toPaise(amounts[i]) - share));
 }
 
 export type EolHplReferenceSalary = {
@@ -37,17 +48,12 @@ export type EolHplDeductionResult = {
 export const HPL_DAY_SALARY_FACTOR = 0.5;
 
 export function referenceSalaryBasisTotal(salary: EolHplReferenceSalary): number {
-  return roundRupees(
-    Math.max(0, salary.basic) +
-      Math.max(0, salary.da) +
-      Math.max(0, salary.hra) +
-      Math.max(0, salary.medical),
-  );
+  return sumMoney(Math.max(0, salary.basic), Math.max(0, salary.da), Math.max(0, salary.hra), Math.max(0, salary.medical));
 }
 
 /** HPL deduction basis: Basic + DA only. */
 export function referenceSalaryHplBasisTotal(salary: EolHplReferenceSalary): number {
-  return roundRupees(Math.max(0, salary.basic) + Math.max(0, salary.da));
+  return sumMoney(Math.max(0, salary.basic), Math.max(0, salary.da));
 }
 
 export function computeEolHplDeductions(input: EolHplDeductionInput): EolHplDeductionResult {
@@ -58,11 +64,12 @@ export function computeEolHplDeductions(input: EolHplDeductionInput): EolHplDedu
   const hplDays = Math.min(dim, Math.max(0, Math.floor(Number(input.hplDays) || 0)));
   const eolBasisTotal = referenceSalaryBasisTotal(input.referenceSalary);
   const hplBasisTotal = referenceSalaryHplBasisTotal(input.referenceSalary);
-  const dailyEolBasis = dim > 0 ? eolBasisTotal / dim : 0;
-  const dailyHplBasis = dim > 0 ? hplBasisTotal / dim : 0;
+  const dailyEolBasis = dim > 0 ? round2(eolBasisTotal / dim) : 0;
+  const dailyHplBasis = dim > 0 ? round2(hplBasisTotal / dim) : 0;
 
-  const eolDeduction = roundRupees(dailyEolBasis * eolDays);
-  const hplDeduction = roundRupees(dailyHplBasis * hplDays * HPL_DAY_SALARY_FACTOR);
+  // Exact: basis x days / days-in-month in integer paise, rounded once (not daily rate x days).
+  const eolDeduction = proportion(eolBasisTotal, eolDays, dim);
+  const hplDeduction = proportion(hplBasisTotal, hplDays * HPL_DAY_SALARY_FACTOR, dim);
 
   return {
     eolDays,
@@ -90,12 +97,12 @@ export function referenceSalaryFromGovRecalc(gr: {
   medicalFixed: number;
   hasQuarter?: boolean;
 }): EolHplReferenceSalary {
-  const gb = Math.max(0, Math.round(Number(gr.grossBasic) || 0));
+  const gb = Math.max(0, round2(Number(gr.grossBasic) || 0));
   const daPct = Number(gr.daPercent) || 0;
   const hraPct = Number(gr.hraPercent) || 0;
-  const medical = Math.max(0, Math.round(Number(gr.medicalFixed) || 0));
-  const da = roundRupees((gb * daPct) / 100);
-  const hra = gr.hasQuarter ? 0 : roundRupees((gb * hraPct) / 100);
+  const medical = Math.max(0, round2(Number(gr.medicalFixed) || 0));
+  const da = percentOf(gb, daPct);
+  const hra = gr.hasQuarter ? 0 : percentOf(gb, hraPct);
   return { basic: gb, da, hra, medical };
 }
 
@@ -118,15 +125,11 @@ export function applyProportionalEarningsCut(
     Math.max(0, amounts.da) +
     Math.max(0, amounts.hra) +
     Math.max(0, amounts.medical);
-  const cut = Math.max(0, Math.round(Number(cutTotal) || 0));
+  const cut = Math.max(0, round2(Number(cutTotal) || 0));
   if (cut <= 0 || total <= 0) return amounts;
-  const applied = Math.min(cut, total);
-  return {
-    basic: roundRupees(amounts.basic - (amounts.basic / total) * applied),
-    da: roundRupees(amounts.da - (amounts.da / total) * applied),
-    hra: roundRupees(amounts.hra - (amounts.hra / total) * applied),
-    medical: roundRupees(amounts.medical - (amounts.medical / total) * applied),
-  };
+  const applied = Math.min(cut, round2(total));
+  const [basic, da, hra, medical] = allocateCut([amounts.basic, amounts.da, amounts.hra, amounts.medical].map((a) => Math.max(0, a)), applied);
+  return { basic, da, hra, medical };
 }
 
 /** Reduce only basic and da paid amounts by HPL cut (proportional between basic and da). */
@@ -135,13 +138,9 @@ export function applyBasicDaEarningsCut(
   cutTotal: number,
 ): EolHplReferenceSalary {
   const basicDaTotal = Math.max(0, amounts.basic) + Math.max(0, amounts.da);
-  const cut = Math.max(0, Math.round(Number(cutTotal) || 0));
+  const cut = Math.max(0, round2(Number(cutTotal) || 0));
   if (cut <= 0 || basicDaTotal <= 0) return amounts;
-  const applied = Math.min(cut, basicDaTotal);
-  return {
-    basic: roundRupees(amounts.basic - (amounts.basic / basicDaTotal) * applied),
-    da: roundRupees(amounts.da - (amounts.da / basicDaTotal) * applied),
-    hra: amounts.hra,
-    medical: amounts.medical,
-  };
+  const applied = Math.min(cut, round2(basicDaTotal));
+  const [basic, da] = allocateCut([Math.max(0, amounts.basic), Math.max(0, amounts.da)], applied);
+  return { basic, da, hra: amounts.hra, medical: amounts.medical };
 }

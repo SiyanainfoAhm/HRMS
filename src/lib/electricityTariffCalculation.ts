@@ -62,9 +62,9 @@ export function roundMoney2(n: number): number {
   return Math.round(Math.max(0, n) * 100) / 100;
 }
 
-/** Whole rupees — matches governmentPayroll.roundRupees for final deductions. */
+/** Final electricity deduction: the exact bill to 2 decimals (no whole-rupee rounding). */
 export function roundElectricityDeduction(n: number): number {
-  return Math.round(Math.max(0, Number.isFinite(n) ? n : 0));
+  return roundMoney2(Number.isFinite(n) ? n : 0);
 }
 
 export function normalizeElectricitySlabs(slabs: ElectricityTariffSlab[]): ElectricityTariffSlab[] {

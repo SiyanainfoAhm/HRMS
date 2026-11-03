@@ -72,7 +72,7 @@ export function v(m: GovernmentPreviewMonthly | null | undefined, k: keyof Gover
 }
 
 export function fmtIn(n: number): string {
-  return n.toLocaleString("en-IN", { maximumFractionDigits: 2 });
+  return n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function lookupDynamicFieldAmount(
