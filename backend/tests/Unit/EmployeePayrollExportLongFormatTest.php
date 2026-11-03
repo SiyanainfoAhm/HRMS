@@ -50,7 +50,8 @@ final class EmployeePayrollExportLongFormatTest extends TestCase
         ]);
 
         $this->assertSame('Month', $headers[18]);
-        $this->assertSame('Through Day', $headers[19]);
+        $this->assertSame('Year', $headers[19]);
+        $this->assertSame('Through Day', $headers[20]);
         $this->assertContains('Basic Paid', $headers);
         $this->assertContains('Telephone Allowance', $headers);
         $this->assertContains('Advance', $headers);
@@ -298,6 +299,8 @@ final class EmployeePayrollExportLongFormatTest extends TestCase
 
         $headers = $roundTrip[0];
         $rows = array_slice($roundTrip, 1);
+        $totalsRow = array_pop($rows);
+        $this->assertSame('Total', $totalsRow[0]);
         // A: 10 + 12 + 11 actual employee-month snapshots, with a 12-person union.
         $this->assertCount(33, $rows);
         $codes = array_unique(array_column($rows, 0));
@@ -309,8 +312,13 @@ final class EmployeePayrollExportLongFormatTest extends TestCase
         // B/C: audit and residential accommodation values do not exclude any row.
         $this->assertCount(2, array_filter($rows, static fn (array $row): bool => $row[0] === '001'));
         $this->assertCount(2, array_filter($rows, static fn (array $row): bool => $row[0] === '012'));
-        $this->assertSame('Yes', $rows[0][$column['Quarter Assigned']]);
-        $this->assertSame('No', $rows[2][$column['Quarter Assigned']]);
+        $this->assertSame('Yes', array_values(array_filter($rows, static fn (array $row): bool => $row[0] === '001'))[0][$column['Quarter Assigned']]);
+        $this->assertSame('No', array_values(array_filter($rows, static fn (array $row): bool => $row[0] === '003'))[0][$column['Quarter Assigned']]);
+        // Grouped by employee, months in order inside each employee.
+        $order = array_map(static fn (array $row): string => $row[0].'|'.$row[18], $rows);
+        $sorted = $rows;
+        usort($sorted, static fn (array $a, array $b): int => strnatcmp($a[0], $b[0]) ?: strtotime('1 '.$a[18]) <=> strtotime('1 '.$b[18]));
+        $this->assertSame($order, array_map(static fn (array $row): string => $row[0].'|'.$row[18], $sorted));
         // D/E: dynamic fields survive the actual XLSX write/read and remain month-specific.
         $this->assertArrayHasKey('June Custom Earn', $column);
         $this->assertArrayHasKey('July Custom Earn', $column);
@@ -320,7 +328,7 @@ final class EmployeePayrollExportLongFormatTest extends TestCase
         $this->assertSame(null, $juneEmployeeOne[$column['July Custom Earn']]);
         // F: an explicit employee-ID set narrows only when supplied.
         $selected = $this->service()->buildSpreadsheet($periods, $monthlyByPeriod, $masters, [], [], ['earnings' => [], 'deductions' => []], ['employee-12' => true]);
-        $this->assertSame(2, $selected->getActiveSheet()->getHighestDataRow() - 1);
+        $this->assertSame(2, $selected->getActiveSheet()->getHighestDataRow() - 2); // two rows plus the totals row
     }
 
     public function test_service_source_no_longer_builds_wide_month_headers(): void
@@ -353,8 +361,8 @@ final class EmployeePayrollExportLongFormatTest extends TestCase
             'employee_user_id' => $employeeUserId,
             'basic_paid' => 1000 + $number,
             'total_earnings' => 1000 + $number + array_sum($earnings),
-            'total_deductions' => array_sum($deductions),
-            'net_salary' => 1000 + $number + array_sum($earnings) - array_sum($deductions),
+            'total_deductions' => array_sum($deductions) + ($number <= 2 ? 500 : 0),
+            'net_salary' => 1000 + $number + array_sum($earnings) - array_sum($deductions) - ($number <= 2 ? 500 : 0),
             'has_quarter' => $number <= 2,
             'quarter_name' => $number <= 2 ? 'Q-'.$number : null,
             'quarter_type' => $number <= 2 ? 'Type I' : null,

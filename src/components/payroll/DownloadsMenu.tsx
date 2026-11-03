@@ -16,7 +16,8 @@ import {
 import { createPortal } from "react-dom";
 import { ChevronDown, ChevronRight, Download, FileSpreadsheet, FileText, Landmark, Loader2, ClipboardList, X } from "lucide-react";
 import { useToast } from "@/components/ToastProvider";
-import { MonthInput } from "@/components/ui/MonthInput";
+import { PeriodMultiSelect } from "@/components/payroll/PeriodMultiSelect";
+import { PeriodReportPreview } from "@/components/payroll/PeriodReportPreview";
 import { cn } from "@/lib/cn";
 import { formatMonthLabel } from "@/lib/dateInputs";
 import {
@@ -29,7 +30,6 @@ import {
   menuKeyAction,
   monthKey,
   reportTypeOf,
-  tdsRangeError,
   type BankLetterFormatId,
   type MenuItem,
   type MenuItemId,
@@ -37,7 +37,8 @@ import {
   type MenuSubmenuId,
   type PanelPlacement,
 } from "@/lib/downloadsMenuModel";
-import { downloadPostPayrollReport } from "@/lib/postPayrollDownload";
+import { downloadPostPayrollReport, downloadPostPayrollTdsMonths } from "@/lib/postPayrollDownload";
+import { defaultSelection, type ReportPeriod } from "@/lib/periodReport";
 
 type Props = {
   /** The page's own month/year selectors; the only month input. */
@@ -230,8 +231,9 @@ export function DownloadsMenu({
   const [open, setOpen] = useState(defaultOpen);
   const [sub, setSub] = useState<MenuSubmenuId | null>(defaultSubmenu);
   const [tdsOpen, setTdsOpen] = useState(false);
-  const [tdsTo, setTdsTo] = useState("");
-  const [available, setAvailable] = useState<string[] | null>(null);
+  const [tdsPeriods, setTdsPeriods] = useState<ReportPeriod[] | null>(null);
+  const [tdsMonths, setTdsMonths] = useState<string[]>([]);
+  const [tdsPreviewOpen, setTdsPreviewOpen] = useState(false);
   const [busyId, setBusyId] = useState<MenuItemId | null>(null);
   const [focusId, setFocusId] = useState<string | null>(null);
   const [focusRequest, setFocusRequest] = useState<{ id: string; n: number } | null>(null);
@@ -339,19 +341,23 @@ export function DownloadsMenu({
   const openTds = useCallback(() => {
     setSub("reports");
     setTdsOpen(true);
-    setTdsTo("");
-    if (available === null) {
+    // Default = the month selected on the page, when that month was generated.
+    setTdsMonths((cur) => (cur.length > 0 ? cur : tdsPeriods ? defaultSelection(tdsPeriods, ym) : []));
+    if (tdsPeriods === null) {
       void (async () => {
         try {
-          const res = await fetch("/api/payroll/post-downloads-months", { cache: "no-store" });
+          const res = await fetch("/api/payroll/export-periods", { cache: "no-store" });
           const data = await res.json();
-          if (res.ok && Array.isArray(data.months)) setAvailable(data.months);
+          if (res.ok && Array.isArray(data.periods)) {
+            setTdsPeriods(data.periods as ReportPeriod[]);
+            setTdsMonths((cur) => (cur.length > 0 ? cur : defaultSelection(data.periods as ReportPeriod[], ym)));
+          }
         } catch {
-          /* leave every month selectable; the download itself reports a missing month */
+          /* the list stays empty; the server rejects months without a generated run */
         }
       })();
     }
-  }, [available]);
+  }, [tdsPeriods, ym]);
 
   async function runItem(item: MenuItem) {
     if (item.disabledReason || busyId === item.id) return;
@@ -386,14 +392,14 @@ export function DownloadsMenu({
   }
 
   async function runTds() {
-    const rangeError = tdsRangeError(ym, tdsTo);
-    if (rangeError) {
-      showToast("error", rangeError);
+    if (tdsMonths.length === 0) {
+      showToast("error", "Select at least one month.");
       return;
     }
     setBusyId("report-tds");
     try {
-      const name = await downloadPostPayrollReport("tds", ym, tdsTo || null);
+      const name = await downloadPostPayrollTdsMonths(tdsMonths);
+      setTdsPreviewOpen(false);
       showToast("success", `${name} downloaded.`);
       closeAll(true);
     } catch (err) {
@@ -494,15 +500,8 @@ export function DownloadsMenu({
   const tdsForm = (compact: boolean) => (
     <div className={cn("space-y-3", compact ? "px-1 pb-2 pt-1" : "")}>
       <div>
-        <span className="label-field">From</span>
-        <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[13px] text-slate-700" aria-label="From month">
-          {formatMonthLabel(ym) || ym}
-        </p>
-      </div>
-      <div>
-        <span className="label-field">To month (optional)</span>
-        <MonthInput aria-label="To month" optional value={tdsTo} min={ym} available={available} unavailableReason="No payroll generated" onChange={setTdsTo} />
-        {tdsRangeError(ym, tdsTo) ? <p role="alert" className="mt-1 text-[11px] text-red-600">{tdsRangeError(ym, tdsTo)}</p> : null}
+        <span className="label-field">Months</span>
+        <PeriodMultiSelect periods={tdsPeriods ?? []} selected={tdsMonths} onChange={setTdsMonths} />
       </div>
       <div className="flex justify-end gap-2">
         <button type="button" className="btn btn-outline btn-sm" onClick={() => { setTdsOpen(false); requestFocus("report-tds"); }}>
@@ -510,8 +509,16 @@ export function DownloadsMenu({
         </button>
         <button
           type="button"
+          className="btn btn-outline btn-sm"
+          disabled={busyId === "report-tds" || tdsMonths.length === 0}
+          onClick={() => setTdsPreviewOpen(true)}
+        >
+          Preview
+        </button>
+        <button
+          type="button"
           className="btn btn-primary btn-sm inline-flex items-center gap-1.5"
-          disabled={busyId === "report-tds" || Boolean(tdsRangeError(ym, tdsTo))}
+          disabled={busyId === "report-tds" || tdsMonths.length === 0}
           onClick={() => void runTds()}
         >
           {busyId === "report-tds" ? <Spinner /> : <Download className="h-3.5 w-3.5" aria-hidden />}
@@ -623,7 +630,7 @@ export function DownloadsMenu({
                 <div
                   ref={tdsPanelRef}
                   role="dialog"
-                  aria-label="TDS Data range"
+                  aria-label="TDS Data months"
                   onKeyDown={onTdsKey}
                   onPointerEnter={cancelTimer}
                   className={cn(panelBase, "fixed z-[9992] w-[264px] p-3")}
@@ -672,7 +679,7 @@ export function DownloadsMenu({
                     <SectionHeader>Post-payroll reports</SectionHeader>
                     {model.reports.map((item) => commonRow(item, true))}
                     {sub === "reports" && tdsOpen ? (
-                      <div ref={tdsPanelRef} role="dialog" aria-label="TDS Data range" onKeyDown={onTdsKey} className="mx-1 mt-1 rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+                      <div ref={tdsPanelRef} role="dialog" aria-label="TDS Data months" onKeyDown={onTdsKey} className="mx-1 mt-1 rounded-lg border border-slate-200 bg-slate-50/60 p-3">
                         {tdsForm(true)}
                       </div>
                     ) : null}
@@ -682,6 +689,14 @@ export function DownloadsMenu({
             </div>,
           )
         : null}
+      <PeriodReportPreview
+        open={tdsPreviewOpen}
+        onClose={() => setTdsPreviewOpen(false)}
+        type="tds"
+        months={tdsMonths}
+        downloading={busyId === "report-tds"}
+        onDownload={() => void runTds()}
+      />
     </>
   );
 }

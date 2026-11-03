@@ -6,6 +6,7 @@ use App\Models\HrmsGovernmentMonthlyPayroll;
 use App\Models\HrmsPayrollMaster;
 use App\Models\HrmsPayrollPeriod;
 use App\Models\HrmsQuarter;
+use App\Support\PayrollExportTotals;
 use App\Support\PayrollLabels;
 use App\Support\SpreadsheetLayout;
 use Illuminate\Support\Facades\Schema;
@@ -47,8 +48,8 @@ class EmployeePayrollExportService
         if ($periodIds === []) {
             abort(422, 'Select at least one payroll run month.');
         }
-        if (count($periodIds) > 3) {
-            abort(422, 'Select at most 3 payroll run months.');
+        if (count($periodIds) > PeriodReportService::MAX_MONTHS) {
+            abort(422, 'Select at most '.PeriodReportService::MAX_MONTHS.' payroll run months.');
         }
 
         $periods = HrmsPayrollPeriod::query()
@@ -65,7 +66,7 @@ class EmployeePayrollExportService
         $monthlyByPeriod = $this->loadMonthlyByPeriod($companyId, $periodIds);
         $mastersById = $this->loadMastersByIdForMonthly($companyId, $monthlyByPeriod);
         $quartersById = $this->loadQuartersById($companyId);
-        $customKeys = $this->collectCustomFieldKeys($monthlyByPeriod);
+        $customKeys = $this->resolveCustomKeys($companyId, $monthlyByPeriod);
 
         $sheet = $this->buildSpreadsheet(
             $periods->all(),
@@ -76,17 +77,42 @@ class EmployeePayrollExportService
             $customKeys,
             $employeeUserIdSet,
         );
-        if ($sheet->getActiveSheet()->getHighestDataRow() < 2) {
+        if ($sheet->getActiveSheet()->getHighestDataRow() < 3) {
             abort(422, 'No employees match the selected payroll months and explicit filters.');
         }
 
-        $filename = 'cirt_employee_payroll_export_'.date('Ymd_His').'.xlsx';
+        $first = $periods->first()->period_start?->format('Y-m') ?? 'period';
+        $last = $periods->last()->period_start?->format('Y-m') ?? 'period';
+        $filename = 'cirt_employee_payroll_'.($first === $last ? $first : "{$first}_to_{$last}").'.xlsx';
 
         return response()->streamDownload(function () use ($sheet) {
             (new Xlsx($sheet))->save('php://output');
         }, $filename, [
             'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         ]);
+    }
+
+    /**
+     * Preview of the export (same loaders, same rows, same totals check as the download).
+     *
+     * @param  list<string>  $periodIds
+     * @param  list<string>  $employeeUserIds
+     * @return array{headers: list<string>, rows: list<list<mixed>>, totals: list<mixed>, moneyColumns: list<int>}
+     */
+    public function previewTable(string $companyId, array $periodIds, array $employeeUserIds = []): array
+    {
+        $periods = HrmsPayrollPeriod::query()->where('company_id', $companyId)->whereIn('id', $periodIds)->orderBy('period_start')->get();
+        $monthlyByPeriod = $this->loadMonthlyByPeriod($companyId, $periodIds);
+
+        return $this->buildTable(
+            $periods->all(),
+            $monthlyByPeriod,
+            $this->loadMastersByUser($companyId),
+            $this->loadMastersByIdForMonthly($companyId, $monthlyByPeriod),
+            $this->loadQuartersById($companyId),
+            $this->resolveCustomKeys($companyId, $monthlyByPeriod),
+            $employeeUserIds === [] ? null : array_fill_keys($employeeUserIds, true),
+        );
     }
 
     /**
@@ -111,7 +137,8 @@ class EmployeePayrollExportService
         array $customKeys,
         ?array $employeeUserIdSet = null,
     ): Spreadsheet {
-        $headers = $this->buildHeaders($customKeys);
+        $table = $this->buildTable($periods, $monthlyByPeriod, $mastersByUser, $mastersById, $quartersById, $customKeys, $employeeUserIdSet);
+        $headers = $table['headers'];
         $amountColIndexes = $this->amountColumnIndexes($headers);
         $sheet = new Spreadsheet;
         $active = $sheet->getActiveSheet();
@@ -121,47 +148,114 @@ class EmployeePayrollExportService
         $active->getStyle('A1:'.$lastHeaderCol.'1')->getFont()->setBold(true);
 
         $rowNum = 2;
-        // Month first (periods already ordered by period_start), then employee code.
-        foreach ($periods as $period) {
-            $pid = (string) $period->id;
-            $monthRows = $monthlyByPeriod[$pid] ?? [];
-            usort($monthRows, function (HrmsGovernmentMonthlyPayroll $a, HrmsGovernmentMonthlyPayroll $b) use ($mastersByUser) {
-                return strnatcasecmp($this->employeeCodeFor($a, $mastersByUser), $this->employeeCodeFor($b, $mastersByUser));
-            });
-            foreach ($monthRows as $gov) {
-                $uid = (string) ($gov->employee_user_id ?? '');
-                if ($employeeUserIdSet !== null && ! isset($employeeUserIdSet[$uid])) {
-                    continue;
+        foreach ($table['rows'] as $values) {
+            foreach ($values as $colIndex0 => $value) {
+                $coord = $this->colLetter($colIndex0 + 1).$rowNum;
+                if ($colIndex0 === 0) {
+                    $active->setCellValueExplicit($coord, (string) $value, DataType::TYPE_STRING);
+                } elseif (in_array($colIndex0, $amountColIndexes, true) && $value !== '' && $value !== null && is_numeric($value)) {
+                    $active->setCellValue($coord, 0 + $value);
+                    $active->getStyle($coord)->getNumberFormat()->setFormatCode('#,##0.00');
+                } else {
+                    $active->setCellValue($coord, $value);
                 }
-                $values = $this->buildDataRow(
-                    $mastersByUser[$uid] ?? null,
-                    $period,
-                    $gov,
-                    $customKeys,
-                    $this->resolveQuarterMeta($gov, $mastersByUser[$uid] ?? null, $mastersById, $quartersById),
-                );
-                foreach ($values as $colIndex0 => $value) {
-                    $coord = $this->colLetter($colIndex0 + 1).$rowNum;
-                    if ($colIndex0 === 0) {
-                        $active->setCellValueExplicit($coord, (string) $value, DataType::TYPE_STRING);
-                    } elseif (in_array($colIndex0, $amountColIndexes, true) && $value !== '' && $value !== null && is_numeric($value)) {
-                        $active->setCellValue($coord, 0 + $value);
-                        $active->getStyle($coord)->getNumberFormat()->setFormatCode('#,##0.00');
-                    } else {
-                        $active->setCellValue($coord, $value);
-                    }
-                }
-                $rowNum++;
+            }
+            $rowNum++;
+        }
+        $lastDataRow = max(1, $rowNum - 1);
+        // Totals row (bold, real numeric cells), outside the filter range so sorting never moves it.
+        foreach ($table['totals'] as $colIndex0 => $value) {
+            if ($value === '' || $value === null) continue;
+            $coord = $this->colLetter($colIndex0 + 1).$rowNum;
+            if (is_numeric($value) && $colIndex0 !== 0) {
+                $active->setCellValue($coord, 0 + $value);
+                $active->getStyle($coord)->getNumberFormat()->setFormatCode('#,##0.00');
+            } else {
+                $active->setCellValue($coord, $value);
             }
         }
+        $active->getStyle('A'.$rowNum.':'.$lastHeaderCol.$rowNum)->getFont()->setBold(true);
         SpreadsheetLayout::finish($active, [
-            'header_row' => 1, 'freeze' => 'C2', 'autofilter' => 'A1:'.$lastHeaderCol.max(1, $rowNum - 1),
+            'header_row' => 1, 'freeze' => 'C2', 'autofilter' => 'A1:'.$lastHeaderCol.$lastDataRow,
             'date_columns' => array_fill_keys(SpreadsheetLayout::columnsByHeader($active, 1, ['Date of Joining', 'Date of Birth']), SpreadsheetLayout::FORMAT_DATE),
             'text_columns' => SpreadsheetLayout::columnsByHeader($active, 1, ['Employee Code', 'Phone', 'PAN', 'Aadhaar', 'UAN', 'CPF No', 'Bank Account Number', 'IFSC']),
             'wrap_columns' => SpreadsheetLayout::columnsByHeader($active, 1, ['Designation', 'Department', 'Division', 'Email']),
         ]);
 
         return $sheet;
+    }
+
+    /**
+     * The report as data (used by the preview and the workbook): one row per employee per selected
+     * period, grouped by employee (employee code, natural order), periods in chronological order.
+     * Every row is the period's SAVED payroll row, and its totals are cross-checked (422 on mismatch).
+     *
+     * @param  list<HrmsPayrollPeriod>  $periods
+     * @param  array<string, list<HrmsGovernmentMonthlyPayroll>>  $monthlyByPeriod
+     * @param  array<string, array<string, mixed>>  $mastersByUser
+     * @param  array<string, array{quarterId: ?string, hasQuarter: bool, quarterName: ?string, quarterType: ?string}>  $mastersById
+     * @param  array<string, array{name: string, type: string}>  $quartersById
+     * @param  array{earnings: list<string>, deductions: list<string>, labels?: array<string, string>}  $customKeys
+     * @param  array<string, true>|null  $employeeUserIdSet
+     * @return array{headers: list<string>, rows: list<list<mixed>>, totals: list<mixed>, moneyColumns: list<int>}
+     */
+    public function buildTable(
+        array $periods,
+        array $monthlyByPeriod,
+        array $mastersByUser,
+        array $mastersById,
+        array $quartersById,
+        array $customKeys,
+        ?array $employeeUserIdSet = null,
+    ): array {
+        $headers = $this->buildHeaders($customKeys);
+        $skipSum = array_keys(array_intersect($headers, ['Electricity Units']));
+        $amountCols = array_values(array_diff($this->amountColumnIndexes($headers), $skipSum));
+        $items = [];
+        foreach ($periods as $period) {
+            foreach ($monthlyByPeriod[(string) $period->id] ?? [] as $gov) {
+                $uid = (string) ($gov->employee_user_id ?? '');
+                if ($employeeUserIdSet !== null && ! isset($employeeUserIdSet[$uid])) {
+                    continue;
+                }
+                $items[] = [
+                    'period' => $period, 'gov' => $gov, 'uid' => $uid,
+                    'code' => $this->employeeCodeFor($gov, $mastersByUser),
+                    'start' => $period->period_start?->getTimestamp() ?? 0,
+                ];
+            }
+        }
+        usort($items, fn (array $x, array $y) => strnatcasecmp($x['code'], $y['code']) ?: strcmp($x['uid'], $y['uid']) ?: $x['start'] <=> $y['start']);
+
+        $rows = [];
+        $totals = array_fill(0, count($headers), '');
+        $sums = array_fill_keys($amountCols, 0.0);
+        foreach ($items as $it) {
+            /** @var HrmsGovernmentMonthlyPayroll $gov */
+            $gov = $it['gov'];
+            $attrs = $gov->getAttributes();
+            $attrs['incentive'] = $gov->payslip?->incentive ?? 0;
+            $attrs['pr_bonus'] = $gov->payslip?->pr_bonus ?? 0;
+            $attrs['reimbursement'] = $gov->payslip?->reimbursement ?? 0;
+            PayrollExportTotals::assertConsistent($attrs, trim($it['code'].' '.$this->monthLabel($it['period'])));
+            $values = $this->buildDataRow(
+                $mastersByUser[$it['uid']] ?? null,
+                $it['period'],
+                $gov,
+                $customKeys,
+                $this->resolveQuarterMeta($gov, $mastersByUser[$it['uid']] ?? null, $mastersById, $quartersById),
+            );
+            foreach ($amountCols as $i) {
+                if (isset($values[$i]) && is_numeric($values[$i])) $sums[$i] += (float) $values[$i];
+            }
+            $rows[] = $values;
+        }
+        if ($rows !== []) {
+            $totals[0] = 'Total';
+            foreach ($sums as $i => $sum) $totals[$i] = round($sum, 2);
+        }
+
+        return ['headers' => $headers, 'rows' => $rows, 'totals' => $totals, 'moneyColumns' => $amountCols];
     }
 
     /**
@@ -373,37 +467,25 @@ class EmployeePayrollExportService
     }
 
     /**
+     * Custom earning/deduction columns: every definition from Settings (active, or inactive with a
+     * non-zero saved value) plus any saved key without a definition. Telephone Allowance and GPF keep
+     * their dedicated columns.
+     *
      * @param  array<string, list<HrmsGovernmentMonthlyPayroll>>  $monthlyByPeriod
-     * @return array{earnings: list<string>, deductions: list<string>}
+     * @return array{earnings: list<string>, deductions: list<string>, labels: array<string, string>}
      */
-    private function collectCustomFieldKeys(array $monthlyByPeriod): array
+    private function resolveCustomKeys(string $companyId, array $monthlyByPeriod): array
     {
-        $earnings = [];
-        $deductions = [];
+        $bags = [];
         foreach ($monthlyByPeriod as $rows) {
-            foreach ($rows as $gov) {
-                foreach (array_keys($this->normalizeCustomMap($gov->custom_earnings)) as $key) {
-                    if (in_array($key, self::FIXED_CUSTOM_COMPONENTS, true)) {
-                        continue;
-                    }
-                    $earnings[$key] = true;
-                }
-                foreach (array_keys($this->normalizeCustomMap($gov->custom_deductions)) as $key) {
-                    if (in_array($key, self::FIXED_CUSTOM_COMPONENTS, true)) {
-                        continue;
-                    }
-                    $deductions[$key] = true;
-                }
-            }
+            foreach ($rows as $gov) $bags[] = [$gov->custom_earnings, $gov->custom_deductions];
         }
-        $earnKeys = array_keys($earnings);
-        $dedKeys = array_keys($deductions);
-        natcasesort($earnKeys);
-        natcasesort($dedKeys);
+        $cols = app(PeriodReportService::class)->customColumns($companyId, $bags, PeriodReportService::EMPLOYEE_FIXED_CUSTOM);
 
         return [
-            'earnings' => array_values($earnKeys),
-            'deductions' => array_values($dedKeys),
+            'earnings' => array_keys($cols['earnings']),
+            'deductions' => array_keys($cols['deductions']),
+            'labels' => $cols['earnings'] + $cols['deductions'],
         ];
     }
 
@@ -433,6 +515,7 @@ class EmployeePayrollExportService
             'Bank Account Number',
             'IFSC',
             'Month',
+            'Year',
             'Through Day',
             'Quarter Assigned',
             'Quarter Name',
@@ -457,7 +540,7 @@ class EmployeePayrollExportService
         ];
 
         foreach ($customKeys['earnings'] as $key) {
-            $headers[] = $this->customHeaderLabel($key);
+            $headers[] = $this->uniqueHeader($headers, $this->customHeaderLabel($customKeys['labels'][$key] ?? $key));
         }
 
         $headers = array_merge($headers, [
@@ -487,7 +570,7 @@ class EmployeePayrollExportService
         ]);
 
         foreach ($customKeys['deductions'] as $key) {
-            $headers[] = $this->customHeaderLabel($key);
+            $headers[] = $this->uniqueHeader($headers, $this->customHeaderLabel($customKeys['labels'][$key] ?? $key));
         }
 
         return array_merge($headers, [
@@ -507,7 +590,7 @@ class EmployeePayrollExportService
         $skip = [
             'Employee Code', 'Name', 'Email', 'Phone', 'Designation', 'Department', 'Division',
             'Pay Level', 'Status', 'Date of Joining', 'Date of Birth', 'PAN', 'Aadhaar', 'UAN',
-            'CPF No', 'Bank Name', 'Bank Account Number', 'IFSC', 'Month', 'Through Day',
+            'CPF No', 'Bank Name', 'Bank Account Number', 'IFSC', 'Month', 'Year', 'Through Day',
             'Quarter Assigned', 'Quarter Name', 'Quarter Type',
         ];
         $indexes = [];
@@ -565,6 +648,7 @@ class EmployeePayrollExportService
             $master['bankAccountNumber'] ?? '',
             $master['bankIfsc'] ?? '',
             $this->monthLabel($period),
+            $period->period_start ? (int) $period->period_start->format('Y') : '',
             $this->throughDay($period, $gov),
             ! empty($quarterMeta['assigned']) ? 'Yes' : 'No',
             (string) ($quarterMeta['name'] ?? ''),
@@ -699,6 +783,12 @@ class EmployeePayrollExportService
         }
 
         return $out;
+    }
+
+    /** A custom field named like a fixed column (e.g. the "Arrears" field) gets "(Custom)" so headers stay unambiguous. */
+    private function uniqueHeader(array $headers, string $label): string
+    {
+        return in_array($label, $headers, true) ? $label.' (Custom)' : $label;
     }
 
     private function customHeaderLabel(string $key): string

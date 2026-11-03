@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Services\PeriodReportService;
 use App\Services\PostPayrollDownloadService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -24,9 +25,29 @@ final class PostPayrollDownloadController extends Controller
         return response()->json(['months' => $months]);
     }
 
+    /** TDS Data for any set of generated months (employee-grouped, month-ordered, custom columns, totals). */
+    private function downloadTdsMonths(Request $request): BinaryFileResponse
+    {
+        $companyId = (string) $request->user()->company_id;
+        $periods = app(PeriodReportService::class);
+        $months = $periods->parseMonths($request->query('months'));
+        $periods->periodIdsFor($companyId, $months);
+        $rows = $this->service->rowsForMonths($companyId, $months);
+        abort_if($rows === [], 404, 'No generated payroll was found for the selected months.');
+        $extras = $periods->customColumns($companyId, array_map(fn ($r) => [$r['custom_earnings'] ?? null, $r['custom_deductions'] ?? null], $rows));
+        $book = $this->service->buildTds($rows, $extras);
+
+        return response()->download($this->service->save($book), 'TDS_DATA_'.PeriodReportService::rangeLabel($months).'.xlsx', [
+            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        ])->deleteFileAfterSend(true);
+    }
+
     public function download(Request $request, string $type): BinaryFileResponse
     {
         abort_unless(in_array($type, ['cpf', 'division-wise', 'tds', 'paybill'], true), 404);
+        if ($type === 'tds' && $request->filled('months')) {
+            return $this->downloadTdsMonths($request);
+        }
         $d = $request->validate([
             'year' => ['required', 'integer', 'min:2000', 'max:2100'],
             'month' => ['required', 'integer', 'min:1', 'max:12'],

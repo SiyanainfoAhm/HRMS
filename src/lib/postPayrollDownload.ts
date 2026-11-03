@@ -38,6 +38,26 @@ export function postPayrollReportUrl(type: PostPayrollReportType, ym: string, to
   return `/api/payroll/post-downloads/${type}?${p.toString()}`;
 }
 
+/** TDS Data for any set of generated months ("2026-05,2026-06"): one request, one workbook. */
+export function tdsMonthsUrl(months: readonly string[]): string {
+  const list = [...new Set(months)].sort();
+  if (list.length === 0) throw new Error("Select at least one month.");
+  if (list.some((m) => !isValidYm(m))) throw new Error("Choose valid months.");
+  return `/api/payroll/post-downloads/tds?months=${list.join(",")}`;
+}
+
+export async function downloadPostPayrollTdsMonths(months: readonly string[], fetchFn: typeof fetch = fetch): Promise<string> {
+  const res = await fetchFn(tdsMonthsUrl(months));
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data?.message || data?.error || "Could not create the file.");
+  }
+  const blob = await res.blob();
+  const name = fileNameFromDisposition(res.headers.get("content-disposition"), "TDS_DATA.xlsx");
+  saveBlob(blob, name);
+  return name;
+}
+
 /** Pulls the file name out of a Content-Disposition header. */
 export function fileNameFromDisposition(header: string | null | undefined, fallback: string): string {
   const match = header ? /filename="?([^";\n]+)"?/i.exec(header) : null;

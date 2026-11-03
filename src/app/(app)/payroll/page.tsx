@@ -52,6 +52,7 @@ import {
 import { PayrollPreviewToolbar } from "@/components/payroll/PayrollPreviewToolbar";
 import { EmployeePayrollExportButton, type EmployeePayrollExportHandle } from "@/components/payroll/EmployeePayrollExportButton";
 import { DownloadsMenu } from "@/components/payroll/DownloadsMenu";
+import { monthKey } from "@/lib/downloadsMenuModel";
 import { PrivateRunPreviewCards } from "@/components/payroll/PrivateRunPreviewCards";
 import { v as govPreviewV } from "@/components/payroll/payrollRunPreviewShared";
 import { downloadPayrollRunWorkbook, type PayrollWorkbookStatus } from "@/lib/payrollRunWorkbook";
@@ -3846,6 +3847,7 @@ function PayrollPageContent() {
                 {canManage ? (
                 <EmployeePayrollExportButton
                   ref={employeeExportRef}
+                  defaultMonth={monthKey(runYear, runMonth)}
                   hideTrigger
                   buttonLabel="Export Employee Payroll"
                   resolveEmployeeUserIds={
