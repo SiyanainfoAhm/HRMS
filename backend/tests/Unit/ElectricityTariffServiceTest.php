@@ -71,7 +71,7 @@ final class ElectricityTariffServiceTest extends TestCase
         $this->assertEqualsWithDelta(4198.2, $bill['subtotal'], 0.001);
         $this->assertEqualsWithDelta(671.71, $bill['dutyAmount'], 0.001);
         $this->assertEqualsWithDelta(4869.91, $bill['totalExact'], 0.001);
-        $this->assertSame(4870, (int) $bill['total']);
+        $this->assertSame(4869.91, $bill["total"], "the final deduction is the exact bill to paise");
     }
 
     public function test_zero_units_still_applies_fixed_charges(): void

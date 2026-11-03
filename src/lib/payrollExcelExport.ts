@@ -1,7 +1,14 @@
+import { round2 } from "./money";
 import type { GovernmentMonthlyComputed } from "@/lib/governmentPayroll";
 import { calendarDaysInMonth, equivalentPayableDays, leaveSalaryAdjustment } from "@/lib/payrollLeaveDays";
 
 /** Run Payroll Excel export — no duplicate PT/Professional Tax or TakeHome/Net Pay columns. */
+/**
+ * Column order of the Run Payroll workbook (Preview Excel / Extract / saved export), one list for both builders.
+ * Grouped: identity, earnings, GrossTotal, deductions, TotalDeductions, NetSalary, then memo columns.
+ * Custom earnings are inserted before GrossTotal and custom deductions before TotalDeductions
+ * (see buildPayrollExcelHeaders); every column's group is in PAYROLL_EXCEL_GROUPS below.
+ */
 export const PAYROLL_EXCEL_HEADER = [
   "AccountNumber",
   "EmployeeName",
@@ -30,8 +37,12 @@ export const PAYROLL_EXCEL_HEADER = [
   "GrossArrears",
   "Encashment",
   "EncashmentDA",
+  "Incentive",
+  "PRBonus",
+  "Reimbursement",
   "GrossTotal",
   "IncomeTax",
+  "ProfessionalTax",
   "LIC",
   "CPF",
   "DACPF",
@@ -52,24 +63,22 @@ export const PAYROLL_EXCEL_HEADER = [
   "Remarks",
   "VehCharge",
   "OtherDeduction",
+  "QuarterRentDeduction",
+  "CPF Arr",
   "TotalDeductions",
   "NetSalary",
   "CTC",
-  "Incentive",
-  "PRBonus",
-  "Reimbursement",
   "TDS",
   "EmployeePF",
   "EmployerPF",
   "EmployeeESIC",
   "EmployerESIC",
-  "ProfessionalTax",
   "QuarterAssigned",
   "QuarterName",
   "QuarterType",
   "QuarterRent",
-  "QuarterRentDeduction",
   "NetPay",
+  "Net Arrears",
   "CalendarDays",
   "EOLDays",
   "HPLDays",
@@ -77,6 +86,87 @@ export const PAYROLL_EXCEL_HEADER = [
   "EOLSalaryAdjustment",
   "HPLSalaryAdjustment",
 ] as const;
+
+export type PayrollExcelGroup = "identity" | "info" | "earning" | "total_earnings" | "deduction" | "total_deductions" | "net";
+
+/** Classification of every fixed column. Typed as a full Record, so a column without a group does not compile. */
+export const PAYROLL_EXCEL_GROUPS: Record<(typeof PAYROLL_EXCEL_HEADER)[number], PayrollExcelGroup> = {
+  "AccountNumber": "identity",
+  "EmployeeName": "identity",
+  "Division": "identity",
+  "Department": "identity",
+  "Designation": "identity",
+  "PayLevel": "identity",
+  "PayDays": "info",
+  "Basic": "earning",
+  "DA": "earning",
+  "HRA": "earning",
+  "Medical": "earning",
+  "TransportTA": "earning",
+  "SPPay": "earning",
+  "ExtraWorkAllowance": "earning",
+  "NightAllowance": "earning",
+  "NightHours": "info",
+  "NightAllowanceRate": "info",
+  "NightAllowanceCeiling": "info",
+  "NightAllowanceEligible": "info",
+  "UniformAllowance": "earning",
+  "EducationAllowance": "earning",
+  "TelephoneAllowance": "earning",
+  "DAArrears": "earning",
+  "TransportArrears": "earning",
+  "GrossArrears": "earning",
+  "Encashment": "earning",
+  "EncashmentDA": "earning",
+  "Incentive": "earning",
+  "PRBonus": "earning",
+  "Reimbursement": "earning",
+  "GrossTotal": "total_earnings",
+  "IncomeTax": "deduction",
+  "ProfessionalTax": "deduction",
+  "LIC": "deduction",
+  "CPF": "deduction",
+  "DACPF": "deduction",
+  "GPF": "deduction",
+  "VPF": "deduction",
+  "PFLoan": "deduction",
+  "PostOffice": "deduction",
+  "CreditSociety": "deduction",
+  "StdLicenceFee": "deduction",
+  "Electricity": "deduction",
+  "ElectricityUnits": "info",
+  "Water": "deduction",
+  "Mess": "deduction",
+  "BankRecovery": "deduction",
+  "Welfare": "deduction",
+  "HPL": "deduction",
+  "EOL": "deduction",
+  "Remarks": "info",
+  "VehCharge": "deduction",
+  "OtherDeduction": "deduction",
+  "QuarterRentDeduction": "deduction",
+  "CPF Arr": "deduction",
+  "TotalDeductions": "total_deductions",
+  "NetSalary": "net",
+  "CTC": "info",
+  "TDS": "info",
+  "EmployeePF": "info",
+  "EmployerPF": "info",
+  "EmployeeESIC": "info",
+  "EmployerESIC": "info",
+  "QuarterAssigned": "info",
+  "QuarterName": "info",
+  "QuarterType": "info",
+  "QuarterRent": "info",
+  "NetPay": "info",
+  "Net Arrears": "info",
+  "CalendarDays": "info",
+  "EOLDays": "info",
+  "HPLDays": "info",
+  "EquivalentPayableDays": "info",
+  "EOLSalaryAdjustment": "info",
+  "HPLSalaryAdjustment": "info",
+};
 
 export type PayrollExcelHeader = (typeof PAYROLL_EXCEL_HEADER)[number];
 
@@ -218,10 +308,18 @@ const FIXED_PAYROLL_EXPORT_KEYS = new Set([
   "income_tax", "professional_tax", "lic", "cpf", "da_cpf", "gpf", "vpf", "post_office",
   "credit_society", "electricity", "water", "mess", "loan_recovery", "welfare", "hpl", "eol",
   "quarter_rent", "other_deduction",
+  // Fixed named columns (CPF Arr is a deduction, Net Arrears a memo column), read from the monthly row.
+  "cpf_arrears", "net_arrears",
 ]);
 
 function customAmount(raw: unknown, key: string): number {
   return n(parseCustomBag(raw)[key]);
+}
+
+/** A custom column named like a fixed column or another custom column gets "(Custom)" so no two headers match. */
+function uniqueExcelLabel(label: string, cols: DynamicPayrollExcelColumn[]): string {
+  const taken = new Set([...PAYROLL_EXCEL_HEADER, ...cols.map((c) => c.label)].map((h) => String(h).toLowerCase()));
+  return taken.has(label.toLowerCase()) ? `${label} (Custom)` : label;
 }
 
 /** Collect unique dynamic field keys from government monthly rows for export. */
@@ -239,7 +337,7 @@ export function collectDynamicPayrollExcelColumns(
       const group = fieldGroupByKey.get(key);
       if (!group) continue;
       seen.add(key);
-      cols.push({ key: `dyn_${key}`, label: fieldLabelByKey?.get(key) ?? titleFromFieldKey(key), group });
+      cols.push({ key: `dyn_${key}`, label: uniqueExcelLabel(fieldLabelByKey?.get(key) ?? titleFromFieldKey(key), cols), group });
     }
   }
   for (const g of govRows) {
@@ -257,8 +355,9 @@ export function collectDynamicPayrollExcelColumns(
         seen.add(key);
         cols.push({
           key: `dyn_${key}`,
-          label: fieldLabelByKey?.get(key) ?? titleFromFieldKey(key),
-          ...(configuredGroup ? { group: configuredGroup } : {}),
+          label: uniqueExcelLabel(fieldLabelByKey?.get(key) ?? titleFromFieldKey(key), cols),
+          // Settings group when configured, otherwise the bag the value was saved in.
+          group: configuredGroup ?? bag.group,
         });
       }
     }
@@ -266,8 +365,27 @@ export function collectDynamicPayrollExcelColumns(
   return cols;
 }
 
+/**
+ * Headers in column order: the fixed list, with custom earnings inserted right before GrossTotal and custom
+ * deductions (including statutory) right before TotalDeductions, so nothing that is an earning or a
+ * deduction ever sits after its total.
+ */
 export function buildPayrollExcelHeaders(dynamicCols: DynamicPayrollExcelColumn[] = []): string[] {
-  return [...PAYROLL_EXCEL_HEADER, ...dynamicCols.map((c) => c.label)];
+  const earnings = dynamicCols.filter((c) => c.group === "earnings").map((c) => c.label);
+  const deductions = dynamicCols.filter((c) => c.group !== "earnings").map((c) => c.label);
+  const out: string[] = [];
+  for (const h of PAYROLL_EXCEL_HEADER) {
+    if (h === "GrossTotal") out.push(...earnings);
+    if (h === "TotalDeductions") out.push(...deductions);
+    out.push(h);
+  }
+  return out;
+}
+
+/** Group of each header produced by buildPayrollExcelHeaders (same order). */
+export function payrollExcelHeaderGroups(dynamicCols: DynamicPayrollExcelColumn[] = []): PayrollExcelGroup[] {
+  const byLabel = new Map(dynamicCols.map((c) => [c.label, c.group === "earnings" ? "earning" : "deduction"] as const));
+  return buildPayrollExcelHeaders(dynamicCols).map((h) => PAYROLL_EXCEL_GROUPS[h as keyof typeof PAYROLL_EXCEL_GROUPS] ?? byLabel.get(h) ?? "info");
 }
 
 function dynamicValuesFromGov(
@@ -393,6 +511,8 @@ function govFromComputed(
       quarterRent: c.quarterRent,
     }),
     NetPay: c.netSalary,
+    "CPF Arr": n((c as unknown as Record<string, unknown>).cpfArrear),
+    "Net Arrears": n((c as unknown as Record<string, unknown>).netArrear),
   };
 }
 
@@ -472,6 +592,8 @@ function govFromDbRow(
       quarterRent: r.quarter_rent_amount,
     }),
     NetPay: n(r.net_salary),
+    "CPF Arr": n(r.cpf_arrear),
+    "Net Arrears": n(r.net_arrear),
   };
 }
 
@@ -550,7 +672,7 @@ export function buildPayrollExcelRow(
     VehCharge: 0,
     OtherDeduction: 0,
     TotalDeductions: n(p.deductions),
-    NetSalary: Math.round(n(p.gross_pay) - n(p.deductions)),
+    NetSalary: round2(n(p.gross_pay) - n(p.deductions)),
     CTC: n(p.ctc),
     Incentive: n(p.incentive),
     PRBonus: n(p.pr_bonus),
@@ -563,6 +685,8 @@ export function buildPayrollExcelRow(
     ProfessionalTax: professionalTax,
     ...quarterExcelColumns({}),
     NetPay: netPay,
+    "CPF Arr": 0,
+    "Net Arrears": 0,
   };
 
   let body: Omit<

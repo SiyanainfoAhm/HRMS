@@ -1,3 +1,4 @@
+import { round2 } from "./money";
 import { PAYROLL_LABELS } from "./payrollLabels";
 import * as XLSX from "xlsx-js-style";
 import { calendarDaysInMonth, equivalentPayableDays } from "@/lib/payrollLeaveDays";
@@ -296,11 +297,11 @@ export function aggregatePayrollSummary(rows: PayrollRunExportRow[]) {
     earnings,
     arrears,
     deductions,
-    totalEarnings: Math.round(totalEarnings),
-    totalArrears: Math.round(totalArrears),
-    totalDeductions: Math.round(totalDeductions),
-    netPayable: Math.round(totalNet),
-    earningsExcludingArrears: Math.round(totalEarnings - totalArrears),
+    totalEarnings: round2(totalEarnings),
+    totalArrears: round2(totalArrears),
+    totalDeductions: round2(totalDeductions),
+    netPayable: round2(totalNet),
+    earningsExcludingArrears: round2(totalEarnings - totalArrears),
   };
 }
 
@@ -635,6 +636,9 @@ function governmentMonthlyToDbShape(
     leave_remarks: (gm.leaveRemarks ?? gm.leave_remarks ?? null) as string | null,
     veh_charge_amount: d.vehCharge,
     other_deduction_amount: d.other,
+    gross_arrear: gmNum(gm, "grossArrear", "gross_arrear"),
+    cpf_arrear: gmNum(gm, "cpfArrear", "cpf_arrear"),
+    net_arrear: gmNum(gm, "netArrear", "net_arrear"),
     total_earnings: gmNum(gm, "totalEarnings", "total_earnings"),
     total_deductions: gmNum(gm, "totalDeductions", "total_deductions"),
     net_salary: gmNum(gm, "netSalary", "net_salary"),

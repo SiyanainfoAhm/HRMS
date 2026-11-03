@@ -1,5 +1,6 @@
 "use client";
 
+import { round2 } from "@/lib/money";
 import { useRef, useState } from "react";
 import type { PayrollFieldDefinition } from "@/lib/payrollFieldTypes";
 import { cn } from "@/lib/cn";
@@ -10,6 +11,14 @@ import type { ElectricityBillBreakdown } from "@/lib/electricityTariffCalculatio
 import { PayrollComponentScroller, type PayrollScrollerHandle } from "./PayrollComponentScroller";
 import { PayrollEmployeeCardHeader } from "./PayrollEmployeeCardHeader";
 import { PAYROLL_LABELS } from "@/lib/payrollLabels";
+import { nightAllowanceRateLabel } from "@/lib/nightAllowanceCalculation";
+import {
+  ARREAR_MIRROR_HINT,
+  isCustomEarningVisibleOnRow,
+  isMirroredArrearKey,
+  mirroredArrearValue,
+  resolveUnpaidArrears,
+} from "@/lib/payrollRunArrearMirror";
 import { calendarDaysInMonth, equivalentPayableDays, leaveSalaryAdjustment } from "@/lib/payrollLeaveDays";
 import {
   GOV_PREVIEW_CPF_ARREAR_LINE,
@@ -419,24 +428,10 @@ function StickyMiniSummary({
   );
 }
 
-function resolveUnpaidArrears(row: GovernmentRunPreviewRow) {
-  const g = row.governmentMonthly;
-  return {
-    daArrear: Math.round(Number(row.daArrear ?? g?.daArrearsPaid ?? 0) || 0),
-    trArrear: Math.round(Number(row.transportArrear ?? g?.transportArrearsPaid ?? 0) || 0),
-    grossArrear: Math.round(Number(row.grossArrear ?? g?.grossArrear ?? 0) || 0),
-    cpfArrear: Math.round(Number(row.cpfArrear ?? g?.cpfArrear ?? 0) || 0),
-    netArrear: Math.round(Number(row.netArrear ?? g?.netArrear ?? 0) || 0),
-  };
-}
-
-/** Value of an arrear-path line (grossArrear / cpfArrear / netArrear) for the preview chips. */
-function resolveUnpaidArrearValue(row: GovernmentRunPreviewRow, field: string): number {
-  const a = resolveUnpaidArrears(row);
-  if (field === "grossArrear") return a.grossArrear;
-  if (field === "cpfArrear") return a.cpfArrear;
-  if (field === "netArrear") return a.netArrear;
-  return 0;
+/** A typed amount, exactly as typed (to 2 decimals); blank or invalid is 0. */
+function parseAmount(raw: string): number {
+  const n = Number(raw);
+  return Number.isFinite(n) ? round2(Math.max(0, n)) : 0;
 }
 
 function ArrearField({
@@ -459,9 +454,9 @@ function ArrearField({
         <input
           type="number"
           min={0}
-          step={1}
+          step="0.01"
           value={value}
-          onChange={(e) => onChange(parseInt(e.target.value, 10) || 0)}
+          onChange={(e) => onChange(parseAmount(e.target.value))}
           className={inpWide}
         />
       )}
@@ -553,8 +548,8 @@ function GovernmentEmployeeDetail({
   const eolRefYear = leave.eolReferenceYear ?? runYear;
   const hplRefMonth = leave.hplReferenceMonth ?? runMonth;
   const hplRefYear = leave.hplReferenceYear ?? runYear;
-  const eolBasis = Math.round(Number(gRecord?.eolBasisAmount ?? 0) || 0);
-  const hplBasis = Math.round(Number(gRecord?.hplBasisAmount ?? 0) || 0);
+  const eolBasis = round2(Number(gRecord?.eolBasisAmount ?? 0) || 0);
+  const hplBasis = round2(Number(gRecord?.hplBasisAmount ?? 0) || 0);
   const activeFieldKeys = new Set(payrollFieldDefs?.filter((field) => field.isActive).map((field) => field.fieldKey));
   const isVisibleConfiguredField = (fieldKey?: string) =>
     preserveSavedFields || !fieldKey || activeFieldKeys.has(fieldKey);
@@ -787,7 +782,7 @@ function GovernmentEmployeeDetail({
                   />
                 )}
                 <p className="mt-0.5 text-[10px] tabular-nums text-slate-500">
-                  Rate ₹{(leave.nightAllowanceRate ?? 0).toFixed(2)}/{leave.nightAllowanceRateBasis === "duty" ? "duty" : "hr"}
+                  Rate {nightAllowanceRateLabel(leave.nightAllowanceRate, leave.nightAllowanceRateBasis)}
                 </p>
 
               </div>
@@ -799,8 +794,9 @@ function GovernmentEmployeeDetail({
                   <input
                     type="number"
                     min={0}
+                    step="0.01"
                     value={row.incentive ?? 0}
-                    onChange={(e) => onUpdate(row.employeeUserId, "incentive", parseInt(e.target.value, 10) || 0)}
+                    onChange={(e) => onUpdate(row.employeeUserId, "incentive", parseAmount(e.target.value))}
                     className={inpWide}
                   />
                 )}
@@ -813,8 +809,9 @@ function GovernmentEmployeeDetail({
                   <input
                     type="number"
                     min={0}
+                    step="0.01"
                     value={row.prBonus ?? 0}
-                    onChange={(e) => onUpdate(row.employeeUserId, "prBonus", parseInt(e.target.value, 10) || 0)}
+                    onChange={(e) => onUpdate(row.employeeUserId, "prBonus", parseAmount(e.target.value))}
                     className={inpWide}
                   />
                 )}
@@ -827,9 +824,10 @@ function GovernmentEmployeeDetail({
                   <input
                     type="number"
                     min={0}
+                    step="0.01"
                     value={v(g, "encashmentPaid")}
                     onChange={(e) =>
-                      onUpdate(row.employeeUserId, "govEarning_encashmentPaid", parseInt(e.target.value, 10) || 0)
+                      onUpdate(row.employeeUserId, "govEarning_encashmentPaid", parseAmount(e.target.value))
                     }
                     className={inpWide}
                   />
@@ -843,9 +841,10 @@ function GovernmentEmployeeDetail({
                   <input
                     type="number"
                     min={0}
+                    step="0.01"
                     value={v(g, "encashmentDaPaid")}
                     onChange={(e) =>
-                      onUpdate(row.employeeUserId, "govEarning_encashmentDaPaid", parseInt(e.target.value, 10) || 0)
+                      onUpdate(row.employeeUserId, "govEarning_encashmentDaPaid", parseAmount(e.target.value))
                     }
                     className={inpWide}
                   />
@@ -859,8 +858,9 @@ function GovernmentEmployeeDetail({
                   <input
                     type="number"
                     min={0}
+                    step="0.01"
                     value={row.reimbursement ?? 0}
-                    onChange={(e) => onUpdate(row.employeeUserId, "reimbursement", parseInt(e.target.value, 10) || 0)}
+                    onChange={(e) => onUpdate(row.employeeUserId, "reimbursement", parseAmount(e.target.value))}
                     className={inpWide}
                   />
                 )}
@@ -881,24 +881,37 @@ function GovernmentEmployeeDetail({
             <PayrollComponentScroller ref={scrollerRef}>
               <div className="flex flex-col gap-2.5">
                 <PayrollSectionRow title="Earnings" titleClassName="text-emerald-900">
-                  {GOV_PREVIEW_EARNING_FIELDS.filter((field) => isVisibleConfiguredField(field.fieldKey)).map(({ key, label, arrearField, memo }) => (
-                    <FieldChip
-                      key={key}
-                      label={label}
-                      readOnly={readOnly || Boolean(memo)}
-                      value={arrearField ? resolveUnpaidArrearValue(row, arrearField) : v(g, key)}
-                      onChange={(n) => onUpdate(row.employeeUserId, arrearField ?? `govEarning_${key}`, n)}
-                    />
-                  ))}
-                  {customEarningFields.map((f) => (
-                    <FieldChip
-                      key={f.id}
-                      label={f.fieldLabel}
-                      readOnly={readOnly}
-                      value={customFieldAmount(g, row.govRecalc, f.fieldKey, "earnings")}
-                      onChange={(n) => onUpdate(row.employeeUserId, `govCustom_${f.fieldKey}`, n)}
-                    />
-                  ))}
+                  {GOV_PREVIEW_EARNING_FIELDS.filter((field) => isVisibleConfiguredField(field.fieldKey)).map(({ key, label }) =>
+                    isMirroredArrearKey(key) ? (
+                      <FieldChip
+                        key={key}
+                        label={label}
+                        readOnly
+                        mirrorHint={ARREAR_MIRROR_HINT}
+                        value={mirroredArrearValue(row, key)}
+                        onChange={() => {}}
+                      />
+                    ) : (
+                      <FieldChip
+                        key={key}
+                        label={label}
+                        readOnly={readOnly}
+                        value={v(g, key)}
+                        onChange={(n) => onUpdate(row.employeeUserId, `govEarning_${key}`, n)}
+                      />
+                    ),
+                  )}
+                  {customEarningFields
+                    .filter((f) => isCustomEarningVisibleOnRow(f.fieldKey, customFieldAmount(g, row.govRecalc, f.fieldKey, "earnings")))
+                    .map((f) => (
+                      <FieldChip
+                        key={f.id}
+                        label={f.fieldLabel}
+                        readOnly={readOnly}
+                        value={customFieldAmount(g, row.govRecalc, f.fieldKey, "earnings")}
+                        onChange={(n) => onUpdate(row.employeeUserId, `govCustom_${f.fieldKey}`, n)}
+                      />
+                    ))}
                 </PayrollSectionRow>
                 <PayrollSectionRow title="Deductions" titleClassName="text-rose-900">
                   {GOV_PREVIEW_DEDUCTION_FIELDS.filter((field) => isVisibleConfiguredField(field.fieldKey)).map(({ key, label }) => (
@@ -913,9 +926,10 @@ function GovernmentEmployeeDetail({
                   {isVisibleConfiguredField(GOV_PREVIEW_CPF_ARREAR_LINE.fieldKey) && (
                     <FieldChip
                       label={GOV_PREVIEW_CPF_ARREAR_LINE.label}
-                      readOnly={readOnly}
-                      value={resolveUnpaidArrearValue(row, GOV_PREVIEW_CPF_ARREAR_LINE.arrearField)}
-                      onChange={(n) => onUpdate(row.employeeUserId, GOV_PREVIEW_CPF_ARREAR_LINE.arrearField, n)}
+                      readOnly
+                      mirrorHint={ARREAR_MIRROR_HINT}
+                      value={mirroredArrearValue(row, "cpfArrear")}
+                      onChange={() => {}}
                     />
                   )}
                   {customDeductionFields.map((f) => (

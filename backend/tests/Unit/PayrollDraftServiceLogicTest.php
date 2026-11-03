@@ -114,7 +114,7 @@ final class PayrollDraftServiceLogicTest extends TestCase
         $unassigned = $service->applyAuthoritativeQuarterValues($assigned, [
             'hasQuarter' => false, 'quarterId' => null, 'quarterName' => null, 'quarterType' => null, 'quarterRent' => 0,
         ], 2026, 10);
-        $this->assertSame(14516.0, $unassigned['governmentMonthly']['hraPaid'], 'restored HRA is prorated for 30 payable days in October');
+        $this->assertSame(14516.13, $unassigned['governmentMonthly']['hraPaid'], 'restored HRA is prorated for 30 of 31 days in October, to paise');
         $this->assertSame(0.0, $unassigned['governmentMonthly']['deductions']['quarterRent']);
         $this->assertSame(11750, $unassigned['governmentMonthly']['deductions']['creditSociety']);
     }

@@ -93,6 +93,15 @@ final class PostPayrollDownloadService
         $monthly = DB::table('cirt_monthly_payroll')->where('company_id', $companyId)
             ->whereDate('month_year', '>=', $from)->whereDate('month_year', '<=', $to)
             ->orderBy('month_year')->get();
+        $out = $this->attachMasters($companyId, $monthly);
+        usort($out, fn ($a, $b) => [$a['_master']['employee_code'] ?? '', $a['_ym']] <=> [$b['_master']['employee_code'] ?? '', $b['_ym']]);
+
+        return $out;
+    }
+
+    /** @return list<array<string, mixed>> monthly rows with the employee's master and user attached */
+    private function attachMasters(string $companyId, \Illuminate\Support\Collection $monthly): array
+    {
         $ids = $monthly->pluck('employee_user_id')->unique()->all();
         $masters = [];
         foreach (DB::table('cirt_payroll_master')->where('company_id', $companyId)->whereIn('employee_user_id', $ids)
@@ -110,7 +119,29 @@ final class PostPayrollDownloadService
             $row['_ym'] = (int) date('Ym', strtotime((string) $r->month_year));
             $out[] = $row;
         }
-        usort($out, fn ($a, $b) => [$a['_master']['employee_code'] ?? '', $a['_ym']] <=> [$b['_master']['employee_code'] ?? '', $b['_ym']]);
+
+        return $out;
+    }
+
+    /**
+     * Saved monthly rows of the chosen months (any set, across years) in ONE query, payslip lines
+     * included for the totals check. Grouped by employee (code, natural order), months chronological.
+     *
+     * @param  list<string>  $months  YYYY-MM
+     * @return list<array<string, mixed>>
+     */
+    public function rowsForMonths(string $companyId, array $months): array
+    {
+        $monthly = DB::table('cirt_monthly_payroll as m')
+            ->leftJoin('cirt_payslips as p', 'p.id', '=', 'm.payslip_id')
+            ->where('m.company_id', $companyId)
+            ->whereIn(DB::raw("to_char(m.month_year, 'YYYY-MM')"), $months)
+            ->select('m.*', 'p.incentive', 'p.pr_bonus', 'p.reimbursement')
+            ->get();
+        $out = $this->attachMasters($companyId, $monthly);
+        usort($out, fn ($a, $b) => strnatcasecmp((string) ($a['_master']['employee_code'] ?? ''), (string) ($b['_master']['employee_code'] ?? ''))
+            ?: strcmp((string) $a['employee_user_id'], (string) $b['employee_user_id'])
+            ?: $a['_ym'] <=> $b['_ym']);
 
         return $out;
     }
@@ -439,16 +470,101 @@ final class PostPayrollDownloadService
         ];
     }
 
-    public function buildTds(array $rows): Spreadsheet
+    /**
+     * TDS Data as data (preview and workbook). The 44 TDS columns are unchanged; with $extras the
+     * multi-period columns follow them, each total beside the fields it sums:
+     * Month | Year | custom EARNINGS | Total Earnings | custom DEDUCTIONS | Total Deductions | Net Pay
+     * (the SAVED row's totals), and a totals row. tdsExtraLayout() is the one definition of that order for
+     * both the preview and the workbook. Every row's totals are cross-checked (422 when earnings -
+     * deductions is not net or the lines do not add up).
+     *
+     * @param  array{earnings: array<string, string>, deductions: array<string, string>}|null  $extras
+     * @return array{headers: list<string>, rows: list<list<mixed>>, totals: list<mixed>, moneyColumns: list<int>}
+     */
+    public function tdsTable(array $rows, ?array $extras = null): array
     {
+        $headers = self::TDS_COLUMNS;
+        $money = range(18, 43);
+        $layout = $extras === null ? [] : self::tdsExtraLayout($extras);
+        if ($extras !== null) {
+            $headers = array_merge($headers, array_column($layout, 'label'));
+            $money = array_merge($money, range(46, count($headers) - 1));
+        }
+        $table = [];
+        $sums = array_fill_keys($money, 0.0);
+        foreach ($rows as $r) {
+            if ($extras !== null) {
+                \App\Support\PayrollExportTotals::assertConsistent($r, trim(((string) ($r['_master']['employee_code'] ?? '')).' '.date('F Y', strtotime((string) $r['month_year']))));
+            }
+            $values = $this->tdsValues($r);
+            if ($extras !== null) {
+                $earn = self::customBag($r, 'custom_earnings');
+                $ded = self::customBag($r, 'custom_deductions');
+                foreach ($layout as $col) {
+                    $values[] = match ($col['kind']) {
+                        'month' => date('F Y', strtotime((string) $r['month_year'])),
+                        'year' => (int) date('Y', strtotime((string) $r['month_year'])),
+                        'earning' => array_key_exists($col['key'], $earn) ? $earn[$col['key']] : null,
+                        'deduction' => array_key_exists($col['key'], $ded) ? $ded[$col['key']] : null,
+                        'total_earnings' => self::n($r, 'total_earnings'),
+                        'total_deductions' => self::n($r, 'total_deductions'),
+                        'net' => self::n($r, 'net_salary'),
+                    };
+                }
+            }
+            foreach ($money as $i) {
+                if (isset($values[$i]) && is_numeric($values[$i])) $sums[$i] += (float) $values[$i];
+            }
+            $table[] = $values;
+        }
+        $totals = array_fill(0, count($headers), null);
+        if ($table !== []) {
+            $totals[0] = 'TOTAL';
+            foreach ($sums as $i => $sum) $totals[$i] = round($sum, 2);
+        }
+
+        return ['headers' => $headers, 'rows' => $table, 'totals' => $totals, 'moneyColumns' => $money];
+    }
+
+    /**
+     * The one definition of the columns that follow the 44 TDS columns (preview and Excel both read it).
+     * A custom field named like a fixed column gets "(Custom)" so headers stay unambiguous.
+     *
+     * @param  array{earnings: array<string, string>, deductions: array<string, string>}  $extras  field_key => label
+     * @return list<array{label: string, kind: string, key?: string}>
+     */
+    public static function tdsExtraLayout(array $extras): array
+    {
+        $taken = array_merge(self::TDS_COLUMNS, ['Month', 'Year', 'Total Earnings', 'Total Deductions', 'Net Pay']);
+        $unique = function (string $label) use (&$taken): string {
+            if (in_array($label, $taken, true)) $label .= ' (Custom)';
+            $taken[] = $label;
+
+            return $label;
+        };
+        $layout = [['label' => 'Month', 'kind' => 'month'], ['label' => 'Year', 'kind' => 'year']];
+        foreach ($extras['earnings'] as $key => $label) $layout[] = ['label' => $unique((string) $label), 'kind' => 'earning', 'key' => (string) $key];
+        $layout[] = ['label' => 'Total Earnings', 'kind' => 'total_earnings'];
+        foreach ($extras['deductions'] as $key => $label) $layout[] = ['label' => $unique((string) $label), 'kind' => 'deduction', 'key' => (string) $key];
+        $layout[] = ['label' => 'Total Deductions', 'kind' => 'total_deductions'];
+        $layout[] = ['label' => 'Net Pay', 'kind' => 'net'];
+
+        return $layout;
+    }
+
+    /** @param array{earnings: array<string, string>, deductions: array<string, string>}|null $extras */
+    public function buildTds(array $rows, ?array $extras = null): Spreadsheet
+    {
+        $t = $this->tdsTable($rows, $extras);
         $wb = new Spreadsheet;
         $ws = $wb->getActiveSheet()->setTitle('TDS_DATA');
         foreach (self::TDS_TOP as $i => $label) $ws->setCellValue([19 + $i, 1], $label);
-        foreach (self::TDS_COLUMNS as $i => $label) $ws->setCellValue([$i + 1, 2], $label);
-        $ws->getStyle('A1:AR2')->getFont()->setBold(true);
+        foreach ($t['headers'] as $i => $label) $ws->setCellValue([$i + 1, 2], $label);
+        $lastCol = Coordinate::stringFromColumnIndex(count($t['headers']));
+        $ws->getStyle('A1:'.$lastCol.'2')->getFont()->setBold(true);
         $line = 3;
-        foreach ($rows as $r) {
-            foreach ($this->tdsValues($r) as $i => $v) {
+        foreach ($t['rows'] as $values) {
+            foreach ($values as $i => $v) {
                 if ($v === null || $v === '') continue;
                 if (in_array($i, [4, 14, 16], true)) {
                     $ws->setCellValueExplicit([$i + 1, $line], (string) $v, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
@@ -458,11 +574,20 @@ final class PostPayrollDownloadService
             }
             $line++;
         }
-        if ($line > 3) $ws->getStyle('R3:R'.($line - 1))->getNumberFormat()->setFormatCode('0'); // YYYYMM: no thousands separator
+        $lastData = $line - 1;
+        if ($line > 3) $ws->getStyle('R3:R'.$lastData)->getNumberFormat()->setFormatCode('0'); // YYYYMM: no thousands separator
+        if ($extras !== null && $t['rows'] !== []) {
+            // Totals row: real numeric cells, bold, outside the filter range so sorting never moves it.
+            foreach ($t['totals'] as $i => $v) {
+                if ($v === null || $v === '') continue;
+                $ws->setCellValue([$i + 1, $line], $v);
+            }
+            $ws->getStyle('A'.$line.':'.$lastCol.$line)->getFont()->setBold(true);
+        }
         SpreadsheetLayout::finish($ws, [
-            'header_row' => 2, 'freeze' => 'B3', 'autofilter' => true,
+            'header_row' => 2, 'freeze' => 'B3', 'autofilter' => $extras === null ? true : 'A2:'.$lastCol.max(2, $lastData),
             'date_columns' => ['F' => SpreadsheetLayout::FORMAT_DATE_US, 'H' => SpreadsheetLayout::FORMAT_DATE_US],
-            'text_columns' => ['E', 'O', 'Q'], 'amount_columns' => array_map(fn ($i) => Coordinate::stringFromColumnIndex($i), range(19, 44)),
+            'text_columns' => ['E', 'O', 'Q'], 'amount_columns' => array_map(fn ($i) => Coordinate::stringFromColumnIndex($i + 1), $t['moneyColumns']),
             'wrap_columns' => ['I', 'J', 'K', 'L', 'M', 'N'],
         ]);
 

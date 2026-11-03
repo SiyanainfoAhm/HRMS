@@ -34,8 +34,11 @@ const row = buildPayrollExcelRow({
 const dynamicColumns = collectDynamicPayrollExcelColumns([
   { custom_earnings: { new_allowance: 42, inactive_component: 999 } },
 ], new Map([["new_allowance", "New Allowance"], ["inactive_component", "Inactive"]]), new Set(["new_allowance"]));
-if (JSON.stringify(buildPayrollExcelHeaders(dynamicColumns).slice(-1)) !== JSON.stringify(["New Allowance"])) {
-  throw new Error("Configured active dynamic component must be included and inactive fields excluded.");
+{
+  const headers = buildPayrollExcelHeaders(dynamicColumns);
+  if (headers.indexOf("New Allowance") < 0 || headers.indexOf("New Allowance") + 1 !== headers.indexOf("GrossTotal") || headers.includes("Inactive")) {
+    throw new Error("Configured active dynamic component must be included (right before GrossTotal) and inactive fields excluded.");
+  }
 }
 const dynamicRow = buildPayrollExcelRow({ payroll_mode: "government", employee_user_id: "employee-2" }, "Employee Two", {
   kind: "row",
@@ -101,7 +104,7 @@ const expected: Record<string, string | number> = {
   ProfessionalTax: 135, QuarterAssigned: "Yes", QuarterName: "Q-1", QuarterType: "Type-A",
   QuarterRent: 138, QuarterRentDeduction: 138, NetPay: -17,
   CalendarDays: 31, EOLDays: 1, HPLDays: 2, EquivalentPayableDays: 29,
-  EOLSalaryAdjustment: 3, HPLSalaryAdjustment: 3,
+  EOLSalaryAdjustment: 3.23, HPLSalaryAdjustment: 3.23,
 };
 
 for (const [field, value] of Object.entries(expected)) {

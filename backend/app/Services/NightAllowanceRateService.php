@@ -10,45 +10,114 @@ use Illuminate\Support\Str;
 final class NightAllowanceRateService
 {
     /**
-     * CIRT-08 - Night Duty Allowance = (Total Night Duty Hours / 8) x Night Allowance Rate for the
-     * employee's Pay Level (rate per 8-hour duty). Mirror: src/lib/nightAllowanceCalculation.ts.
-     *
-     * UNCONFIRMED rules, each behind ONE constant:
-     *  - DUTY_UNITS_DECIMALS: duties (hours / 8) are rounded to this many decimals;
-     *  - ROUND_AMOUNT_TO_RUPEE: final amount rounded to the nearest rupee (the previous code already did).
+     * Night Duty Allowance = hours / 8 x rate. The rate (Settings > Night Allowance, 7th CPC table:
+     * Level 1 = 23.20) is the amount per DUTY of 8 hours and is stored exactly as typed.
+     * Computed as (hours x rate) / 8 and rounded ONCE, to 2 decimals (paise), at the end. Mirror: src/lib/nightAllowanceCalculation.ts
+     * (shared cases: tests/fixtures/night_allowance_cases.json).
      */
     public const DUTY_BASE_HOURS = 8;
 
-    public const DUTY_UNITS_DECIMALS = 2;
-
-    public const ROUND_AMOUNT_TO_RUPEE = true;
+    public const ROUND_AMOUNT_TO_RUPEE = false;
 
     /** 'duty' = rate is per 8-hour duty; 'hour' = legacy rows keep hours x rate (history unchanged). */
     public const BASIS_DUTY = 'duty';
 
     public const BASIS_HOUR = 'hour';
 
-    public static function allowanceAmount(float $hours, float $rate, string $basis = self::BASIS_HOUR): float
+    public static function allowanceAmount(float $hours, float $rate, string $basis = self::BASIS_DUTY): float
     {
         $hours = max(0.0, $hours);
         $rate = max(0.0, $rate);
         if ($hours <= 0) {
             return 0.0;
         }
-        if ($basis !== self::BASIS_DUTY) {
+        if ($basis === self::BASIS_HOUR) {
             return (float) round($hours * $rate);
         }
-        $scale = 10 ** self::DUTY_UNITS_DECIMALS;
-        $duties = round(($hours / self::DUTY_BASE_HOURS) * $scale) / $scale;
-        $amount = $duties * $rate;
+        // hours x rate / 8 in integer paise (App\Support\Money), rounded once, half up, to paise.
+        $amount = \App\Support\Money::proportion($rate, $hours, self::DUTY_BASE_HOURS);
 
-        return self::ROUND_AMOUNT_TO_RUPEE ? (float) round($amount) : round($amount, 2);
+        return self::ROUND_AMOUNT_TO_RUPEE ? (float) round($amount) : $amount;
     }
 
-    /** Rate per duty: the stored value, else the legacy hourly rate x 8. */
-    public static function ratePerDuty(mixed $stored, float $legacyPerHour): float
+    /**
+     * Open-draft row -> duty basis. A row saved before the per-duty rate (no basis, or 'hour' with
+     * an hourly rate such as 28.85) gets basis 'duty' and the rate re-resolved from the active slab
+     * for its pay level and period. Typed hours and a typed (override) amount are kept; only a
+     * computed amount can change, and gross/net move by exactly that delta. A level with no slab
+     * is left untouched (a stored amount is never zeroed). A row already on 'duty' whose rate is
+     * exactly 8x the slab rate (saved while the slabs were 8x too high) is corrected the same way.
+     * The basis alone decides this, never a rate threshold. Idempotent. Never call for finalized months.
+     *
+     * @param  array<string, mixed>  $payload  draft row_payload
+     * @param  list<array<string, mixed>>  $preloadedRates
+     * @return array{payload: array<string, mixed>, changed: bool, from: array<string, mixed>, to: array<string, mixed>}
+     */
+    public function normalizeDraftPayloadToDuty(array $payload, array $preloadedRates, ?string $periodEndDate): array
     {
-        return is_numeric($stored) ? (float) $stored : round($legacyPerHour * self::DUTY_BASE_HOURS, 2);
+        $unchanged = ['payload' => $payload, 'changed' => false, 'from' => [], 'to' => []];
+        $gr = $payload['govRecalc'] ?? null;
+        $gm = $payload['governmentMonthly'] ?? null;
+        if (! is_array($gr) || ! is_array($gm)) {
+            return $unchanged;
+        }
+        $basis = $gr['nightAllowanceRateBasis'] ?? $gm['nightAllowanceRateBasis'] ?? null;
+        $level = (int) ($gr['payLevel'] ?? $gm['payLevel'] ?? 0);
+        $resolved = $this->resolveFromPreloadedRates($preloadedRates, $level, $periodEndDate);
+        if ($resolved['rate'] <= 0) {
+            return $unchanged;
+        }
+        $rate = (float) $resolved['rate'];
+        $storedRate = (float) ($gr['nightAllowanceRate'] ?? $gm['nightAllowanceRate'] ?? 0);
+        $stale8x = $basis === self::BASIS_DUTY && abs($storedRate - 8 * $rate) < 0.005;
+        if ($basis === self::BASIS_DUTY && ! $stale8x) {
+            return $unchanged;
+        }
+        $hours = (float) ($gr['nightHours'] ?? $gm['nightHours'] ?? 0);
+        $manual = (bool) ($gr['nightAllowanceManualOverride'] ?? $gm['nightAllowanceManualOverride'] ?? false);
+        $eligible = ($gm['nightAllowanceEligible'] ?? true) !== false;
+        $oldAmount = (float) ($gm['nightAllowancePaid'] ?? 0);
+        $newAmount = ($manual || ! $eligible) ? $oldAmount : self::allowanceAmount($hours, $rate, self::BASIS_DUTY);
+
+        $from = ['rate' => $gr['nightAllowanceRate'] ?? null, 'basis' => $basis, 'amount' => $oldAmount];
+        $gr['nightAllowanceRate'] = $rate;
+        $gr['nightAllowanceRateBasis'] = self::BASIS_DUTY;
+        $gr['nightAllowanceSlabNo'] = $resolved['slabNo'];
+        $gm['nightAllowanceRate'] = $rate;
+        $gm['nightAllowanceRateBasis'] = self::BASIS_DUTY;
+        $gm['nightAllowanceSlabNo'] = $resolved['slabNo'];
+        $delta = $hours > 0 ? $newAmount - $oldAmount : 0.0;
+        if (abs($delta) > 0.0001) {
+            foreach (['nightAllowancePaid', 'nightAllowanceAmount', 'nightAllowanceActual'] as $k) {
+                $gm[$k] = $newAmount;
+            }
+            $gm['totalEarnings'] = (float) ($gm['totalEarnings'] ?? 0) + $delta;
+            $gm['netSalary'] = (float) ($gm['netSalary'] ?? 0) + $delta;
+            foreach (['grossPay', 'netPay', 'takeHome'] as $k) {
+                if (isset($payload[$k]) && is_numeric($payload[$k])) {
+                    $payload[$k] = (float) $payload[$k] + $delta;
+                }
+            }
+        }
+        $payload['govRecalc'] = $gr;
+        $payload['governmentMonthly'] = $gm;
+
+        return [
+            'payload' => $payload,
+            'changed' => true,
+            'from' => $from,
+            'to' => ['rate' => $rate, 'basis' => self::BASIS_DUTY, 'amount' => $hours > 0 ? $newAmount : $oldAmount],
+        ];
+    }
+
+    /**
+     * Rate per duty, exactly as stored. Rows created before rate_per_duty existed carry the same
+     * 7th CPC table amount in the legacy rate_per_hour column (a misnomer: it is per duty), so no
+     * multiplication or division is applied.
+     */
+    public static function ratePerDuty(mixed $stored, float $legacyColumn): float
+    {
+        return is_numeric($stored) ? (float) $stored : round($legacyColumn, 2);
     }
 
     /** @return list<array<string, mixed>> */
@@ -226,7 +295,7 @@ final class NightAllowanceRateService
             'slab_no' => $slabNo,
             'pay_level' => $payLevel,
             'rate_per_duty' => round($rate, 2),
-            'rate_per_hour' => round($rate / self::DUTY_BASE_HOURS, 2),
+            'rate_per_hour' => round($rate, 2), // legacy column name; holds the same per-duty amount
             'effective_from' => $effectiveFrom ? Carbon::parse((string) $effectiveFrom)->toDateString() : null,
             'is_active' => (bool) ($data['is_active'] ?? $data['isActive'] ?? true),
         ]);
@@ -264,7 +333,7 @@ final class NightAllowanceRateService
             'slab_no' => $slabNo,
             'pay_level' => $payLevel,
             'rate_per_duty' => round($rate, 2),
-            'rate_per_hour' => round($rate / self::DUTY_BASE_HOURS, 2),
+            'rate_per_hour' => round($rate, 2), // legacy column name; holds the same per-duty amount
             'effective_from' => $effectiveFrom,
             'is_active' => array_key_exists('is_active', $data) || array_key_exists('isActive', $data)
                 ? (bool) ($data['is_active'] ?? $data['isActive'])
@@ -326,7 +395,7 @@ final class NightAllowanceRateService
 
         $amount = self::allowanceAmount($hours, $rate, $rateBasis);
         if ($manualOverride && $manualAmount !== null) {
-            $amount = round(max(0, $manualAmount));
+            $amount = round(max(0, $manualAmount), 2);
         }
 
         return [
@@ -350,6 +419,7 @@ final class NightAllowanceRateService
 
         $hours = (float) ($gm['nightHours'] ?? $gm['night_hours'] ?? 0);
         $rate = (float) ($gm['nightAllowanceRate'] ?? $gm['night_allowance_rate'] ?? 0);
+        // A payload with no basis predates the per-duty rate (hourly rate); `payroll:repair-data` moves open drafts to 'duty'.
         $rateBasis = ($gm['nightAllowanceRateBasis'] ?? $gm['night_allowance_rate_basis'] ?? null) === self::BASIS_DUTY ? self::BASIS_DUTY : self::BASIS_HOUR;
         $manualOverride = (bool) ($gm['nightAllowanceManualOverride'] ?? $gm['night_allowance_manual_override'] ?? false);
         $oldAmount = (float) ($gm['nightAllowancePaid'] ?? $gm['night_allowance_paid'] ?? $gm['nightAllowanceAmount'] ?? 0);

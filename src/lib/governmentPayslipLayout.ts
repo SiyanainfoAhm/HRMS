@@ -1,3 +1,4 @@
+import { round2 } from "./money";
 import { PAYROLL_LABELS } from "./payrollLabels";
 /**
  * Government payslip: T-account style (earnings left, deductions right) and period title.
@@ -78,7 +79,7 @@ function customSnapshotPairs(
       .sort((a, b) => a.displayOrder - b.displayOrder)
       .map((m) => {
         shown.add(m.fieldKey);
-        return [historicalFieldLabel(m.fieldKey, m.fieldLabel), Math.round(Number(obj[m.fieldKey] ?? 0) || 0)] as [string, number];
+        return [historicalFieldLabel(m.fieldKey, m.fieldLabel), round2(Number(obj[m.fieldKey] ?? 0) || 0)] as [string, number];
       });
 
     // Definitions may be deactivated or deleted after a payroll is saved.  Do
@@ -86,7 +87,7 @@ function customSnapshotPairs(
     const historical = Object.entries(obj)
       .filter(([key, value]) => !shown.has(key) && Number(value) !== 0)
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([key, value]) => [historicalFieldLabel(key), Math.round(Number(value) || 0)] as [string, number]);
+      .map(([key, value]) => [historicalFieldLabel(key), round2(Number(value) || 0)] as [string, number]);
 
     return [...configured, ...historical];
   }

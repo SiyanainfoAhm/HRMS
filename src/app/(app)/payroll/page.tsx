@@ -1,5 +1,6 @@
 "use client";
 
+import { proportion, round2, sumMoney } from "@/lib/money";
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
@@ -52,6 +53,8 @@ import {
 import { PayrollPreviewToolbar } from "@/components/payroll/PayrollPreviewToolbar";
 import { EmployeePayrollExportButton, type EmployeePayrollExportHandle } from "@/components/payroll/EmployeePayrollExportButton";
 import { DownloadsMenu } from "@/components/payroll/DownloadsMenu";
+import { PostPayrollReportsMenu } from "@/components/payroll/PostPayrollReportsMenu";
+import { monthKey } from "@/lib/downloadsMenuModel";
 import { PrivateRunPreviewCards } from "@/components/payroll/PrivateRunPreviewCards";
 import { v as govPreviewV } from "@/components/payroll/payrollRunPreviewShared";
 import { downloadPayrollRunWorkbook, type PayrollWorkbookStatus } from "@/lib/payrollRunWorkbook";
@@ -340,11 +343,11 @@ function governmentRowFromCompute<T extends {
     netPay: netSalary,
     tds: ded.incomeTax,
     profTax: ded.pt,
-    pfEmployee: Math.round(ded.cpf + ded.daCpf + ded.vpf),
+    pfEmployee: sumMoney(ded.cpf, ded.daCpf, ded.vpf),
     pfEmployer: 0,
     esicEmployee: 0,
     esicEmployer: 0,
-    takeHome: Math.round(netSalary),
+    takeHome: round2(netSalary),
   };
 }
 
@@ -415,11 +418,11 @@ function arrearSnapshotFromRow(row: {
 }) {
   const g = row.governmentMonthly as GovernmentPreviewMonthly | GovMonthlyWithArrear | null | undefined;
   return {
-    daArrear: Math.round(Number(row.daArrear ?? g?.daArrearsPaid ?? 0) || 0),
-    transportArrear: Math.round(Number(row.transportArrear ?? g?.transportArrearsPaid ?? 0) || 0),
-    grossArrear: Math.round(Number(row.grossArrear ?? g?.grossArrear ?? 0) || 0),
-    cpfArrear: Math.round(Number(row.cpfArrear ?? g?.cpfArrear ?? 0) || 0),
-    netArrear: Math.round(Number(row.netArrear ?? g?.netArrear ?? 0) || 0),
+    daArrear: round2(Number(row.daArrear ?? g?.daArrearsPaid ?? 0) || 0),
+    transportArrear: round2(Number(row.transportArrear ?? g?.transportArrearsPaid ?? 0) || 0),
+    grossArrear: round2(Number(row.grossArrear ?? g?.grossArrear ?? 0) || 0),
+    cpfArrear: round2(Number(row.cpfArrear ?? g?.cpfArrear ?? 0) || 0),
+    netArrear: round2(Number(row.netArrear ?? g?.netArrear ?? 0) || 0),
   };
 }
 
@@ -1750,11 +1753,12 @@ function PayrollPageContent() {
 
           const next = { ...row, [field]: numValue } as typeof row;
           const recalcGovTakeHome = () => {
-            next.takeHome =
-              Math.round(Number(next.netPay) || 0) +
-              Math.round(Number(next.incentive) || 0) +
-              Math.round(Number(next.prBonus) || 0) +
-              Math.round(Number(next.reimbursement) || 0);
+            next.takeHome = sumMoney(
+              Number(next.netPay) || 0,
+              Number(next.incentive) || 0,
+              Number(next.prBonus) || 0,
+              Number(next.reimbursement) || 0,
+            );
           };
           if (field === "payDays") {
             return recompute(gr0, numValue, undefined, next, { clearMonetaryOverrides: true });
@@ -1791,20 +1795,20 @@ function PayrollPageContent() {
         if (field === "payDays") {
           const newPayDays = Math.max(0, Math.min(payDaysMax, numValue));
           const grossMonthly =
-            row.grossMonthly ?? Math.round((row.grossPay * payDenom) / (row.payDays || row.rawPayDays || 1));
+            row.grossMonthly ?? proportion(row.grossPay, payDenom, row.payDays || row.rawPayDays || 1);
           next.payDays = newPayDays;
           if (newPayDays > 0) next.payDaysSuppressedMinAttendance = false;
-          next.grossPay = newPayDays === 0 ? 0 : Math.round((grossMonthly * newPayDays) / payDenom);
+          next.grossPay = newPayDays === 0 ? 0 : proportion(grossMonthly, newPayDays, payDenom);
           if (newPayDays === 0) {
             next.profTax = 0;
           } else if (row.payDays === 0 && row.profTax === 0) {
             next.profTax = row.profTaxMonthly ?? companyPt;
           }
           const ratio = row.payDays > 0 && newPayDays > 0 ? newPayDays / row.payDays : newPayDays === 0 ? 0 : 1;
-          next.pfEmployee = Math.round(row.pfEmployee * ratio);
-          next.pfEmployer = Math.round(row.pfEmployer * ratio);
-          next.esicEmployee = Math.round(row.esicEmployee * ratio);
-          next.esicEmployer = Math.round(row.esicEmployer * ratio);
+          next.pfEmployee = round2(row.pfEmployee * ratio);
+          next.pfEmployer = round2(row.pfEmployer * ratio);
+          next.esicEmployee = round2(row.esicEmployee * ratio);
+          next.esicEmployer = round2(row.esicEmployer * ratio);
           next.deductions = next.pfEmployee + next.esicEmployee + next.profTax;
           next.netPay = next.grossPay - next.deductions;
           recalcTakeHome();
@@ -3832,20 +3836,21 @@ function PayrollPageContent() {
                   running={running || draftSaving || auditSaving}
                   exportDisabled={previewLoading || draftHydrationLoading || Boolean(draftLoadError) || (editableRows.length === 0 && !draftMeta && !preview?.alreadyRun)}
                   bankLetterLoading={bankLetterLoading}
-                  generated={
-                    Number(preview?.year) === Number(runYear) &&
-                    Number(preview?.month) === Number(runMonth) &&
-                    !previewLoading &&
-                    isGeneratedPayrollMonth(preview)
-                  }
                   onPreviewExcel={() => downloadRunExcel("detail")}
                   onExtract={() => downloadRunExcel("summary")}
                   onBankLetter={(format) => downloadBankLetter(format)}
                   onExportEmployeePayroll={() => employeeExportRef.current?.openDialog()}
                 />
+                <PostPayrollReportsMenu
+                  runMonth={runMonth}
+                  runYear={runYear}
+                  canManage={canManage}
+                  running={running || draftSaving || auditSaving}
+                />
                 {canManage ? (
                 <EmployeePayrollExportButton
                   ref={employeeExportRef}
+                  defaultMonth={monthKey(runYear, runMonth)}
                   hideTrigger
                   buttonLabel="Export Employee Payroll"
                   resolveEmployeeUserIds={
@@ -4090,12 +4095,12 @@ function PayrollPageContent() {
                   })
                 : "—";
 
-              const n = (x: number) => (x ?? 0).toLocaleString("en-IN");
+              const n = (x: number) => (x ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
               const totalPerf = slip.incentive + slip.prBonus + slip.reimbursement;
               // Bank credit: salary after statutory deductions, minus TDS, plus variable pay (aligned with payroll preview).
               // Do not use slip.netPay alone — it may already equal take-home in some runs, which would double-count bonus/reimbursement.
               const salaryAfterDeductions = slip.grossPay - slip.deductions;
-              const takeHome = Math.round(
+              const takeHome = round2(
                 salaryAfterDeductions - slip.tds + slip.incentive + slip.prBonus + slip.reimbursement
               );
 

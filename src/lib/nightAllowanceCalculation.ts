@@ -2,20 +2,18 @@
 export const DEFAULT_NIGHT_ALLOWANCE_BASIC_CEILING = 43600;
 
 /**
- * CIRT-08 — Night Duty Allowance = (Total Night Duty Hours / 8) x Night Allowance Rate for the
- * employee's Pay Level. The rate is per 8-hour duty (Settings > Night Allowance, per Pay Level).
- *
- * UNCONFIRMED rules, each behind ONE constant (mirror: NightAllowanceRateService.php):
- *  - NIGHT_DUTY_UNITS_DECIMALS: duties (hours / 8) are rounded to this many decimals;
- *  - NIGHT_ALLOWANCE_ROUND_TO_RUPEE: the final amount is rounded to the nearest rupee
- *    (the previous code already rounded to the rupee). If false it keeps 2 decimals.
+ * Night Duty Allowance = hours / 8 x rate. The rate (Settings > Night Allowance, 7th CPC table:
+ * Level 1 = 23.20) is the amount per DUTY of 8 hours and is stored exactly as typed.
+ * Computed as (hours x rate) / 8 and rounded ONCE, to 2 decimals (paise), at the end
+ * (no rounded duty count in between).
+ * Mirror: NightAllowanceRateService::allowanceAmount (shared cases in
+ * backend/tests/fixtures/night_allowance_cases.json).
  */
 export const NIGHT_DUTY_BASE_HOURS = 8;
-export const NIGHT_DUTY_UNITS_DECIMALS = 2;
-export const NIGHT_ALLOWANCE_ROUND_TO_RUPEE = true;
+export const NIGHT_ALLOWANCE_ROUND_TO_RUPEE = false;
 
 /**
- * 'duty' = rate is per 8-hour duty (new formula). 'hour' = legacy rows whose stored rate is per
+ * 'duty' = rate is per 8-hour duty (all new rows). 'hour' = legacy rows whose stored rate is per
  * hour; they keep hours x rate so already generated payroll recomputes to the same amount.
  */
 export type NightAllowanceRateBasis = "duty" | "hour";
@@ -23,18 +21,24 @@ export type NightAllowanceRateBasis = "duty" | "hour";
 export function calculateNightAllowanceAmount(
   hours: number,
   rate: number,
-  basis: NightAllowanceRateBasis = "hour",
+  basis: NightAllowanceRateBasis = "duty",
 ): number {
   const h = Math.max(0, Number(hours) || 0);
   const r = Math.max(0, Number(rate) || 0);
   if (h <= 0) return 0;
-  if (basis !== "duty") return Math.round(h * r);
-  const scale = 10 ** NIGHT_DUTY_UNITS_DECIMALS;
-  const duties = Math.round((h / NIGHT_DUTY_BASE_HOURS) * scale) / scale;
-  const amount = duties * r;
-  return NIGHT_ALLOWANCE_ROUND_TO_RUPEE ? Math.round(amount) : Math.round(amount * 100) / 100;
+  if (basis === "hour") return Math.round(h * r);
+  // hours x rate / 8 in integer paise (src/lib/money.ts), rounded once, half up, to paise.
+  const amount = proportion(r, h, NIGHT_DUTY_BASE_HOURS);
+  return NIGHT_ALLOWANCE_ROUND_TO_RUPEE ? Math.round(amount) : amount;
 }
 
+/** Label under NIGHT HRS: "₹23.20/duty"; legacy 'hour'-basis rows (hours x rate) show "/hr". */
+export function nightAllowanceRateLabel(rate: number | null | undefined, basis: NightAllowanceRateBasis | undefined): string {
+  const r = Math.max(0, Number(rate) || 0);
+  return `₹${r.toFixed(2)}/${basis === "duty" ? "duty" : "hr"}`;
+}
+
+import { proportion } from "./money";
 import { isValidGovernmentPayLevel } from "./payLevel";
 
 export function formatNightAllowanceSlabLabel(slabNo: number, payLevel: number, ratePerDuty: number): string {
@@ -93,7 +97,7 @@ export function resolveNightAllowanceRateByPayLevel(
 
   const perDuty = Number(pick.ratePerDuty);
   return {
-    rate: Number.isFinite(perDuty) && pick.ratePerDuty != null ? perDuty : Math.round(pick.ratePerHour * NIGHT_DUTY_BASE_HOURS * 100) / 100,
+    rate: Number.isFinite(perDuty) && pick.ratePerDuty != null ? perDuty : Math.round(pick.ratePerHour * 100) / 100,
     slabNo: pick.slabNo,
     warning: null,
     basis: "duty",
@@ -156,13 +160,13 @@ export function resolveNightAllowanceAmount(params: {
     };
   }
 
-  let amount = hours > 0 ? calculateNightAllowanceAmount(hours, rate, params.rateBasis ?? "hour") : 0;
+  let amount = hours > 0 ? calculateNightAllowanceAmount(hours, rate, params.rateBasis ?? "duty") : 0;
   if (
     params.manualOverride &&
     params.manualAmount != null &&
     Number.isFinite(Number(params.manualAmount))
   ) {
-    amount = Math.round(Math.max(0, Number(params.manualAmount)));
+    amount = Math.round(Math.max(0, Number(params.manualAmount)) * 100) / 100;
   }
 
   return {

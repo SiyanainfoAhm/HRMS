@@ -3,6 +3,7 @@
  * editable entry sheet. Only aggregate totals recalculate — never full payroll
  * recompute that would overwrite other components.
  */
+import { round2 } from "./money";
 import type {
   GovernmentDeductionDefaults,
   GovernmentEarningPaidOverrides,
@@ -93,13 +94,11 @@ export type SheetSettlementEarningKey = (typeof SHEET_SETTLEMENT_EARNING_KEYS)[n
 
 export type SheetArrearKey = (typeof SHEET_ARREAR_KEYS)[number];
 
-function roundRupees(n: number): number {
-  return Math.round((Number.isFinite(n) ? n : 0) * 100) / 100;
-}
+
 
 function amount(v: unknown): number {
   const n = Number(v);
-  return Number.isFinite(n) ? Math.max(0, roundRupees(n)) : 0;
+  return Number.isFinite(n) ? Math.max(0, round2(n)) : 0;
 }
 
 function asRecord(v: unknown): Record<string, unknown> {
@@ -119,7 +118,7 @@ function supplementalGrossArrear(gm: Record<string, unknown>): number {
   const detailed =
     amount(gm.daArrearsPaid ?? gm.da_arrears_paid) +
     amount(gm.transportArrearsPaid ?? gm.transport_arrears_paid);
-  return Math.max(0, roundRupees(gross - detailed));
+  return Math.max(0, round2(gross - detailed));
 }
 
 /** Sum current earning paid lines + custom earnings included in totals. */
@@ -139,7 +138,7 @@ export function sumSheetEarnings(
   sum += supplementalGrossArrear(gm);
   const custom = asRecord(gm.customEarnings ?? gm.custom_earnings) as Record<string, number>;
   sum += sumCustomBagForTotal(custom, payrollFieldDefs, "earnings");
-  return roundRupees(sum);
+  return round2(sum);
 }
 
 /** Sum current deduction lines + custom deductions included in totals. */
@@ -156,7 +155,7 @@ export function sumSheetDeductions(
   sum += amount(gm.cpfArrear ?? gm.cpf_arrear);
   const custom = asRecord(gm.customDeductions ?? gm.custom_deductions) as Record<string, number>;
   sum += sumCustomBagForTotal(custom, payrollFieldDefs, "deductions");
-  return roundRupees(sum);
+  return round2(sum);
 }
 
 /**
@@ -169,7 +168,7 @@ export function recalculateGovernmentSheetTotals(
 ): GovernmentMonthlySheetState {
   const totalEarnings = sumSheetEarnings(gm, payrollFieldDefs);
   const totalDeductions = sumSheetDeductions(gm, payrollFieldDefs);
-  const netSalary = roundRupees(totalEarnings - totalDeductions);
+  const netSalary = round2(totalEarnings - totalDeductions);
   const ded = asRecord(gm.deductions);
   const quarterRent = hasOwn(ded, "quarterRent") ? amount(ded.quarterRent) : amount(gm.quarterRent);
   return {
@@ -221,7 +220,7 @@ export function mergeDeductionDefaultsWithPaidOverrides(
   for (const key of SHEET_DEDUCTION_KEYS) {
     if (hasOwn(paidOverrides, key)) {
       const v = Number((paidOverrides as Record<string, number>)[key]);
-      if (Number.isFinite(v)) (base as Record<string, number>)[key] = Math.max(0, Math.round(v));
+      if (Number.isFinite(v)) (base as Record<string, number>)[key] = Math.max(0, round2(v));
     }
   }
   return base;
@@ -289,7 +288,7 @@ function syncRowAggregatesFromGm<T extends GovernmentSheetRow>(
     netPay: netSalary,
     tds: amount(ded.incomeTax),
     profTax: amount(ded.pt),
-    pfEmployee: roundRupees(amount(ded.cpf) + amount(ded.daCpf) + amount(ded.vpf)),
+    pfEmployee: round2(amount(ded.cpf) + amount(ded.daCpf) + amount(ded.vpf)),
     // Net Salary already contains the named side-panel payments.
     takeHome: netSalary,
   };
@@ -402,18 +401,18 @@ export function applyGovernmentSheetMonetaryEdit<T extends GovernmentSheetRow>(
     if (arrearKey === "daArrear" || arrearKey === "transportArrear") {
       const prevAuto = amount(row.grossArrear) === amount(row.daArrear) + amount(row.transportArrear);
       if (prevAuto) {
-        next.grossArrear = roundRupees(next.daArrear + next.transportArrear);
+        next.grossArrear = round2(next.daArrear + next.transportArrear);
       }
     }
     if (arrearKey === "netArrear") {
       // Net arrear is a derived amount.  Editing it changes only the matching
       // CPF-arrear deduction, never adds a second earnings line.
-      next.cpfArrear = Math.max(0, roundRupees(next.grossArrear - next.netArrear));
+      next.cpfArrear = Math.max(0, round2(next.grossArrear - next.netArrear));
     } else if (arrearKey === "grossArrear" || arrearKey === "cpfArrear") {
       const prevAutoNet =
         amount(row.netArrear) === Math.max(0, amount(row.grossArrear) - amount(row.cpfArrear));
       if (prevAutoNet) {
-        next.netArrear = Math.max(0, roundRupees(next.grossArrear - next.cpfArrear));
+        next.netArrear = Math.max(0, round2(next.grossArrear - next.cpfArrear));
       }
     }
     daArrear = next.daArrear;
@@ -572,7 +571,8 @@ export function applyFrozenSheetOverridesToComputed(
     for (const key of SHEET_EARNING_KEYS) {
       if (hasOwn(eo, key)) {
         const v = Number((eo as Record<string, number>)[key]);
-        if (Number.isFinite(v)) gm[key] = Math.max(0, Math.round(v));
+        // Night allowance keeps paise (a typed 54.09 stays 54.09); other lines stay whole-rupee.
+        if (Number.isFinite(v)) gm[key] = Math.max(0, round2(v));
       }
     }
   }

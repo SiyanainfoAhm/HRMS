@@ -1,0 +1,399 @@
+{
+ "anchors": {
+  "level1_120h": 348
+ },
+ "cases": [
+  {
+   "slab": 1,
+   "level": 1,
+   "perDuty": 23.2,
+   "hours": 0,
+   "expected": 0
+  },
+  {
+   "slab": 1,
+   "level": 1,
+   "perDuty": 23.2,
+   "hours": 8,
+   "expected": 23.2
+  },
+  {
+   "slab": 1,
+   "level": 1,
+   "perDuty": 23.2,
+   "hours": 120,
+   "expected": 348
+  },
+  {
+   "slab": 1,
+   "level": 1,
+   "perDuty": 23.2,
+   "hours": 8.5,
+   "expected": 24.65
+  },
+  {
+   "slab": 2,
+   "level": 2,
+   "perDuty": 26.1,
+   "hours": 0,
+   "expected": 0
+  },
+  {
+   "slab": 2,
+   "level": 2,
+   "perDuty": 26.1,
+   "hours": 8,
+   "expected": 26.1
+  },
+  {
+   "slab": 2,
+   "level": 2,
+   "perDuty": 26.1,
+   "hours": 120,
+   "expected": 391.5
+  },
+  {
+   "slab": 2,
+   "level": 2,
+   "perDuty": 26.1,
+   "hours": 8.5,
+   "expected": 27.73
+  },
+  {
+   "slab": 3,
+   "level": 3,
+   "perDuty": 28.85,
+   "hours": 0,
+   "expected": 0
+  },
+  {
+   "slab": 3,
+   "level": 3,
+   "perDuty": 28.85,
+   "hours": 8,
+   "expected": 28.85
+  },
+  {
+   "slab": 3,
+   "level": 3,
+   "perDuty": 28.85,
+   "hours": 120,
+   "expected": 432.75
+  },
+  {
+   "slab": 3,
+   "level": 3,
+   "perDuty": 28.85,
+   "hours": 8.5,
+   "expected": 30.65
+  },
+  {
+   "slab": 4,
+   "level": 4,
+   "perDuty": 32.65,
+   "hours": 0,
+   "expected": 0
+  },
+  {
+   "slab": 4,
+   "level": 4,
+   "perDuty": 32.65,
+   "hours": 8,
+   "expected": 32.65
+  },
+  {
+   "slab": 4,
+   "level": 4,
+   "perDuty": 32.65,
+   "hours": 120,
+   "expected": 489.75
+  },
+  {
+   "slab": 4,
+   "level": 4,
+   "perDuty": 32.65,
+   "hours": 8.5,
+   "expected": 34.69
+  },
+  {
+   "slab": 5,
+   "level": 5,
+   "perDuty": 36.55,
+   "hours": 0,
+   "expected": 0
+  },
+  {
+   "slab": 5,
+   "level": 5,
+   "perDuty": 36.55,
+   "hours": 8,
+   "expected": 36.55
+  },
+  {
+   "slab": 5,
+   "level": 5,
+   "perDuty": 36.55,
+   "hours": 120,
+   "expected": 548.25
+  },
+  {
+   "slab": 5,
+   "level": 5,
+   "perDuty": 36.55,
+   "hours": 8.5,
+   "expected": 38.83
+  },
+  {
+   "slab": 6,
+   "level": 5,
+   "perDuty": 38.05,
+   "hours": 0,
+   "expected": 0
+  },
+  {
+   "slab": 6,
+   "level": 5,
+   "perDuty": 38.05,
+   "hours": 8,
+   "expected": 38.05
+  },
+  {
+   "slab": 6,
+   "level": 5,
+   "perDuty": 38.05,
+   "hours": 120,
+   "expected": 570.75
+  },
+  {
+   "slab": 6,
+   "level": 5,
+   "perDuty": 38.05,
+   "hours": 8.5,
+   "expected": 40.43
+  },
+  {
+   "slab": 7,
+   "level": 5,
+   "perDuty": 39.6,
+   "hours": 0,
+   "expected": 0
+  },
+  {
+   "slab": 7,
+   "level": 5,
+   "perDuty": 39.6,
+   "hours": 8,
+   "expected": 39.6
+  },
+  {
+   "slab": 7,
+   "level": 5,
+   "perDuty": 39.6,
+   "hours": 120,
+   "expected": 594
+  },
+  {
+   "slab": 7,
+   "level": 5,
+   "perDuty": 39.6,
+   "hours": 8.5,
+   "expected": 42.08
+  },
+  {
+   "slab": 8,
+   "level": 5,
+   "perDuty": 41.25,
+   "hours": 0,
+   "expected": 0
+  },
+  {
+   "slab": 8,
+   "level": 5,
+   "perDuty": 41.25,
+   "hours": 8,
+   "expected": 41.25
+  },
+  {
+   "slab": 8,
+   "level": 5,
+   "perDuty": 41.25,
+   "hours": 120,
+   "expected": 618.75
+  },
+  {
+   "slab": 8,
+   "level": 5,
+   "perDuty": 41.25,
+   "hours": 8.5,
+   "expected": 43.83
+  },
+  {
+   "slab": 9,
+   "level": 6,
+   "perDuty": 43.5,
+   "hours": 0,
+   "expected": 0
+  },
+  {
+   "slab": 9,
+   "level": 6,
+   "perDuty": 43.5,
+   "hours": 8,
+   "expected": 43.5
+  },
+  {
+   "slab": 9,
+   "level": 6,
+   "perDuty": 43.5,
+   "hours": 120,
+   "expected": 652.5
+  },
+  {
+   "slab": 9,
+   "level": 6,
+   "perDuty": 43.5,
+   "hours": 8.5,
+   "expected": 46.22
+  },
+  {
+   "slab": 10,
+   "level": 6,
+   "perDuty": 46,
+   "hours": 0,
+   "expected": 0
+  },
+  {
+   "slab": 10,
+   "level": 6,
+   "perDuty": 46,
+   "hours": 8,
+   "expected": 46
+  },
+  {
+   "slab": 10,
+   "level": 6,
+   "perDuty": 46,
+   "hours": 120,
+   "expected": 690
+  },
+  {
+   "slab": 10,
+   "level": 6,
+   "perDuty": 46,
+   "hours": 8.5,
+   "expected": 48.88
+  },
+  {
+   "slab": 11,
+   "level": 7,
+   "perDuty": 50.4,
+   "hours": 0,
+   "expected": 0
+  },
+  {
+   "slab": 11,
+   "level": 7,
+   "perDuty": 50.4,
+   "hours": 8,
+   "expected": 50.4
+  },
+  {
+   "slab": 11,
+   "level": 7,
+   "perDuty": 50.4,
+   "hours": 120,
+   "expected": 756
+  },
+  {
+   "slab": 11,
+   "level": 7,
+   "perDuty": 50.4,
+   "hours": 8.5,
+   "expected": 53.55
+  },
+  {
+   "slab": 12,
+   "level": 8,
+   "perDuty": 55.45,
+   "hours": 0,
+   "expected": 0
+  },
+  {
+   "slab": 12,
+   "level": 8,
+   "perDuty": 55.45,
+   "hours": 8,
+   "expected": 55.45
+  },
+  {
+   "slab": 12,
+   "level": 8,
+   "perDuty": 55.45,
+   "hours": 120,
+   "expected": 831.75
+  },
+  {
+   "slab": 12,
+   "level": 8,
+   "perDuty": 55.45,
+   "hours": 8.5,
+   "expected": 58.92
+  },
+  {
+   "slab": 13,
+   "level": 8,
+   "perDuty": 58.55,
+   "hours": 0,
+   "expected": 0
+  },
+  {
+   "slab": 13,
+   "level": 8,
+   "perDuty": 58.55,
+   "hours": 8,
+   "expected": 58.55
+  },
+  {
+   "slab": 13,
+   "level": 8,
+   "perDuty": 58.55,
+   "hours": 120,
+   "expected": 878.25
+  },
+  {
+   "slab": 13,
+   "level": 8,
+   "perDuty": 58.55,
+   "hours": 8.5,
+   "expected": 62.21
+  },
+  {
+   "slab": 14,
+   "level": 9,
+   "perDuty": 63.6,
+   "hours": 0,
+   "expected": 0
+  },
+  {
+   "slab": 14,
+   "level": 9,
+   "perDuty": 63.6,
+   "hours": 8,
+   "expected": 63.6
+  },
+  {
+   "slab": 14,
+   "level": 9,
+   "perDuty": 63.6,
+   "hours": 120,
+   "expected": 954
+  },
+  {
+   "slab": 14,
+   "level": 9,
+   "perDuty": 63.6,
+   "hours": 8.5,
+   "expected": 67.58
+  }
+ ]
+}

@@ -2,12 +2,13 @@
 
 import { forwardRef, useImperativeHandle, useState } from "react";
 import { AppPageLoader } from "@/components/ui/AppPageLoader";
-import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { useToast } from "@/components/ToastProvider";
+import { PeriodMultiSelect } from "@/components/payroll/PeriodMultiSelect";
+import { PeriodReportPreview } from "@/components/payroll/PeriodReportPreview";
+import { defaultSelection, monthsQuery, type ReportPeriod } from "@/lib/periodReport";
 
-type PeriodOpt = { id: string; label: string; payrollRun?: boolean };
 type ExportScope = "all" | "filtered" | "selected";
 
 async function downloadFromApi(path: string, fallbackName: string) {
@@ -47,6 +48,8 @@ type Props = {
   buttonLabel?: string;
   disabled?: boolean;
   className?: string;
+  /** The currently selected month ("YYYY-MM"): the default selection when that month was generated. */
+  defaultMonth?: string;
   /**
    * When set (e.g. Run Payroll active division/department/search filters),
    * resolve the matching employee user IDs and restrict the Excel export.
@@ -55,8 +58,8 @@ type Props = {
 };
 
 /**
- * Download saved employee-payroll snapshots for one month or a custom three-month period.
- * Shared by Payroll Master and Run Payroll.
+ * Download saved employee-payroll snapshots for any set of generated months (one row per employee per
+ * month, grouped by employee), with an on-screen preview. Shared by Payroll Master and Run Payroll.
  */
 export const EmployeePayrollExportButton = forwardRef<EmployeePayrollExportHandle, Props>(function EmployeePayrollExportButton(
   {
@@ -64,6 +67,7 @@ export const EmployeePayrollExportButton = forwardRef<EmployeePayrollExportHandl
     disabled = false,
     className,
     resolveEmployeeUserIds,
+    defaultMonth = "",
     hideTrigger = false,
   },
   ref,
@@ -72,37 +76,23 @@ export const EmployeePayrollExportButton = forwardRef<EmployeePayrollExportHandl
   const [open, setOpen] = useState(false);
   const [loadingOpts, setLoadingOpts] = useState(false);
   const [downloading, setDownloading] = useState(false);
-  const [periods, setPeriods] = useState<PeriodOpt[]>([]);
-  const [selectedPeriodIds, setSelectedPeriodIds] = useState<string[]>([]);
+  const [periods, setPeriods] = useState<ReportPeriod[]>([]);
+  const [selectedMonths, setSelectedMonths] = useState<string[]>([]);
   const [exportScope, setExportScope] = useState<ExportScope>("all");
   const [selectedEmployeeIdsText, setSelectedEmployeeIdsText] = useState("");
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewIds, setPreviewIds] = useState("");
 
   async function openDialog() {
     setOpen(true);
     setLoadingOpts(true);
     try {
-      const periodsRes = await fetch("/api/payroll/periods");
-      const periodsData = await periodsRes.json();
-      if (!periodsRes.ok) {
-        throw new Error(periodsData?.error || periodsData?.message || "Failed to load payroll periods");
-      }
-
-      const nextPeriods = ((periodsData.periods ?? []) as Array<Record<string, unknown>>)
-        .map((p) => {
-          const id = String(p.id ?? "");
-          const name = String(p.period_name ?? p.periodName ?? "").trim();
-          const start = String(p.period_start ?? p.periodStart ?? "").slice(0, 10);
-          return {
-            id,
-            label: name || start || id,
-            payrollRun: Boolean(p.payroll_run ?? p.payrollRun),
-          };
-        })
-        .filter((p) => p.id);
-      setPeriods(nextPeriods);
-
-      const defaultPeriod = nextPeriods.find((p) => p.payrollRun)?.id ?? nextPeriods[0]?.id ?? null;
-      setSelectedPeriodIds(defaultPeriod ? [defaultPeriod] : []);
+      const res = await fetch("/api/payroll/export-periods", { cache: "no-store" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || data?.message || "Failed to load payroll months");
+      const list = (data.periods ?? []) as ReportPeriod[];
+      setPeriods(list);
+      setSelectedMonths(defaultSelection(list, defaultMonth));
       setExportScope("all");
       setSelectedEmployeeIdsText("");
     } catch (e: unknown) {
@@ -113,56 +103,48 @@ export const EmployeePayrollExportButton = forwardRef<EmployeePayrollExportHandl
     }
   }
 
-  function toggle(
-    id: string,
-    selected: string[],
-    setSelected: (next: string[]) => void,
-    max: number,
-    label: string,
-  ) {
-    if (selected.includes(id)) {
-      setSelected(selected.filter((x) => x !== id));
+  /** Comma-separated employee ids for the chosen scope ("" = everyone). Throws a user-facing message. */
+  async function scopeEmployeeIds(): Promise<string> {
+    if (exportScope === "filtered" && resolveEmployeeUserIds) {
+      const ids = await resolveEmployeeUserIds();
+      if (ids.length === 0) throw new Error("No employees match the current Run Payroll filters.");
+      return ids.join(",");
+    }
+    if (exportScope === "selected") {
+      const ids = selectedEmployeeIdsText.split(/[\s,]+/).map((id) => id.trim()).filter(Boolean);
+      if (ids.length === 0) throw new Error("Enter at least one employee user ID for the selected-employee scope.");
+      return [...new Set(ids)].join(",");
+    }
+    return "";
+  }
+
+  async function preview() {
+    if (selectedMonths.length < 1) {
+      showToast("error", "Select at least 1 payroll month.");
       return;
     }
-    if (selected.length >= max) {
-      showToast("error", `Select at most ${max} ${label}.`);
-      return;
+    try {
+      setPreviewIds(await scopeEmployeeIds());
+      setPreviewOpen(true);
+    } catch (e: unknown) {
+      showToast("error", e instanceof Error ? e.message : "Preview failed");
     }
-    setSelected([...selected, id]);
   }
 
   async function download() {
-    if (selectedPeriodIds.length < 1) {
-      showToast("error", "Select at least 1 payroll run month.");
-      return;
-    }
-    if (selectedPeriodIds.length > 3) {
-      showToast("error", "Select at most 3 payroll run months.");
+    if (selectedMonths.length < 1) {
+      showToast("error", "Select at least 1 payroll month.");
       return;
     }
     setDownloading(true);
     try {
       const qs = new URLSearchParams();
-      qs.set("periodIds", selectedPeriodIds.join(","));
-      if (exportScope === "filtered" && resolveEmployeeUserIds) {
-        const ids = await resolveEmployeeUserIds();
-        if (ids.length === 0) {
-          throw new Error("No employees match the current Run Payroll filters.");
-        }
-        qs.set("employeeUserIds", ids.join(","));
-      }
-      if (exportScope === "selected") {
-        const ids = selectedEmployeeIdsText.split(/[\s,]+/).map((id) => id.trim()).filter(Boolean);
-        if (ids.length === 0) {
-          throw new Error("Enter at least one employee user ID for the selected-employee scope.");
-        }
-        qs.set("employeeUserIds", [...new Set(ids)].join(","));
-      }
-      await downloadFromApi(
-        `/api/payroll/master/export-employee-payroll?${qs.toString()}`,
-        "cirt_employee_payroll_export.xlsx",
-      );
+      qs.set("months", monthsQuery(selectedMonths));
+      const ids = await scopeEmployeeIds();
+      if (ids) qs.set("employeeUserIds", ids);
+      await downloadFromApi(`/api/payroll/master/export-employee-payroll?${qs.toString()}`, "cirt_employee_payroll.xlsx");
       showToast("success", "Employee payroll Excel downloaded");
+      setPreviewOpen(false);
       setOpen(false);
     } catch (e: unknown) {
       showToast("error", e instanceof Error ? e.message : "Export failed");
@@ -193,17 +175,20 @@ export const EmployeePayrollExportButton = forwardRef<EmployeePayrollExportHandl
         open={open}
         onClose={() => !downloading && setOpen(false)}
         title="Export Employee Payroll Excel"
-        description={"One row per employee per saved month. Choose one month, or up to three months for a custom three-month payroll report. All saved employees are included by default."}
+        description="One row per employee per saved month, grouped by employee with months in order. Pick any generated months; all saved employees are included by default."
         size="md"
         footer={
           <>
             <Button type="button" variant="outline" disabled={downloading} onClick={() => setOpen(false)}>
               Cancel
             </Button>
+            <Button type="button" variant="outline" disabled={loadingOpts || selectedMonths.length < 1} onClick={() => void preview()}>
+              Preview
+            </Button>
             <Button
               type="button"
               loading={downloading}
-              disabled={loadingOpts || selectedPeriodIds.length < 1}
+              disabled={loadingOpts || selectedMonths.length < 1}
               onClick={() => void download()}
             >
               Download Excel
@@ -212,75 +197,58 @@ export const EmployeePayrollExportButton = forwardRef<EmployeePayrollExportHandl
         }
       >
         {loadingOpts ? (
-          <AppPageLoader variant="inline" message="Loading payroll periods..." submessage="" />
+          <AppPageLoader variant="inline" message="Loading payroll months..." submessage="" />
         ) : (
           <div className="space-y-5">
             <fieldset>
-                <legend className="text-sm font-semibold text-slate-800">Export scope</legend>
-                <p className="mt-0.5 text-xs text-slate-500">
-                  Audit, search, and pagination never restrict an export unless this filtered scope is selected.
-                </p>
-                <div className="mt-2 space-y-1 rounded-lg border border-slate-200 p-2 text-sm">
+              <legend className="text-sm font-semibold text-slate-800">Export scope</legend>
+              <p className="mt-0.5 text-xs text-slate-500">
+                Audit, search, and pagination never restrict an export unless this filtered scope is selected.
+              </p>
+              <div className="mt-2 space-y-1 rounded-lg border border-slate-200 p-2 text-sm">
+                <label className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-slate-50">
+                  <input type="radio" name="employee-payroll-export-scope" checked={exportScope === "all"} onChange={() => setExportScope("all")} />
+                  <span><strong>All employees</strong> — complete saved payroll population.</span>
+                </label>
+                {resolveEmployeeUserIds ? (
                   <label className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-slate-50">
-                    <input type="radio" name="employee-payroll-export-scope" checked={exportScope === "all"} onChange={() => setExportScope("all")} />
-                    <span><strong>All employees</strong> — complete saved payroll population.</span>
-                  </label>
-                  {resolveEmployeeUserIds ? <label className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-slate-50">
                     <input type="radio" name="employee-payroll-export-scope" checked={exportScope === "filtered"} onChange={() => setExportScope("filtered")} />
                     <span>Current filtered results — only search and organisation filters.</span>
-                  </label> : null}
-                  <label className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-slate-50">
-                    <input type="radio" name="employee-payroll-export-scope" checked={exportScope === "selected"} onChange={() => setExportScope("selected")} />
-                    <span>Selected employees — enter employee user IDs below.</span>
                   </label>
-                </div>
-                {exportScope === "selected" ? (
-                  <textarea
-                    className="mt-2 w-full rounded-lg border border-slate-300 p-2 text-sm"
-                    aria-label="Selected employee user IDs"
-                    placeholder="Employee user IDs, separated by commas or lines"
-                    value={selectedEmployeeIdsText}
-                    onChange={(event) => setSelectedEmployeeIdsText(event.target.value)}
-                  />
                 ) : null}
-              </fieldset>
-            <div>
-              <p className="text-sm font-semibold text-slate-800">
-                Payroll run months{" "}
-                <span className="font-normal text-slate-500">({selectedPeriodIds.length}/3)</span>
-              </p>
-              <p className="mt-0.5 text-xs text-slate-500">Required. Select one month, or up to three months for a custom three-month report.</p>
-              <div className="mt-2 max-h-44 space-y-1 overflow-y-auto rounded-lg border border-slate-200 p-2">
-                {periods.length === 0 ? (
-                  <p className="px-1 py-2 text-sm text-slate-500">No payroll periods found.</p>
-                ) : (
-                  periods.map((p) => (
-                    <label
-                      key={p.id}
-                      className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-slate-50"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selectedPeriodIds.includes(p.id)}
-                        onChange={() =>
-                          toggle(p.id, selectedPeriodIds, setSelectedPeriodIds, 3, "payroll run months")
-                        }
-                      />
-                      <span className="min-w-0 flex-1 truncate">{p.label}</span>
-                      {p.payrollRun ? (
-                        <Badge tone="success" className="shrink-0">
-                          Run
-                        </Badge>
-                      ) : null}
-                    </label>
-                  ))
-                )}
+                <label className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-slate-50">
+                  <input type="radio" name="employee-payroll-export-scope" checked={exportScope === "selected"} onChange={() => setExportScope("selected")} />
+                  <span>Selected employees — enter employee user IDs below.</span>
+                </label>
               </div>
+              {exportScope === "selected" ? (
+                <textarea
+                  className="mt-2 w-full rounded-lg border border-slate-300 p-2 text-sm"
+                  aria-label="Selected employee user IDs"
+                  placeholder="Employee user IDs, separated by commas or lines"
+                  value={selectedEmployeeIdsText}
+                  onChange={(event) => setSelectedEmployeeIdsText(event.target.value)}
+                />
+              ) : null}
+            </fieldset>
+            <div>
+              <p className="text-sm font-semibold text-slate-800">Payroll months</p>
+              <p className="mb-2 mt-0.5 text-xs text-slate-500">Required. Only months with a generated payroll run can be chosen.</p>
+              <PeriodMultiSelect periods={periods} selected={selectedMonths} onChange={setSelectedMonths} />
             </div>
-
           </div>
         )}
       </Modal>
+
+      <PeriodReportPreview
+        open={previewOpen}
+        onClose={() => setPreviewOpen(false)}
+        type="employee-payroll"
+        months={selectedMonths}
+        employeeUserIds={previewIds}
+        downloading={downloading}
+        onDownload={() => void download()}
+      />
     </>
   );
 });

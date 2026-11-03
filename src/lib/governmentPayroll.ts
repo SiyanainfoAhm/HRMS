@@ -1,3 +1,4 @@
+import { percentOf, proportion, round2, sumMoney } from "./money";
 import {
   calculateCpfFromBasis,
   DEFAULT_CPF_BASIS_KEYS,
@@ -207,10 +208,6 @@ export type GovernmentMonthlyInput = {
   payrollFieldDefs?: import("./payrollFieldTypes").PayrollFieldDefinition[];
 };
 
-function roundRupees(n: number): number {
-  return Math.round((Number(n) || 0) * 100) / 100;
-}
-
 /**
  * When payroll master does not set `cpf_default`, employee CPF is taken as this
  * fraction of total monthly earnings (Basic+DA+HRA+Medical+TA+allowances), matching
@@ -222,7 +219,7 @@ export const GOVERNMENT_DEFAULT_CPF_RATE_ON_TOTAL_EARNINGS = 0.12;
 export function paidAfterUnpaidDays(actual: number, daysInMonth: number, unpaidDays: number): number {
   const dim = Math.max(1, Math.floor(daysInMonth));
   const u = Math.max(0, Math.min(unpaidDays, dim));
-  return roundRupees(actual - (actual / dim) * u);
+  return proportion(actual, dim - u, dim);
 }
 
 export type GovernmentMonthlyComputed = {
@@ -307,8 +304,8 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
     input.transportSettings ?? DEFAULT_TRANSPORT_ALLOWANCE_SETTINGS,
   );
   const daPctForTransport = Number(input.daPercent) || 0;
-  const transportDa = roundRupees((slab.transportBase * daPctForTransport) / 100);
-  const transportActual = roundRupees(slab.transportBase + transportDa);
+  const transportDa = percentOf(slab.transportBase, daPctForTransport);
+  const transportActual = round2(slab.transportBase + transportDa);
   const transportPaid = transportActual;
 
   const daPct = Number(input.daPercent) || 0;
@@ -316,9 +313,9 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
   const medFixed = Number(input.medicalFixed) || 0;
 
   const basicActual = gb;
-  const daActual = roundRupees((gb * daPct) / 100);
+  const daActual = percentOf(gb, daPct);
   const hasQuarter = Boolean(input.hasQuarter);
-  const hraActual = hasQuarter ? 0 : roundRupees((gb * hraPct) / 100);
+  const hraActual = hasQuarter ? 0 : percentOf(gb, hraPct);
   const medicalActual = medFixed;
 
   const dim = Math.max(1, Math.floor(input.daysInMonth));
@@ -342,7 +339,7 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
   const eo = input.earningPaidOverrides ?? {};
   const pickPaid = (computed: number, key: keyof GovernmentEarningPaidOverrides): number => {
     const v = eo[key];
-    if (v != null && Number.isFinite(Number(v))) return roundRupees(Number(v));
+    if (v != null && Number.isFinite(Number(v))) return round2(Number(v));
     return computed;
   };
 
@@ -407,10 +404,10 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
   // show the cut in Earnings. Auto HPL/EOL deduction lines stay 0 to avoid double-counting;
   // manual HPL/EOL overrides skip the earnings cut and use the typed deduction amounts.
   let eolDeduction = input.eolDeductionManualOverride
-    ? roundRupees(d.eol)
+    ? round2(d.eol)
     : eolLeave.eolDeduction;
   let hplDeduction = input.hplDeductionManualOverride
-    ? roundRupees(d.hpl)
+    ? round2(d.hpl)
     : hplLeave.hplDeduction;
 
   let basicOut = basicPaidF;
@@ -451,7 +448,7 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
   const nightResolved = resolveNightAllowanceAmount({
     hours: nightHours,
     rate: nightRate,
-    rateBasis: input.nightAllowanceRateBasis === "duty" ? "duty" : "hour",
+    rateBasis: input.nightAllowanceRateBasis === "hour" ? "hour" : "duty",
     basicPay: basicForCeiling,
     ceiling: nightCeiling,
     manualOverride: input.nightAllowanceManualOverride,
@@ -461,22 +458,23 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
   const naF = nightResolved.amount;
 
   // Sum order matches government payslip line sequence (Basic → DA → HRA → Medical → TA → SP Pay → others).
-  const totalEarnings =
-    basicOut +
-    daOut +
-    hraOut +
-    medicalOut +
-    transportPaidF +
-    spF +
-    ewaF +
-    naF +
-    uaF +
-    edaF +
-    daaF +
-    traF +
-    encF +
-    encDaF +
-    customEarningsTotal;
+  const totalEarnings = sumMoney(
+    basicOut,
+    daOut,
+    hraOut,
+    medicalOut,
+    transportPaidF,
+    spF,
+    ewaF,
+    naF,
+    uaF,
+    edaF,
+    daaF,
+    traF,
+    encF,
+    encDaF,
+    customEarningsTotal,
+  );
 
   const basisAmounts = runPayrollBasisAmountsFromComputed({
     basicPaid: basicOut,
@@ -508,7 +506,7 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
   if (input.cpfManualOverride) {
     const raw = d.cpf;
     const n = Number(raw);
-    cpfAmount = Number.isFinite(n) ? Math.max(0, roundRupees(n)) : 0;
+    cpfAmount = Number.isFinite(n) ? Math.max(0, round2(n)) : 0;
   } else if (cpfMode === "fixed_amount") {
     // Explicit fixed amount — including intentional ₹0.
     cpfAmount = Number.isFinite(cpfFixed) ? cpfFixed : 0;
@@ -538,7 +536,7 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
 
   // Priority: run/input rent → deduction default → 0. Explicit 0 stays 0.
   const quarterRentAmount = hasQuarter
-    ? roundRupees(
+    ? round2(
         (() => {
           const raw = input.quarterRent ?? d.quarterRent;
           if (raw === null || raw === undefined) return 0;
@@ -549,52 +547,53 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
     : 0;
 
   const deductions: GovernmentDeductionDefaults = {
-    incomeTax: roundRupees(d.incomeTax),
-    pt: roundRupees(d.pt),
-    lic: roundRupees(d.lic),
+    incomeTax: round2(d.incomeTax),
+    pt: round2(d.pt),
+    lic: round2(d.lic),
     cpf: cpfAmount,
-    daCpf: roundRupees(d.daCpf),
-    vpf: roundRupees(d.vpf),
-    pfLoan: roundRupees(d.pfLoan),
-    postOffice: roundRupees(d.postOffice),
-    creditSociety: roundRupees(d.creditSociety),
-    stdLicenceFee: roundRupees(d.stdLicenceFee),
+    daCpf: round2(d.daCpf),
+    vpf: round2(d.vpf),
+    pfLoan: round2(d.pfLoan),
+    postOffice: round2(d.postOffice),
+    creditSociety: round2(d.creditSociety),
+    stdLicenceFee: round2(d.stdLicenceFee),
     electricity: electricityAmount,
-    water: roundRupees(d.water),
-    mess: roundRupees(d.mess),
-    loanRecovery: roundRupees(d.loanRecovery),
-    welfare: roundRupees(d.welfare),
+    water: round2(d.water),
+    mess: round2(d.mess),
+    loanRecovery: round2(d.loanRecovery),
+    welfare: round2(d.welfare),
     hpl: hplDeduction,
     eol: eolDeduction,
-    vehCharge: roundRupees(d.vehCharge),
-    other: roundRupees(d.other),
+    vehCharge: round2(d.vehCharge),
+    other: round2(d.other),
     quarterRent: quarterRentAmount,
   };
 
-  const totalDeductions =
-    deductions.incomeTax +
-    deductions.pt +
-    deductions.lic +
-    deductions.cpf +
-    deductions.daCpf +
-    deductions.vpf +
-    deductions.pfLoan +
-    deductions.postOffice +
-    deductions.creditSociety +
-    deductions.stdLicenceFee +
-    deductions.electricity +
-    deductions.water +
-    deductions.mess +
-    deductions.loanRecovery +
-    deductions.welfare +
-    deductions.hpl +
-    deductions.eol +
-    deductions.vehCharge +
-    deductions.other +
-    deductions.quarterRent +
-    customDeductionsTotal;
+  const totalDeductions = sumMoney(
+    deductions.incomeTax,
+    deductions.pt,
+    deductions.lic,
+    deductions.cpf,
+    deductions.daCpf,
+    deductions.vpf,
+    deductions.pfLoan,
+    deductions.postOffice,
+    deductions.creditSociety,
+    deductions.stdLicenceFee,
+    deductions.electricity,
+    deductions.water,
+    deductions.mess,
+    deductions.loanRecovery,
+    deductions.welfare,
+    deductions.hpl,
+    deductions.eol,
+    deductions.vehCharge,
+    deductions.other,
+    deductions.quarterRent,
+    customDeductionsTotal,
+  );
 
-  const netSalary = roundRupees(totalEarnings - totalDeductions);
+  const netSalary = round2(totalEarnings - totalDeductions);
 
   return {
     transportSlab: slab,
@@ -659,7 +658,7 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
     electricityMode,
     nightHours,
     nightAllowanceRate: nightRate,
-    nightAllowanceRateBasis: input.nightAllowanceRateBasis === "duty" ? "duty" : "hour",
+    nightAllowanceRateBasis: input.nightAllowanceRateBasis === "hour" ? "hour" : "duty",
     nightAllowanceAmount: naF,
     nightAllowanceBasicCeiling: nightResolved.ceiling,
     nightAllowanceEligible: nightResolved.eligible,

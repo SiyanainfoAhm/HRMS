@@ -351,6 +351,10 @@ class PayrollMasterController extends Controller
         }
 
         $periodIds = $request->input('period_ids', $request->input('periodIds', []));
+        if ($request->filled('months')) {
+            $reports = app(\App\Services\PeriodReportService::class);
+            $periodIds = $reports->periodIdsFor((string) $user->company_id, $reports->parseMonths($request->input('months')));
+        }
         $employeeUserIds = $request->input('employee_user_ids', $request->input('employeeUserIds', []));
         if (! is_array($periodIds)) {
             $periodIds = array_filter(array_map('trim', explode(',', (string) $periodIds)));

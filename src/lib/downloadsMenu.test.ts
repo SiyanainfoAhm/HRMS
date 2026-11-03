@@ -1,8 +1,9 @@
 /**
  * Run: npx --yes tsx src/lib/downloadsMenu.test.ts
  *
- * Run Payroll "Downloads" menu: item states for no draft / draft / generated month, the TDS range rule, keyboard
- * navigation of the menu and submenus, the phone layout switch, edge flipping, and the rendered markup.
+ * Run Payroll "Downloads" menu (the post-payroll reports now live in their own menu, see
+ * postPayrollReportsMenu.test.ts): item states for no draft / draft, keyboard navigation of the menu and
+ * submenus, the phone layout switch, edge flipping, and the rendered markup.
  */
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -13,7 +14,6 @@ import {
   REASON_BANK_BUSY,
   REASON_BUSY,
   REASON_NOTHING_TO_EXPORT,
-  REASON_NOT_GENERATED,
   bankFormatOf,
   buildDownloadsMenu,
   computePanelPosition,
@@ -31,10 +31,10 @@ function assertEq(a: unknown, b: unknown, msg: string) {
   if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error(`${msg}: expected ${JSON.stringify(b)}, got ${JSON.stringify(a)}`);
 }
 
-const base: MenuContext = { canManage: true, running: false, exportDisabled: false, bankLetterLoading: false, generated: false, ym: "2026-09" };
+const base: MenuContext = { canManage: true, running: false, exportDisabled: false, bankLetterLoading: false, ym: "2026-09" };
 const reasons = (ctx: Partial<MenuContext>) => {
   const m = buildDownloadsMenu({ ...base, ...ctx });
-  return Object.fromEntries([...m.payroll, ...m.bank, ...(m.reports ?? [])].map((i) => [i.id, i.disabledReason]));
+  return Object.fromEntries([...m.payroll, ...m.bank].map((i) => [i.id, i.disabledReason]));
 };
 
 // ---- the selected month feeds the menu
@@ -43,44 +43,38 @@ assertEq(monthKey(2026, 9), "2026-09", "month key from numbers");
 
 // ---- no draft and nothing calculated: exports are disabled with the reason, Employee Payroll export stays available
 {
-  const r = reasons({ exportDisabled: true, generated: false });
+  const r = reasons({ exportDisabled: true });
   assertEq(r["preview-excel"], REASON_NOTHING_TO_EXPORT, "preview excel, no draft");
   assertEq(r["extract"], REASON_NOTHING_TO_EXPORT, "extract, no draft");
   assertEq(r["bank-docx"], REASON_NOTHING_TO_EXPORT, "bank letter word, no draft");
   assertEq(r["bank-xlsx"], REASON_NOTHING_TO_EXPORT, "bank letter excel, no draft");
   assertEq(r["bank-pdf"], REASON_NOTHING_TO_EXPORT, "bank letter pdf, no draft");
   assertEq(r["export-employee-payroll"], null, "export employee payroll does not depend on the draft (as before)");
-  for (const t of ["tds", "cpf", "division-wise", "paybill"]) assertEq(r[`report-${t}`], REASON_NOT_GENERATED, `report ${t} needs a generated month`);
+  for (const t of ["tds", "cpf", "division-wise", "paybill"]) assertEq(r[`report-${t}`], undefined, `report ${t} is no longer in the Downloads menu`);
 }
-// ---- draft saved / preview calculated, month still open: payroll + bank letter on, reports explained
+// ---- draft saved / preview calculated: payroll + bank letter on
 {
-  const m = buildDownloadsMenu({ ...base, exportDisabled: false, generated: false });
-  const r = reasons({ exportDisabled: false, generated: false });
+  const r = reasons({ exportDisabled: false });
   assertEq([r["preview-excel"], r["extract"], r["bank-docx"], r["bank-xlsx"], r["bank-pdf"]], [null, null, null, null, null], "draft: payroll and bank letter enabled");
-  assertEq(r["report-paybill"], "Generate payroll for this month first.", "open month: reports disabled with the tooltip text");
-  assertEq(m.reportsHint, "Sep 2026: generate payroll for this month first.", "hint above the disabled reports");
 }
-// ---- generated month: everything on
+// ---- what the Downloads menu contains: no Post-payroll reports entry any more
 {
-  const m = buildDownloadsMenu({ ...base, generated: true });
-  const all = [...m.payroll, ...m.bank, ...(m.reports ?? [])];
-  assertEq(all.filter((i) => i.disabledReason).length, 0, "generated month: nothing disabled");
-  assertEq(m.reportsHint, null, "no hint when reports are available");
+  const m = buildDownloadsMenu({ ...base });
+  const all = [...m.payroll, ...m.bank];
+  assertEq(all.filter((i) => i.disabledReason).length, 0, "nothing disabled when there is something to export");
+  assertEq(Object.keys(m).sort(), ["bank", "payroll"], "the model has only the payroll and bank groups");
+  assertEq(all.some((i) => i.id.startsWith("report-")), false, "no report item in Downloads");
   assertEq(m.payroll.map((i) => i.label), ["Preview Excel", "Extract", "Export Employee Payroll"], "payroll group");
   assertEq(m.bank.map((i) => i.label), ["Word document", "Excel workbook", "PDF letter"], "bank letter formats, same as before");
-  assertEq(m.reports!.map((i) => i.label), ["TDS Data", "CPF / VPF Statement", "Division-Wise Salary", "Paybill"], "reports");
   assertEq(m.bank.map((i) => i.tag), ["Letter", "Excel", "Letter"], "tags on the right");
-  assertEq(m.reports!.every((i) => i.tag === "Excel"), true, "reports are Excel");
 }
 // ---- busy / role
 {
-  const r = reasons({ running: true, generated: true });
+  const r = reasons({ running: true });
   assertEq(r["preview-excel"], REASON_BUSY, "saving or generating disables exports");
-  assertEq(r["report-cpf"], REASON_BUSY, "and reports");
   assertEq(reasons({ bankLetterLoading: true })["bank-pdf"], REASON_BANK_BUSY, "a bank letter in progress disables the bank formats only");
   assertEq(reasons({ bankLetterLoading: true })["extract"], null, "other items stay enabled while the bank letter builds");
-  const staff = buildDownloadsMenu({ ...base, canManage: false, generated: true });
-  assertEq(staff.reports, null, "no post-payroll reports without admin rights");
+  const staff = buildDownloadsMenu({ ...base, canManage: false });
   assertEq(staff.payroll.map((i) => i.id), ["preview-excel", "extract"], "no Export Employee Payroll without admin rights");
   assertEq(staff.bank.length, 3, "bank letter stays (as before)");
 }
@@ -182,7 +176,7 @@ const render = (props: Partial<Parameters<typeof DownloadsMenu>[0]>) =>
       ToastProvider,
       null,
       createElement(DownloadsMenu, {
-        runMonth: "09", runYear: "2026", canManage: true, running: false, exportDisabled: false, bankLetterLoading: false, generated: true,
+        runMonth: "09", runYear: "2026", canManage: true, running: false, exportDisabled: false, bankLetterLoading: false,
         onPreviewExcel: async () => true, onExtract: async () => true, onBankLetter: async () => true, onExportEmployeePayroll: () => {},
         renderInline: true, ...props,
       }),
@@ -196,37 +190,37 @@ const render = (props: Partial<Parameters<typeof DownloadsMenu>[0]>) =>
 
   const desktop = render({ defaultOpen: true, forceLayout: "popover" });
   assertEq(desktop.includes('role="menu"'), true, "open menu has role=menu");
-  assertEq((desktop.match(/role="menuitem"/g) ?? []).length, 5, "3 payroll rows + 2 submenu triggers");
-  assertEq((desktop.match(/aria-haspopup="menu"/g) ?? []).length, 3, "trigger + Bank Letter + Post-payroll reports");
-  assertEq(desktop.includes("Payroll") && desktop.includes("Bank Letter") && desktop.includes("Post-payroll reports"), true, "sections");
+  assertEq((desktop.match(/role="menuitem"/g) ?? []).length, 4, "3 payroll rows + the Bank Letter submenu trigger");
+  assertEq((desktop.match(/aria-haspopup="menu"/g) ?? []).length, 2, "trigger + Bank Letter");
+  assertEq(desktop.includes("Payroll") && desktop.includes("Bank Letter"), true, "sections");
+  assertEq(desktop.includes("Post-payroll reports"), false, "no Post-payroll reports entry in Downloads");
   assertEq(desktop.includes("Preview Excel") && desktop.includes("Extract") && desktop.includes("Export Employee Payroll"), true, "payroll items");
   assertEq(desktop.includes("role=\"dialog\""), false, "desktop has no sheet");
   assertEq(/tabindex="0"/.test(desktop), true, "one row is in the tab order (roving focus)");
 
   const bank = render({ defaultOpen: true, defaultSubmenu: "bank", forceLayout: "popover" });
   assertEq(bank.includes("Word document") && bank.includes("Excel workbook") && bank.includes("PDF letter"), true, "bank letter submenu lists the same formats");
-  const reports = render({ defaultOpen: true, defaultSubmenu: "reports", forceLayout: "popover" });
-  assertEq(["TDS Data", "CPF / VPF Statement", "Division-Wise Salary", "Paybill"].every((l) => reports.includes(l)), true, "reports submenu");
-  assertEq(reports.includes("Reports for Sep 2026"), true, "submenu header names the selected month");
+  for (const label of ["TDS Data", "CPF / VPF Statement", "Division-Wise Salary", "Paybill"]) {
+    assertEq(bank.includes(label) || desktop.includes(label), false, `${label} is not in the Downloads menu`);
+  }
 
-  const openMonth = render({ defaultOpen: true, defaultSubmenu: "reports", forceLayout: "popover", generated: false });
-  assertEq(openMonth.includes("Generate payroll for this month first."), true, "disabled reports carry their reason");
-  assertEq(openMonth.includes('aria-disabled="true"'), true, "disabled rows are marked aria-disabled");
-  assertEq(openMonth.includes('role="tooltip"'), true, "tooltip element is present for disabled rows");
-  assertEq(openMonth.includes("Sep 2026: generate payroll for this month first."), true, "hint above the reports");
+  const noExport = render({ defaultOpen: true, defaultSubmenu: "bank", forceLayout: "popover", exportDisabled: true });
+  assertEq(noExport.includes(REASON_NOTHING_TO_EXPORT), true, "disabled rows carry their reason");
+  assertEq(noExport.includes('aria-disabled="true"'), true, "disabled rows are marked aria-disabled");
+  assertEq(noExport.includes('role="tooltip"'), true, "tooltip element is present for disabled rows");
 
   const staff = render({ defaultOpen: true, forceLayout: "popover", canManage: false });
-  assertEq(staff.includes("Post-payroll reports") || staff.includes("Export Employee Payroll"), false, "admin-only items hidden for other roles");
+  assertEq(staff.includes("Export Employee Payroll"), false, "admin-only items hidden for other roles");
 
   const sheet = render({ defaultOpen: true, forceLayout: "sheet" });
   assertEq(sheet.includes("Downloads · Sep 2026"), true, "sheet title shows the month");
-  assertEq((sheet.match(/role="group"/g) ?? []).length, 3, "sheet has Payroll, Bank Letter and Post-payroll reports sections");
+  assertEq((sheet.match(/role="group"/g) ?? []).length, 2, "sheet has Payroll and Bank Letter sections");
   assertEq(sheet.includes("min-h-[44px]"), true, "44px rows on phones");
-  assertEq((sheet.match(/role="menuitem"/g) ?? []).length, 3 + 3 + 4, "sheet lists every item flat (no hover submenus)");
+  assertEq((sheet.match(/role="menuitem"/g) ?? []).length, 3 + 3, "sheet lists every item flat (no hover submenus)");
   assertEq(sheet.includes('aria-label="Close downloads"'), true, "sheet has a close button");
-  const sheetOpenMonth = render({ defaultOpen: true, forceLayout: "sheet", generated: false });
-  assertEq(sheetOpenMonth.includes("Generate payroll for this month first."), true, "phone shows the reason inline (no hover)");
-  assertEq(sheetOpenMonth.includes('role="tooltip"'), false, "no hover tooltips on the sheet");
+  const sheetNoExport = render({ defaultOpen: true, forceLayout: "sheet", exportDisabled: true });
+  assertEq(sheetNoExport.includes(REASON_NOTHING_TO_EXPORT), true, "phone shows the reason inline (no hover)");
+  assertEq(sheetNoExport.includes('role="tooltip"'), false, "no hover tooltips on the sheet");
 }
 
 console.log("downloadsMenu.test.ts passed");

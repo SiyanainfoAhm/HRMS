@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Support\Money;
 use App\Support\PayrollFieldRegistry;
 
 /**
@@ -191,11 +192,11 @@ final class PayrollCalculationService
         $resolvedTransport = self::normalizeTransportConfig($transportConfig);
         $slab = $this->deriveTransportSlab($payLevel, $grossBasic, $resolvedTransport);
         $transportBase = $slab['base'];
-        $transportDa = $this->roundRupees($transportBase * $daPercent / 100);
-        $transportTotal = $this->roundRupees($transportBase + $transportDa);
+        $transportDa = Money::percentOf($transportBase, $daPercent);
+        $transportTotal = $this->round2($transportBase + $transportDa);
 
-        $daAmount = $this->roundRupees($grossBasic * $daPercent / 100);
-        $hraAmount = $this->roundRupees($grossBasic * $hraPercent / 100);
+        $daAmount = Money::percentOf($grossBasic, $daPercent);
+        $hraAmount = Money::percentOf($grossBasic, $hraPercent);
 
         $daAmount = $this->optionalAmountOverride($input, ['da_amount', 'daAmount'], $daAmount);
         $hasQuarter = $this->employeeHasQuarter($input);
@@ -205,20 +206,20 @@ final class PayrollCalculationService
             $hraAmount = $this->optionalAmountOverride($input, ['hra_amount', 'hraAmount', 'hra'], $hraAmount);
         }
         $transportBase = $this->optionalAmountOverride($input, ['transport_base', 'transportBase'], $transportBase);
-        $transportDa = $this->optionalAmountOverride($input, ['transport_da', 'transportDa'], $this->roundRupees($transportBase * $daPercent / 100));
+        $transportDa = $this->optionalAmountOverride($input, ['transport_da', 'transportDa'], Money::percentOf($transportBase, $daPercent));
         $transportTotal = $this->optionalAmountOverride(
             $input,
             ['transport_total', 'transportTotal', 'trans'],
-            $this->roundRupees($transportBase + $transportDa),
+            $this->round2($transportBase + $transportDa),
         );
 
         $customEarnings = $customEarnings ?? [];
         $customDeductions = $customDeductions ?? [];
-        $customEarningsTotal = $this->roundRupees(array_sum(array_map('floatval', $customEarnings)));
+        $customEarningsTotal = $this->round2(array_sum(array_map('floatval', $customEarnings)));
         $totalEarnings = $this->optionalAmountOverride(
             $input,
             ['total_earnings', 'totalEarnings', 'ctc'],
-            $this->roundRupees($grossBasic + $daAmount + $hraAmount + $medical + $transportTotal + $customEarningsTotal),
+            $this->round2($grossBasic + $daAmount + $hraAmount + $medical + $transportTotal + $customEarningsTotal),
         );
 
         $deductions = $this->extractDeductions($input);
@@ -244,17 +245,17 @@ final class PayrollCalculationService
             $cpfEffective = $this->wholeRupee($cpfBasisAmount * ($cpfPercentage / 100));
         }
 
-        $daCpf = $this->roundRupees((float) ($input['da_cpf'] ?? $input['da_cpf_default'] ?? $input['daCpf'] ?? $deductions['da_cpf']));
-        $professionalTax = $this->roundRupees($deductions['professional_tax']);
-        $incomeTax = $this->roundRupees($deductions['income_tax']);
-        $advance = $this->roundRupees($deductions['advance']);
+        $daCpf = $this->round2((float) ($input['da_cpf'] ?? $input['da_cpf_default'] ?? $input['daCpf'] ?? $deductions['da_cpf']));
+        $professionalTax = $this->round2($deductions['professional_tax']);
+        $incomeTax = $this->round2($deductions['income_tax']);
+        $advance = $this->round2($deductions['advance']);
 
-        $customDeductionsTotal = $this->roundRupees(array_sum(array_map('floatval', $customDeductions)));
+        $customDeductionsTotal = $this->round2(array_sum(array_map('floatval', $customDeductions)));
         $quarterRent = $hasQuarter
-            ? $this->roundRupees((float) $this->pick($input, ['quarter_rent', 'quarterRent'], 0))
+            ? $this->round2((float) $this->pick($input, ['quarter_rent', 'quarterRent'], 0))
             : 0.0;
 
-        $totalDeductions = $this->roundRupees(
+        $totalDeductions = $this->round2(
             $incomeTax + $professionalTax + $deductions['lic'] + $cpfEffective + $daCpf
             + $deductions['vpf'] + $deductions['pf_loan'] + $deductions['post_office']
             + $deductions['credit_society'] + $deductions['standard_licence_fee']
@@ -264,7 +265,7 @@ final class PayrollCalculationService
             + $deductions['other_deduction'] + $advance + $quarterRent + $customDeductionsTotal
         );
 
-        $takeHome = $this->roundRupees($totalEarnings - $totalDeductions);
+        $takeHome = $this->round2($totalEarnings - $totalDeductions);
 
         return [
             'pay_level' => $payLevel,
@@ -348,7 +349,7 @@ final class PayrollCalculationService
     /** @return array<string, float> */
     private function extractDeductions(array $input): array
     {
-        $g = fn (array $keys, float $default = 0.0) => $this->roundRupees((float) $this->pick($input, $keys, $default));
+        $g = fn (array $keys, float $default = 0.0) => $this->round2((float) $this->pick($input, $keys, $default));
 
         return [
             'income_tax' => $g(['income_tax', 'incomeTax', 'income_tax_default', 'tds'], 0),
@@ -395,7 +396,7 @@ final class PayrollCalculationService
     {
         $value = $this->pick($input, $keys, null);
 
-        return $value === null ? $computed : $this->roundRupees((float) $value);
+        return $value === null ? $computed : $this->round2((float) $value);
     }
 
     /**
@@ -407,7 +408,7 @@ final class PayrollCalculationService
         if ($value === null) {
             return $computed;
         }
-        $parsed = $this->roundRupees((float) $value);
+        $parsed = $this->round2((float) $value);
 
         return $parsed > 0 ? $parsed : $computed;
     }
@@ -429,14 +430,10 @@ final class PayrollCalculationService
         return (bool) $flag;
     }
 
-    /**
-     * THE money rounding rule, identical to roundRupees() in src/lib/payrollMasterCalc.ts
-     * and src/lib/governmentPayroll.ts: round half up to 2 decimals (paise). Written as
-     * floor(x*100+0.5)/100 so it matches JavaScript's Math.round exactly.
-     */
-    private function roundRupees(float $n): float
+    /** THE money rule (App\Support\Money, mirror of src/lib/money.ts): half up to 2 decimals (paise). */
+    private function round2(float $n): float
     {
-        return floor($n * 100 + 0.5) / 100;
+        return Money::round2($n);
     }
 
     /** CPF is the one component taken in whole rupees (Math.round in payrollCpfCalculation.ts). */

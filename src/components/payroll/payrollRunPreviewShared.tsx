@@ -72,7 +72,7 @@ export function v(m: GovernmentPreviewMonthly | null | undefined, k: keyof Gover
 }
 
 export function fmtIn(n: number): string {
-  return n.toLocaleString("en-IN", { maximumFractionDigits: 2 });
+  return n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function lookupDynamicFieldAmount(
@@ -117,12 +117,34 @@ export function FieldChip({
   readOnly,
   value,
   onChange,
+  mirrorHint,
 }: {
   label: string;
   readOnly: boolean;
   value: number;
   onChange: (n: number) => void;
+  /** Set for read-only mirrors of the Arrears (UNPAID) section: never rendered as an input. */
+  mirrorHint?: string;
 }) {
+  if (mirrorHint) {
+    return (
+      <div
+        className="flex w-[6.875rem] min-w-[6.875rem] shrink-0 flex-col items-center gap-0.5"
+        data-arrear-mirror="true"
+      >
+        <span className="w-full truncate text-center text-[9px] font-medium uppercase tracking-wide text-slate-600">
+          {label}
+        </span>
+        <span
+          className="payroll-amount-value w-full rounded border border-dashed border-slate-300 bg-slate-50 text-slate-700"
+          aria-readonly="true"
+        >
+          {fmtIn(value)}
+        </span>
+        <span className="w-full truncate text-center text-[8px] italic text-slate-500">{mirrorHint}</span>
+      </div>
+    );
+  }
   return (
     <div className="flex w-[6.875rem] min-w-[6.875rem] shrink-0 flex-col items-center gap-0.5">
       <span className="w-full truncate text-center text-[9px] font-medium uppercase tracking-wide text-slate-600">
