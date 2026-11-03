@@ -58,7 +58,7 @@ import {
   type TransportAllowanceSettings,
 } from "@/lib/transportAllowanceSettings";
 import { GOVERNMENT_DEFAULT_CPF_RATE_ON_TOTAL_EARNINGS } from "@/lib/governmentPayroll";
-import { resolveNightAllowanceRateByPayLevel } from "@/lib/nightAllowanceCalculation";
+import { nightHourlyRateForDisplay, resolveNightAllowanceRateByPayLevel } from "@/lib/nightAllowanceCalculation";
 import {
   formatQuarterOptionLabel,
   isCustomQuarterRent,
@@ -3014,7 +3014,7 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
                         {editing && isValidGovernmentPayLevel(form.payLevel) ? (
                           resolvedNightAllowance.rate > 0 ? (
                             <p className="mt-1 text-xs font-medium text-slate-700">
-                              Night Allowance Rate: ₹{resolvedNightAllowance.rate.toFixed(2)}/hour
+                              Night Allowance Rate: ₹{nightHourlyRateForDisplay(resolvedNightAllowance.rate).toFixed(2)}/hour
                             </p>
                           ) : resolvedNightAllowance.warning ? (
                             <p className="mt-1 text-xs text-amber-700">{resolvedNightAllowance.warning}</p>

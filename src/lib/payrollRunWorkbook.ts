@@ -624,7 +624,9 @@ function governmentMonthlyToDbShape(
     eol_reference_days_in_month: calendarDaysInMonth(gmNum(gm, "eolReferenceYear", "eol_reference_year"), gmNum(gm, "eolReferenceMonth", "eol_reference_month")) || undefined,
     hpl_reference_days_in_month: calendarDaysInMonth(gmNum(gm, "hplReferenceYear", "hpl_reference_year"), gmNum(gm, "hplReferenceMonth", "hpl_reference_month")) || undefined,
     night_hours: gmNum(gm, "nightHours", "night_hours"),
+    // Raw stored rate + its basis; buildPayrollExcelRow converts to the hourly rate once.
     night_allowance_rate: gmNum(gm, "nightAllowanceRate", "night_allowance_rate"),
+    night_allowance_rate_basis: String(gm?.nightAllowanceRateBasis ?? gm?.night_allowance_rate_basis ?? ""),
     night_allowance_amount: gmNum(gm, "nightAllowanceAmount", "night_allowance_amount"),
     water_amount: d.water,
     mess_amount: d.mess,
