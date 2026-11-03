@@ -803,14 +803,13 @@ function GovernmentEmployeeDetail({
                   <MoneyInput value={v(g, "encashmentPaid")} onChange={(n) => onUpdate(row.employeeUserId, "govEarning_encashmentPaid", n)} className={inpWide} />
                 )}
               </div>
-              <div>
-                <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">EOL DA</p>
-                {readOnly ? (
+              {v(g, "encashmentDaPaid") !== 0 ? (
+                // Encashment DA is no longer entered. An amount already saved on this row stays in its totals and is shown read-only.
+                <div>
+                  <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Enc. DA (earlier entry)</p>
                   <p className="text-[13px] tabular-nums">{fmtIn(v(g, "encashmentDaPaid"))}</p>
-                ) : (
-                  <MoneyInput value={v(g, "encashmentDaPaid")} onChange={(n) => onUpdate(row.employeeUserId, "govEarning_encashmentDaPaid", n)} className={inpWide} />
-                )}
-              </div>
+                </div>
+              ) : null}
               <div>
                 <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Reimb.</p>
                 {readOnly ? (
@@ -855,6 +854,9 @@ function GovernmentEmployeeDetail({
                       />
                     ),
                   )}
+                  {v(g, "encashmentDaPaid") !== 0 ? (
+                    <FieldChip label="Enc. DA (earlier entry)" readOnly value={v(g, "encashmentDaPaid")} onChange={() => {}} />
+                  ) : null}
                   {customEarningFields
                     .filter((f) => isCustomEarningVisibleOnRow(f.fieldKey, customFieldAmount(g, row.govRecalc, f.fieldKey, "earnings")))
                     .map((f) => (

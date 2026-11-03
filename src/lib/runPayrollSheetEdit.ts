@@ -46,6 +46,14 @@ export const SHEET_EARNING_KEYS = [
 
 export type SheetEarningKey = (typeof SHEET_EARNING_KEYS)[number];
 
+/**
+ * Encashment DA was retired from Run Payroll: it can no longer be typed. The key stays in SHEET_EARNING_KEYS only so that an
+ * amount already saved on a row (an older month, or an open draft that held one) keeps counting in its totals and is
+ * carried through recalculation unchanged. Nothing may change it.
+ */
+export const RETIRED_EARNING_KEYS = ["encashmentDaPaid"] as const;
+const isRetiredEarningKey = (key: string): boolean => (RETIRED_EARNING_KEYS as readonly string[]).includes(key);
+
 export const SHEET_DEDUCTION_KEYS = [
   "incomeTax",
   "pt",
@@ -311,7 +319,7 @@ export function applyGovernmentSheetMonetaryEdit<T extends GovernmentSheetRow>(
 
   if (field.startsWith("govEarning_")) {
     const key = field.slice("govEarning_".length) as SheetEarningKey;
-    if (!(SHEET_EARNING_KEYS as readonly string[]).includes(key)) return row;
+    if (!(SHEET_EARNING_KEYS as readonly string[]).includes(key) || isRetiredEarningKey(key)) return row;
     gm[key] = value;
     // Keep actual mirrors in sync for payslip display where used.
     const actualKey = key.replace(/Paid$/, "Actual");
@@ -430,7 +438,8 @@ export function applyGovernmentSheetMonetaryEdit<T extends GovernmentSheetRow>(
 /** Whether this field should use the sheet (totals-only) path. */
 export function isGovernmentSheetMonetaryField(field: string): boolean {
   if (field.startsWith("govEarning_")) {
-    return (SHEET_EARNING_KEYS as readonly string[]).includes(field.slice("govEarning_".length));
+    const key = field.slice("govEarning_".length);
+    return (SHEET_EARNING_KEYS as readonly string[]).includes(key) && !isRetiredEarningKey(key);
   }
   if (field.startsWith("govDeduction_")) {
     return (SHEET_DEDUCTION_KEYS as readonly string[]).includes(field.slice("govDeduction_".length));

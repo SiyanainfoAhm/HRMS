@@ -27,7 +27,6 @@ export const GOV_PREVIEW_EARNING_FIELDS: GovPreviewLine<keyof GovernmentPreviewM
   { key: "daArrearsPaid", label: PAYROLL_LABELS.daArrears, fieldKey: "da_arrears" },
   { key: "transportArrearsPaid", label: PAYROLL_LABELS.transportArrears, fieldKey: "transport_arrears" },
   { key: "encashmentPaid", label: "Encash." },
-  { key: "encashmentDaPaid", label: "Enc. DA" },
   { key: "grossArrear", label: PAYROLL_LABELS.grossArrears, fieldKey: "gross_arrears", arrearField: "grossArrear" },
   { key: "netArrear", label: PAYROLL_LABELS.netArrears, fieldKey: "net_arrears", arrearField: "netArrear", memo: true },
 ];

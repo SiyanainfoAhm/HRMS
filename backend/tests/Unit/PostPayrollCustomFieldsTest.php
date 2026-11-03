@@ -3,6 +3,7 @@
 namespace Tests\Unit;
 
 use App\Services\PostPayrollDownloadService;
+use App\Support\PayrollExportTotals;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -69,6 +70,28 @@ final class PostPayrollCustomFieldsTest extends TestCase
         $sum = 0.0;
         foreach ($earnings as $name) $sum += (float) ($values[array_search($name, PostPayrollDownloadService::TDS_COLUMNS, false)] ?? 0);
         $this->assertEqualsWithDelta((float) $row['total_earnings'], $sum, 0.01, 'TDS earning columns = total earnings');
+    }
+
+    /** ENC. DA is retired from Run Payroll; months that already hold one must keep their TDS value and reconcile. */
+    public function test_tds_encashment_column_sums_encashment_plus_any_stored_encashment_da(): void
+    {
+        $svc = new PostPayrollDownloadService;
+        $header = 'ENCASHMENT+ENCA DA';
+        $this->assertContains($header, PostPayrollDownloadService::TDS_COLUMNS, 'the header is unchanged');
+        $col = array_search($header, PostPayrollDownloadService::TDS_COLUMNS, true);
+        $base = ['month_year' => '2026-09-01', '_ym' => 202609, '_master' => ['employee_code' => '001', 'name' => 'A B'], '_user' => [], 'custom_earnings' => '{}', 'custom_deductions' => '{}',
+            'basic_paid' => 50000, 'total_earnings' => 51000, 'total_deductions' => 0, 'net_salary' => 51000];
+
+        // New month: no ENC. DA at all.
+        $new = $svc->tdsValues($base + ['encashment_paid' => 1000, 'encashment_da_paid' => 0]);
+        $this->assertSame(1000.0, $new[$col]);
+        // Older month that holds one: Encashment + ENC. DA, so the TDS total still equals gross.
+        $old = ['encashment_paid' => 1000, 'encashment_da_paid' => 700, 'total_earnings' => 51700, 'net_salary' => 51700] + $base;
+        $this->assertSame(1700.0, $svc->tdsValues($old)[$col]);
+        $this->assertSame([], PayrollExportTotals::problems($old), 'gross - deductions = net and the earning columns add up, ENC. DA included');
+        $this->assertSame([], PayrollExportTotals::problems($new + []));
+        $t = $svc->tdsTable([$old, $base + ['encashment_paid' => 1000, 'encashment_da_paid' => 0, 'employee_user_id' => 'x']], ['earnings' => [], 'deductions' => []]);
+        $this->assertSame(1700.0 + 1000.0, $t['totals'][$col]);
     }
 
     public function test_custom_bag_reader_accepts_json_text_empty_list_and_arrays(): void
