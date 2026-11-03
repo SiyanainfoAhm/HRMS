@@ -2,10 +2,10 @@
 export const DEFAULT_NIGHT_ALLOWANCE_BASIC_CEILING = 43600;
 
 /**
- * Night Duty Allowance = hours x hourly rate, where hourly = per-duty rate / 8 (Settings >
- * Night Allowance stores the rate per 8-hour duty; the 7th CPC hourly rate is perDuty / 8).
- * Computed as (hours x perDuty) / 8 and rounded ONCE, to the whole rupee, at the end
- * (no rounded hourly rate or rounded duty count in between).
+ * Night Duty Allowance = hours / 8 x rate. The rate (Settings > Night Allowance, 7th CPC table:
+ * Level 1 = 23.20) is the amount per DUTY of 8 hours and is stored exactly as typed.
+ * Computed as (hours x rate) / 8 and rounded ONCE, to the whole rupee, at the end
+ * (no rounded duty count in between).
  * Mirror: NightAllowanceRateService::allowanceAmount (shared cases in
  * backend/tests/fixtures/night_allowance_cases.json).
  */
@@ -31,16 +31,10 @@ export function calculateNightAllowanceAmount(
   return NIGHT_ALLOWANCE_ROUND_TO_RUPEE ? Math.round(amount) : Math.round(amount * 100) / 100;
 }
 
-/** Display-only hourly rate: per-duty rate / 8, 2 decimals (185.60 -> 23.20). Never used in the amount. */
-export function nightHourlyRateForDisplay(ratePerDuty: number): number {
-  return Math.round((Math.max(0, Number(ratePerDuty) || 0) / NIGHT_DUTY_BASE_HOURS) * 100) / 100;
-}
-
-/** Label under NIGHT HRS: "₹23.20/hr (₹185.60/duty)"; legacy hourly rows show their hourly rate. */
+/** Label under NIGHT HRS: "₹23.20/duty"; legacy 'hour'-basis rows (hours x rate) show "/hr". */
 export function nightAllowanceRateLabel(rate: number | null | undefined, basis: NightAllowanceRateBasis | undefined): string {
   const r = Math.max(0, Number(rate) || 0);
-  if (basis !== "duty") return `₹${r.toFixed(2)}/hr`;
-  return `₹${nightHourlyRateForDisplay(r).toFixed(2)}/hr (₹${r.toFixed(2)}/duty)`;
+  return `₹${r.toFixed(2)}/${basis === "duty" ? "duty" : "hr"}`;
 }
 
 import { isValidGovernmentPayLevel } from "./payLevel";
@@ -101,7 +95,7 @@ export function resolveNightAllowanceRateByPayLevel(
 
   const perDuty = Number(pick.ratePerDuty);
   return {
-    rate: Number.isFinite(perDuty) && pick.ratePerDuty != null ? perDuty : Math.round(pick.ratePerHour * NIGHT_DUTY_BASE_HOURS * 100) / 100,
+    rate: Number.isFinite(perDuty) && pick.ratePerDuty != null ? perDuty : Math.round(pick.ratePerHour * 100) / 100,
     slabNo: pick.slabNo,
     warning: null,
     basis: "duty",

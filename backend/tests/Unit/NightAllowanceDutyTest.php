@@ -59,7 +59,7 @@ final class NightAllowanceDutyTest extends TestCase
         $l7 = $svc->resolveFromPreloadedRates($rates, 7, '2026-09-30');
         $this->assertSame(403.2, $l7['rate']);
         $this->assertSame('duty', $l7['basis']);
-        $this->assertSame(443.6, $svc->resolveFromPreloadedRates($rates, 8, '2026-09-30')['rate']);
+        $this->assertSame(55.45, $svc->resolveFromPreloadedRates($rates, 8, '2026-09-30')['rate'], 'no per-duty column: legacy column holds the table amount, no x8');
         $this->assertSame(0.0, $svc->resolveFromPreloadedRates($rates, 3, '2026-09-30')['rate']);
     }
 }

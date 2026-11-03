@@ -51,7 +51,7 @@ const rates = [
 const l7 = resolveNightAllowanceRateByPayLevel(rates, 7, "2026-09-30");
 assertEq(l7.rate, 403.2, "level 7 per-duty rate");
 assertEq(l7.basis, "duty", "new rates are per duty");
-assertEq(resolveNightAllowanceRateByPayLevel(rates, 8, "2026-09-30").rate, 443.6, "no per-duty rate -> hourly x 8");
+assertEq(resolveNightAllowanceRateByPayLevel(rates, 8, "2026-09-30").rate, 55.45, "no per-duty column -> the legacy column already holds the table amount (no x8)");
 assertEq(resolveNightAllowanceRateByPayLevel(rates, 3, "2026-09-30").rate, 0, "no rate for level");
 
 // Ceiling and manual override still apply on top.

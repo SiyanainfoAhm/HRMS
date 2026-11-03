@@ -397,19 +397,22 @@ export function isZeroStubPayrollRow(row: RunPayrollRowLike): boolean {
 
 /**
  * Open (not generated) months are always duty-based: a draft saved before the per-duty
- * rate (no basis, or 'hour' with an hourly rate such as 28.85) is moved to basis 'duty'
- * with the rate re-resolved from the active slab for the employee's pay level and period
- * (the fresh API row carries it). Typed hours and a typed NDA amount are kept; only a
+ * rate (no basis, or 'hour' with the table rate such as 28.85 applied per hour) is moved to
+ * basis 'duty' with the rate re-resolved from the active slab for the employee's pay level
+ * and period (the fresh API row carries it). A row already on 'duty' whose rate is exactly
+ * 8x the slab rate (saved while the slabs were 8x too high) is corrected the same way.
+ * The basis alone decides this, never a rate threshold. Typed hours and a typed NDA amount are kept; only a
  * computed (non-override) amount can change, and gross/net move by exactly that delta.
  * Generated/finalized months are never passed through here (ctx.alreadyRun).
  */
 export function ensureOpenRowNightAllowanceDuty(result: RunPayrollRowLike, fresh: RunPayrollRowLike): RunPayrollRowLike {
   if (result.payrollMode !== "government" || !result.govRecalc) return result;
   const gr = result.govRecalc;
-  if (gr.nightAllowanceRateBasis === "duty") return result;
   const freshGr = fresh.govRecalc;
   const freshRate = Number(freshGr?.nightAllowanceRate) || 0;
   if (freshGr?.nightAllowanceRateBasis !== "duty" || freshRate <= 0) return result; // no slab: keep stored values
+  const stale8x = gr.nightAllowanceRateBasis === "duty" && Math.abs((Number(gr.nightAllowanceRate) || 0) - 8 * freshRate) < 0.005;
+  if (gr.nightAllowanceRateBasis === "duty" && !stale8x) return result;
 
   const gm = (result.governmentMonthly ?? {}) as Record<string, unknown>;
   const hours = Math.max(0, Number(gr.nightHours ?? gm.nightHours ?? 0) || 0);

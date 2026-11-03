@@ -122,7 +122,7 @@ export function NightAllowanceSettings() {
     setForm({
       slabNo: String(rate.slabNo),
       payLevel: String(rate.payLevel),
-      ratePerDuty: String(rate.ratePerDuty ?? Math.round(rate.ratePerHour * 8 * 100) / 100),
+      ratePerDuty: String(rate.ratePerDuty ?? rate.ratePerHour),
       effectiveFrom: rate.effectiveFrom?.slice(0, 10) ?? "",
     });
     setFormErrors({});
@@ -274,7 +274,7 @@ export function NightAllowanceSettings() {
                   <td className="px-2 py-2 font-medium">{rate.slabNo}</td>
                   <td className="px-2 py-2">Level {rate.payLevel}</td>
                   <td className="px-2 py-2 text-right tabular-nums">
-                    ₹{(rate.ratePerDuty ?? rate.ratePerHour * 8).toFixed(2)}
+                    ₹{(rate.ratePerDuty ?? rate.ratePerHour).toFixed(2)}
                   </td>
                   <td className="px-2 py-2">{rate.effectiveFrom ?? "—"}</td>
                   <td className="px-2 py-2">
