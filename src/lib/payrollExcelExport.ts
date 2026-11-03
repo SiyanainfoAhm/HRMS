@@ -1,5 +1,4 @@
 import type { GovernmentMonthlyComputed } from "@/lib/governmentPayroll";
-import { nightRateAsHourly } from "@/lib/nightAllowanceCalculation";
 import { calendarDaysInMonth, equivalentPayableDays, leaveSalaryAdjustment } from "@/lib/payrollLeaveDays";
 
 /** Run Payroll Excel export — no duplicate PT/Professional Tax or TakeHome/Net Pay columns. */
@@ -153,7 +152,6 @@ export type GovernmentMonthlyRow = {
   hpl_reference_days_in_month?: number | null;
   night_hours?: number | null;
   night_allowance_rate?: number | null;
-  night_allowance_rate_basis?: string | null;
   night_allowance_amount?: number | null;
   night_allowance_basic_ceiling?: number | null;
   night_allowance_eligible?: boolean | null;
@@ -339,7 +337,7 @@ function govFromComputed(
     ExtraWorkAllowance: c.extraWorkAllowancePaid,
     NightAllowance: c.nightAllowancePaid,
     NightHours: c.nightHours ?? 0,
-    NightAllowanceRate: nightRateAsHourly(c.nightAllowanceRate, c.nightAllowanceRateBasis),
+    NightAllowanceRate: c.nightAllowanceRate ?? 0,
     NightAllowanceCeiling: c.nightAllowanceBasicCeiling ?? 0,
     NightAllowanceEligible: c.nightAllowanceEligible === false ? "No" : "Yes",
     UniformAllowance: c.uniformAllowancePaid,
@@ -416,7 +414,7 @@ function govFromDbRow(
     ExtraWorkAllowance: n(r.extra_work_allowance_paid),
     NightAllowance: n(r.night_allowance_paid),
     NightHours: n(r.night_hours),
-    NightAllowanceRate: nightRateAsHourly(n(r.night_allowance_rate), r.night_allowance_rate_basis ?? undefined),
+    NightAllowanceRate: n(r.night_allowance_rate),
     NightAllowanceCeiling: n(r.night_allowance_basic_ceiling),
     NightAllowanceEligible: r.night_allowance_eligible === false ? "No" : "Yes",
     UniformAllowance: n(r.uniform_allowance_paid),

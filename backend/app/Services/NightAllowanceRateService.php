@@ -39,47 +39,10 @@ final class NightAllowanceRateService
         return self::ROUND_AMOUNT_TO_RUPEE ? (float) round($amount) : round($amount, 2);
     }
 
-    /** Display-only hourly rate: per-duty rate / 8, 2 decimals, in whole paise. Never used in the amount. */
+    /** Display-only hourly rate: per-duty rate / 8, 2 decimals. Never used in the amount. */
     public static function hourlyRateForDisplay(float $ratePerDuty): float
     {
-        $paise = (int) round(max(0.0, $ratePerDuty) * 100);
-
-        return (float) (intdiv(2 * $paise + self::DUTY_BASE_HOURS, 2 * self::DUTY_BASE_HOURS)) / 100;
-    }
-
-    /**
-     * Settings input: hourly rate -> stored per-duty rate (hourly x 8), exactly, in whole paise.
-     * Positive, at most 2 decimals; null otherwise. Mirror: hourlyRateToPerDuty in nightAllowanceCalculation.ts.
-     */
-    public static function hourlyToPerDuty(mixed $hourly): ?float
-    {
-        $text = is_int($hourly) || is_float($hourly) ? (string) $hourly : (is_string($hourly) ? trim($hourly) : '');
-        if (! preg_match('/^\d+(\.\d{1,2})?$/', $text)) {
-            return null;
-        }
-        [$whole, $frac] = array_pad(explode('.', $text, 2), 2, '');
-        $paise = (int) $whole * 100 + (int) str_pad($frac, 2, '0');
-        if ($paise <= 0) {
-            return null;
-        }
-
-        return ($paise * self::DUTY_BASE_HOURS) / 100;
-    }
-
-    /** @param array<string, mixed> $data the per-duty rate to store: typed hourly x 8, else a legacy per-duty value */
-    private function storedRateFromInput(array $data, float $fallback): float
-    {
-        $hasHourly = array_key_exists('rate_per_hour', $data) || array_key_exists('ratePerHour', $data);
-        if ($hasHourly) {
-            $perDuty = self::hourlyToPerDuty($data['rate_per_hour'] ?? $data['ratePerHour']);
-            if ($perDuty === null) {
-                abort(422, 'Night allowance rate must be greater than 0 with at most 2 decimals.');
-            }
-
-            return $perDuty;
-        }
-
-        return (float) ($data['rate_per_duty'] ?? $data['ratePerDuty'] ?? $fallback);
+        return round(max(0.0, $ratePerDuty) / self::DUTY_BASE_HOURS, 2);
     }
 
     /**
@@ -314,7 +277,7 @@ final class NightAllowanceRateService
     {
         $slabNo = (int) ($data['slab_no'] ?? $data['slabNo'] ?? 0);
         $payLevel = (int) ($data['pay_level'] ?? $data['payLevel'] ?? 0);
-        $rate = $this->storedRateFromInput($data, -1);
+        $rate = (float) ($data['rate_per_duty'] ?? $data['ratePerDuty'] ?? -1);
 
         $this->validateSlab($companyId, $slabNo, $payLevel, $rate);
 
@@ -346,7 +309,7 @@ final class NightAllowanceRateService
 
         $slabNo = (int) ($data['slab_no'] ?? $data['slabNo'] ?? $row->slab_no);
         $payLevel = (int) ($data['pay_level'] ?? $data['payLevel'] ?? $row->pay_level);
-        $rate = $this->storedRateFromInput($data, self::ratePerDuty($row->rate_per_duty, (float) $row->rate_per_hour));
+        $rate = (float) ($data['rate_per_duty'] ?? $data['ratePerDuty'] ?? self::ratePerDuty($row->rate_per_duty, (float) $row->rate_per_hour));
 
         $this->validateSlab((string) $row->company_id, $slabNo, $payLevel, $rate);
 
@@ -507,7 +470,7 @@ final class NightAllowanceRateService
             'ratePerDuty' => self::ratePerDuty($r->rate_per_duty, (float) $r->rate_per_hour),
             'effectiveFrom' => $r->effective_from?->toDateString(),
             'isActive' => (bool) $r->is_active,
-            'label' => sprintf('S.No %d - Level %d - ₹%s/hr', $r->slab_no, $r->pay_level, number_format(self::hourlyRateForDisplay(self::ratePerDuty($r->rate_per_duty, (float) $r->rate_per_hour)), 2)),
+            'label' => sprintf('S.No %d - Level %d - ₹%s/duty', $r->slab_no, $r->pay_level, number_format(self::ratePerDuty($r->rate_per_duty, (float) $r->rate_per_hour), 2)),
         ];
     }
 }

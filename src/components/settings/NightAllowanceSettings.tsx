@@ -9,12 +9,7 @@ import { FormField } from "@/components/ui/FormField";
 import { Input } from "@/components/ui/Input";
 import { DateInput } from "@/components/ui/DateInput";
 import { Modal } from "@/components/ui/Modal";
-import {
-  DEFAULT_NIGHT_ALLOWANCE_BASIC_CEILING,
-  hourlyRateToPerDuty,
-  nightHourlyRateForDisplay,
-  perDutyToHourlyText,
-} from "@/lib/nightAllowanceCalculation";
+import { formatNightAllowanceSlabLabel, DEFAULT_NIGHT_ALLOWANCE_BASIC_CEILING } from "@/lib/nightAllowanceCalculation";
 import { payLevelSelectOptions } from "@/lib/payLevel";
 import { SelectField } from "@/components/ui/SelectField";
 
@@ -22,9 +17,9 @@ export type NightAllowanceRateRecord = {
   id: string;
   slabNo: number;
   payLevel: number;
-  /** Legacy hourly column (kept for history). */
+  /** Legacy per-hour rate (kept for history). */
   ratePerHour: number;
-  /** Stored rate; the screen shows and edits the hourly rate derived from it. */
+  /** Night Allowance Rate per 8-hour duty: allowance = (night hours / 8) x this rate. */
   ratePerDuty: number;
   effectiveFrom?: string | null;
   isActive: boolean;
@@ -34,14 +29,14 @@ export type NightAllowanceRateRecord = {
 type RateForm = {
   slabNo: string;
   payLevel: string;
-  ratePerHour: string;
+  ratePerDuty: string;
   effectiveFrom: string;
 };
 
 const emptyForm = (): RateForm => ({
   slabNo: "",
   payLevel: "",
-  ratePerHour: "",
+  ratePerDuty: "",
   effectiveFrom: "",
 });
 
@@ -69,10 +64,9 @@ function validateRateForm(
     errors.payLevel = "Please select a valid Pay Level.";
   }
 
-  if (!form.ratePerHour.trim()) {
-    errors.ratePerHour = "Night allowance rate is required.";
-  } else if (hourlyRateToPerDuty(form.ratePerHour) == null) {
-    errors.ratePerHour = "Enter a rate greater than 0 with at most 2 decimals.";
+  const rate = Number(form.ratePerDuty);
+  if (!form.ratePerDuty.trim() || !Number.isFinite(rate) || rate < 0) {
+    errors.ratePerDuty = "Night allowance rate is required.";
   }
 
   return errors;
@@ -128,7 +122,7 @@ export function NightAllowanceSettings() {
     setForm({
       slabNo: String(rate.slabNo),
       payLevel: String(rate.payLevel),
-      ratePerHour: perDutyToHourlyText(rate.ratePerDuty ?? rate.ratePerHour * 8),
+      ratePerDuty: String(rate.ratePerDuty ?? Math.round(rate.ratePerHour * 8 * 100) / 100),
       effectiveFrom: rate.effectiveFrom?.slice(0, 10) ?? "",
     });
     setFormErrors({});
@@ -154,7 +148,7 @@ export function NightAllowanceSettings() {
       const payload = {
         slabNo: Number(form.slabNo),
         payLevel: Number(form.payLevel),
-        ratePerHour: form.ratePerHour.trim(),
+        ratePerDuty: Number(form.ratePerDuty),
         effectiveFrom: form.effectiveFrom.trim() || null,
         isActive: true,
       };
@@ -268,7 +262,7 @@ export function NightAllowanceSettings() {
               <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-500">
                 <th className="px-2 py-2">S.No</th>
                 <th className="px-2 py-2">Pay Level</th>
-                <th className="px-2 py-2 text-right">Night Allowance Rate / Hour</th>
+                <th className="px-2 py-2 text-right">Night Allowance Rate / Duty (8 h)</th>
                 <th className="px-2 py-2">Effective From</th>
                 <th className="px-2 py-2">Status</th>
                 <th className="px-2 py-2 text-right">Actions</th>
@@ -280,7 +274,7 @@ export function NightAllowanceSettings() {
                   <td className="px-2 py-2 font-medium">{rate.slabNo}</td>
                   <td className="px-2 py-2">Level {rate.payLevel}</td>
                   <td className="px-2 py-2 text-right tabular-nums">
-                    ₹{nightHourlyRateForDisplay(rate.ratePerDuty ?? rate.ratePerHour * 8).toFixed(2)}
+                    ₹{(rate.ratePerDuty ?? rate.ratePerHour * 8).toFixed(2)}
                   </td>
                   <td className="px-2 py-2">{rate.effectiveFrom ?? "—"}</td>
                   <td className="px-2 py-2">
@@ -351,21 +345,21 @@ export function NightAllowanceSettings() {
             />
           </FormField>
           <FormField
-            label="Night Allowance Rate / Hour (₹)"
+            label="Night Allowance Rate per 8-hour duty (₹)"
             required
-            error={formErrors.ratePerHour}
-            helperText="Night Duty Allowance = night duty hours x this hourly rate for the employee's Pay Level."
+            error={formErrors.ratePerDuty}
+            helperText="Night Duty Allowance = (Total Night Duty Hours / 8) x this rate for the employee's Pay Level."
           >
             <Input
               type="number"
-              min={0.01}
+              min={0}
               step="0.01"
-              value={form.ratePerHour}
+              value={form.ratePerDuty}
               onChange={(e) => {
-                setForm((f) => ({ ...f, ratePerHour: e.target.value }));
+                setForm((f) => ({ ...f, ratePerDuty: e.target.value }));
                 setFormErrors((prev) => {
                   const next = { ...prev };
-                  delete next.ratePerHour;
+                  delete next.ratePerDuty;
                   return next;
                 });
               }}
@@ -375,6 +369,16 @@ export function NightAllowanceSettings() {
           <FormField label="Effective From">
             <DateInput aria-label="Effective from" optional value={form.effectiveFrom} onChange={(v) => setForm((f) => ({ ...f, effectiveFrom: v }))} />
           </FormField>
+          {form.slabNo && form.payLevel && form.ratePerDuty ? (
+            <p className="text-xs text-slate-600">
+              Preview:{" "}
+              {formatNightAllowanceSlabLabel(
+                Number(form.slabNo) || 0,
+                Number(form.payLevel) || 0,
+                Number(form.ratePerDuty) || 0,
+              )}
+            </p>
+          ) : null}
           <div className="flex justify-end gap-2">
             <Button type="button" variant="outline" onClick={() => setFormOpen(false)}>
               Cancel

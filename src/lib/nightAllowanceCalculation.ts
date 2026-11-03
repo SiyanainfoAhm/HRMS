@@ -31,51 +31,22 @@ export function calculateNightAllowanceAmount(
   return NIGHT_ALLOWANCE_ROUND_TO_RUPEE ? Math.round(amount) : Math.round(amount * 100) / 100;
 }
 
-/**
- * Display-only hourly rate: stored per-duty rate / 8, 2 decimals (185.60 -> 23.20). Works in whole
- * paise so there is no floating-point drift. Never used in the amount.
- */
+/** Display-only hourly rate: per-duty rate / 8, 2 decimals (185.60 -> 23.20). Never used in the amount. */
 export function nightHourlyRateForDisplay(ratePerDuty: number): number {
-  const paise = Math.round(Math.max(0, Number(ratePerDuty) || 0) * 100);
-  return Math.round(paise / NIGHT_DUTY_BASE_HOURS) / 100;
+  return Math.round((Math.max(0, Number(ratePerDuty) || 0) / NIGHT_DUTY_BASE_HOURS) * 100) / 100;
 }
 
-/**
- * Settings input: hourly rate typed by the user -> stored per-duty rate (hourly x 8) in whole paise.
- * Accepts only a positive number with at most 2 decimals; returns null otherwise.
- */
-export function hourlyRateToPerDuty(input: string | number): number | null {
-  const text = typeof input === "number" ? String(input) : input.trim();
-  if (!/^\d+(\.\d{1,2})?$/.test(text)) return null;
-  const [whole, frac = ""] = text.split(".");
-  const paise = Number(whole) * 100 + Number(frac.padEnd(2, "0"));
-  if (!Number.isSafeInteger(paise) || paise <= 0) return null;
-  return (paise * NIGHT_DUTY_BASE_HOURS) / 100;
-}
-
-/** Hourly rate as shown in an edit box ("23.20"). */
-export function perDutyToHourlyText(ratePerDuty: number): string {
-  return nightHourlyRateForDisplay(ratePerDuty).toFixed(2);
-}
-
-/**
- * Hourly rate of a payroll row for display/export. 'duty' rows store the per-duty rate (/8);
- * legacy rows ('hour' or no basis) already store the hourly rate.
- */
-export function nightRateAsHourly(rate: number | null | undefined, basis: string | undefined): number {
-  const r = Math.max(0, Number(rate) || 0);
-  return basis === "duty" ? nightHourlyRateForDisplay(r) : Math.round(r * 100) / 100;
-}
-
-/** Label under NIGHT HRS: "₹23.20/hr" (hourly only). */
+/** Label under NIGHT HRS: "₹23.20/hr (₹185.60/duty)"; legacy hourly rows show their hourly rate. */
 export function nightAllowanceRateLabel(rate: number | null | undefined, basis: NightAllowanceRateBasis | undefined): string {
-  return `₹${nightRateAsHourly(rate, basis).toFixed(2)}/hr`;
+  const r = Math.max(0, Number(rate) || 0);
+  if (basis !== "duty") return `₹${r.toFixed(2)}/hr`;
+  return `₹${nightHourlyRateForDisplay(r).toFixed(2)}/hr (₹${r.toFixed(2)}/duty)`;
 }
 
 import { isValidGovernmentPayLevel } from "./payLevel";
 
 export function formatNightAllowanceSlabLabel(slabNo: number, payLevel: number, ratePerDuty: number): string {
-  return `S.No ${slabNo} - Level ${payLevel} - ₹${perDutyToHourlyText(ratePerDuty)}/hr`;
+  return `S.No ${slabNo} - Level ${payLevel} - ₹${ratePerDuty.toFixed(2)}/duty`;
 }
 
 export type NightAllowanceRateRow = {

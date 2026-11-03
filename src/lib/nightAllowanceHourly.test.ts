@@ -9,10 +9,7 @@ import { readFileSync } from "node:fs";
 import {
   calculateNightAllowanceAmount,
   nightAllowanceRateLabel,
-  hourlyRateToPerDuty,
   nightHourlyRateForDisplay,
-  nightRateAsHourly,
-  perDutyToHourlyText,
   resolveNightAllowanceAmount,
 } from "./nightAllowanceCalculation";
 import { ensureOpenRowNightAllowanceDuty, type RunPayrollRowLike } from "./resolveRunPayrollRow";
@@ -39,7 +36,7 @@ for (const c of fixture.cases) {
 assertEq(calculateNightAllowanceAmount(120, 185.6, "duty"), 2784, "Level 1, 120h = 2784.00");
 assertEq(fixture.anchors.level1_120h, 2784, "fixture anchor");
 assertEq(nightHourlyRateForDisplay(185.6), 23.2, "Level 1 hourly = 23.20");
-assertEq(nightAllowanceRateLabel(185.6, "duty"), "₹23.20/hr", "label shows the hourly rate only");
+assertEq(nightAllowanceRateLabel(185.6, "duty"), "₹23.20/hr (₹185.60/duty)", "label shows hourly with per-duty in brackets");
 assertEq(nightAllowanceRateLabel(28.85, undefined), "₹28.85/hr", "legacy hourly row keeps its hourly label");
 
 // Ceiling: payable only when Basic Pay <= ceiling.
@@ -117,31 +114,5 @@ const reloaded = deserializePayrollDraftEmployee(
   { employeeUserId: "u", payrollMode: "government" } as never,
 ) as unknown as RunPayrollRowLike;
 assertEq(reloaded.govRecalc?.nightHours, 8.5, "reload keeps typed hours");
-
-// Settings shows/edits the HOURLY rate; storage stays per duty (hourly x 8, exact at 2 decimals).
-const OFFICIAL_HOURLY = ["23.20", "26.10", "28.85", "32.65", "36.55", "38.05", "39.60", "41.25", "43.50", "46.00", "50.40", "55.45", "58.55", "63.60"];
-assertEq(fixture.cases.filter((c) => c.hours === 0).length, 14, "14 stored slabs");
-fixture.cases.filter((c) => c.hours === 0).forEach((c, i) => {
-  assertEq(perDutyToHourlyText(c.perDuty), OFFICIAL_HOURLY[i], `slab ${c.slab}: stored ${c.perDuty}/duty shows as hourly`);
-  const stored = hourlyRateToPerDuty(OFFICIAL_HOURLY[i]);
-  assertEq(stored, c.perDuty, `slab ${c.slab}: typing ${OFFICIAL_HOURLY[i]} stores exactly 8x`);
-  assertEq(hourlyRateToPerDuty(Number(OFFICIAL_HOURLY[i])), c.perDuty, `slab ${c.slab}: numeric input stores the same`);
-  // The payroll amount for the same hours is identical whichever way the rate was entered.
-  for (const h of [0, 8, 120, 8.5]) {
-    assertEq(calculateNightAllowanceAmount(h, stored as number, "duty"), calculateNightAllowanceAmount(h, c.perDuty, "duty"), `slab ${c.slab} ${h}h unchanged`);
-  }
-});
-// Floating-point traps: 0.1 style values still store exactly hourly x 8.
-assertEq(hourlyRateToPerDuty("0.29"), 2.32, "0.29 x 8 = 2.32");
-assertEq(hourlyRateToPerDuty("57.35"), 458.8, "57.35 x 8 = 458.80");
-assertEq(hourlyRateToPerDuty("1234.56"), 9876.48, "1234.56 x 8");
-// Validation: positive, at most 2 decimals.
-for (const bad of ["", "0", "0.00", "-1", "23.205", "abc", "1e3", "23,2"]) assertEq(hourlyRateToPerDuty(bad), null, `rejects "${bad}"`);
-assertEq(hourlyRateToPerDuty("23"), 184, "whole number accepted");
-assertEq(hourlyRateToPerDuty("23.2"), 185.6, "one decimal accepted");
-// Run Payroll / export rate: hourly only; legacy hourly rows unchanged.
-assertEq(nightRateAsHourly(185.6, "duty"), 23.2, "duty row shows hourly");
-assertEq(nightRateAsHourly(28.85, "hour"), 28.85, "legacy hourly row unchanged");
-assertEq(nightRateAsHourly(108, undefined), 108, "no basis = already hourly");
 
 console.log("nightAllowanceHourly.test.ts passed");
