@@ -2,7 +2,7 @@
  * Run: npx --yes tsx src/lib/leaveDeductions.test.ts
  * CIRT leave calculation, Ref ADM:Gen:1521 (October 2026, leave period 20.09.2026 - 19.10.2026).
  */
-import { computeLeaveCuts, normalizeLeaveLines, type LeaveLine } from "./leaveDeductions";
+import { computeLeaveCuts, leaveLineError, normalizeLeaveLines, type LeaveLine } from "./leaveDeductions";
 
 function eq(a: unknown, b: unknown, msg: string) {
   if (a !== b) throw new Error(`${msg}: expected ${JSON.stringify(b)}, got ${JSON.stringify(a)}`);
@@ -74,6 +74,14 @@ function percentOfDa(b: number) { return Math.round(b * 0.63); }
   const stored = normalizeLeaveLines({ leaveLines: [{ type: "EOL", month: 9, year: 2026, days: 2 }], hplDays: 9 }, 10, 2026);
   eq(stored.length, 1, "stored list wins over legacy fields");
 }
+
+// Save Draft is blocked for empty / 0 / too many days; a duplicate line is not an error.
+eq(leaveLineError({ month: 9, year: 2026, days: 0 }), "Enter days (1–30)", "0 days is an error");
+eq(leaveLineError({ month: 9, year: 2026, days: NaN }), "Enter days (1–30)", "empty days is an error");
+eq(leaveLineError({ month: 9, year: 2026, days: 31 }), "At most 30 days in Sep 2026", "more than the month has");
+eq(leaveLineError({ month: 10, year: 2026, days: 31 }), null, "31 days in October is fine");
+eq(leaveLineError({ month: 2, year: 2028, days: 29 }), null, "leap February");
+eq(leaveLineError({ month: 9, year: 2026, days: 1 }), null, "1 day is fine");
 
 // Through the real Run Payroll compute (what the screen and the draft use): spec cases and no-leave.
 import { runGovernmentPayrollCompute, type GovRecalcPayload } from "./govRunPayrollCompute";

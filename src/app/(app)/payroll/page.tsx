@@ -44,7 +44,7 @@ import {
   isSamePayrollReferencePeriod,
   referenceSalaryFromGovRecalc,
 } from "@/lib/hplEolDeductions";
-import { daysInMonthOf, type LeaveLine } from "@/lib/leaveDeductions";
+import { daysInMonthOf, leaveLineError, type LeaveLine } from "@/lib/leaveDeductions";
 import { customRunFieldsForPreview, type PayrollConfig, type PayrollFieldDefinition } from "@/lib/payrollFieldTypes";
 import { applyAutoArrearsToGovernmentMonthly, arrearChain, totalArrearsPaid } from "@/lib/payrollArrearCalc";
 import {
@@ -2879,6 +2879,19 @@ function PayrollPageContent() {
       const rows = await collectAllRunRowsForExport();
       if (rows.length === 0) {
         throw new Error("No employees to save in draft.");
+      }
+      // A leave line with empty / 0 / too many days is not saved (the calculation would cap it, so what is saved
+      // would differ from what was typed). Duplicate-line warnings do not block.
+      const badLeave = rows
+        .filter((r) => {
+          const lines = (r as { govRecalc?: { leaveLines?: LeaveLine[] } }).govRecalc?.leaveLines;
+          return Array.isArray(lines) && lines.some((l) => leaveLineError(l) != null);
+        })
+        .map((r) => String((r as { employeeName?: string | null; employeeEmail?: string }).employeeName || (r as { employeeEmail?: string }).employeeEmail || r.employeeUserId));
+      if (badLeave.length > 0) {
+        const names = badLeave.length > 3 ? `${badLeave.slice(0, 3).join(", ")} and ${badLeave.length - 3} more` : badLeave.join(", ");
+        showToast("error", `Fix leave lines for ${names} before saving.`);
+        return false;
       }
       const periodKey = payrollPeriodKey(runYear, runMonth);
       const rowsToSave = rowsForPayrollDraftSave(

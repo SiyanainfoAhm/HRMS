@@ -9,6 +9,7 @@ import {
   computeLeaveCuts,
   computeLeaveLineCut,
   daysInMonthOf,
+  leaveLineError,
   type LeaveCutContext,
   type LeaveLine,
   type LeaveLineCut,
@@ -141,12 +142,7 @@ export function LeaveLinesEditor({
 
   const options = monthOptions(runYear, runMonth, lines);
   const dimOf = (l: LeaveLine) => daysInMonthOf(l.year, l.month);
-  const error = (l: LeaveLine): string | null => {
-    const dim = dimOf(l);
-    if (!(l.days > 0)) return `Enter days (1–${dim})`;
-    if (l.days > dim) return `At most ${dim} days in ${monthLabel(l.year, l.month)}`;
-    return null;
-  };
+  const error = (l: LeaveLine): string | null => leaveLineError(l);
   const dupKey = (l: LeaveLine) => `${l.type}-${monthKey(l.year, l.month)}`;
   const dupCount = new Map<string, number>();
   for (const l of lines) dupCount.set(dupKey(l), (dupCount.get(dupKey(l)) ?? 0) + 1);

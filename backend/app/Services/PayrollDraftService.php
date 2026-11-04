@@ -213,6 +213,7 @@ class PayrollDraftService
                             'employees' => ['Existing drafts accept patches for existing employees with explicit changedFields only. Reload and retry.'],
                         ]);
                     }
+                    if (in_array('leaveLines', $changedFields, true)) $this->assertLeaveLinesValid($payload, (string) ($row['employeeCode'] ?? $employeeUserId));
                     $payload = $this->applyChangedFields($beforePayload, $payload, $changedFields);
                     $payload = $this->recalculateDraftTotals($payload, $payrollFieldDefinitions);
                 } else {
@@ -1016,6 +1017,24 @@ class PayrollDraftService
         if ($current->isNotEmpty()) return $current->first();
 
         return null;
+    }
+
+    /** Leave lines must have whole days from 1 up to the days of their month; a capped value is never stored. */
+    private function assertLeaveLinesValid(array $payload, string $who): void
+    {
+        $lines = $payload['govRecalc']['leaveLines'] ?? null;
+        if (! is_array($lines)) return;
+        foreach ($lines as $line) {
+            $days = is_array($line) ? ($line['days'] ?? null) : null;
+            $month = (int) ($line['month'] ?? 0);
+            $year = (int) ($line['year'] ?? 0);
+            $max = ($month >= 1 && $month <= 12 && $year > 0) ? (int) date('t', mktime(0, 0, 0, $month, 1, $year)) : 0;
+            if (! is_numeric($days) || (float) $days != floor((float) $days) || $days < 1 || $days > $max) {
+                throw ValidationException::withMessages([
+                    'leaveLines' => ["Fix leave lines for {$who} before saving: days must be a whole number from 1 to the days in that month."],
+                ]);
+            }
+        }
     }
 
     private function applyChangedFields(array $saved, array $incoming, array $fields): array

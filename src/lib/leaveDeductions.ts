@@ -76,6 +76,20 @@ export function daysInMonthOf(year: number, month: number): number {
   return new Date(y, m, 0).getDate();
 }
 
+const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/**
+ * Why a leave line cannot be saved, or null when it is fine: days must be a whole number from 1 up to the days of
+ * its month. Used by the editor (message under the field) and by Save Draft (blocks the save).
+ */
+export function leaveLineError(line: Pick<LeaveLine, "month" | "year" | "days">): string | null {
+  const dim = daysInMonthOf(line.year, line.month);
+  const days = Number(line.days);
+  if (!Number.isFinite(days) || !(days > 0)) return `Enter days (1–${dim})`;
+  if (days > dim) return `At most ${dim} days in ${MONTH_NAMES[line.month - 1] ?? line.month} ${line.year}`;
+  return null;
+}
+
 /** HPL: half a day's Basic per HPL day. */
 export const HPL_DAY_FACTOR = 0.5;
 
