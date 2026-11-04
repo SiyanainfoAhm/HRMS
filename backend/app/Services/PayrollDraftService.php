@@ -65,7 +65,7 @@ class PayrollDraftService
             ->get()
             ->map(function (HrmsPayrollDraftEmployee $row) use ($companyId, $year, $month, $finalized, $quarterPayrollFieldDefinitions) {
                 if (! $finalized && is_array($row->row_payload)) {
-                    $meta = ($this->quarterService ?? app(QuarterService::class))->quarterMetaForEmployeePeriod($companyId, (string) $row->employee_user_id, $year, $month);
+                    $meta = ($this->quarterService ?? app(QuarterService::class))->quarterMetaForDraft($companyId, (string) $row->employee_user_id, $year, $month);
                     $master = $this->resolvePayrollMasterForPeriod($companyId, (string) $row->employee_user_id, $year, $month);
                     $row->row_payload = $this->applyAuthoritativeQuarterValues($row->row_payload, $meta, $year, $month, $quarterPayrollFieldDefinitions, $master);
                     $row->row_payload = $this->reconcileDraftElectricity($row->row_payload, $companyId, $year, $month, [], $master, $quarterPayrollFieldDefinitions);
@@ -220,7 +220,7 @@ class PayrollDraftService
                 }
                 $master = $this->resolvePayrollMasterForPeriod($companyId, $employeeUserId, $year, $month);
                 $payload = $this->reconcileDraftElectricity($payload, $companyId, $year, $month, $changedFields, $master, $payrollFieldDefinitions);
-                $quarterMeta = ($this->quarterService ?? app(QuarterService::class))->quarterMetaForEmployeePeriod($companyId, $employeeUserId, $year, $month);
+                $quarterMeta = ($this->quarterService ?? app(QuarterService::class))->quarterMetaForDraft($companyId, $employeeUserId, $year, $month);
                 $payload = $this->applyAuthoritativeQuarterValues($payload, $quarterMeta, $year, $month, $payrollFieldDefinitions, $master);
 
                 $attrs = [
@@ -961,6 +961,24 @@ class PayrollDraftService
         return $payload;
     }
 
+    /**
+     * The row exactly as a first save would build it from the calculated (pre-edit) values: same electricity reconciliation and
+     * the same Payroll Master / live Quarters context, with no operator edits. Used only as the audit comparison point.
+     *
+     * @param array<string, mixed> $payload
+     * @return array<string, mixed>
+     */
+    public function baselineSnapshot(string $companyId, int $year, int $month, string $employeeUserId, array $payload): array
+    {
+        $definitions = HrmsPayrollFieldDefinition::query()->where('company_id', $companyId)->where('is_active', true)
+            ->get(['field_key', 'field_group', 'field_type', 'include_in_total_earnings', 'include_in_total_deductions'])->all();
+        $master = $this->resolvePayrollMasterForPeriod($companyId, $employeeUserId, $year, $month);
+        $payload = $this->reconcileDraftElectricity($payload, $companyId, $year, $month, [], $master, $definitions);
+        $quarterMeta = ($this->quarterService ?? app(QuarterService::class))->quarterMetaForDraft($companyId, $employeeUserId, $year, $month);
+
+        return $this->applyAuthoritativeQuarterValues($payload, $quarterMeta, $year, $month, $definitions, $master);
+    }
+
     private function resolvePayrollMasterForPeriod(string $companyId, string $employeeUserId, int $year, int $month): ?HrmsPayrollMaster
     {
         $asOf = Carbon::create($year, $month, 1)->endOfMonth()->toDateString();
@@ -1065,7 +1083,7 @@ class PayrollDraftService
                 $paths = [...$paths, 'govRecalc.leaveRemarks', 'governmentMonthly.leaveRemarks', 'governmentMonthly.leave_remarks', ...$totals];
                 continue;
             }
-            if (in_array($field, ['payDays', 'unpaidLeaveDays', 'hplDays', 'eolDays', 'hplReferenceMonth', 'hplReferenceYear', 'eolReferenceMonth', 'eolReferenceYear'], true)) {
+            if (in_array($field, ['payDays', 'unpaidLeaveDays', 'hplDays', 'eolDays', 'leaveLines', 'hplReferenceMonth', 'hplReferenceYear', 'eolReferenceMonth', 'eolReferenceYear'], true)) {
                 // These are calculation drivers. The resolved row contains the
                 // documented dependent monthly recalculation; unrelated employee
                 // rows and record membership remain untouched.
@@ -1074,6 +1092,8 @@ class PayrollDraftService
                     'govRecalc.cpfManualOverride', 'govRecalc.hplDeductionManualOverride', 'govRecalc.eolDeductionManualOverride',
                     'govRecalc.electricityManualOverride', 'govRecalc.quarterRentManualOverride', 'govRecalc.nightAllowanceManualOverride', ...$totals];
                 $removePaths = [...$removePaths, 'govRecalc.earningPaidOverrides', 'govRecalc.deductionPaidOverrides'];
+                // The leave lines (HPL / EOL, month, days) travel with their day totals.
+                if ($field === 'leaveLines') $paths = [...$paths, 'govRecalc.hplDays', 'govRecalc.eolDays'];
                 continue;
             }
             if (in_array($field, ['daArrear', 'transportArrear', 'grossArrear', 'cpfArrear', 'netArrear'], true)) {

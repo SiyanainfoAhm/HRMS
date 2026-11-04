@@ -87,7 +87,7 @@ const headerRow = (XLSX.utils.sheet_to_json<string[]>(detail, { header: 1 }) as 
 const acctCol = (XLSX.utils.sheet_to_json<string[]>(detail, { header: 1 }) as string[][])[headerRow].indexOf("AccountNumber");
 const acct = detail[XLSX.utils.encode_cell({ r: headerRow + 1, c: acctCol })] as Cell;
 if (acct.t !== "s" || acct.v !== "001234567891") fail(`Account number must stay text, got ${JSON.stringify(acct)}`);
-const netCol = (XLSX.utils.sheet_to_json<string[]>(detail, { header: 1 }) as string[][])[headerRow].indexOf("NetPay");
+const netCol = (XLSX.utils.sheet_to_json<string[]>(detail, { header: 1 }) as string[][])[headerRow].indexOf("NetSalary");
 const net = detail[XLSX.utils.encode_cell({ r: headerRow + 1, c: netCol })] as Cell;
 if (net.t !== "n") fail("NetPay must be a numeric cell");
 

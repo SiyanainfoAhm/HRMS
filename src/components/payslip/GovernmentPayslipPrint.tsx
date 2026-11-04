@@ -101,10 +101,12 @@ export const GovernmentPayslipPrint = forwardRef<HTMLDivElement, GovernmentPaysl
       Number(gov.hpl_reference_year ?? periodYear),
       Number(gov.hpl_reference_month ?? periodMonth),
     ) || dim;
-    const eolAdjustment = Number(gov.eol_amount) || leaveSalaryAdjustment(
+    // Rows saved with leave lines carry the adjustment that was actually taken off (all lines summed);
+    // older rows fall back to the single reference month calculation.
+    const eolAdjustment = gov.eol_adjustment != null ? Number(gov.eol_adjustment) : Number(gov.eol_amount) || leaveSalaryAdjustment(
       Number(gov.eol_basis_amount ?? 0), eolDays, eolReferenceDays,
     );
-    const hplAdjustment = Number(gov.hpl_amount) || leaveSalaryAdjustment(
+    const hplAdjustment = gov.hpl_adjustment != null ? Number(gov.hpl_adjustment) : Number(gov.hpl_amount) || leaveSalaryAdjustment(
       Number(gov.hpl_basis_amount ?? 0), hplDays, hplReferenceDays, 0.5,
     );
 

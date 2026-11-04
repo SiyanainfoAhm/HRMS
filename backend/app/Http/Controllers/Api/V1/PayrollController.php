@@ -592,7 +592,7 @@ class PayrollController extends Controller
                 $quarterMeta = $isGeneratedPayrollPeriod
                     ? ['hasQuarter' => false, 'quarterAssigned' => false, 'quarterId' => null, 'quarterName' => null,
                         'quarterType' => null, 'quarterTypeId' => null, 'quarterRent' => 0.0, 'hraEligible' => true]
-                    : $this->quarterService->quarterMetaForEmployeePeriod(
+                    : $this->quarterService->quarterMetaForDraft(
                         (string) $user->company_id,
                         $employeeUserId,
                         $year,
@@ -2271,6 +2271,9 @@ class PayrollController extends Controller
             'hplReferenceYear' => $gov->hpl_reference_year ? (int) $gov->hpl_reference_year : null,
             'eolBasisAmount' => $num($gov->eol_basis_amount ?? 0),
             'hplBasisAmount' => $num($gov->hpl_basis_amount ?? 0),
+            'eolAdjustment' => isset($gov->eol_adjustment) ? $num($gov->eol_adjustment) : null,
+            'hplAdjustment' => isset($gov->hpl_adjustment) ? $num($gov->hpl_adjustment) : null,
+            'leaveLines' => is_array($gov->leave_lines ?? null) ? $gov->leave_lines : (is_string($gov->leave_lines ?? null) ? json_decode($gov->leave_lines, true) : null),
             'electricityUnitsConsumed' => $num($gov->electricity_units_consumed ?? 0),
             'electricityUnitRate' => $num($gov->electricity_unit_rate ?? 0),
             'electricityTariffId' => $gov->electricity_tariff_id ?? null,
@@ -2423,9 +2426,10 @@ class PayrollController extends Controller
         // saved with no quarter id/name/type. Take them from the Master's quarter (new runs only).
         $quarterId = $gm['quarterId'] ?? $gm['quarter_id'] ?? null;
         if (! $quarterId && (bool) ($gm['hasQuarter'] ?? $gm['has_quarter'] ?? false)) {
-            $quarterId = \Illuminate\Support\Facades\DB::table('cirt_payroll_master')->where('id', $masterId)->value('quarter_id');
+            // The Master's quarter_id is only a mirror (often unset); the assignment is authoritative.
+            $quarterId = $this->quarterService->quarterMetaForDraft($companyId, $employeeUserId, $year, $month)['quarterId'] ?? null;
         }
-        if ($quarterId && empty($gm['quarterName'] ?? $gm['quarter_name'] ?? null)) {
+        if ($quarterId && (empty($gm['quarterName'] ?? $gm['quarter_name'] ?? null) || empty($gm['quarterType'] ?? $gm['quarter_type'] ?? null))) {
             $quarter = \Illuminate\Support\Facades\DB::table('cirt_quarters')->where('id', $quarterId)->first(['quarter_name', 'quarter_type']);
             $gm['quarterId'] = $quarterId;
             $gm['quarterName'] = $quarter->quarter_name ?? null;
@@ -2549,6 +2553,7 @@ class PayrollController extends Controller
             'quarter_type' => $gm['quarterType'] ?? $gm['quarter_type'] ?? null,
             // Division / designation as they are for this month (reports must not follow a later Settings rename).
             ...\App\Support\OrgNameSnapshot::forMaster((string) $masterId),
+            ...$this->leaveLineColumns($gm),
         ]);
 
         return (string) $record->id;
@@ -2954,10 +2959,31 @@ class PayrollController extends Controller
             ->where('month_year', $monthYear)
             ->first();
 
+        // DA rate in force for the leave month AFTER revisions (cirt_da_revision_events). A month that was
+        // paid before a revision (e.g. September 2026 paid at 60% before the 60% -> 63% revision effective
+        // 01.07.2026) still carries the old rate in its stored payroll, so the stored da_actual is not used for the rate.
+        $revisionDaPercent = $this->daPercentInForceForMonth($companyId, $year, $month);
+
         if ($monthly) {
+            // Gross Basic of the leave month: the Payroll Master effective in that month. A saved month's
+            // basic_actual is not used when the employee had leave in it (the old calculation stored the
+            // reduced Basic there), so it is only the fallback when no master version covers the month.
+            $asOfMonth = sprintf('%04d-%02d-%02d', $year, $month, min(28, $daysInMonth));
+            $monthMaster = $this->resolveMasterForPayrollDate($companyId, $employeeUserId, $asOfMonth);
+            $masterBasic = $monthMaster ? (float) ($monthMaster->gross_basic_pay ?? $monthMaster->gross_salary ?? 0) : 0.0;
+            $basic = $masterBasic > 0 ? $masterBasic : (float) $monthly->basic_actual;
+            $storedBasic = (float) $monthly->basic_actual;
+            $storedPercent = $storedBasic > 0 ? round(((float) $monthly->da_actual / $storedBasic) * 100, 2) : null;
+            $daPercent = $revisionDaPercent ?? $storedPercent ?? 0.0;
+
             return response()->json([
-                'basic' => (float) $monthly->basic_actual,
-                'da' => (float) $monthly->da_actual,
+                'basic' => $basic,
+                'grossBasic' => $basic,
+                'da' => $revisionDaPercent !== null ? \App\Support\Money::percentOf($basic, $daPercent) : (float) $monthly->da_actual,
+                'daPercent' => $daPercent,
+                'daPercentSource' => $revisionDaPercent !== null ? 'da_revision' : 'monthly_payroll',
+                'daPercentPaid' => $storedPercent,
+                'basicSource' => $masterBasic > 0 ? 'payroll_master' : 'monthly_payroll',
                 'hra' => (float) $monthly->hra_actual,
                 'medical' => (float) $monthly->medical_actual,
                 'daysInMonth' => (int) ($monthly->days_in_month ?? $daysInMonth),
@@ -2978,11 +3004,15 @@ class PayrollController extends Controller
         $hraPct = (float) ($master->hra_percent ?? 0);
         $med = (float) ($master->medical ?? 0);
         $hasQuarter = (bool) ($master->has_quarter ?? false);
+        $daPct = $revisionDaPercent ?? $daPct;
         $hra = $hasQuarter ? 0.0 : \App\Support\Money::percentOf($gb, $hraPct);
         $da = \App\Support\Money::percentOf($gb, $daPct);
 
         return response()->json([
             'basic' => $gb,
+            'grossBasic' => $gb,
+            'daPercent' => $daPct,
+            'daPercentSource' => $revisionDaPercent !== null ? 'da_revision' : 'payroll_master',
             'da' => $da,
             'hra' => $hra,
             'medical' => $med,
@@ -2990,5 +3020,47 @@ class PayrollController extends Controller
             'source' => 'payroll_master',
             'warning' => 'Reference payroll not found. Current payroll master values are being used.',
         ]);
+    }
+
+    /**
+     * The DA percentage in force on the first day of the given month: the new rate of the latest revision
+     * event effective on or before it (ties: the most recently created). Null when there is no revision event.
+     */
+    private function daPercentInForceForMonth(string $companyId, int $year, int $month): ?float
+    {
+        $event = \App\Models\HrmsDaRevisionEvent::query()
+            ->where('company_id', $companyId)
+            ->whereDate('effective_from', '<=', sprintf('%04d-%02d-01', $year, $month))
+            ->orderByDesc('effective_from')
+            ->orderByDesc('created_at')
+            ->first();
+
+        return $event ? (float) $event->new_da_percent : null;
+    }
+
+    /**
+     * The leave lines a payroll row was calculated from and the resulting HPL / EOL adjustments (CIRT leave
+     * calculation). Only written once migration 2026_11_05_100000 has added the columns, so finalising keeps working
+     * on a database that has not been migrated yet.
+     *
+     * @param  array<string, mixed>  $gm
+     * @return array<string, mixed>
+     */
+    private function leaveLineColumns(array $gm): array
+    {
+        $table = 'cirt_monthly_payroll';
+        $out = [];
+        if (\Illuminate\Support\Facades\Schema::hasColumn($table, 'leave_lines')) {
+            $lines = $gm['leaveLines'] ?? $gm['leave_lines'] ?? null;
+            $out['leave_lines'] = is_array($lines) ? json_encode(array_values($lines)) : null;
+        }
+        foreach (['hpl_adjustment' => 'hplAdjustment', 'eol_adjustment' => 'eolAdjustment'] as $column => $key) {
+            if (\Illuminate\Support\Facades\Schema::hasColumn($table, $column)) {
+                $value = $gm[$key] ?? $gm[$column] ?? null;
+                $out[$column] = is_numeric($value) ? \App\Support\Money::roundMoney($value) : null;
+            }
+        }
+
+        return $out;
     }
 }

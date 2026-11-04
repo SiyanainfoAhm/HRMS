@@ -6,6 +6,7 @@ import {
   buildPayrollExcelRow,
   buildPayrollExcelHeaders,
   collectDynamicPayrollExcelColumns,
+  retiredEmptyExcelColumns,
   payrollExcelAmountColumnIndices,
   type GovernmentMonthlyRow,
 } from "@/lib/payrollExcelExport";
@@ -394,7 +395,7 @@ export async function GET(request: NextRequest) {
     ]),
   );
   const dynamicCols = collectDynamicPayrollExcelColumns(govList, fieldLabelByKey, exportableKeys, fieldGroupByKey);
-  const excelHeaders = buildPayrollExcelHeaders(dynamicCols);
+  const excelHeaders = buildPayrollExcelHeaders(dynamicCols, retiredEmptyExcelColumns(govList));
 
   const periodStart = String(payload.period?.periodStart ?? payload.period?.period_start ?? "");
   const payrollStatus: "Finalized" | "Draft" = Boolean(payload.period?.isLocked ?? payload.period?.is_locked) ? "Finalized" : "Draft";

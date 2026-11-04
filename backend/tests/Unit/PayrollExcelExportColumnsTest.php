@@ -21,22 +21,20 @@ final class PayrollExcelExportColumnsTest extends TestCase
         $this->assertStringContainsString('"PayrollMode"', $source);
         $this->assertStringContainsString('"PT"', $source);
         $this->assertStringContainsString('"TakeHome"', $source);
-        $this->assertStringContainsString('"ProfessionalTax"', $source);
-        $this->assertStringContainsString('"NetPay"', $source);
         $this->assertStringContainsString('"ElectricityUnitRate"', $source);
 
-        preg_match('/export const PAYROLL_EXCEL_HEADER = \[([\s\S]*?)\] as const;/', $source, $m);
-        $this->assertNotEmpty($m[1] ?? null);
-        $headerBlock = $m[1];
-        $this->assertStringNotContainsString('"PayrollMode"', $headerBlock);
-        $this->assertStringNotContainsString('"PT"', $headerBlock);
-        $this->assertStringNotContainsString('"TakeHome"', $headerBlock);
-        $this->assertStringNotContainsString('"ElectricityUnitRate"', $headerBlock);
-        $this->assertStringContainsString('"ProfessionalTax"', $headerBlock);
-        $this->assertStringContainsString('"NetPay"', $headerBlock);
-        $this->assertStringContainsString('"CalendarDays"', $headerBlock);
-        $this->assertStringContainsString('"EOLDays"', $headerBlock);
-        $this->assertStringContainsString('"HPLDays"', $headerBlock);
-        $this->assertStringContainsString('"EquivalentPayableDays"', $headerBlock);
+        // The fixed columns are derived from the Run Payroll field list, not hard-coded (one source of truth).
+        $this->assertStringContainsString('from "./runPayrollFields"', $source);
+        $this->assertStringContainsString('RUN_PAYROLL_EARNING_LINES', $source);
+        $this->assertStringContainsString('RUN_PAYROLL_DEDUCTION_LINES', $source);
+        preg_match('/const EXPORT_COLUMNS[\s\S]*?\}\)\(\);/', $source, $m);
+        $this->assertNotEmpty($m[0] ?? null, 'EXPORT_COLUMNS builder not found');
+        foreach (['StdLicenceFee', '"NetPay"', '"CTC"', '"TDS"', 'EmployerPF', 'NightHours', 'QuarterRent"', 'QuarterAssigned'] as $gone) {
+            $this->assertStringNotContainsString($gone, $m[0], "$gone must not be an exported column");
+        }
+
+        $fields = file_get_contents(dirname(__DIR__, 3).'/src/lib/runPayrollFields.ts');
+        $this->assertStringNotContainsString('stdLicenceFee', $fields, 'Std Licence Fee is not a Run Payroll line');
+        $this->assertStringContainsString('key: "quarterRent"', $fields);
     }
 }

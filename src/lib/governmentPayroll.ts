@@ -9,13 +9,8 @@ import {
 } from "./payrollCpfCalculation";
 import type { PayrollConfig } from "./payrollFieldTypes";
 import { sumCustomBagForTotal } from "./payrollFieldTypes";
-import {
-  computeEolHplDeductions,
-  applyProportionalEarningsCut,
-  applyBasicDaEarningsCut,
-  isSamePayrollReferencePeriod,
-  type EolHplReferenceSalary,
-} from "./hplEolDeductions";
+import type { EolHplReferenceSalary } from "./hplEolDeductions";
+import { computeLeaveCuts, normalizeLeaveLines, type LeaveLine } from "./leaveDeductions";
 import { DEFAULT_NIGHT_ALLOWANCE_BASIC_CEILING, resolveNightAllowanceAmount } from "./nightAllowanceCalculation";
 import { masterRecordToDeductionDefaults } from "./masterRunPayrollMapping";
 import {
@@ -156,6 +151,8 @@ export type GovernmentMonthlyInput = {
   hplDays?: number;
   /** Extra ordinary leave days — deducted using reference month salary basis. */
   eolDays?: number;
+  /** Leave lines (type, month/year, days). When present they replace hplDays/eolDays + the reference months. */
+  leaveLines?: LeaveLine[];
   eolReferenceMonth?: number;
   eolReferenceYear?: number;
   hplReferenceMonth?: number;
@@ -269,8 +266,13 @@ export type GovernmentMonthlyComputed = {
   eolReferenceYear?: number;
   hplReferenceMonth?: number;
   hplReferenceYear?: number;
+  /** Total taken off the paid lines for EOL (Basic + DA + HRA + Medical) / HPL (Basic + DA), all leave lines summed. */
   eolBasisAmount?: number;
   hplBasisAmount?: number;
+  eolAdjustment?: number;
+  hplAdjustment?: number;
+  /** The leave lines the deduction was calculated from, with the resolved Basic / DA % / days per line. */
+  leaveLines?: LeaveLine[];
   eolReferenceWarning?: string;
   hplReferenceWarning?: string;
   electricityUnitsConsumed?: number;
@@ -371,72 +373,54 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
   const eolRefYear = input.eolReferenceYear ?? runYear;
   const hplRefMonth = input.hplReferenceMonth ?? runMonth;
   const hplRefYear = input.hplReferenceYear ?? runYear;
-  const eolIsCurrent = isSamePayrollReferencePeriod(eolRefMonth, eolRefYear, runMonth, runYear);
-  const hplIsCurrent = isSamePayrollReferencePeriod(hplRefMonth, hplRefYear, runMonth, runYear);
+  // Leave (HPL / EOL) per the CIRT leave calculation: each line is cut on its own leave month, Basic first,
+  // then DA / HRA / Medical derived from the Basic cut (see leaveDeductions.ts). The cut is taken off the paid
+  // earnings lines, so the auto HPL / EOL deduction lines stay 0 (no double counting). A manual HPL / EOL
+  // override skips the earnings cut for that leave type and uses the typed deduction instead.
+  const leaveLines = normalizeLeaveLines(
+    {
+      leaveLines: input.leaveLines,
+      hplDays: input.hplDays,
+      eolDays: input.eolDays,
+      hplReferenceMonth: hplRefMonth,
+      hplReferenceYear: hplRefYear,
+      eolReferenceMonth: eolRefMonth,
+      eolReferenceYear: eolRefYear,
+      hplReferenceSalary: input.hplReferenceSalary,
+      eolReferenceSalary: input.eolReferenceSalary,
+      hplReferenceDaysInMonth: input.hplReferenceDaysInMonth,
+      eolReferenceDaysInMonth: input.eolReferenceDaysInMonth,
+    },
+    runMonth,
+    runYear,
+  );
+  const leaveCtx = { runMonth, runYear, grossBasic: gb, daPercent: daPct, hraPercent: hraPct, medicalFixed: medFixed };
+  const hplAuto = computeLeaveCuts(leaveLines.filter((l) => l.type === "HPL"), leaveCtx);
+  const eolAuto = computeLeaveCuts(leaveLines.filter((l) => l.type === "EOL"), leaveCtx);
+  const leaveAll = computeLeaveCuts(leaveLines, leaveCtx);
+  const hplLeave = { hplDays: hplAuto.hplDays, hplBasisAmount: hplAuto.hplAdjustment, hplDeduction: 0 };
+  const eolLeave = { eolDays: eolAuto.eolDays, eolBasisAmount: eolAuto.eolAdjustment, eolDeduction: 0 };
 
-  const fullMonthRef: EolHplReferenceSalary = {
-    basic: basicActual,
-    da: daActual,
-    hra: hraActual,
-    medical: medicalActual,
-  };
-  const eolRefSalary: EolHplReferenceSalary = eolIsCurrent
-    ? fullMonthRef
-    : (input.eolReferenceSalary ?? fullMonthRef);
-  const hplRefSalary: EolHplReferenceSalary = hplIsCurrent
-    ? fullMonthRef
-    : (input.hplReferenceSalary ?? eolRefSalary);
+  let eolDeduction = input.eolDeductionManualOverride ? roundMoney(d.eol) : 0;
+  let hplDeduction = input.hplDeductionManualOverride ? roundMoney(d.hpl) : 0;
 
-  const eolLeave = computeEolHplDeductions({
-    referenceSalary: eolRefSalary,
-    daysInReferenceMonth: eolIsCurrent ? dim : (input.eolReferenceDaysInMonth ?? dim),
-    eolDays: input.eolDays,
-    hplDays: 0,
-  });
-  const hplLeave = computeEolHplDeductions({
-    referenceSalary: hplRefSalary,
-    daysInReferenceMonth: hplIsCurrent ? dim : (input.hplReferenceDaysInMonth ?? dim),
-    eolDays: 0,
-    hplDays: input.hplDays,
-  });
-
-  // Always reduce paid earnings for EOL/HPL (current or prior-month reference) so Basic/DA/HRA/Medical
-  // show the cut in Earnings. Auto HPL/EOL deduction lines stay 0 to avoid double-counting;
-  // manual HPL/EOL overrides skip the earnings cut and use the typed deduction amounts.
-  let eolDeduction = input.eolDeductionManualOverride
-    ? roundMoney(d.eol)
-    : eolLeave.eolDeduction;
-  let hplDeduction = input.hplDeductionManualOverride
-    ? roundMoney(d.hpl)
-    : hplLeave.hplDeduction;
-
+  const cutOf = (c: ReturnType<typeof computeLeaveCuts>, paid: number, key: "basic" | "da" | "hra" | "medical") =>
+    Math.min(Math.max(0, paid), c[key]);
   let basicOut = basicPaidF;
   let daOut = daPaidF;
   let hraOut = hraPaidF;
   let medicalOut = medicalPaidF;
-
-  if (eolLeave.eolDays > 0 && !input.eolDeductionManualOverride) {
-    const cut = applyProportionalEarningsCut(
-      { basic: basicOut, da: daOut, hra: hraOut, medical: medicalOut },
-      eolDeduction,
-    );
-    basicOut = cut.basic;
-    daOut = cut.da;
-    hraOut = cut.hra;
-    medicalOut = cut.medical;
-    eolDeduction = 0;
+  if (!input.eolDeductionManualOverride) {
+    basicOut = sumMoney(basicOut, -cutOf(eolAuto, basicOut, "basic"));
+    daOut = sumMoney(daOut, -cutOf(eolAuto, daOut, "da"));
+    hraOut = sumMoney(hraOut, -cutOf(eolAuto, hraOut, "hra"));
+    medicalOut = sumMoney(medicalOut, -cutOf(eolAuto, medicalOut, "medical"));
   }
-  if (hplLeave.hplDays > 0 && !input.hplDeductionManualOverride) {
-    const cut = applyBasicDaEarningsCut(
-      { basic: basicOut, da: daOut, hra: hraOut, medical: medicalOut },
-      hplDeduction,
-    );
-    basicOut = cut.basic;
-    daOut = cut.da;
-    hraOut = cut.hra;
-    medicalOut = cut.medical;
-    hplDeduction = 0;
+  if (!input.hplDeductionManualOverride) {
+    basicOut = sumMoney(basicOut, -cutOf(hplAuto, basicOut, "basic"));
+    daOut = sumMoney(daOut, -cutOf(hplAuto, daOut, "da"));
   }
+  const leaveWarning = leaveAll.lines.map((l) => l.warning).find(Boolean);
 
   const nightRate = Math.max(0, Number(input.nightAllowanceRate) || 0);
   const nightHours = Math.max(0, Number(input.nightHours) || 0);
@@ -642,7 +626,12 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
     hplReferenceYear: hplRefYear,
     eolBasisAmount: eolLeave.eolBasisAmount,
     hplBasisAmount: hplLeave.hplBasisAmount,
-    eolReferenceWarning: input.eolReferenceWarning,
+    eolAdjustment: eolAuto.eolAdjustment,
+    hplAdjustment: hplAuto.hplAdjustment,
+    leaveLines: leaveAll.lines.map(({ type, month, year, days, grossBasic, daPercent, daysInMonth, warning }) => ({
+      type, month, year, days, grossBasic, daPercent, daysInMonth, ...(warning ? { warning } : {}),
+    })),
+    eolReferenceWarning: input.eolReferenceWarning ?? leaveWarning,
     hplReferenceWarning: input.hplReferenceWarning,
     electricityUnitsConsumed: units,
     electricityUnitRate: unitRate,

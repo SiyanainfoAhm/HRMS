@@ -371,6 +371,44 @@ final class ActivityLogService
         return $out;
     }
 
+    /** The saved draft row of one employee as comparable values, or null when there is none. @return array<string, mixed>|null */
+    private function savedDraftValues(string $companyId, int $year, int $month, string $employeeUserId): ?array
+    {
+        $draft = HrmsPayrollDraft::query()->where('company_id', $companyId)->where('payroll_year', $year)->where('payroll_month', $month)
+            ->where('status', HrmsPayrollDraft::STATUS_DRAFT)->first();
+        $row = $draft?->employees()->where('employee_user_id', $employeeUserId)->first();
+        if (! $row) return null;
+
+        return $this->draftRowValues([
+            'rowPayload' => $row->row_payload, 'payDays' => $row->pay_days, 'grossPay' => $row->gross_pay, 'totalEarnings' => $row->total_earnings,
+            'totalDeductions' => $row->total_deductions, 'totalArrears' => $row->total_arrears, 'netPay' => $row->net_pay, 'remarks' => $row->remarks,
+        ]);
+    }
+
+    /**
+     * First save of a draft: the previous value is the row as calculated from Payroll Master (and live Quarters) before the
+     * operator touched it, built by the same service that builds the draft. It is only a comparison point, never an audit entry.
+     * @param array<string, mixed> $baselineRow
+     * @return array<string, mixed>
+     */
+    private function firstSaveBaselineValues(string $companyId, int $year, int $month, string $employeeUserId, array $baselineRow): array
+    {
+        $payload = is_array($baselineRow['rowPayload'] ?? null) ? $baselineRow['rowPayload'] : $baselineRow;
+        $built = app(PayrollDraftService::class)->baselineSnapshot($companyId, $year, $month, $employeeUserId, $payload);
+        $gm = is_array($built['governmentMonthly'] ?? null) ? $built['governmentMonthly'] : [];
+
+        return $this->draftRowValues([
+            'rowPayload' => $built,
+            'payDays' => $baselineRow['payDays'] ?? $built['payDays'] ?? null,
+            'grossPay' => $built['grossPay'] ?? $baselineRow['grossPay'] ?? null,
+            'totalEarnings' => $gm['totalEarnings'] ?? $baselineRow['totalEarnings'] ?? null,
+            'totalDeductions' => $gm['totalDeductions'] ?? $baselineRow['totalDeductions'] ?? null,
+            'totalArrears' => $baselineRow['totalArrears'] ?? null,
+            'netPay' => $gm['netSalary'] ?? $baselineRow['netPay'] ?? null,
+            'remarks' => $baselineRow['remarks'] ?? null,
+        ]);
+    }
+
     /** @return array<string, mixed> */
     private function draftRowValues(array $row): array
     {
@@ -406,7 +444,9 @@ final class ActivityLogService
         foreach (array_unique([...array_keys($beforeFlat), ...array_keys($afterFlat)]) as $field) {
             $old = $beforeFlat[$field] ?? null;
             $new = $afterFlat[$field] ?? null;
-            $same = (is_numeric($old) && is_numeric($new)) ? (float) $old === (float) $new : $old === $new;
+            // Numbers compare as numbers (30 vs "30"), and 0 / null / "" / "—" are all "nothing", so they never count as a change.
+            $nothing = static fn ($v): bool => $v === null || $v === '' || $v === '—' || (is_numeric($v) && (float) $v === 0.0);
+            $same = ($nothing($old) && $nothing($new)) || ((is_numeric($old) && is_numeric($new)) ? (float) $old === (float) $new : $old === $new);
             if ($same) continue;
             $fields[] = $field;
             $beforeChanged[$field] = $old;

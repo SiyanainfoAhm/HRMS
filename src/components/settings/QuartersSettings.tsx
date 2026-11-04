@@ -26,6 +26,9 @@ export type QuarterRecord = {
   assignedEmployeeId?: string | null;
   assignedEmployeeName?: string | null;
   assignedEmployeeCode?: string | null;
+  isActive?: boolean;
+  /** Server-computed: inactive and never assigned / used by payroll. */
+  canDelete?: boolean;
 };
 
 export type QuarterTypeRecord = {
@@ -77,6 +80,8 @@ export function QuartersSettings() {
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [deactivateTarget, setDeactivateTarget] = useState<QuarterRecord | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<QuarterRecord | null>(null);
+  const [showInactive, setShowInactive] = useState(false);
 
   const [addingType, setAddingType] = useState(false);
   const [newTypeName, setNewTypeName] = useState("");
@@ -94,7 +99,7 @@ export function QuartersSettings() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/settings/quarters");
+      const res = await fetch(`/api/settings/quarters${showInactive ? "?include_inactive=true" : ""}`);
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(firstValidationMessage(data) || "Failed to load quarters");
       setQuarters((data.quarters ?? []) as QuarterRecord[]);
@@ -110,7 +115,7 @@ export function QuartersSettings() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [showInactive]);
 
   useEffect(() => {
     void load();
@@ -258,6 +263,24 @@ export function QuartersSettings() {
     await load();
   }
 
+  async function deleteQuarter(q: QuarterRecord) {
+    setError(null);
+    const res = await fetch(`/api/settings/quarters/${q.id}`, { method: "DELETE" });
+    const data = await res.json().catch(() => ({}));
+    setDeleteTarget(null);
+    if (!res.ok) {
+      setError(firstValidationMessage(data) || "Delete failed");
+      return;
+    }
+    await load();
+  }
+
+  // Only ACTIVE + ASSIGNED quarters count towards the rent figures.
+  const assignedSummary = useMemo(() => {
+    const rows = quarters.filter((q) => q.status === "assigned" && q.isActive !== false);
+    return { count: rows.length, rent: rows.reduce((sum, q) => sum + (Number(q.monthlyRent) || 0), 0) };
+  }, [quarters]);
+
   async function setTypeActive(t: QuarterTypeRecord, active: boolean) {
     setError(null);
     const res = await fetch(`/api/settings/quarter-types/${t.id}/${active ? "activate" : "deactivate"}`, {
@@ -321,6 +344,17 @@ export function QuartersSettings() {
           <Button onClick={openAdd}>Add Quarter</Button>
         </div>
 
+        <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-slate-700">
+          <span>
+            Assigned quarters: <strong>{assignedSummary.count}</strong> · Total monthly rent:{" "}
+            <strong>₹{Math.round(assignedSummary.rent).toLocaleString("en-IN")}</strong>
+          </span>
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} />
+            Show inactive
+          </label>
+        </div>
+
         {error ? <p className="text-sm text-red-600">{error}</p> : null}
 
         {loading ? (
@@ -360,6 +394,16 @@ export function QuartersSettings() {
                         {q.status === "assigned" ? (
                           <Button variant="ghost" size="sm" onClick={() => void unassign(q)}>
                             Unassign
+                          </Button>
+                        ) : null}
+                        {q.canDelete && q.status === "inactive" ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="!text-red-700"
+                            onClick={() => setDeleteTarget(q)}
+                          >
+                            Delete
                           </Button>
                         ) : null}
                         {q.status !== "inactive" ? (
@@ -579,6 +623,16 @@ export function QuartersSettings() {
           <Input value={renameValue} onChange={(e) => setRenameValue(e.target.value)} autoFocus />
         </FormField>
       </Modal>
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="Delete quarter?"
+        message={`Delete quarter ${deleteTarget?.quarterName ?? ""} permanently?`}
+        confirmText="Delete"
+        variant="danger"
+        onConfirm={() => deleteTarget && void deleteQuarter(deleteTarget)}
+        onCancel={() => setDeleteTarget(null)}
+      />
 
       <ConfirmDialog
         open={!!deactivateTarget}

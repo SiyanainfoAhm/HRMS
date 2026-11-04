@@ -4,9 +4,16 @@ import * as XLSX from "xlsx-js-style";
 import { calendarDaysInMonth, equivalentPayableDays } from "@/lib/payrollLeaveDays";
 import { totalArrearsPaid } from "@/lib/payrollArrearCalc";
 import {
+  RUN_PAYROLL_ARREAR_KEYS,
+  RUN_PAYROLL_DEDUCTION_LINES,
+  RUN_PAYROLL_EARNING_LINES,
+  runPayrollSnakeKey,
+} from "@/lib/runPayrollFields";
+import {
   buildPayrollExcelHeaders,
   buildPayrollExcelRow,
   collectDynamicPayrollExcelColumns,
+  retiredEmptyExcelColumns,
   payrollExcelAmountColumnIndices,
   type DynamicPayrollExcelColumn,
   type GovernmentMonthlyRow,
@@ -181,46 +188,13 @@ function addAmount(map: Record<string, number>, label: string, amount: number) {
 }
 
 export function aggregatePayrollSummary(rows: PayrollRunExportRow[]) {
-  const earnings: Record<string, number> = {
-    "Basic Pay": 0,
-    "Dearness Allowance": 0,
-    "House Rent Allowance": 0,
-    "Transport Allowance": 0,
-    "Medical Allowance": 0,
-    "Special Pay": 0,
-    EWA: 0,
-    "Night Allowance": 0,
-    "Uniform Allowance": 0,
-    "Education Allowance": 0,
-    Encashment: 0,
-    "Encashment DA": 0,
-  };
-  const arrears: Record<string, number> = {
-    [PAYROLL_LABELS.daArrears]: 0,
-    [PAYROLL_LABELS.transportArrears]: 0,
-    [PAYROLL_LABELS.grossArrears]: 0,
-  };
-  const deductions: Record<string, number> = {
-    "Income Tax": 0,
-    "Professional Tax": 0,
-    LIC: 0,
-    CPF: 0,
-    "DA CPF": 0,
-    VPF: 0,
-    "PF Loan": 0,
-    "Post Office": 0,
-    "Credit Society": 0,
-    Electricity: 0,
-    Water: 0,
-    Mess: 0,
-    "Bank Recovery": 0,
-    Welfare: 0,
-    HPL: 0,
-    EOL: 0,
-    "Vehicle Charge": 0,
-    "Other Deduction": 0,
-    "Quarter Rent": 0,
-  };
+  // Heads come from the Run Payroll field list (same labels), so the summary only has heads that exist on the screen.
+  const earningLines = RUN_PAYROLL_EARNING_LINES.filter((l) => !l.memo && !RUN_PAYROLL_ARREAR_KEYS.has(l.key));
+  const arrearLines = RUN_PAYROLL_EARNING_LINES.filter((l) => RUN_PAYROLL_ARREAR_KEYS.has(l.key));
+  const earnings: Record<string, number> = Object.fromEntries(earningLines.map((l) => [l.label, 0]));
+  const arrears: Record<string, number> = Object.fromEntries(arrearLines.map((l) => [l.label, 0]));
+  const deductions: Record<string, number> = Object.fromEntries(RUN_PAYROLL_DEDUCTION_LINES.map((l) => [l.label, 0]));
+  let encashmentDaTotal = 0; // retired line: shown only while some row still carries an amount
 
   let totalEarnings = 0;
   let totalDeductions = 0;
@@ -230,18 +204,8 @@ export function aggregatePayrollSummary(rows: PayrollRunExportRow[]) {
   for (const r of rows) {
     const gm = (r.governmentMonthly ?? null) as Record<string, unknown> | null;
     if (gm) {
-      earnings["Basic Pay"] += gmNum(gm, "basicPaid", "basic_paid");
-      earnings["Dearness Allowance"] += gmNum(gm, "daPaid", "da_paid");
-      earnings["House Rent Allowance"] += gmNum(gm, "hraPaid", "hra_paid");
-      earnings["Transport Allowance"] += gmNum(gm, "transportPaid", "transport_paid");
-      earnings["Medical Allowance"] += gmNum(gm, "medicalPaid", "medical_paid");
-      earnings["Special Pay"] += gmNum(gm, "spPayPaid", "sp_pay_paid");
-      earnings.EWA += gmNum(gm, "extraWorkAllowancePaid", "extra_work_allowance_paid");
-      earnings["Night Allowance"] += gmNum(gm, "nightAllowancePaid", "night_allowance_paid");
-      earnings["Uniform Allowance"] += gmNum(gm, "uniformAllowancePaid", "uniform_allowance_paid");
-      earnings["Education Allowance"] += gmNum(gm, "educationAllowancePaid", "education_allowance_paid");
-      earnings.Encashment += gmNum(gm, "encashmentPaid", "encashment_paid");
-      earnings["Encashment DA"] += gmNum(gm, "encashmentDaPaid", "encashment_da_paid");
+      for (const l of earningLines) earnings[l.label] += gmNum(gm, l.key, runPayrollSnakeKey(l.key));
+      encashmentDaTotal += gmNum(gm, "encashmentDaPaid", "encashment_da_paid");
 
       for (const [key, amount] of Object.entries(
         parseCustomBag(gm.customEarnings ?? gm.custom_earnings),
@@ -249,30 +213,10 @@ export function aggregatePayrollSummary(rows: PayrollRunExportRow[]) {
         addAmount(earnings, titleFromFieldKey(key), amount);
       }
 
-      arrears[PAYROLL_LABELS.daArrears] += gmNum(gm, "daArrearsPaid", "da_arrears_paid");
-      arrears[PAYROLL_LABELS.transportArrears] += gmNum(gm, "transportArrearsPaid", "transport_arrears_paid");
-      arrears[PAYROLL_LABELS.grossArrears] += gmNum(gm, "grossArrear", "gross_arrear");
+      for (const l of arrearLines) arrears[l.label] += gmNum(gm, l.key, runPayrollSnakeKey(l.key));
 
       const d = gmDeductions(gm);
-      deductions["Income Tax"] += d.incomeTax;
-      deductions["Professional Tax"] += d.pt;
-      deductions.LIC += d.lic;
-      deductions.CPF += d.cpf;
-      deductions["DA CPF"] += d.daCpf;
-      deductions.VPF += d.vpf;
-      deductions["PF Loan"] += d.pfLoan;
-      deductions["Post Office"] += d.postOffice;
-      deductions["Credit Society"] += d.creditSociety;
-      deductions.Electricity += d.electricity;
-      deductions.Water += d.water;
-      deductions.Mess += d.mess;
-      deductions["Bank Recovery"] += d.loanRecovery;
-      deductions.Welfare += d.welfare;
-      deductions.HPL += d.hpl;
-      deductions.EOL += d.eol;
-      deductions["Vehicle Charge"] += d.vehCharge;
-      deductions["Other Deduction"] += d.other;
-      deductions["Quarter Rent"] += d.quarterRent;
+      for (const l of RUN_PAYROLL_DEDUCTION_LINES) deductions[l.label] += d[l.key] ?? 0;
 
       for (const [key, amount] of Object.entries(
         parseCustomBag(gm.customDeductions ?? gm.custom_deductions),
@@ -294,6 +238,8 @@ export function aggregatePayrollSummary(rows: PayrollRunExportRow[]) {
       totalNet += num(r.takeHome ?? r.netPay);
     }
   }
+
+  if (encashmentDaTotal !== 0) earnings["Encashment DA"] = encashmentDaTotal;
 
   return {
     employeeCount: rows.length,
@@ -700,7 +646,7 @@ export function buildEmployeeDetailSheet(
     exportableFields ? new Set(fieldLabelByKey?.keys()) : undefined,
     fieldGroupByKey,
   );
-  const headers = buildPayrollExcelHeaders(dynamicCols);
+  const headers = buildPayrollExcelHeaders(dynamicCols, retiredEmptyExcelColumns(govRows));
   assertExportHeaders(headers, "Run Payroll Preview Excel / Extract");
   const amountCols = new Set(payrollExcelAmountColumnIndices(headers));
 

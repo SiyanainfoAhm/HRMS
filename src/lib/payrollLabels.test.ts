@@ -44,7 +44,7 @@ assertEq(earn[PAYROLL_LABELS.grossArrears], 350, "payslip Gross Arrears shows th
 assertEq(ded[PAYROLL_LABELS.cpfArrears], 60, "payslip CPF Arr");
 
 // 4. Preview lists carry CPF Arr (deduction) and Net Arrears (earnings, memo) and route arrear edits.
-const shared = readFileSync(new URL("../components/payroll/payrollRunPreviewShared.tsx", import.meta.url), "utf8");
+const shared = readFileSync(new URL("./runPayrollFields.ts", import.meta.url), "utf8");
 for (const needle of ["PAYROLL_LABELS.grossArrears", "PAYROLL_LABELS.netArrears", "PAYROLL_LABELS.cpfArrears", 'arrearField: "grossArrear"', "memo: true"]) {
   if (!shared.includes(needle)) throw new Error(`preview list missing ${needle}`);
 }

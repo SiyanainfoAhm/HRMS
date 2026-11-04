@@ -34,6 +34,11 @@ export type GovRecalcPayload = {
   payLevel: number;
   hplDays?: number;
   eolDays?: number;
+  /**
+   * Leave lines (HPL / EOL, month/year, days). Each is calculated on its own leave month and summed.
+   * When absent, hplDays/eolDays + the reference months are read as one line each (older saved rows).
+   */
+  leaveLines?: import("./leaveDeductions").LeaveLine[];
   leaveRemarks?: string | null;
   eolReferenceMonth?: number;
   eolReferenceYear?: number;
@@ -125,6 +130,7 @@ export function runGovernmentPayrollCompute(
     unpaidDays,
     hplDays: gr.hplDays ?? 0,
     eolDays: gr.eolDays ?? 0,
+    leaveLines: gr.leaveLines,
     eolReferenceMonth: gr.eolReferenceMonth ?? opts.runMonth,
     eolReferenceYear: gr.eolReferenceYear ?? opts.runYear,
     hplReferenceMonth: gr.hplReferenceMonth ?? opts.runMonth,

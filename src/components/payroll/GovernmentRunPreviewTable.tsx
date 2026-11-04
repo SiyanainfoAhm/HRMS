@@ -21,7 +21,9 @@ import {
   mirroredArrearValue,
   resolveUnpaidArrears,
 } from "@/lib/payrollRunArrearMirror";
-import { calendarDaysInMonth, equivalentPayableDays, leaveSalaryAdjustment } from "@/lib/payrollLeaveDays";
+import { equivalentPayableDays } from "@/lib/payrollLeaveDays";
+import { normalizeLeaveLines, type LeaveLine } from "@/lib/leaveDeductions";
+import { LeaveLinesEditor } from "./LeaveLinesEditor";
 import {
   GOV_PREVIEW_CPF_ARREAR_LINE,
   GOV_PREVIEW_DEDUCTION_FIELDS,
@@ -537,12 +539,29 @@ function GovernmentEmployeeDetail({
   const g = row.governmentMonthly;
   const leave = leaveMetaFromRow(row);
   const gRecord = g as Record<string, unknown> | null | undefined;
-  const eolRefMonth = leave.eolReferenceMonth ?? runMonth;
-  const eolRefYear = leave.eolReferenceYear ?? runYear;
-  const hplRefMonth = leave.hplReferenceMonth ?? runMonth;
-  const hplRefYear = leave.hplReferenceYear ?? runYear;
-  const eolBasis = roundMoney(Number(gRecord?.eolBasisAmount ?? 0) || 0);
-  const hplBasis = roundMoney(Number(gRecord?.hplBasisAmount ?? 0) || 0);
+  const grLeave = row.govRecalc as
+    | { leaveLines?: LeaveLine[]; grossBasic?: number; daPercent?: number; hraPercent?: number; medicalFixed?: number }
+    | undefined;
+  const storedLeaveLines = Array.isArray(grLeave?.leaveLines)
+    ? grLeave.leaveLines
+    : Array.isArray(gRecord?.leaveLines)
+      ? (gRecord.leaveLines as LeaveLine[])
+      : null;
+  const leaveLines = storedLeaveLines ?? normalizeLeaveLines((grLeave ?? {}) as object, runMonth, runYear);
+  const leaveCtx =
+    grLeave && Number(grLeave.grossBasic) > 0
+      ? {
+          runMonth,
+          runYear,
+          grossBasic: Number(grLeave.grossBasic) || 0,
+          daPercent: Number(grLeave.daPercent) || 0,
+          hraPercent: Number(grLeave.hraPercent) || 0,
+          medicalFixed: Number(grLeave.medicalFixed) || 0,
+        }
+      : null;
+  const leaveFallbackTotal = roundMoney(
+    (Number(gRecord?.eolAdjustment ?? 0) || 0) + (Number(gRecord?.hplAdjustment ?? 0) || 0),
+  );
   const activeFieldKeys = new Set(payrollFieldDefs?.filter((field) => field.isActive).map((field) => field.fieldKey));
   const isVisibleConfiguredField = (fieldKey?: string) =>
     preserveSavedFields || !fieldKey || activeFieldKeys.has(fieldKey);
@@ -590,132 +609,11 @@ function GovernmentEmployeeDetail({
                   />
                 )}
               </div>
-              <div>
-                <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">HPL days</p>
-                {readOnly ? (
-                  <p className="text-[13px] tabular-nums text-slate-800">{leave.hplDays}</p>
-                ) : (
-                  <DaysNumberInput
-                    min={0}
-                    max={daysInMonth}
-                    value={leave.hplDays}
-                    onChange={(n) => onUpdate(row.employeeUserId, "hplDays", n)}
-                    className={payrollDaysInputClass}
-                    title="Half pay leave — reduces Basic + DA in Earnings (current or prior reference month)"
-                  />
-                )}
-              </div>
-              <div>
-                <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">EOL days</p>
-                {readOnly ? (
-                  <p className="text-[13px] tabular-nums text-slate-800">{leave.eolDays}</p>
-                ) : (
-                  <DaysNumberInput
-                    min={0}
-                    max={daysInMonth}
-                    value={leave.eolDays}
-                    onChange={(n) => onUpdate(row.employeeUserId, "eolDays", n)}
-                    className={payrollDaysInputClass}
-                    title="EOL — reduces Basic + DA + HRA + Medical in Earnings (current or prior reference month)"
-                  />
-                )}
-              </div>
               <SummaryStat label="Calendar days" value={String(daysInMonth)} />
               <SummaryStat
                 label="Pay days after leave"
                 value={fmtIn(equivalentPayableDays(daysInMonth, leave.eolDays, leave.hplDays))}
               />
-              <SummaryStat
-                label="EOL salary adjustment (₹)"
-                value={fmtIn(leave.eolDeductionManualOverride
-                  ? d(row.governmentMonthly, "eol")
-                  : leaveSalaryAdjustment(
-                      Number(row.governmentMonthly?.eolBasisAmount ?? 0),
-                      leave.eolDays,
-                      calendarDaysInMonth(leave.eolReferenceYear ?? runYear, leave.eolReferenceMonth ?? runMonth) || daysInMonth,
-                    ))}
-              />
-              <SummaryStat
-                label="HPL salary adjustment (₹)"
-                value={fmtIn(leave.hplDeductionManualOverride
-                  ? d(row.governmentMonthly, "hpl")
-                  : leaveSalaryAdjustment(
-                      Number(row.governmentMonthly?.hplBasisAmount ?? 0),
-                      leave.hplDays,
-                      calendarDaysInMonth(leave.hplReferenceYear ?? runYear, leave.hplReferenceMonth ?? runMonth) || daysInMonth,
-                      0.5,
-                    ))}
-              />
-              <div className="col-span-2 rounded border border-slate-100 bg-slate-50/80 p-2">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-600">EOL reference</p>
-                {readOnly ? (
-                  <p className="mt-1 text-[12px] text-slate-800">
-                    {MONTH_OPTIONS.find((m) => m.value === eolRefMonth)?.label ?? eolRefMonth} {eolRefYear}
-                  </p>
-                ) : (
-                  <div className="mt-1 grid grid-cols-2 gap-2">
-                    <select
-                      className="input-field text-[12px]"
-                      value={eolRefMonth}
-                      onChange={(e) =>
-                        onUpdate(row.employeeUserId, "eolReferenceMonth", parseInt(e.target.value, 10) || 1)
-                      }
-                    >
-                      {MONTH_OPTIONS.map((m) => (
-                        <option key={m.value} value={m.value}>
-                          {m.label}
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      type="number"
-                      min={2000}
-                      max={2100}
-                      className={payrollDaysInputClass}
-                      value={eolRefYear}
-                      onChange={(e) =>
-                        onUpdate(row.employeeUserId, "eolReferenceYear", parseInt(e.target.value, 10) || runYear)
-                      }
-                    />
-                  </div>
-                )}
-
-              </div>
-              <div className="col-span-2 rounded border border-slate-100 bg-slate-50/80 p-2">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-600">HPL reference</p>
-                {readOnly ? (
-                  <p className="mt-1 text-[12px] text-slate-800">
-                    {MONTH_OPTIONS.find((m) => m.value === hplRefMonth)?.label ?? hplRefMonth} {hplRefYear}
-                  </p>
-                ) : (
-                  <div className="mt-1 grid grid-cols-2 gap-2">
-                    <select
-                      className="input-field text-[12px]"
-                      value={hplRefMonth}
-                      onChange={(e) =>
-                        onUpdate(row.employeeUserId, "hplReferenceMonth", parseInt(e.target.value, 10) || 1)
-                      }
-                    >
-                      {MONTH_OPTIONS.map((m) => (
-                        <option key={m.value} value={m.value}>
-                          {m.label}
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      type="number"
-                      min={2000}
-                      max={2100}
-                      className={payrollDaysInputClass}
-                      value={hplRefYear}
-                      onChange={(e) =>
-                        onUpdate(row.employeeUserId, "hplReferenceYear", parseInt(e.target.value, 10) || runYear)
-                      }
-                    />
-                  </div>
-                )}
-
-              </div>
               <div className="col-span-2">
                 <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Remarks</p>
                 {readOnly ? (
@@ -876,6 +774,11 @@ function GovernmentEmployeeDetail({
                       label={label}
                       readOnly={readOnly}
                       value={d(g, key)}
+                      overrideHint={
+                        key === "quarterRent" && (row.govRecalc as { quarterRentManualOverride?: boolean } | null | undefined)?.quarterRentManualOverride
+                          ? "Typed override"
+                          : undefined
+                      }
                       onChange={(n) => onUpdate(row.employeeUserId, `govDeduction_${key}`, n)}
                     />
                   ))}
@@ -901,6 +804,14 @@ function GovernmentEmployeeDetail({
               </div>
             </PayrollComponentScroller>
             <ArrearsUnpaidSection row={row} readOnly={readOnly} onUpdate={onUpdate} />
+            <LeaveLinesEditor
+              lines={leaveLines}
+              ctx={leaveCtx}
+              readOnly={readOnly}
+              manualOverride={Boolean(leave.hplDeductionManualOverride || leave.eolDeductionManualOverride)}
+              fallbackTotal={leaveFallbackTotal}
+              onChange={(next) => onUpdate(row.employeeUserId, "leaveLines", JSON.stringify(next))}
+            />
           </div>
         </div>
       </div>

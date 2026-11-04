@@ -46,7 +46,7 @@ export function draftFieldValue(payload: Rec | null | undefined, token: string):
   if (token.startsWith("govEarning_")) return gm[token.slice("govEarning_".length)];
   if (token.startsWith("govCustomDeduction_")) return asRec(gm.customDeductions)[token.slice("govCustomDeduction_".length)];
   if (token.startsWith("govCustom_")) return asRec(gm.customEarnings)[token.slice("govCustom_".length)];
-  if (["electricityUnitsConsumed", "nightHours", "nightAllowanceRate", "hplDays", "eolDays", "leaveRemarks"].includes(token)) {
+  if (["electricityUnitsConsumed", "nightHours", "nightAllowanceRate", "hplDays", "eolDays", "leaveLines", "leaveRemarks"].includes(token)) {
     return gr[token] ?? gm[token];
   }
   return p[token] ?? gm[token];
@@ -189,7 +189,7 @@ export function draftTokensOf(payload: Record<string, unknown> | null | undefine
   const gm = asRec(p.governmentMonthly);
   const out = new Set<string>([
     "payDays", "incentive", "prBonus", "reimbursement", "tds", "daArrear", "transportArrear", "grossArrear", "cpfArrear",
-    "netArrear", "electricityUnitsConsumed", "nightHours", "nightAllowanceRate", "hplDays", "eolDays", "leaveRemarks",
+    "netArrear", "electricityUnitsConsumed", "nightHours", "nightAllowanceRate", "hplDays", "eolDays", "leaveLines", "leaveRemarks",
   ]);
   for (const k of Object.keys(asRec(gm.deductions))) out.add(`govDeduction_${k}`);
   for (const k of Object.keys(gm)) if (/Paid$/.test(k)) out.add(`govEarning_${k}`);

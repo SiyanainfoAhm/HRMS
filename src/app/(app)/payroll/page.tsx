@@ -44,6 +44,7 @@ import {
   isSamePayrollReferencePeriod,
   referenceSalaryFromGovRecalc,
 } from "@/lib/hplEolDeductions";
+import { daysInMonthOf, type LeaveLine } from "@/lib/leaveDeductions";
 import { customRunFieldsForPreview, type PayrollConfig, type PayrollFieldDefinition } from "@/lib/payrollFieldTypes";
 import { applyAutoArrearsToGovernmentMonthly, arrearChain, totalArrearsPaid } from "@/lib/payrollArrearCalc";
 import {
@@ -233,6 +234,38 @@ const MASTER_GOVT_DEDUCTION_DEFAULT_COLUMNS: { field: keyof MasterGridRow; label
 type GovMonthlyWithArrear = ReturnType<
   typeof applyAutoArrearsToGovernmentMonthly<GovernmentMonthlyComputed>
 >;
+
+/**
+ * Load, for every leave line that is not in the run month, that month's gross Basic, DA % (after revisions)
+ * and calendar days. Lines of the run month use the run's own values and need no lookup.
+ */
+async function hydrateLeaveLines(
+  employeeUserId: string,
+  gr: GovRecalcPayload,
+  runYear: number,
+  runMonth: number,
+): Promise<GovRecalcPayload> {
+  const lines = gr.leaveLines ?? [];
+  const cache = new Map<string, Promise<Awaited<ReturnType<typeof fetchReferenceSalary>> | null>>();
+  const next = await Promise.all(
+    lines.map(async (line) => {
+      if (line.month === runMonth && line.year === runYear) return line;
+      if (line.grossBasic != null && line.daPercent != null) return line;
+      const key = `${line.year}-${line.month}`;
+      if (!cache.has(key)) cache.set(key, fetchReferenceSalary(employeeUserId, line.year, line.month).catch(() => null));
+      const ref = await cache.get(key)!;
+      if (!ref) return { ...line, warning: "Could not load this month's Basic and DA rate; the run month's values are used." };
+      return {
+        ...line,
+        grossBasic: ref.grossBasic,
+        ...(ref.daPercent != null ? { daPercent: ref.daPercent } : {}),
+        daysInMonth: ref.daysInMonth,
+        warning: ref.warning,
+      };
+    }),
+  );
+  return { ...gr, leaveLines: next };
+}
 
 async function hydrateEolReferenceSalary(
   employeeUserId: string,
@@ -945,6 +978,8 @@ function PayrollPageContent() {
   const editedRunRowKeysRef = useRef<Set<string>>(new Set());
   const changedDraftFieldsRef = useRef<Map<string, Set<string>>>(new Map());
   const auditDirectFieldsRef = useRef<Map<string, Set<string>>>(new Map());
+  /** Row as calculated from Payroll Master before its first edit while no draft exists yet: the audit comparison point of the first save. */
+  const draftBaselineRowsRef = useRef<Map<string, unknown>>(new Map());
   /** Canonical full-period payroll rows keyed by employee_user_id (not page/filter). */
   const resolvedPayrollByUserIdRef = useRef<Map<string, RunPayrollRowLike>>(new Map());
   const draftPayloadByUserRef = useRef<Map<string, Record<string, unknown>>>(new Map());
@@ -1558,6 +1593,7 @@ function PayrollPageContent() {
         if (row.employeeUserId !== employeeUserId) return row;
         const commitEdit = (next: typeof row) => {
           const cacheKey = payrollRowCacheKey(payrollPeriodKey(runYear, runMonth), employeeUserId);
+          if (!draftMeta && !draftBaselineRowsRef.current.has(cacheKey)) draftBaselineRowsRef.current.set(cacheKey, JSON.parse(JSON.stringify(row)));
           runRowEditsRef.current.set(cacheKey, next);
           resolvedPayrollByUserIdRef.current.set(cacheKey, next as RunPayrollRowLike);
           return next;
@@ -1742,6 +1778,62 @@ function PayrollPageContent() {
               nightAllowanceRate: Math.max(0, Number(value) || 0),
             };
             return recompute(grNext, row.payDays, undefined, row, { clearMonetaryOverrides: false });
+          }
+
+          if (field === "leaveLines") {
+            // The whole list of HPL / EOL lines (JSON). Every line is calculated on its own month and summed.
+            let parsed: unknown = [];
+            try {
+              parsed = JSON.parse(String(value));
+            } catch {
+              parsed = [];
+            }
+            const lines: LeaveLine[] = (Array.isArray(parsed) ? parsed : [])
+              .map((raw): LeaveLine => {
+                const l = (raw ?? {}) as Partial<LeaveLine>;
+                const month = Math.max(1, Math.min(12, Math.round(Number(l.month) || runM)));
+                const year = Math.max(2000, Math.round(Number(l.year) || runY));
+                const lineDim = daysInMonthOf(year, month);
+                return {
+                  type: l.type === "EOL" ? "EOL" : "HPL",
+                  month,
+                  year,
+                  days: Math.max(0, Math.min(99, Math.round(Number(l.days) || 0))),
+                  ...(l.grossBasic != null ? { grossBasic: l.grossBasic } : {}),
+                  ...(l.daPercent != null ? { daPercent: l.daPercent } : {}),
+                  ...(l.daysInMonth != null ? { daysInMonth: l.daysInMonth } : {}),
+                  ...(l.warning ? { warning: l.warning } : {}),
+                };
+              });
+            const sumDays = (t: "HPL" | "EOL") =>
+              lines.filter((l) => l.type === t).reduce((s, l) => s + Math.min(l.days, daysInMonthOf(l.year, l.month)), 0);
+            const grNext: GovRecalcPayload = {
+              ...gr0,
+              leaveLines: lines,
+              hplDays: sumDays("HPL"),
+              eolDays: sumDays("EOL"),
+              hplDeductionManualOverride: false,
+              eolDeductionManualOverride: false,
+            };
+            const unresolved = lines.some(
+              (l) => l.days > 0 && !(l.month === runM && l.year === runY) && (l.grossBasic == null || l.daPercent == null),
+            );
+            if (unresolved) {
+              void hydrateLeaveLines(employeeUserId, grNext, runY, runM).then((grHydrated) => {
+                if (activePeriodKeyRef.current !== editPeriodKey) return;
+                setEditableRows((prev) =>
+                  prev.map((r) => {
+                    if (r.employeeUserId !== employeeUserId || !r.govRecalc) return r;
+                    const next = recompute(grHydrated, r.payDays, undefined, r, { clearMonetaryOverrides: true });
+                    const cacheKey = payrollRowCacheKey(payrollPeriodKey(runYear, runMonth), employeeUserId);
+                    runRowEditsRef.current.set(cacheKey, next);
+                    resolvedPayrollByUserIdRef.current.set(cacheKey, next as RunPayrollRowLike);
+                    return next;
+                  }),
+                );
+              });
+            }
+            return recompute(grNext, row.payDays, undefined, row, { clearMonetaryOverrides: true });
           }
 
           if (field === "hplDays" || field === "eolDays") {
@@ -2822,6 +2914,10 @@ function PayrollPageContent() {
           netPay: r.netPay,
           remarks: r.govRecalc?.leaveRemarks ?? null,
           ...("changedFields" in r ? { changedFields: r.changedFields } : {}),
+          // First save only: the row as calculated before the operator's first edit (the audit's "previous value"; never stored as a save).
+          ...(!draftMeta && draftBaselineRowsRef.current.has(payrollRowCacheKey(periodKey, String(r.employeeUserId)))
+            ? { baselineRow: { payDays: r.payDays, rowPayload: draftBaselineRowsRef.current.get(payrollRowCacheKey(periodKey, String(r.employeeUserId))) } }
+            : {}),
           rowPayload: r,
         };
       });
@@ -2890,6 +2986,7 @@ function PayrollPageContent() {
         const body = outcome.body as { error?: string; message?: string; errors?: { version?: string[] } };
         throw new Error(body?.error || body?.message || body?.errors?.version?.[0] || "Failed to save draft");
       }
+      if (!draftMeta) draftBaselineRowsRef.current.clear();
       const data = outcome.body as {
         draft: { id: string; version?: number; updatedAt?: string | null; employeeCount?: number };
         employees?: DraftEmployeeApi[];

@@ -260,7 +260,35 @@ class EmployeePayrollExportService
             foreach ($sums as $i => $sum) $totals[$i] = round($sum, 2);
         }
 
-        return ['headers' => $headers, 'groups' => array_column($this->columnDefinitions($customKeys), 'group'), 'rows' => $rows, 'totals' => $totals, 'moneyColumns' => $amountCols];
+        $groups = array_column($this->columnDefinitions($customKeys), 'group');
+
+        // Encashment DA is retired from payroll: leave its column out unless some row still carries an amount.
+        $retired = array_search('Encashment DA', $headers, true);
+        if ($retired !== false && $this->columnIsEmpty($rows, (int) $retired)) {
+            $drop = static fn (array $list): array => array_values(array_filter($list, static fn ($k) => $k !== $retired, ARRAY_FILTER_USE_KEY));
+            $headers = $drop($headers);
+            $groups = $drop($groups);
+            $totals = $drop($totals);
+            $rows = array_map($drop, $rows);
+            $amountCols = array_values(array_map(
+                static fn (int $i): int => $i > $retired ? $i - 1 : $i,
+                array_filter($amountCols, static fn (int $i): bool => $i !== $retired),
+            ));
+        }
+
+        return ['headers' => $headers, 'groups' => $groups, 'rows' => $rows, 'totals' => $totals, 'moneyColumns' => $amountCols];
+    }
+
+    /** @param list<list<mixed>> $rows */
+    private function columnIsEmpty(array $rows, int $index): bool
+    {
+        foreach ($rows as $row) {
+            if (isset($row[$index]) && is_numeric($row[$index]) && (float) $row[$index] !== 0.0) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**

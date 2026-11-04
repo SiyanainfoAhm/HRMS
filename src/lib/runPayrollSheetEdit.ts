@@ -455,6 +455,7 @@ export function isGovernmentCalculationDriverField(field: string): boolean {
     field === "payDays" ||
     field === "unpaidLeaveDays" ||
     field === "hplDays" ||
+    field === "leaveLines" ||
     field === "eolDays" ||
     field === "eolReferenceMonth" ||
     field === "eolReferenceYear" ||

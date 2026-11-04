@@ -25,7 +25,11 @@ class QuarterController extends Controller
         $companyId = (string) $request->user()->company_id;
         $quarters = $forEmployeeForm
             ? $this->service->listForEmployeeForm($companyId, $currentQuarterId)
-            : $this->service->listForCompany($companyId, $availableOnly);
+            : $this->service->listForCompany(
+                $companyId,
+                $availableOnly,
+                filter_var($request->query('include_inactive', false), FILTER_VALIDATE_BOOLEAN),
+            );
 
         $types = $this->typeService->listForCompany($companyId, activeOnly: false);
 
@@ -129,6 +133,17 @@ class QuarterController extends Controller
             (string) $request->user()->company_id,
             (string) $request->user()->id,
         ));
+    }
+
+    public function destroy(Request $request, string $id): JsonResponse
+    {
+        $quarter = HrmsQuarter::query()
+            ->where('company_id', $request->user()->company_id)
+            ->findOrFail($id);
+
+        $this->service->delete($quarter, (string) $request->user()->company_id);
+
+        return response()->json(['deleted' => true]);
     }
 
     public function deactivate(Request $request, string $id): JsonResponse

@@ -402,6 +402,7 @@ export function deserializePayrollDraftEmployee(
   for (const key of [
     "hplDays",
     "eolDays",
+    "leaveLines",
     "eolReferenceMonth",
     "eolReferenceYear",
     "hplReferenceMonth",

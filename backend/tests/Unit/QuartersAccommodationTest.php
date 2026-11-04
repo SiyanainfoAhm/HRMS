@@ -85,7 +85,7 @@ final class QuartersAccommodationTest extends TestCase
     {
         $source = file_get_contents(dirname(__DIR__, 2).'/app/Http/Controllers/Api/V1/PayrollController.php');
         $this->assertIsString($source);
-        $this->assertStringContainsString('quarterMetaForEmployeePeriod(', $source);
+        $this->assertStringContainsString('quarterMetaForDraft(', $source);
         $this->assertStringContainsString('Generated payroll is a historical snapshot', $source);
         $this->assertStringContainsString("'quarterId' => \$gov->quarter_id", $source);
         $this->assertStringContainsString("'quarterRent' => (float) (\$gov->quarter_rent_amount ?? 0)", $source);

@@ -1,4 +1,5 @@
 import { roundMoney } from "./money";
+import { RUN_PAYROLL_CPF_ARREAR_LINE, RUN_PAYROLL_DEDUCTION_LINES, RUN_PAYROLL_EARNING_LINES, type RunPayrollLine } from "./runPayrollFields";
 import type { GovernmentMonthlyComputed } from "@/lib/governmentPayroll";
 import { calendarDaysInMonth, equivalentPayableDays, leaveSalaryAdjustment } from "@/lib/payrollLeaveDays";
 
@@ -9,7 +10,8 @@ import { calendarDaysInMonth, equivalentPayableDays, leaveSalaryAdjustment } fro
  * Custom earnings are inserted before GrossTotal and custom deductions before TotalDeductions
  * (see buildPayrollExcelHeaders); every column's group is in PAYROLL_EXCEL_GROUPS below.
  */
-export const PAYROLL_EXCEL_HEADER = [
+/** Internal row shape produced by the row builders; the exported columns are chosen from it by PAYROLL_EXCEL_HEADER below. */
+const PAYROLL_EXCEL_LEGACY_HEADER = [
   "AccountNumber",
   "EmployeeName",
   "Division",
@@ -90,7 +92,7 @@ export const PAYROLL_EXCEL_HEADER = [
 export type PayrollExcelGroup = "identity" | "info" | "earning" | "total_earnings" | "deduction" | "total_deductions" | "net";
 
 /** Classification of every fixed column. Typed as a full Record, so a column without a group does not compile. */
-export const PAYROLL_EXCEL_GROUPS: Record<(typeof PAYROLL_EXCEL_HEADER)[number], PayrollExcelGroup> = {
+const PAYROLL_EXCEL_LEGACY_GROUPS: Record<(typeof PAYROLL_EXCEL_LEGACY_HEADER)[number], PayrollExcelGroup> = {
   "AccountNumber": "identity",
   "EmployeeName": "identity",
   "Division": "identity",
@@ -168,7 +170,63 @@ export const PAYROLL_EXCEL_GROUPS: Record<(typeof PAYROLL_EXCEL_HEADER)[number],
   "HPLSalaryAdjustment": "info",
 };
 
-export type PayrollExcelHeader = (typeof PAYROLL_EXCEL_HEADER)[number];
+type PayrollExcelHeader = (typeof PAYROLL_EXCEL_LEGACY_HEADER)[number];
+
+/** Run Payroll line key -> internal row key (the row builders below were written against these names). */
+const LEGACY_KEY_BY_LINE: Record<string, string> = {
+  basicPaid: "Basic", spPayPaid: "SPPay", daPaid: "DA", transportPaid: "TransportTA", hraPaid: "HRA", medicalPaid: "Medical",
+  extraWorkAllowancePaid: "ExtraWorkAllowance", nightAllowancePaid: "NightAllowance", uniformAllowancePaid: "UniformAllowance",
+  educationAllowancePaid: "EducationAllowance", daArrearsPaid: "DAArrears", transportArrearsPaid: "TransportArrears",
+  encashmentPaid: "Encashment", grossArrear: "GrossArrears", netArrear: "Net Arrears",
+  incomeTax: "IncomeTax", pt: "ProfessionalTax", lic: "LIC", cpf: "CPF", daCpf: "DACPF", vpf: "VPF", pfLoan: "PFLoan",
+  postOffice: "PostOffice", creditSociety: "CreditSociety", electricity: "Electricity", water: "Water", mess: "Mess",
+  loanRecovery: "BankRecovery", welfare: "Welfare", hpl: "HPL", eol: "EOL", vehCharge: "VehCharge", quarterRent: "QuarterRentDeduction",
+  other: "OtherDeduction", cpfArrear: "CPF Arr",
+};
+
+type ExportColumn = { header: string; legacyKey: string; group: PayrollExcelGroup };
+const lineColumn = (l: RunPayrollLine, group: PayrollExcelGroup): ExportColumn => ({ header: l.label, legacyKey: LEGACY_KEY_BY_LINE[l.key] ?? l.key, group });
+
+/**
+ * The exported fixed columns, in order, built from the Run Payroll field list (lib/runPayrollFields): identity, the
+ * earnings lines (screen order and labels), the deduction lines, CPF Arr, then the totals and the Net Arrears memo.
+ * Telephone Allowance and GPF are configurable fields with a fixed place; Incentive / PR Bonus / Reimbursement are the
+ * side-panel earnings of the screen; EncashmentDA is a retired line that is only emitted while a row still carries it.
+ * Nothing that is not on Run Payroll (StdLicenceFee, CTC, TDS, PF/ESIC, night-allowance internals, a second Quarter Rent
+ * or second Net column, ...) is exported.
+ */
+const EXPORT_COLUMNS: readonly ExportColumn[] = (() => {
+  const col = (header: string, group: PayrollExcelGroup, legacyKey = header): ExportColumn => ({ header, legacyKey, group });
+  const out: ExportColumn[] = [
+    col("AccountNumber", "identity"), col("EmployeeName", "identity"), col("Division", "identity"), col("Department", "identity"),
+    col("Designation", "identity"), col("PayLevel", "identity"), col("PayDays", "info"),
+  ];
+  for (const l of RUN_PAYROLL_EARNING_LINES) {
+    if (l.memo) continue;
+    out.push(lineColumn(l, "earning"));
+    if (l.key === "educationAllowancePaid") out.push(col("TelephoneAllowance", "earning"));
+    if (l.key === "encashmentPaid") out.push(col("EncashmentDA", "earning"));
+  }
+  out.push(col("Incentive", "earning"), col("PRBonus", "earning"), col("Reimbursement", "earning"), col("GrossTotal", "total_earnings"));
+  for (const l of RUN_PAYROLL_DEDUCTION_LINES) out.push(lineColumn(l, "deduction"));
+  out.push(lineColumn(RUN_PAYROLL_CPF_ARREAR_LINE, "deduction"), col("GPF", "deduction"), col("TotalDeductions", "total_deductions"), col("NetSalary", "net"));
+  for (const l of RUN_PAYROLL_EARNING_LINES) if (l.memo) out.push(lineColumn(l, "info"));
+  return out;
+})();
+
+/** Fixed export columns in order (display labels). */
+export const PAYROLL_EXCEL_HEADER: readonly string[] = EXPORT_COLUMNS.map((c) => c.header);
+
+/** Classification of every fixed export column. */
+export const PAYROLL_EXCEL_GROUPS: Record<string, PayrollExcelGroup> = Object.fromEntries(EXPORT_COLUMNS.map((c) => [c.header, c.group]));
+
+/** Keep only the Run Payroll columns (renamed to the screen labels); dynamic custom columns pass through. */
+function projectToRunPayrollColumns(legacy: Record<string, string | number>, dynamicCols: DynamicPayrollExcelColumn[]): Record<string, string | number> {
+  const out: Record<string, string | number> = {};
+  for (const c of EXPORT_COLUMNS) out[c.header] = legacy[c.legacyKey] ?? 0;
+  for (const c of dynamicCols) if (c.label in legacy) out[c.label] = legacy[c.label];
+  return out;
+}
 
 type PayslipExcelInput = {
   payroll_mode?: string | null;
@@ -373,22 +431,42 @@ export function collectDynamicPayrollExcelColumns(
  * deductions (including statutory) right before TotalDeductions, so nothing that is an earning or a
  * deduction ever sits after its total.
  */
-export function buildPayrollExcelHeaders(dynamicCols: DynamicPayrollExcelColumn[] = []): string[] {
+export function buildPayrollExcelHeaders(
+  dynamicCols: DynamicPayrollExcelColumn[] = [],
+  omit: readonly string[] = [],
+): string[] {
   const earnings = dynamicCols.filter((c) => c.group === "earnings").map((c) => c.label);
   const deductions = dynamicCols.filter((c) => c.group !== "earnings").map((c) => c.label);
+  const skip = new Set(omit);
   const out: string[] = [];
   for (const h of PAYROLL_EXCEL_HEADER) {
     if (h === "GrossTotal") out.push(...earnings);
     if (h === "TotalDeductions") out.push(...deductions);
-    out.push(h);
+    if (!skip.has(h)) out.push(h);
   }
   return out;
 }
 
+/**
+ * Encashment DA was retired from Run Payroll, so its column is left out of an export unless some row
+ * still carries a stored amount (an older month or an open draft keeps counting it). Pass the result as
+ * `omit` to buildPayrollExcelHeaders.
+ */
+export function retiredEmptyExcelColumns(govRows: ReadonlyArray<Record<string, unknown>>): string[] {
+  const hasEncashmentDa = govRows.some((g) => {
+    const raw = g.encashment_da_paid ?? g.encashmentDaPaid;
+    return Math.abs(Number(raw) || 0) > 0;
+  });
+  return hasEncashmentDa ? [] : ["EncashmentDA"];
+}
+
 /** Group of each header produced by buildPayrollExcelHeaders (same order). */
-export function payrollExcelHeaderGroups(dynamicCols: DynamicPayrollExcelColumn[] = []): PayrollExcelGroup[] {
+export function payrollExcelHeaderGroups(
+  dynamicCols: DynamicPayrollExcelColumn[] = [],
+  omit: readonly string[] = [],
+): PayrollExcelGroup[] {
   const byLabel = new Map(dynamicCols.map((c) => [c.label, c.group === "earnings" ? "earning" : "deduction"] as const));
-  return buildPayrollExcelHeaders(dynamicCols).map((h) => PAYROLL_EXCEL_GROUPS[h as keyof typeof PAYROLL_EXCEL_GROUPS] ?? byLabel.get(h) ?? "info");
+  return buildPayrollExcelHeaders(dynamicCols, omit).map((h) => PAYROLL_EXCEL_GROUPS[h] ?? byLabel.get(h) ?? "info");
 }
 
 function dynamicValuesFromGov(
@@ -609,6 +687,16 @@ export type GovernmentExcelSource =
  * plus legacy PF/ESIC columns. Net Pay is the final payable amount (no separate TakeHome column).
  */
 export function buildPayrollExcelRow(
+  p: PayslipExcelInput,
+  userName: string,
+  gov: GovernmentExcelSource | null | undefined,
+  dynamicCols: DynamicPayrollExcelColumn[] = [],
+  org?: { division?: string | null; department?: string | null; designation?: string | null },
+): Record<string, string | number> {
+  return projectToRunPayrollColumns(buildLegacyPayrollExcelRow(p, userName, gov, dynamicCols, org), dynamicCols);
+}
+
+function buildLegacyPayrollExcelRow(
   p: PayslipExcelInput,
   userName: string,
   gov: GovernmentExcelSource | null | undefined,

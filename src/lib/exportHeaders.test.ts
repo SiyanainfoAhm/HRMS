@@ -67,7 +67,7 @@ const headerIdx = grid.findIndex((r) => r.includes("AccountNumber"));
 if (headerIdx < 0) fail("header row not found in Employee Detail");
 const headerRow = grid[headerIdx];
 assertEq(invalidHeaderPositions(headerRow), [], "Employee Detail header row has no blank/null/0/numeric header");
-assertEq(headerRow, buildPayrollExcelHeaders([]), "preview header list equals the Excel header row");
+assertEq(headerRow, buildPayrollExcelHeaders([], ["EncashmentDA"]), "preview header list equals the Excel header row (EncashmentDA left out: no row carries it)");
 
 const cellOf = (h: string, r = headerIdx + 1) => detail[XLSX.utils.encode_cell({ r, c: headerRow.indexOf(h) })] as Cell;
 for (const h of ["PayDays", "PayLevel"]) {
@@ -77,7 +77,7 @@ for (const h of ["PayDays", "PayLevel"]) {
 }
 assertEq(cellOf("PayLevel").v, 10, "PayLevel value");
 // Money columns keep their format.
-if (!String(cellOf("NetPay").z).includes("#,##0")) fail(`NetPay must keep its money format, got ${cellOf("NetPay").z}`);
+if (!String(cellOf("NetSalary").z).includes("#,##0")) fail(`NetSalary must keep its money format, got ${cellOf("NetSalary").z}`);
 // No identifier column anywhere in the sheet carries a thousands separator format.
 for (const h of ["PayDays", "PayLevel", "EmployeeCode"]) {
   const z = cellOf(h)?.z;

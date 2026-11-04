@@ -108,4 +108,14 @@ for (let r = 0; r < 2; r++) {
 }
 assertEq([col("EncashmentDA", 0), col("EncashmentDA", 1)], [0, 700], "Excel carries the stored ENC. DA");
 
+// 8. When no row carries an Encashment DA amount (every current payroll), the Excel has no such column at all.
+const zeroRows = exportRows.slice(0, 1);
+const zeroGrid = XLSX.utils.sheet_to_json<unknown[]>(
+  buildEmployeeDetailSheet(zeroRows, { month: 9, year: 2026, status: "Draft" }),
+  { header: 1 },
+) as unknown[][];
+const zeroHead = zeroGrid.find((r) => r.includes("GrossTotal")) as string[];
+assertEq(zeroHead.includes("EncashmentDA"), false, "no EncashmentDA column when every row is 0");
+assertEq(zeroHead, buildPayrollExcelHeaders([], ["EncashmentDA"]), "the rest of the header row is unchanged");
+
 console.log("encashmentDaRetired.test.ts passed");

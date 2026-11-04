@@ -269,8 +269,18 @@ final class PeriodReportTest extends DatabaseTestCase
         ]);
         $masters = ['u1' => ['employeeCode' => '001', 'name' => 'Emp 1']];
         $table = $svc->buildTable([$period], ['p-may' => [$gov]], $masters, [], [], $keys);
-        $this->assertSame($headers, $table['headers'], 'preview headers are the shared column definition');
-        $this->assertSame($groups, $table['groups']);
+        // Encashment DA is retired: its column is left out of preview and Excel unless a row carries an amount.
+        $retired = array_search('Encashment DA', $headers, true);
+        $without = fn (array $list): array => array_values(array_filter($list, fn ($k) => $k !== $retired, ARRAY_FILTER_USE_KEY));
+        $this->assertNotFalse($retired);
+        $this->assertSame($without($headers), $table['headers'], 'preview headers are the shared column definition minus the empty retired column');
+        $this->assertSame($without($groups), $table['groups']);
+
+        $withAmount = clone $gov;
+        $withAmount->forceFill(['encashment_da_paid' => 700, 'total_earnings' => 1710, 'net_salary' => 1705]);
+        $kept = $svc->buildTable([$period], ['p-may' => [$withAmount]], $masters, [], [], $keys);
+        $this->assertSame($headers, $kept['headers'], 'a stored Encashment DA amount keeps its column');
+        $this->assertSame(700.0, (float) $kept['rows'][0][$retired]);
         $sheet = $svc->buildSpreadsheet([$period], ['p-may' => [$gov]], $masters, [], [], $keys)->getActiveSheet();
         $excelHeaders = array_map('strval', $sheet->rangeToArray('A1:'.$sheet->getHighestColumn().'1', null, true, false)[0]);
         $this->assertSame($table['headers'], $excelHeaders, 'preview and Excel use exactly the same column order');

@@ -135,7 +135,17 @@ trait WritesActivityEntries
                 foreach ($c['targets'] as $targetId) {
                     $row = collect($rows)->first(fn ($r) => is_array($r) && (string) ($r['employeeUserId'] ?? $r['employee_user_id'] ?? '') === $targetId);
                     if (! is_array($row)) continue;
-                    [$fields, $previous, $updated] = $this->changedPayloadValues(($c['draftBefore'] ?? [])[$targetId] ?? [], $this->draftRowValues($row));
+                    $before = ($c['draftBefore'] ?? [])[$targetId] ?? [];
+                    // What the server actually saved (merged, normalised) is the new value; the browser's row can lack fields the save keeps.
+                    $after = $this->savedDraftValues((string) $c['companyId'], (int) $c['year'], (int) $c['month'], (string) $targetId) ?? $this->draftRowValues($row);
+                    if ($before === []) {
+                        // First save: there is no earlier version. Compare with the calculated baseline sent for edited rows;
+                        // a row without one was not touched, so nothing about it is logged.
+                        $baseline = $row['baselineRow'] ?? $row['baseline_row'] ?? null;
+                        if (! is_array($baseline)) continue;
+                        $before = $this->firstSaveBaselineValues((string) $c['companyId'], (int) $c['year'], (int) $c['month'], (string) $targetId, $baseline);
+                    }
+                    [$fields, $previous, $updated] = $this->changedPayloadValues($before, $after);
                     // The operator's own edits come with the row ("changedFields"); anything else that moved is a recalculation.
                     $tokens = $row['changedFields'] ?? $row['changed_fields'] ?? null;
                     $typed = is_array($tokens) && $tokens !== []

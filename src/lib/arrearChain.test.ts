@@ -143,9 +143,9 @@ assertEq(pair(deductionPairs, "CPF Arr"), 243, "payslip CPF arrears");
 assertEq(sumMoney(...earningPairs.map(([, v]) => v)), rg.totalEarnings, "payslip earning lines add up to Gross");
 assertEq(rg.totalEarnings - rg.totalDeductions, rg.netSalary, "payslip: gross - deductions = net pay");
 const excel = buildPayrollExcelRow({ payroll_mode: "government", employee_user_id: "u" }, "Emp", { kind: "row", row: slip as never });
-assertEq(excel["DAArrears"], 2000, "excel DA arrears");
-assertEq(excel["TransportArrears"], 100, "excel TR arrears");
-assertEq(excel["GrossArrears"], 2100, "excel gross arrears");
+assertEq(excel["DA Arrears"], 2000, "excel DA arrears");
+assertEq(excel["TR Arrears"], 100, "excel TR arrears");
+assertEq(excel["Gross Arrears"], 2100, "excel gross arrears");
 assertEq(excel["Net Arrears"] ?? excel["NetArrears"], 1857, "excel net arrears");
 
 console.log("arrearChain.test.ts passed");

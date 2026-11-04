@@ -416,7 +416,6 @@ function testSavedUnitBillOutranksMasterManualFixedDefaultAcrossReloadAndExport(
     net_salary: Number(gm.netSalary),
   } });
   assertEq(excelRow.Electricity, 711, "Excel uses saved/reconciled bill amount");
-  assertEq(excelRow.ElectricityUnits, 80, "Excel uses saved units");
 
   const otherEmployee = stubApiRow("other");
   otherEmployee.govRecalc = { ...otherEmployee.govRecalc!, electricityMode: "manual_fixed", deductionDefaults: { ...otherEmployee.govRecalc!.deductionDefaults, electricity: 49 } };
