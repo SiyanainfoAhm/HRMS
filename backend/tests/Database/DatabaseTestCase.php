@@ -6,6 +6,7 @@ use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\TestCase;
+use Tests\Support\TestWorld;
 
 /**
  * Boots the Laravel app against the LOCAL development database and wraps every
@@ -15,6 +16,9 @@ use PHPUnit\Framework\TestCase;
 abstract class DatabaseTestCase extends TestCase
 {
     protected Application $app;
+
+    /** Known synthetic fixtures, created fresh inside this test's transaction (see tests/Support/TestWorld.php). */
+    protected TestWorld $world;
 
     private static ?Application $booted = null;
 
@@ -33,6 +37,11 @@ abstract class DatabaseTestCase extends TestCase
         parent::setUp();
         $this->app = self::$booted;
 
+        // Hard stop: the suite may only touch a database whose name ends in _test (cirt_payroll_test), never hrms.
+        $database = (string) config('database.connections.'.config('database.default').'.database');
+        if (! str_ends_with($database, '_test') && ! str_ends_with($database, '_clientcopy')) {
+            $this->fail("Refusing to run database tests against '{$database}': the test database must be named *_test (see phpunit.xml).");
+        }
         $host = (string) config('database.connections.'.config('database.default').'.host');
         if (! in_array($host, ['127.0.0.1', 'localhost', '::1'], true)) {
             $this->fail("Refusing to run database tests against non-local host '{$host}'.");
@@ -43,6 +52,7 @@ abstract class DatabaseTestCase extends TestCase
             $this->markTestSkipped('Local database unavailable: '.$e->getMessage());
         }
         DB::beginTransaction();
+        $this->world = TestWorld::seed();
     }
 
     protected function tearDown(): void

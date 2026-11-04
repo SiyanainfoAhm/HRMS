@@ -5,6 +5,11 @@
          colors="true">
     <php>
         <ini name="memory_limit" value="512M"/>
+        <!-- Tests NEVER run against the database that holds real payroll data (hrms). They use cirt_payroll_test
+             (schema cloned from hrms, no data; see tests/README.md). DatabaseTestCase refuses any other name. -->
+        <env name="APP_ENV" value="testing" force="true"/>
+        <env name="DB_CONNECTION" value="pgsql" force="true"/>
+        <env name="DB_DATABASE" value="cirt_payroll_test" force="true"/>
     </php>
     <testsuites>
         <testsuite name="Unit">
