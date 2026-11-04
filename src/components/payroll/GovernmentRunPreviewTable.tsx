@@ -1,6 +1,8 @@
 "use client";
 
-import { round2 } from "@/lib/money";
+import { formatMoney, roundMoney } from "@/lib/money";
+import { MoneyInput } from "@/components/ui/MoneyInput";
+
 import { useRef, useState } from "react";
 import type { PayrollFieldDefinition } from "@/lib/payrollFieldTypes";
 import { cn } from "@/lib/cn";
@@ -19,7 +21,9 @@ import {
   mirroredArrearValue,
   resolveUnpaidArrears,
 } from "@/lib/payrollRunArrearMirror";
-import { calendarDaysInMonth, equivalentPayableDays, leaveSalaryAdjustment } from "@/lib/payrollLeaveDays";
+import { equivalentPayableDays } from "@/lib/payrollLeaveDays";
+import { normalizeLeaveLines, type LeaveLine } from "@/lib/leaveDeductions";
+import { LeaveLinesEditor } from "./LeaveLinesEditor";
 import {
   GOV_PREVIEW_CPF_ARREAR_LINE,
   GOV_PREVIEW_DEDUCTION_FIELDS,
@@ -337,7 +341,7 @@ function ElectricityBreakdownButton({ row }: { row: GovernmentRunPreviewRow }) {
   const bill = electricityBillFromRow(row);
   if (!bill) return null;
   const money = (value: number) =>
-    `₹${Number(value || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    `₹${formatMoney(value)}`;
   return (
     <>
       <button
@@ -428,37 +432,38 @@ function StickyMiniSummary({
   );
 }
 
-/** A typed amount, exactly as typed (to 2 decimals); blank or invalid is 0. */
-function parseAmount(raw: string): number {
-  const n = Number(raw);
-  return Number.isFinite(n) ? round2(Math.max(0, n)) : 0;
-}
 
 function ArrearField({
   label,
   value,
   readOnly,
   onChange,
+  derivedHint,
 }: {
   label: string;
   value: number;
   readOnly: boolean;
   onChange?: (n: number) => void;
+  /** Set for a calculated, read-only result (Gross / Net Arrears): styled like the Earnings mirrors. */
+  derivedHint?: string;
 }) {
   return (
-    <div className="flex min-w-[4.5rem] flex-1 flex-col items-center gap-0.5">
+    <div className="flex min-w-[4.5rem] flex-1 flex-col items-center gap-0.5" data-arrear-derived={derivedHint ? "true" : undefined}>
       <span className="text-center text-[9px] font-medium uppercase tracking-wide text-slate-600">{label}</span>
-      {readOnly || !onChange ? (
+      {derivedHint ? (
+        <>
+          <span
+            className="payroll-amount-value w-full rounded border border-dashed border-slate-300 bg-slate-50 text-slate-700"
+            aria-readonly="true"
+          >
+            {fmtIn(value)}
+          </span>
+          <span className="w-full truncate text-center text-[8px] italic text-slate-500">{derivedHint}</span>
+        </>
+      ) : readOnly || !onChange ? (
         <span className="text-center text-[13px] tabular-nums text-slate-900">{fmtIn(value)}</span>
       ) : (
-        <input
-          type="number"
-          min={0}
-          step="0.01"
-          value={value}
-          onChange={(e) => onChange(parseAmount(e.target.value))}
-          className={inpWide}
-        />
+        <MoneyInput value={value} onChange={onChange} className={inpWide} />
       )}
     </div>
   );
@@ -492,24 +497,14 @@ function ArrearsUnpaidSection({
           readOnly={readOnly}
           onChange={(n) => onUpdate(row.employeeUserId, "transportArrear", n)}
         />
-        <ArrearField
-          label={PAYROLL_LABELS.grossArrears}
-          value={arrears.grossArrear}
-          readOnly={readOnly}
-          onChange={(n) => onUpdate(row.employeeUserId, "grossArrear", n)}
-        />
+        <ArrearField label={PAYROLL_LABELS.grossArrears} value={arrears.grossArrear} readOnly derivedHint="= DA + TR" />
         <ArrearField
           label={PAYROLL_LABELS.cpfArrears}
           value={arrears.cpfArrear}
           readOnly={readOnly}
           onChange={(n) => onUpdate(row.employeeUserId, "cpfArrear", n)}
         />
-        <ArrearField
-          label={PAYROLL_LABELS.netArrears}
-          value={arrears.netArrear}
-          readOnly={readOnly}
-          onChange={(n) => onUpdate(row.employeeUserId, "netArrear", n)}
-        />
+        <ArrearField label={PAYROLL_LABELS.netArrears} value={arrears.netArrear} readOnly derivedHint="= Gross - CPF Arr" />
       </div>
     </section>
   );
@@ -544,12 +539,29 @@ function GovernmentEmployeeDetail({
   const g = row.governmentMonthly;
   const leave = leaveMetaFromRow(row);
   const gRecord = g as Record<string, unknown> | null | undefined;
-  const eolRefMonth = leave.eolReferenceMonth ?? runMonth;
-  const eolRefYear = leave.eolReferenceYear ?? runYear;
-  const hplRefMonth = leave.hplReferenceMonth ?? runMonth;
-  const hplRefYear = leave.hplReferenceYear ?? runYear;
-  const eolBasis = round2(Number(gRecord?.eolBasisAmount ?? 0) || 0);
-  const hplBasis = round2(Number(gRecord?.hplBasisAmount ?? 0) || 0);
+  const grLeave = row.govRecalc as
+    | { leaveLines?: LeaveLine[]; grossBasic?: number; daPercent?: number; hraPercent?: number; medicalFixed?: number }
+    | undefined;
+  const storedLeaveLines = Array.isArray(grLeave?.leaveLines)
+    ? grLeave.leaveLines
+    : Array.isArray(gRecord?.leaveLines)
+      ? (gRecord.leaveLines as LeaveLine[])
+      : null;
+  const leaveLines = storedLeaveLines ?? normalizeLeaveLines((grLeave ?? {}) as object, runMonth, runYear);
+  const leaveCtx =
+    grLeave && Number(grLeave.grossBasic) > 0
+      ? {
+          runMonth,
+          runYear,
+          grossBasic: Number(grLeave.grossBasic) || 0,
+          daPercent: Number(grLeave.daPercent) || 0,
+          hraPercent: Number(grLeave.hraPercent) || 0,
+          medicalFixed: Number(grLeave.medicalFixed) || 0,
+        }
+      : null;
+  const leaveFallbackTotal = roundMoney(
+    (Number(gRecord?.eolAdjustment ?? 0) || 0) + (Number(gRecord?.hplAdjustment ?? 0) || 0),
+  );
   const activeFieldKeys = new Set(payrollFieldDefs?.filter((field) => field.isActive).map((field) => field.fieldKey));
   const isVisibleConfiguredField = (fieldKey?: string) =>
     preserveSavedFields || !fieldKey || activeFieldKeys.has(fieldKey);
@@ -597,132 +609,11 @@ function GovernmentEmployeeDetail({
                   />
                 )}
               </div>
-              <div>
-                <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">HPL days</p>
-                {readOnly ? (
-                  <p className="text-[13px] tabular-nums text-slate-800">{leave.hplDays}</p>
-                ) : (
-                  <DaysNumberInput
-                    min={0}
-                    max={daysInMonth}
-                    value={leave.hplDays}
-                    onChange={(n) => onUpdate(row.employeeUserId, "hplDays", n)}
-                    className={payrollDaysInputClass}
-                    title="Half pay leave — reduces Basic + DA in Earnings (current or prior reference month)"
-                  />
-                )}
-              </div>
-              <div>
-                <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">EOL days</p>
-                {readOnly ? (
-                  <p className="text-[13px] tabular-nums text-slate-800">{leave.eolDays}</p>
-                ) : (
-                  <DaysNumberInput
-                    min={0}
-                    max={daysInMonth}
-                    value={leave.eolDays}
-                    onChange={(n) => onUpdate(row.employeeUserId, "eolDays", n)}
-                    className={payrollDaysInputClass}
-                    title="EOL — reduces Basic + DA + HRA + Medical in Earnings (current or prior reference month)"
-                  />
-                )}
-              </div>
               <SummaryStat label="Calendar days" value={String(daysInMonth)} />
               <SummaryStat
                 label="Pay days after leave"
                 value={fmtIn(equivalentPayableDays(daysInMonth, leave.eolDays, leave.hplDays))}
               />
-              <SummaryStat
-                label="EOL salary adjustment (₹)"
-                value={fmtIn(leave.eolDeductionManualOverride
-                  ? d(row.governmentMonthly, "eol")
-                  : leaveSalaryAdjustment(
-                      Number(row.governmentMonthly?.eolBasisAmount ?? 0),
-                      leave.eolDays,
-                      calendarDaysInMonth(leave.eolReferenceYear ?? runYear, leave.eolReferenceMonth ?? runMonth) || daysInMonth,
-                    ))}
-              />
-              <SummaryStat
-                label="HPL salary adjustment (₹)"
-                value={fmtIn(leave.hplDeductionManualOverride
-                  ? d(row.governmentMonthly, "hpl")
-                  : leaveSalaryAdjustment(
-                      Number(row.governmentMonthly?.hplBasisAmount ?? 0),
-                      leave.hplDays,
-                      calendarDaysInMonth(leave.hplReferenceYear ?? runYear, leave.hplReferenceMonth ?? runMonth) || daysInMonth,
-                      0.5,
-                    ))}
-              />
-              <div className="col-span-2 rounded border border-slate-100 bg-slate-50/80 p-2">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-600">EOL reference</p>
-                {readOnly ? (
-                  <p className="mt-1 text-[12px] text-slate-800">
-                    {MONTH_OPTIONS.find((m) => m.value === eolRefMonth)?.label ?? eolRefMonth} {eolRefYear}
-                  </p>
-                ) : (
-                  <div className="mt-1 grid grid-cols-2 gap-2">
-                    <select
-                      className="input-field text-[12px]"
-                      value={eolRefMonth}
-                      onChange={(e) =>
-                        onUpdate(row.employeeUserId, "eolReferenceMonth", parseInt(e.target.value, 10) || 1)
-                      }
-                    >
-                      {MONTH_OPTIONS.map((m) => (
-                        <option key={m.value} value={m.value}>
-                          {m.label}
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      type="number"
-                      min={2000}
-                      max={2100}
-                      className={payrollDaysInputClass}
-                      value={eolRefYear}
-                      onChange={(e) =>
-                        onUpdate(row.employeeUserId, "eolReferenceYear", parseInt(e.target.value, 10) || runYear)
-                      }
-                    />
-                  </div>
-                )}
-
-              </div>
-              <div className="col-span-2 rounded border border-slate-100 bg-slate-50/80 p-2">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-600">HPL reference</p>
-                {readOnly ? (
-                  <p className="mt-1 text-[12px] text-slate-800">
-                    {MONTH_OPTIONS.find((m) => m.value === hplRefMonth)?.label ?? hplRefMonth} {hplRefYear}
-                  </p>
-                ) : (
-                  <div className="mt-1 grid grid-cols-2 gap-2">
-                    <select
-                      className="input-field text-[12px]"
-                      value={hplRefMonth}
-                      onChange={(e) =>
-                        onUpdate(row.employeeUserId, "hplReferenceMonth", parseInt(e.target.value, 10) || 1)
-                      }
-                    >
-                      {MONTH_OPTIONS.map((m) => (
-                        <option key={m.value} value={m.value}>
-                          {m.label}
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      type="number"
-                      min={2000}
-                      max={2100}
-                      className={payrollDaysInputClass}
-                      value={hplRefYear}
-                      onChange={(e) =>
-                        onUpdate(row.employeeUserId, "hplReferenceYear", parseInt(e.target.value, 10) || runYear)
-                      }
-                    />
-                  </div>
-                )}
-
-              </div>
               <div className="col-span-2">
                 <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Remarks</p>
                 {readOnly ? (
@@ -791,14 +682,7 @@ function GovernmentEmployeeDetail({
                 {readOnly ? (
                   <p className="text-[13px] tabular-nums">{fmtIn(row.incentive ?? 0)}</p>
                 ) : (
-                  <input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={row.incentive ?? 0}
-                    onChange={(e) => onUpdate(row.employeeUserId, "incentive", parseAmount(e.target.value))}
-                    className={inpWide}
-                  />
+                  <MoneyInput value={row.incentive ?? 0} onChange={(n) => onUpdate(row.employeeUserId, "incentive", n)} className={inpWide} />
                 )}
               </div>
               <div>
@@ -806,14 +690,7 @@ function GovernmentEmployeeDetail({
                 {readOnly ? (
                   <p className="text-[13px] tabular-nums">{fmtIn(row.prBonus ?? 0)}</p>
                 ) : (
-                  <input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={row.prBonus ?? 0}
-                    onChange={(e) => onUpdate(row.employeeUserId, "prBonus", parseAmount(e.target.value))}
-                    className={inpWide}
-                  />
+                  <MoneyInput value={row.prBonus ?? 0} onChange={(n) => onUpdate(row.employeeUserId, "prBonus", n)} className={inpWide} />
                 )}
               </div>
               <div>
@@ -821,48 +698,22 @@ function GovernmentEmployeeDetail({
                 {readOnly ? (
                   <p className="text-[13px] tabular-nums">{fmtIn(v(g, "encashmentPaid"))}</p>
                 ) : (
-                  <input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={v(g, "encashmentPaid")}
-                    onChange={(e) =>
-                      onUpdate(row.employeeUserId, "govEarning_encashmentPaid", parseAmount(e.target.value))
-                    }
-                    className={inpWide}
-                  />
+                  <MoneyInput value={v(g, "encashmentPaid")} onChange={(n) => onUpdate(row.employeeUserId, "govEarning_encashmentPaid", n)} className={inpWide} />
                 )}
               </div>
-              <div>
-                <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">EOL DA</p>
-                {readOnly ? (
+              {v(g, "encashmentDaPaid") !== 0 ? (
+                // Encashment DA is no longer entered. An amount already saved on this row stays in its totals and is shown read-only.
+                <div>
+                  <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Enc. DA (earlier entry)</p>
                   <p className="text-[13px] tabular-nums">{fmtIn(v(g, "encashmentDaPaid"))}</p>
-                ) : (
-                  <input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={v(g, "encashmentDaPaid")}
-                    onChange={(e) =>
-                      onUpdate(row.employeeUserId, "govEarning_encashmentDaPaid", parseAmount(e.target.value))
-                    }
-                    className={inpWide}
-                  />
-                )}
-              </div>
+                </div>
+              ) : null}
               <div>
                 <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Reimb.</p>
                 {readOnly ? (
                   <p className="text-[13px] tabular-nums">{fmtIn(row.reimbursement ?? 0)}</p>
                 ) : (
-                  <input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={row.reimbursement ?? 0}
-                    onChange={(e) => onUpdate(row.employeeUserId, "reimbursement", parseAmount(e.target.value))}
-                    className={inpWide}
-                  />
+                  <MoneyInput value={row.reimbursement ?? 0} onChange={(n) => onUpdate(row.employeeUserId, "reimbursement", n)} className={inpWide} />
                 )}
               </div>
             </div>
@@ -901,6 +752,9 @@ function GovernmentEmployeeDetail({
                       />
                     ),
                   )}
+                  {v(g, "encashmentDaPaid") !== 0 ? (
+                    <FieldChip label="Enc. DA (earlier entry)" readOnly value={v(g, "encashmentDaPaid")} onChange={() => {}} />
+                  ) : null}
                   {customEarningFields
                     .filter((f) => isCustomEarningVisibleOnRow(f.fieldKey, customFieldAmount(g, row.govRecalc, f.fieldKey, "earnings")))
                     .map((f) => (
@@ -920,6 +774,11 @@ function GovernmentEmployeeDetail({
                       label={label}
                       readOnly={readOnly}
                       value={d(g, key)}
+                      overrideHint={
+                        key === "quarterRent" && (row.govRecalc as { quarterRentManualOverride?: boolean } | null | undefined)?.quarterRentManualOverride
+                          ? "Typed override"
+                          : undefined
+                      }
                       onChange={(n) => onUpdate(row.employeeUserId, `govDeduction_${key}`, n)}
                     />
                   ))}
@@ -945,6 +804,14 @@ function GovernmentEmployeeDetail({
               </div>
             </PayrollComponentScroller>
             <ArrearsUnpaidSection row={row} readOnly={readOnly} onUpdate={onUpdate} />
+            <LeaveLinesEditor
+              lines={leaveLines}
+              ctx={leaveCtx}
+              readOnly={readOnly}
+              manualOverride={Boolean(leave.hplDeductionManualOverride || leave.eolDeductionManualOverride)}
+              fallbackTotal={leaveFallbackTotal}
+              onChange={(next) => onUpdate(row.employeeUserId, "leaveLines", JSON.stringify(next))}
+            />
           </div>
         </div>
       </div>

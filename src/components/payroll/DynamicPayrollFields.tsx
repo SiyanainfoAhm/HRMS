@@ -66,6 +66,7 @@ export function DynamicPayrollFields({
           return (
             <FormField key={field.id} label={field.fieldLabel} required={field.isRequired} error={err}>
               <Input
+                money={field.fieldType !== "text" && field.fieldType !== "percentage"}
                 type={field.fieldType === "text" ? "text" : "number"}
                 step={field.fieldType === "percentage" ? "0.01" : "1"}
                 value={val}

@@ -77,7 +77,7 @@ final class SpreadsheetLayoutTest extends TestCase
         return [
             'CPF' => [$svc->buildCpf($rows, 202609), [], 4],
             'Division-Wise' => [$svc->buildDivisionWise($rows, 202609), [], 3],
-            'TDS' => [$svc->buildTds($rows), ['TDS_DATA' => ['Birth Date', 'Date of Joining']], 2],
+            'TDS' => [$svc->buildTds($rows), ['TDS_DATA' => ['Birth Date', 'Date of Joining']], 1],
             'Paybill' => [$svc->buildPaybill($rows, 202609), [], 3],
         ];
     }
@@ -116,24 +116,24 @@ final class SpreadsheetLayoutTest extends TestCase
     public function test_tds_dates_are_whole_day_date_cells_in_the_sample_format_and_blank_stays_blank(): void
     {
         $ws = $this->roundTrip((new PostPayrollDownloadService)->buildTds($this->rows()))->getSheet(0);
-        $this->assertSame('mm/dd/yyyy', $ws->getStyle('F3')->getNumberFormat()->getFormatCode());
-        $this->assertSame('05/15/1990', $ws->getCell('F3')->getFormattedValue(), 'birth date must not shift a day under Asia/Kolkata');
-        $this->assertSame('07/01/2012', $ws->getCell('H3')->getFormattedValue());
-        $this->assertSame(33008, (int) $ws->getCell('F3')->getValue());
-        $this->assertSame(33008.0, (float) $ws->getCell('F3')->getValue(), 'whole day, no time fraction');
-        $this->assertNull($ws->getCell('F5')->getValue(), 'missing birth date stays blank, not 0 / 1900');
-        $this->assertSame('202609', $ws->getCell('R3')->getFormattedValue(), 'YYYYMM has no thousands separator');
-        $this->assertSame('A2:AR8', $ws->getAutoFilter()->getRange());
-        $this->assertSame('B3', $ws->getFreezePane());
+        $this->assertSame('mm/dd/yyyy', $ws->getStyle('F2')->getNumberFormat()->getFormatCode());
+        $this->assertSame('05/15/1990', $ws->getCell('F2')->getFormattedValue(), 'birth date must not shift a day under Asia/Kolkata');
+        $this->assertSame('07/01/2012', $ws->getCell('H2')->getFormattedValue());
+        $this->assertSame(33008, (int) $ws->getCell('F2')->getValue());
+        $this->assertSame(33008.0, (float) $ws->getCell('F2')->getValue(), 'whole day, no time fraction');
+        $this->assertNull($ws->getCell('F4')->getValue(), 'missing birth date stays blank, not 0 / 1900');
+        $this->assertSame('202609', $ws->getCell('R2')->getFormattedValue(), 'YYYYMM has no thousands separator');
+        $this->assertSame('A1:AQ7', $ws->getAutoFilter()->getRange());
+        $this->assertSame('E2', $ws->getFreezePane());
     }
 
     public function test_identifiers_stay_text_with_leading_zeros(): void
     {
         $tds = $this->roundTrip((new PostPayrollDownloadService)->buildTds($this->rows()))->getSheet(0);
-        $this->assertSame('00101', $tds->getCell('A3')->getValue());
-        $this->assertSame('ABCDE1234F', $tds->getCell('E3')->getValue());
-        $this->assertSame('411026', $tds->getCell('O3')->getValue());
-        $this->assertSame('09876543210', $tds->getCell('Q3')->getValue());
+        $this->assertSame('00101', $tds->getCell('A2')->getValue());
+        $this->assertSame('ABCDE1234F', $tds->getCell('E2')->getValue());
+        $this->assertSame('411026', $tds->getCell('O2')->getValue());
+        $this->assertSame('09876543210', $tds->getCell('Q2')->getValue());
 
         $cpf = $this->roundTrip((new PostPayrollDownloadService)->buildCpf($this->rows(), 202609))->getSheet(0);
         $this->assertSame('000000000001', $cpf->getCell('B5')->getValue());
@@ -151,7 +151,7 @@ final class SpreadsheetLayoutTest extends TestCase
         $pay = $this->roundTrip($svc->buildPaybill($this->rows(), 202609))->getSheetByName('Paybill');
         $cell = $pay->getCell('G4'); // Basic
         $this->assertTrue(is_float($cell->getValue()) || is_int($cell->getValue()));
-        $this->assertSame('#,##0.00', $pay->getStyle('G4')->getNumberFormat()->getFormatCode());
+        $this->assertSame(SpreadsheetLayout::FORMAT_AMOUNT, $pay->getStyle('G4')->getNumberFormat()->getFormatCode());
         $this->assertSame('right', $pay->getStyle('G4')->getAlignment()->getHorizontal());
         $this->assertSame('C4', $pay->getFreezePane());
         $this->assertSame('landscape', $pay->getPageSetup()->getOrientation());

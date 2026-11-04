@@ -29,10 +29,13 @@ final class QuarterAssignmentTest extends DatabaseTestCase
         foreach ($users as $uid) {
             if (! DB::table('cirt_quarter_assignments')->where('employee_id', $uid)->exists()) { $employee = $uid; break; }
         }
-        $quarters = DB::table('cirt_quarters')->where('company_id', $company)->limit(2)->pluck('id')->all();
+        $quarters = DB::table('cirt_quarters')->where('company_id', $company)->where('status', '!=', 'inactive')->limit(2)->pluck('id')->all();
         if ($employee === null || count($quarters) < 2) {
-            $this->markTestSkipped('Local database has no unassigned employee / two quarters to test with.');
+            $this->markTestSkipped('Local database has no unassigned employee / two active quarters to test with.');
         }
+        // Payroll rent comes from the Quarters master, so pin known rents for these two quarters.
+        DB::table('cirt_quarters')->where('id', $quarters[0])->update(['monthly_rent' => 880]);
+        DB::table('cirt_quarters')->where('id', $quarters[1])->update(['monthly_rent' => 500]);
 
         return [$company, $employee, (string) $quarters[0], (string) $quarters[1]];
     }
@@ -81,10 +84,14 @@ final class QuarterAssignmentTest extends DatabaseTestCase
         $this->openAssignment($company, $quarterA, $employee, '2026-09-10', '2026-10-15', 700);
         $svc = app(QuarterService::class);
 
+        // Overlap rule: start <= month end AND (end is null OR end >= month start); part months are prorated.
         $this->assertFalse($svc->quarterMetaForEmployeePeriod($company, $employee, 2026, 8)['hasQuarter'], 'before assigned_from');
-        $this->assertTrue($svc->quarterMetaForEmployeePeriod($company, $employee, 2026, 9)['hasQuarter'], 'assigned mid-month counts at month end');
-        $this->assertFalse($svc->quarterMetaForEmployeePeriod($company, $employee, 2026, 10)['hasQuarter'], 'released before month end');
-        $this->assertSame(0.0, $svc->quarterMetaForEmployeePeriod($company, $employee, 2026, 10)['quarterRent']);
+        $sep = $svc->quarterMetaForEmployeePeriod($company, $employee, 2026, 9);
+        $this->assertTrue($sep['hasQuarter'], 'assigned mid-month is charged for the days occupied');
+        $this->assertSame(\App\Support\Money::proportion(880, 21, 30), $sep['quarterRent'], '10th..30th = 21 days');
+        $oct = $svc->quarterMetaForEmployeePeriod($company, $employee, 2026, 10);
+        $this->assertTrue($oct['hasQuarter'], 'released mid-month is still charged for days occupied');
+        $this->assertSame(\App\Support\Money::proportion(880, 15, 31), $oct['quarterRent'], '1st..15th inclusive = 15 days');
         $this->assertFalse($svc->quarterMetaForEmployeePeriod($company, $employee, 2026, 11)['hasQuarter']);
     }
 }

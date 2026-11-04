@@ -62,8 +62,9 @@ let threw = false;
 try { tdsMonthsUrl([]); } catch { threw = true; }
 assertEq(threw, true, "no month selected is rejected");
 
-// Preview cells: money has 2 decimals, text is untouched, blanks stay blank.
-assertEq(previewCell(1234567.5, true), "12,34,567.50", "Indian grouping, 2 decimals");
+// Preview cells: money is shown in whole rupees, text is untouched, blanks stay blank.
+assertEq(previewCell(1234567.5, true), "12,34,568", "Indian grouping, whole rupees (0.50 rounds up)");
+assertEq(previewCell(1234567, true), "12,34,567", "no .00");
 assertEq(previewCell(null, true), "", "blank");
 assertEq(previewCell("May 2026", false), "May 2026", "text");
 assertEq(previewCell(2026, false), "2026", "year is not money");

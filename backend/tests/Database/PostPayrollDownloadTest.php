@@ -113,18 +113,29 @@ final class PostPayrollDownloadTest extends DatabaseTestCase
 
     public function test_division_wise_totals_equal_payroll_gross_and_headcount(): void
     {
-        $wb = $this->roundTrip($this->svc->buildDivisionWise($this->rows, self::YM));
-        $this->assertSame(['Division', 'Count', 'Pay Level'], $wb->getSheetNames());
+        $company = (string) DB::table('cirt_monthly_payroll')->value('company_id');
+        $names = $this->svc->settingsDivisionNames($company);
+        $table = $this->svc->divisionWiseTable($this->rows, $names);
+        $wb = $this->roundTrip($this->svc->buildDivisionWise($this->rows, self::YM, $names));
+        $this->assertSame(['Division-Wise', 'Division', 'Count', 'Pay Level'], $wb->getSheetNames());
+
+        // Real division names (no keyword groups, no "OTHER / UNMAPPED"), every employee listed once.
+        $this->assertNotContains('OTHER / UNMAPPED', array_keys($table['divisions']));
+        $this->assertSame(count($this->rows), array_sum(array_column($table['divisions'], 'rows')));
+        $this->assertSame($this->sum('total_earnings'), $table['totals'][8]);
+        $this->assertSame($this->sum('total_deductions'), $table['totals'][9]);
+        $this->assertSame($this->sum('net_salary'), $table['totals'][10]);
+        $detail = array_values(array_filter($table['rows'], fn ($r, $i) => $table['kinds'][$i] === 'detail', ARRAY_FILTER_USE_BOTH));
+        $this->assertCount(count($this->rows), $detail);
+        $this->assertSame([], array_filter(array_column($detail, 1), fn ($c) => trim((string) $c) === ''), 'every row has an employee code');
+        foreach (array_keys($table['divisions']) as $name) $this->assertNotSame('', trim($name));
+
         $div = $wb->getSheetByName('Division');
         $this->assertSame('Salary Details for September 2026', $div->getCell('A1')->getValue());
-        $rowsN = count(PostPayrollDownloadService::DIVISION_ROWS) + (in_array(PostPayrollDownloadService::UNMAPPED, array_column($this->unmappedProbe(), 0), true) ? 1 : 0);
         // Formulas stay live: the TOTAL row sums the division rows; GRAND TOTAL adds the categories.
-        $totalRow = 5 + $this->divisionRowCount();
+        $totalRow = 5 + count($table['divisions']);
         $this->assertSame("=SUM(B5:B".($totalRow - 1).')', $div->getCell('B'.$totalRow)->getValue());
-        $this->assertStringStartsWith('=B'.$totalRow.'+C'.$totalRow, (string) $div->getCell('B'.($totalRow + 1))->getValue());
-        // Values: evaluate the formulas and compare to payroll gross.
-        $calc = $div->getCell('B'.($totalRow + 1))->getCalculatedValue();
-        $this->assertEqualsWithDelta($this->sum('total_earnings'), (float) $calc, 1.0);
+        $this->assertEqualsWithDelta($this->sum('total_earnings'), (float) $div->getCell('B'.($totalRow + 1))->getCalculatedValue(), 1.0);
 
         $count = $wb->getSheetByName('Count');
         $countTotal = 0;
@@ -145,16 +156,6 @@ final class PostPayrollDownloadTest extends DatabaseTestCase
         $this->assertEqualsWithDelta($this->sum('total_earnings'), (float) $pl->getCell('C'.$grand)->getCalculatedValue(), 1.0, 'Pay Level grand total = payroll gross (all levels are in a group)');
     }
 
-    private function unmappedProbe(): array
-    {
-        return array_map(fn ($r) => [PostPayrollDownloadService::reportDivision($r['_master']['division'] ?? '')], $this->rows);
-    }
-
-    private function divisionRowCount(): int
-    {
-        return count(PostPayrollDownloadService::DIVISION_ROWS) + (in_array(PostPayrollDownloadService::UNMAPPED, array_column($this->unmappedProbe(), 0), true) ? 1 : 0);
-    }
-
     public function test_tds_layout_range_and_totals(): void
     {
         $company = (string) DB::table('cirt_monthly_payroll')->value('company_id');
@@ -162,26 +163,30 @@ final class PostPayrollDownloadTest extends DatabaseTestCase
         count($rows) > count($this->rows) || $this->markTestSkipped('Needs two generated months for the range check.');
         $ws = $this->roundTrip($this->svc->buildTds($rows))->getSheet(0);
 
-        $this->assertSame(['ADD1', 'ADD15', 'TR', 'HRA', 'CT', 'PT', 'PF', 'TDS', 'DED1', 'GI', 'US101', 'US102', 'US103'],
-            array_map(fn ($c) => $ws->getCell($c.'1')->getValue(), ['S', 'AG', 'AH', 'AI', 'AJ', 'AK', 'AL', 'AM', 'AN', 'AO', 'AP', 'AQ', 'AR']));
-        $this->assertEquals(PostPayrollDownloadService::TDS_COLUMNS, array_map(fn ($c) => $ws->getCell([$c, 2])->getValue(), range(1, 44)));
-        $this->assertSame(count($rows), $ws->getHighestDataRow() - 2);
+        // Row 1 is the header row: 43 columns, no ADD1..US103 code row, no blank/0 column.
+        $this->assertCount(43, PostPayrollDownloadService::TDS_COLUMNS);
+        $this->assertEquals(PostPayrollDownloadService::TDS_COLUMNS, array_map(fn ($c) => $ws->getCell([$c, 1])->getValue(), range(1, 43)));
+        $this->assertSame([], \App\Support\SpreadsheetLayout::auditHeaders($ws->getParent(), ['TDS_DATA' => 1]));
+        $this->assertSame(count($rows), $ws->getHighestDataRow() - 1);
+        $this->assertSame('E2', $ws->getFreezePane());
         $yms = [];
-        for ($r = 3; $r <= 2 + count($rows); $r++) $yms[(int) $ws->getCell('R'.$r)->getValue()] = true;
+        for ($r = 2; $r <= 1 + count($rows); $r++) $yms[(int) $ws->getCell('R'.$r)->getValue()] = true;
         $this->assertSame([202609, 202610], array_keys($yms));
+        $this->assertSame('0', $ws->getStyle('R2')->getNumberFormat()->getFormatCode(), 'YYYYMM has no thousands separator');
 
-        $sumCol = fn (string $c) => $this->columnSum($ws, \PhpOffice\PhpSpreadsheet\Cell\Coordinate::columnIndexFromString($c), 3, 2 + count($rows));
+        $letter = fn (string $header) => \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex(array_search($header, PostPayrollDownloadService::TDS_COLUMNS, true) + 1);
+        $sumCol = fn (string $header) => $this->columnSum($ws, \PhpOffice\PhpSpreadsheet\Cell\Coordinate::columnIndexFromString($letter($header)), 2, 1 + count($rows));
         $tot = fn (string $k) => round(array_sum(array_map(fn ($r) => PostPayrollDownloadService::n($r, $k), $rows)), 2);
-        $this->assertSame($tot('basic_paid'), $sumCol('S'));
-        $this->assertSame(round($tot('da_paid') + $tot('da_arrears_paid'), 2), $sumCol('T'));
-        $this->assertSame($tot('hra_paid'), $sumCol('AI'));
-        $this->assertSame($tot('transport_paid'), $sumCol('AJ'));
-        $this->assertSame($tot('pt_amount'), $sumCol('AK'));
-        $this->assertSame(round($tot('cpf_amount') + $tot('vpf_amount'), 2), $sumCol('AL'));
-        $this->assertSame($tot('income_tax_amount'), $sumCol('AM'));
-        $this->assertSame($tot('lic_amount'), $sumCol('AN'));
+        $this->assertSame($tot('basic_paid'), $sumCol('BASIC+DP'));
+        $this->assertSame(round($tot('da_paid') + $tot('da_arrears_paid'), 2), $sumCol('DA+DA ARRS'));
+        $this->assertSame($tot('hra_paid'), $sumCol('HRA'));
+        $this->assertSame($tot('transport_paid'), $sumCol('Conveyance(Taxable)'));
+        $this->assertSame($tot('pt_amount'), $sumCol('Professional Tax'));
+        $this->assertSame(round($tot('cpf_amount') + $tot('vpf_amount'), 2), $sumCol('Provident Fund'));
+        $this->assertSame($tot('income_tax_amount'), $sumCol('Tax Deducted'));
+        $this->assertSame($tot('lic_amount'), $sumCol('Insurance'));
         // Dates are real Excel dates shown mm/dd/yyyy.
-        $this->assertSame('mm/dd/yyyy', $ws->getStyle('F3')->getNumberFormat()->getFormatCode());
+        $this->assertSame('mm/dd/yyyy', $ws->getStyle('F2')->getNumberFormat()->getFormatCode());
         $this->assertSame(['Subhash', 'Duryodhan', 'Katkar'], PostPayrollDownloadService::splitName('Subhash Duryodhan Katkar'));
     }
 

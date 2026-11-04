@@ -171,9 +171,12 @@ final class ActivityLogController extends Controller
     public function entries(Request $request): JsonResponse
     {
         $f = $request->validate([
-            'module' => ['sometimes', 'in:Payroll,Master,Configuration'],
+            'module' => ['sometimes', 'string', 'max:24'],
             'action' => ['sometimes', 'string', 'max:64'],
             'actor' => ['sometimes', 'string', 'max:160'],
+            'employee' => ['sometimes', 'string', 'max:160'],
+            'month' => ['sometimes', 'integer', 'min:1', 'max:12'],
+            'year' => ['sometimes', 'integer', 'min:2000', 'max:2100'],
             'from' => ['sometimes', 'date'],
             'to' => ['sometimes', 'date', 'after_or_equal:from'],
             'page' => ['sometimes', 'integer', 'min:1'],
@@ -185,10 +188,20 @@ final class ActivityLogController extends Controller
             ->when(isset($f['module']), fn (Builder $q) => $q->where('module', $f['module']))
             ->when(isset($f['action']), fn (Builder $q) => $q->where('action_code', $f['action']))
             ->when(isset($f['actor']), fn (Builder $q) => $q->whereRaw('LOWER(performed_by_name) LIKE ?', ['%'.mb_strtolower($f['actor']).'%']))
+            ->when(isset($f['employee']), function (Builder $q) use ($f): void {
+                $term = '%'.mb_strtolower($f['employee']).'%';
+                $q->whereExists(fn ($d) => $d->selectRaw('1')->from('cirt_activity_log_details as d')->whereColumn('d.entry_id', 'cirt_activity_log_entries.id')
+                    ->where(function ($w) use ($term, $f): void {
+                        $w->whereRaw('LOWER(d.employee_label) LIKE ?', [$term]);
+                        if (preg_match('/^[0-9a-f-]{36}$/i', $f['employee'])) $w->orWhere('d.employee_user_id', $f['employee']);
+                    }));
+            })
+            ->when(isset($f['month']), fn (Builder $q) => $q->where('payroll_month', (int) $f['month']))
+            ->when(isset($f['year']), fn (Builder $q) => $q->where('payroll_year', (int) $f['year']))
             ->when(isset($f['from']), fn (Builder $q) => $q->where('performed_at', '>=', Carbon::parse($f['from'], $tz)->startOfDay()))
             ->when(isset($f['to']), fn (Builder $q) => $q->where('performed_at', '<=', Carbon::parse($f['to'], $tz)->endOfDay()))
             ->orderByDesc('performed_at')->orderByDesc('id')
-            ->paginate((int) ($f['per_page'] ?? 25));
+            ->paginate((int) ($f['per_page'] ?? 25), ['*'], 'page', isset($f['page']) ? (int) $f['page'] : null);
 
         return response()->json([
             'entries' => collect($page->items())->map(function (HrmsActivityLogEntry $e) use ($tz): array {
@@ -200,8 +213,11 @@ final class ActivityLogController extends Controller
                     'date' => $at?->format('d-m-Y'), 'time' => $at?->format('H:i:s'), 'performedAt' => $e->performed_at?->toIso8601String(), 'module' => $e->module,
                     'outcome' => $e->outcome, 'employeeCount' => (int) $e->employee_count, 'detailCount' => (int) $e->detail_count,
                     'payrollYear' => $e->payroll_year, 'payrollMonth' => $e->payroll_month,
+                    'subject' => $e->subject ?? null,
                 ];
             })->values(),
+            'modules' => array_values(array_unique([...['Payroll', 'Master', 'Users', 'Settings', 'Quarters', 'Reports', 'Configuration'],
+                ...HrmsActivityLogEntry::query()->where('company_id', (string) $request->user()->company_id)->distinct()->pluck('module')->all()])),
             'pagination' => ['currentPage' => $page->currentPage(), 'perPage' => $page->perPage(), 'total' => $page->total(), 'lastPage' => $page->lastPage()],
         ]);
     }
@@ -215,10 +231,17 @@ final class ActivityLogController extends Controller
         return response()->json(['entry' => [
             'id' => $entry->id, 'action' => $entry->action_label, 'performedBy' => $entry->performed_by_name,
             'date' => $at?->format('d-m-Y'), 'time' => $at?->format('H:i:s'), 'performedAt' => $entry->performed_at?->toIso8601String(), 'module' => $entry->module, 'outcome' => $entry->outcome,
+            'subject' => $entry->subject ?? null,
+            'summary' => $entry->summary ?? null,
             'details' => $entry->details()->get()->map(fn ($d) => [
                 'employee' => $d->employee_label, 'changedItem' => $d->changed_item,
                 'previousValue' => $d->previous_value, 'updatedValue' => $d->updated_value,
+                'kind' => $d->change_kind ?? 'typed',
+                'diff' => isset($d->diff) ? \App\Support\ActivityDiff::scrub(is_string($d->diff) ? json_decode($d->diff, true) : $d->diff) : null,
             ])->values(),
+            // Records written before field-level tracking carry no individual changes: say so instead of showing nothing.
+            'legacyNote' => ((int) $entry->detail_count) === 0 && $entry->outcome !== 'failed'
+                ? 'This record was written before field-level change tracking, so no individual changes were stored.' : null,
         ]]);
     }
 

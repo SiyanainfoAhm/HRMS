@@ -2,9 +2,10 @@ import { formatMonthLabel, isValidYm } from "@/lib/dateInputs";
 import { POST_PAYROLL_REPORTS, type PostPayrollReportType } from "@/lib/postPayrollDownload";
 
 /**
- * Pure model of the Run Payroll "Downloads" menu and the separate "Post-payroll reports" menu: which items exist,
- * whether each is enabled (and why not), keyboard navigation and the phone layout switch. The React components
- * only render this.
+ * Pure model of the Run Payroll "Downloads" menu (Preview Excel, Extract) and the separate "Post-payroll reports"
+ * menu (TDS Data, CPF / VPF Statement, Division-Wise Salary, Paybill, Bank Letter): which items exist, whether each
+ * is enabled (and why not), keyboard navigation and the phone layout switch. The React components only render this.
+ * Export Employee Payroll is no longer a menu entry (its backend, routes and component stay).
  */
 
 export type BankLetterFormatId = "docx" | "xlsx" | "pdf";
@@ -12,21 +13,15 @@ export type BankLetterFormatId = "docx" | "xlsx" | "pdf";
 export type MenuItemId =
   | "preview-excel"
   | "extract"
-  | "export-employee-payroll"
+  | "bank-letter"
   | `bank-${BankLetterFormatId}`
   | `report-${PostPayrollReportType}`;
 
-export type MenuSubmenuId = "bank";
-
 export type MenuContext = {
-  /** Admin-only features (Export Employee Payroll, post-payroll reports), exactly as the old buttons/page. */
-  canManage: boolean;
   /** Something is saving / generating / loading. */
   running: boolean;
-  /** Same condition the old Preview Excel / Extract / Bank Letter buttons used: no preview or draft to export. */
+  /** Same condition the old Preview Excel / Extract buttons used: no preview or draft to export. */
   exportDisabled: boolean;
-  /** Bank letter is being built (existing flag). */
-  bankLetterLoading: boolean;
   /** Selected month, "YYYY-MM" (read from the page selectors). */
   ym: string;
 };
@@ -43,7 +38,6 @@ export type MenuItem = {
 
 export type DownloadsMenuModel = {
   payroll: MenuItem[];
-  bank: MenuItem[];
 };
 
 export const REASON_NOTHING_TO_EXPORT = "Nothing to export yet. Calculate the payroll or save a draft first.";
@@ -65,31 +59,12 @@ export function monthKey(runYear: string | number, runMonth: string | number): s
 
 export function buildDownloadsMenu(ctx: MenuContext): DownloadsMenuModel {
   const exportReason = ctx.running ? REASON_BUSY : ctx.exportDisabled ? REASON_NOTHING_TO_EXPORT : null;
-  const bankReason = ctx.running ? REASON_BUSY : ctx.exportDisabled ? REASON_NOTHING_TO_EXPORT : ctx.bankLetterLoading ? REASON_BANK_BUSY : null;
-
-  const payroll: MenuItem[] = [
-    { id: "preview-excel", label: "Preview Excel", description: "Current preview or saved draft", tag: "Excel", disabledReason: exportReason },
-    { id: "extract", label: "Extract", description: "Monthly payroll summary", tag: "Excel", disabledReason: exportReason },
-  ];
-  if (ctx.canManage) {
-    payroll.push({
-      id: "export-employee-payroll",
-      label: "Export Employee Payroll",
-      description: "Saved payroll for chosen periods",
-      tag: "Excel",
-      disabledReason: null,
-    });
-  }
-
-  const bank: MenuItem[] = BANK_FORMATS.map((f) => ({
-    id: `bank-${f.id}` as MenuItemId,
-    label: f.label,
-    description: f.description,
-    tag: f.tag,
-    disabledReason: bankReason,
-  }));
-
-  return { payroll, bank };
+  return {
+    payroll: [
+      { id: "preview-excel", label: "Preview Excel", description: "Current preview or saved draft", tag: "Excel", disabledReason: exportReason },
+      { id: "extract", label: "Extract", description: "Monthly payroll summary", tag: "Excel", disabledReason: exportReason },
+    ],
+  };
 }
 
 // ---------------------------------------------------------------- Post-payroll reports menu
@@ -99,6 +74,10 @@ export const REASON_NO_MONTH_GENERATED = "No payroll month has been generated ye
 export type PostPayrollMenuContext = {
   canManage: boolean;
   running: boolean;
+  /** No preview or draft for the page month (Bank Letter is built from the page month's payroll). */
+  exportDisabled?: boolean;
+  /** A bank letter is being built (existing flag). */
+  bankLetterLoading?: boolean;
   /** Months ("YYYY-MM") with a generated/finalized run; null while the list is still loading. */
   generatedMonths: string[] | null;
   /** Month selected on the Run Payroll page. */
@@ -107,11 +86,14 @@ export type PostPayrollMenuContext = {
 
 export type PostPayrollMenuItem = MenuItem & {
   /** multi-month: opens the month picker (TDS Data); single-month: a month selector limited to generated months. */
-  flow: "multi-month" | "single-month";
+  flow: "multi-month" | "single-month" | "bank-letter";
 };
 
 export type PostPayrollMenuModel = {
+  /** TDS Data, CPF / VPF Statement, Division-Wise Salary, Paybill, Bank Letter - in that order. */
   items: PostPayrollMenuItem[];
+  /** The formats offered by Bank Letter. */
+  bankFormats: MenuItem[];
   /** Shown above the list only when no month has been generated at all. */
   hint: string | null;
 };
@@ -125,17 +107,38 @@ export function buildPostPayrollMenu(ctx: PostPayrollMenuContext): PostPayrollMe
   if (!ctx.canManage) return null;
   const none = ctx.generatedMonths !== null && ctx.generatedMonths.length === 0;
   const reason = ctx.running ? REASON_BUSY : none ? REASON_NO_MONTH_GENERATED : null;
-  return {
-    items: POST_PAYROLL_REPORTS.map((r) => ({
-      id: `report-${r.type}` as MenuItemId,
-      label: r.label,
-      description: r.description,
-      tag: "Excel" as const,
-      disabledReason: reason,
-      flow: r.type === "tds" ? ("multi-month" as const) : ("single-month" as const),
-    })),
-    hint: none ? REASON_NO_MONTH_GENERATED : null,
-  };
+  // Bank Letter is built from the page month's payroll (preview or draft), not from a generated-month list.
+  const bankReason = ctx.running
+    ? REASON_BUSY
+    : ctx.exportDisabled
+      ? REASON_NOTHING_TO_EXPORT
+      : ctx.bankLetterLoading
+        ? REASON_BANK_BUSY
+        : null;
+  const items: PostPayrollMenuItem[] = POST_PAYROLL_REPORTS.map((r) => ({
+    id: `report-${r.type}` as MenuItemId,
+    label: r.label,
+    description: r.description,
+    tag: "Excel" as const,
+    disabledReason: reason,
+    flow: r.type === "tds" || r.type === "division-wise" ? ("multi-month" as const) : ("single-month" as const),
+  }));
+  items.push({
+    id: "bank-letter",
+    label: "Bank Letter",
+    description: "Salary advice for the bank",
+    tag: "Letter",
+    disabledReason: bankReason,
+    flow: "bank-letter",
+  });
+  const bankFormats: MenuItem[] = BANK_FORMATS.map((f) => ({
+    id: `bank-${f.id}` as MenuItemId,
+    label: f.label,
+    description: f.description,
+    tag: f.tag,
+    disabledReason: bankReason,
+  }));
+  return { items, bankFormats, hint: none ? REASON_NO_MONTH_GENERATED : null };
 }
 
 /**

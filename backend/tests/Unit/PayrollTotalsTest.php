@@ -10,13 +10,13 @@ final class PayrollTotalsTest extends TestCase
     private function gm(): array
     {
         return [
-            'basicPaid' => 34590, 'daPaid' => 18332.7, 'hraPaid' => 0, 'transportPaid' => 3600,
+            'basicPaid' => 34590, 'daPaid' => 18333, 'hraPaid' => 0, 'transportPaid' => 3600,
             'daArrearsPaid' => 1000, 'transportArrearsPaid' => 200, 'grossArrear' => 1200,
             'deductions' => ['pt' => 200, 'cpf' => 5000, 'electricity' => 98, 'water' => 314, 'mess' => 25, 'quarterRent' => 138],
             'cpfArrear' => 50,
-            'totalEarnings' => 57722.7,
+            'totalEarnings' => 57723,
             'totalDeductions' => 5825,
-            'netSalary' => 51897.7,
+            'netSalary' => 51898,
         ];
     }
 
@@ -25,12 +25,13 @@ final class PayrollTotalsTest extends TestCase
         $this->assertSame([], PayrollTotals::reconcile($this->gm()));
     }
 
-    public function test_gross_arrear_is_not_double_counted_when_it_equals_da_plus_tr(): void
+    public function test_gross_arrear_is_da_plus_tr_and_never_added_again(): void
     {
-        $this->assertSame(0.0, PayrollTotals::supplementalGrossArrear($this->gm()));
+        $this->assertSame(1200.0, PayrollTotals::arrearsTotal($this->gm()));
         $gm = $this->gm();
-        $gm['grossArrear'] = 1500; // 300 recorded only as gross arrear
-        $this->assertSame(300.0, PayrollTotals::supplementalGrossArrear($gm));
+        $gm["grossArrear"] = 1500; // a stored gross is not trusted: Gross Arrears = DA + TR
+        $this->assertSame(1200.0, PayrollTotals::arrearsTotal($gm));
+        $this->assertSame([], PayrollTotals::reconcile($gm), "a wrong stored gross arrear does not change the totals check");
     }
 
     public function test_net_must_equal_gross_minus_deductions(): void
@@ -53,7 +54,8 @@ final class PayrollTotalsTest extends TestCase
         $this->assertArrayHasKey('totals', PayrollTotals::reconcile(['totalEarnings' => 'x', 'totalDeductions' => 0, 'netSalary' => 0]));
         $this->assertArrayHasKey('totals', PayrollTotals::reconcile([]));
         $this->assertSame(0.0, PayrollTotals::amount(-5));
-        $this->assertSame(1.01, PayrollTotals::amount('1.005')); // 2-dp half-up
+        $this->assertSame(1.0, PayrollTotals::amount('1.005')); // whole rupee, half up
+        $this->assertSame(2.0, PayrollTotals::amount('1.5'));
     }
 
     public function test_custom_fields_are_bounded_by_their_values(): void

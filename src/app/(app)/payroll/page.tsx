@@ -1,6 +1,7 @@
 "use client";
 
-import { proportion, round2, sumMoney } from "@/lib/money";
+import { formatMoney } from "@/lib/money";
+import { proportion, roundMoney, sumMoney } from "@/lib/money";
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
@@ -43,8 +44,9 @@ import {
   isSamePayrollReferencePeriod,
   referenceSalaryFromGovRecalc,
 } from "@/lib/hplEolDeductions";
+import { daysInMonthOf, leaveLineError, type LeaveLine } from "@/lib/leaveDeductions";
 import { customRunFieldsForPreview, type PayrollConfig, type PayrollFieldDefinition } from "@/lib/payrollFieldTypes";
-import { applyAutoArrearsToGovernmentMonthly, totalArrearsPaid } from "@/lib/payrollArrearCalc";
+import { applyAutoArrearsToGovernmentMonthly, arrearChain, totalArrearsPaid } from "@/lib/payrollArrearCalc";
 import {
   GovernmentRunPreviewTable,
   type GovernmentPreviewMonthly,
@@ -233,6 +235,38 @@ type GovMonthlyWithArrear = ReturnType<
   typeof applyAutoArrearsToGovernmentMonthly<GovernmentMonthlyComputed>
 >;
 
+/**
+ * Load, for every leave line that is not in the run month, that month's gross Basic, DA % (after revisions)
+ * and calendar days. Lines of the run month use the run's own values and need no lookup.
+ */
+async function hydrateLeaveLines(
+  employeeUserId: string,
+  gr: GovRecalcPayload,
+  runYear: number,
+  runMonth: number,
+): Promise<GovRecalcPayload> {
+  const lines = gr.leaveLines ?? [];
+  const cache = new Map<string, Promise<Awaited<ReturnType<typeof fetchReferenceSalary>> | null>>();
+  const next = await Promise.all(
+    lines.map(async (line) => {
+      if (line.month === runMonth && line.year === runYear) return line;
+      if (line.grossBasic != null && line.daPercent != null) return line;
+      const key = `${line.year}-${line.month}`;
+      if (!cache.has(key)) cache.set(key, fetchReferenceSalary(employeeUserId, line.year, line.month).catch(() => null));
+      const ref = await cache.get(key)!;
+      if (!ref) return { ...line, warning: "Could not load this month's Basic and DA rate; the run month's values are used." };
+      return {
+        ...line,
+        grossBasic: ref.grossBasic,
+        ...(ref.daPercent != null ? { daPercent: ref.daPercent } : {}),
+        daysInMonth: ref.daysInMonth,
+        warning: ref.warning,
+      };
+    }),
+  );
+  return { ...gr, leaveLines: next };
+}
+
 async function hydrateEolReferenceSalary(
   employeeUserId: string,
   gr: GovRecalcPayload,
@@ -322,6 +356,10 @@ function governmentRowFromCompute<T extends {
   const totalDeductions = Number(gm.totalDeductions ?? comp.totalDeductions) || 0;
   const netSalary = Number(gm.netSalary ?? comp.netSalary) || 0;
   const ded = (gm.deductions ?? comp.deductions) as GovernmentDeductionDefaults;
+  const rowDaArrear = arrear?.daArrear ?? (Number(gm.daArrearsPaid ?? comp.daArrearsPaid) || 0);
+  const rowTrArrear = arrear?.transportArrear ?? (Number(gm.transportArrearsPaid ?? comp.transportArrearsPaid) || 0);
+  const rowCpfArrear = arrear?.cpfArrear ?? (Number(gm.cpfArrear ?? comp.cpfArrear) || 0);
+  const rowArrearChain = arrearChain(rowDaArrear, rowTrArrear, rowCpfArrear);
 
   return {
     ...row,
@@ -332,12 +370,11 @@ function governmentRowFromCompute<T extends {
       ...gm,
       leaveRemarks: gr.leaveRemarks ?? (row.governmentMonthly as { leaveRemarks?: string | null } | null | undefined)?.leaveRemarks ?? null,
     },
-    daArrear: arrear?.daArrear ?? (Number(gm.daArrearsPaid ?? comp.daArrearsPaid) || 0),
-    transportArrear:
-      arrear?.transportArrear ?? (Number(gm.transportArrearsPaid ?? comp.transportArrearsPaid) || 0),
-    grossArrear: arrear?.grossArrear ?? (Number(gm.grossArrear ?? comp.grossArrear) || 0),
-    cpfArrear: arrear?.cpfArrear ?? (Number(gm.cpfArrear ?? comp.cpfArrear) || 0),
-    netArrear: arrear?.netArrear ?? (Number(gm.netArrear ?? comp.netArrear) || 0),
+    daArrear: rowDaArrear,
+    transportArrear: rowTrArrear,
+    grossArrear: rowArrearChain.grossArrear,
+    cpfArrear: rowCpfArrear,
+    netArrear: rowArrearChain.netArrear,
     grossPay: totalEarnings,
     deductions: totalDeductions,
     netPay: netSalary,
@@ -347,7 +384,7 @@ function governmentRowFromCompute<T extends {
     pfEmployer: 0,
     esicEmployee: 0,
     esicEmployer: 0,
-    takeHome: round2(netSalary),
+    takeHome: roundMoney(netSalary),
   };
 }
 
@@ -417,13 +454,10 @@ function arrearSnapshotFromRow(row: {
   governmentMonthly?: GovernmentPreviewMonthly | GovMonthlyWithArrear | null | unknown;
 }) {
   const g = row.governmentMonthly as GovernmentPreviewMonthly | GovMonthlyWithArrear | null | undefined;
-  return {
-    daArrear: round2(Number(row.daArrear ?? g?.daArrearsPaid ?? 0) || 0),
-    transportArrear: round2(Number(row.transportArrear ?? g?.transportArrearsPaid ?? 0) || 0),
-    grossArrear: round2(Number(row.grossArrear ?? g?.grossArrear ?? 0) || 0),
-    cpfArrear: round2(Number(row.cpfArrear ?? g?.cpfArrear ?? 0) || 0),
-    netArrear: round2(Number(row.netArrear ?? g?.netArrear ?? 0) || 0),
-  };
+  const daArrear = roundMoney(Number(row.daArrear ?? g?.daArrearsPaid ?? 0) || 0);
+  const transportArrear = roundMoney(Number(row.transportArrear ?? g?.transportArrearsPaid ?? 0) || 0);
+  const cpfArrear = roundMoney(Number(row.cpfArrear ?? g?.cpfArrear ?? 0) || 0);
+  return { daArrear, transportArrear, cpfArrear, ...arrearChain(daArrear, transportArrear, cpfArrear) };
 }
 
 function govDeductionDefaultsFromMasterRow(row: MasterGridRow): GovernmentDeductionDefaults {
@@ -944,6 +978,8 @@ function PayrollPageContent() {
   const editedRunRowKeysRef = useRef<Set<string>>(new Set());
   const changedDraftFieldsRef = useRef<Map<string, Set<string>>>(new Map());
   const auditDirectFieldsRef = useRef<Map<string, Set<string>>>(new Map());
+  /** Row as calculated from Payroll Master before its first edit while no draft exists yet: the audit comparison point of the first save. */
+  const draftBaselineRowsRef = useRef<Map<string, unknown>>(new Map());
   /** Canonical full-period payroll rows keyed by employee_user_id (not page/filter). */
   const resolvedPayrollByUserIdRef = useRef<Map<string, RunPayrollRowLike>>(new Map());
   const draftPayloadByUserRef = useRef<Map<string, Record<string, unknown>>>(new Map());
@@ -1557,6 +1593,7 @@ function PayrollPageContent() {
         if (row.employeeUserId !== employeeUserId) return row;
         const commitEdit = (next: typeof row) => {
           const cacheKey = payrollRowCacheKey(payrollPeriodKey(runYear, runMonth), employeeUserId);
+          if (!draftMeta && !draftBaselineRowsRef.current.has(cacheKey)) draftBaselineRowsRef.current.set(cacheKey, JSON.parse(JSON.stringify(row)));
           runRowEditsRef.current.set(cacheKey, next);
           resolvedPayrollByUserIdRef.current.set(cacheKey, next as RunPayrollRowLike);
           return next;
@@ -1743,6 +1780,62 @@ function PayrollPageContent() {
             return recompute(grNext, row.payDays, undefined, row, { clearMonetaryOverrides: false });
           }
 
+          if (field === "leaveLines") {
+            // The whole list of HPL / EOL lines (JSON). Every line is calculated on its own month and summed.
+            let parsed: unknown = [];
+            try {
+              parsed = JSON.parse(String(value));
+            } catch {
+              parsed = [];
+            }
+            const lines: LeaveLine[] = (Array.isArray(parsed) ? parsed : [])
+              .map((raw): LeaveLine => {
+                const l = (raw ?? {}) as Partial<LeaveLine>;
+                const month = Math.max(1, Math.min(12, Math.round(Number(l.month) || runM)));
+                const year = Math.max(2000, Math.round(Number(l.year) || runY));
+                const lineDim = daysInMonthOf(year, month);
+                return {
+                  type: l.type === "EOL" ? "EOL" : "HPL",
+                  month,
+                  year,
+                  days: Math.max(0, Math.min(99, Math.round(Number(l.days) || 0))),
+                  ...(l.grossBasic != null ? { grossBasic: l.grossBasic } : {}),
+                  ...(l.daPercent != null ? { daPercent: l.daPercent } : {}),
+                  ...(l.daysInMonth != null ? { daysInMonth: l.daysInMonth } : {}),
+                  ...(l.warning ? { warning: l.warning } : {}),
+                };
+              });
+            const sumDays = (t: "HPL" | "EOL") =>
+              lines.filter((l) => l.type === t).reduce((s, l) => s + Math.min(l.days, daysInMonthOf(l.year, l.month)), 0);
+            const grNext: GovRecalcPayload = {
+              ...gr0,
+              leaveLines: lines,
+              hplDays: sumDays("HPL"),
+              eolDays: sumDays("EOL"),
+              hplDeductionManualOverride: false,
+              eolDeductionManualOverride: false,
+            };
+            const unresolved = lines.some(
+              (l) => l.days > 0 && !(l.month === runM && l.year === runY) && (l.grossBasic == null || l.daPercent == null),
+            );
+            if (unresolved) {
+              void hydrateLeaveLines(employeeUserId, grNext, runY, runM).then((grHydrated) => {
+                if (activePeriodKeyRef.current !== editPeriodKey) return;
+                setEditableRows((prev) =>
+                  prev.map((r) => {
+                    if (r.employeeUserId !== employeeUserId || !r.govRecalc) return r;
+                    const next = recompute(grHydrated, r.payDays, undefined, r, { clearMonetaryOverrides: true });
+                    const cacheKey = payrollRowCacheKey(payrollPeriodKey(runYear, runMonth), employeeUserId);
+                    runRowEditsRef.current.set(cacheKey, next);
+                    resolvedPayrollByUserIdRef.current.set(cacheKey, next as RunPayrollRowLike);
+                    return next;
+                  }),
+                );
+              });
+            }
+            return recompute(grNext, row.payDays, undefined, row, { clearMonetaryOverrides: true });
+          }
+
           if (field === "hplDays" || field === "eolDays") {
             const grNext: GovRecalcPayload = {
               ...gr0,
@@ -1805,10 +1898,10 @@ function PayrollPageContent() {
             next.profTax = row.profTaxMonthly ?? companyPt;
           }
           const ratio = row.payDays > 0 && newPayDays > 0 ? newPayDays / row.payDays : newPayDays === 0 ? 0 : 1;
-          next.pfEmployee = round2(row.pfEmployee * ratio);
-          next.pfEmployer = round2(row.pfEmployer * ratio);
-          next.esicEmployee = round2(row.esicEmployee * ratio);
-          next.esicEmployer = round2(row.esicEmployer * ratio);
+          next.pfEmployee = roundMoney(row.pfEmployee * ratio);
+          next.pfEmployer = roundMoney(row.pfEmployer * ratio);
+          next.esicEmployee = roundMoney(row.esicEmployee * ratio);
+          next.esicEmployer = roundMoney(row.esicEmployer * ratio);
           next.deductions = next.pfEmployee + next.esicEmployee + next.profTax;
           next.netPay = next.grossPay - next.deductions;
           recalcTakeHome();
@@ -2787,6 +2880,19 @@ function PayrollPageContent() {
       if (rows.length === 0) {
         throw new Error("No employees to save in draft.");
       }
+      // A leave line with empty / 0 / too many days is not saved (the calculation would cap it, so what is saved
+      // would differ from what was typed). Duplicate-line warnings do not block.
+      const badLeave = rows
+        .filter((r) => {
+          const lines = (r as { govRecalc?: { leaveLines?: LeaveLine[] } }).govRecalc?.leaveLines;
+          return Array.isArray(lines) && lines.some((l) => leaveLineError(l) != null);
+        })
+        .map((r) => String((r as { employeeName?: string | null; employeeEmail?: string }).employeeName || (r as { employeeEmail?: string }).employeeEmail || r.employeeUserId));
+      if (badLeave.length > 0) {
+        const names = badLeave.length > 3 ? `${badLeave.slice(0, 3).join(", ")} and ${badLeave.length - 3} more` : badLeave.join(", ");
+        showToast("error", `Fix leave lines for ${names} before saving.`);
+        return false;
+      }
       const periodKey = payrollPeriodKey(runYear, runMonth);
       const rowsToSave = rowsForPayrollDraftSave(
         rows as Array<(typeof rows)[number] & { employeeUserId: string }>,
@@ -2821,6 +2927,10 @@ function PayrollPageContent() {
           netPay: r.netPay,
           remarks: r.govRecalc?.leaveRemarks ?? null,
           ...("changedFields" in r ? { changedFields: r.changedFields } : {}),
+          // First save only: the row as calculated before the operator's first edit (the audit's "previous value"; never stored as a save).
+          ...(!draftMeta && draftBaselineRowsRef.current.has(payrollRowCacheKey(periodKey, String(r.employeeUserId)))
+            ? { baselineRow: { payDays: r.payDays, rowPayload: draftBaselineRowsRef.current.get(payrollRowCacheKey(periodKey, String(r.employeeUserId))) } }
+            : {}),
           rowPayload: r,
         };
       });
@@ -2889,6 +2999,7 @@ function PayrollPageContent() {
         const body = outcome.body as { error?: string; message?: string; errors?: { version?: string[] } };
         throw new Error(body?.error || body?.message || body?.errors?.version?.[0] || "Failed to save draft");
       }
+      if (!draftMeta) draftBaselineRowsRef.current.clear();
       const data = outcome.body as {
         draft: { id: string; version?: number; updatedAt?: string | null; employeeCount?: number };
         employees?: DraftEmployeeApi[];
@@ -3832,20 +3943,19 @@ function PayrollPageContent() {
                 <DownloadsMenu
                   runMonth={runMonth}
                   runYear={runYear}
-                  canManage={canManage}
                   running={running || draftSaving || auditSaving}
                   exportDisabled={previewLoading || draftHydrationLoading || Boolean(draftLoadError) || (editableRows.length === 0 && !draftMeta && !preview?.alreadyRun)}
-                  bankLetterLoading={bankLetterLoading}
                   onPreviewExcel={() => downloadRunExcel("detail")}
                   onExtract={() => downloadRunExcel("summary")}
-                  onBankLetter={(format) => downloadBankLetter(format)}
-                  onExportEmployeePayroll={() => employeeExportRef.current?.openDialog()}
                 />
                 <PostPayrollReportsMenu
                   runMonth={runMonth}
                   runYear={runYear}
                   canManage={canManage}
                   running={running || draftSaving || auditSaving}
+                  exportDisabled={previewLoading || draftHydrationLoading || Boolean(draftLoadError) || (editableRows.length === 0 && !draftMeta && !preview?.alreadyRun)}
+                  bankLetterLoading={bankLetterLoading}
+                  onBankLetter={(format) => downloadBankLetter(format)}
                 />
                 {canManage ? (
                 <EmployeePayrollExportButton
@@ -4095,12 +4205,12 @@ function PayrollPageContent() {
                   })
                 : "—";
 
-              const n = (x: number) => (x ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+              const n = (x: number) => formatMoney(x ?? 0);
               const totalPerf = slip.incentive + slip.prBonus + slip.reimbursement;
               // Bank credit: salary after statutory deductions, minus TDS, plus variable pay (aligned with payroll preview).
               // Do not use slip.netPay alone — it may already equal take-home in some runs, which would double-count bonus/reimbursement.
               const salaryAfterDeductions = slip.grossPay - slip.deductions;
-              const takeHome = round2(
+              const takeHome = roundMoney(
                 salaryAfterDeductions - slip.tds + slip.incentive + slip.prBonus + slip.reimbursement
               );
 

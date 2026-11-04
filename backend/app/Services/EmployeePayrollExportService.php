@@ -155,7 +155,7 @@ class EmployeePayrollExportService
                     $active->setCellValueExplicit($coord, (string) $value, DataType::TYPE_STRING);
                 } elseif (in_array($colIndex0, $amountColIndexes, true) && $value !== '' && $value !== null && is_numeric($value)) {
                     $active->setCellValue($coord, 0 + $value);
-                    $active->getStyle($coord)->getNumberFormat()->setFormatCode('#,##0.00');
+                    $active->getStyle($coord)->getNumberFormat()->setFormatCode(\App\Support\SpreadsheetLayout::FORMAT_AMOUNT);
                 } else {
                     $active->setCellValue($coord, $value);
                 }
@@ -169,7 +169,7 @@ class EmployeePayrollExportService
             $coord = $this->colLetter($colIndex0 + 1).$rowNum;
             if (is_numeric($value) && $colIndex0 !== 0) {
                 $active->setCellValue($coord, 0 + $value);
-                $active->getStyle($coord)->getNumberFormat()->setFormatCode('#,##0.00');
+                $active->getStyle($coord)->getNumberFormat()->setFormatCode(\App\Support\SpreadsheetLayout::FORMAT_AMOUNT);
             } else {
                 $active->setCellValue($coord, $value);
             }
@@ -209,6 +209,7 @@ class EmployeePayrollExportService
         ?array $employeeUserIdSet = null,
     ): array {
         $headers = $this->buildHeaders($customKeys);
+        SpreadsheetLayout::assertHeaders($headers, 'Export Employee Payroll');
         $skipSum = array_keys(array_intersect($headers, ['Electricity Units']));
         $amountCols = array_values(array_diff($this->amountColumnIndexes($headers, $customKeys), $skipSum));
         $items = [];
@@ -246,7 +247,11 @@ class EmployeePayrollExportService
                 $this->resolveQuarterMeta($gov, $mastersByUser[$it['uid']] ?? null, $mastersById, $quartersById),
             );
             foreach ($amountCols as $i) {
-                if (isset($values[$i]) && is_numeric($values[$i])) $sums[$i] += (float) $values[$i];
+                if (isset($values[$i]) && is_numeric($values[$i])) {
+                    // Every amount shown is a whole rupee, so the Total row is the exact sum of the rows above it.
+                    $values[$i] = \App\Support\Money::roundMoney($values[$i]);
+                    $sums[$i] += $values[$i];
+                }
             }
             $rows[] = $values;
         }
@@ -255,7 +260,35 @@ class EmployeePayrollExportService
             foreach ($sums as $i => $sum) $totals[$i] = round($sum, 2);
         }
 
-        return ['headers' => $headers, 'groups' => array_column($this->columnDefinitions($customKeys), 'group'), 'rows' => $rows, 'totals' => $totals, 'moneyColumns' => $amountCols];
+        $groups = array_column($this->columnDefinitions($customKeys), 'group');
+
+        // Encashment DA is retired from payroll: leave its column out unless some row still carries an amount.
+        $retired = array_search('Encashment DA', $headers, true);
+        if ($retired !== false && $this->columnIsEmpty($rows, (int) $retired)) {
+            $drop = static fn (array $list): array => array_values(array_filter($list, static fn ($k) => $k !== $retired, ARRAY_FILTER_USE_KEY));
+            $headers = $drop($headers);
+            $groups = $drop($groups);
+            $totals = $drop($totals);
+            $rows = array_map($drop, $rows);
+            $amountCols = array_values(array_map(
+                static fn (int $i): int => $i > $retired ? $i - 1 : $i,
+                array_filter($amountCols, static fn (int $i): bool => $i !== $retired),
+            ));
+        }
+
+        return ['headers' => $headers, 'groups' => $groups, 'rows' => $rows, 'totals' => $totals, 'moneyColumns' => $amountCols];
+    }
+
+    /** @param list<list<mixed>> $rows */
+    private function columnIsEmpty(array $rows, int $index): bool
+    {
+        foreach ($rows as $row) {
+            if (isset($row[$index]) && is_numeric($row[$index]) && (float) $row[$index] !== 0.0) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**
@@ -739,9 +772,9 @@ class EmployeePayrollExportService
 
     private function customHeaderLabel(string $key): string
     {
-        $key = trim($key);
-        if ($key === '') {
-            return 'Custom Field';
+        $key = SpreadsheetLayout::safeHeader($key, 'Custom Field'); // blank or numeric labels never become a header
+        if ($key === 'Custom Field') {
+            return $key;
         }
         // Avoid recreating month-prefixed headers.
         if (preg_match('/^.+\s+-\s+.+$/', $key)) {

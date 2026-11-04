@@ -19,7 +19,7 @@ final class QuarterService
     ) {}
 
     /** @return list<array<string, mixed>> */
-    public function listForCompany(string $companyId, bool $availableOnly = false): array
+    public function listForCompany(string $companyId, bool $availableOnly = false, bool $includeInactive = false): array
     {
         $query = HrmsQuarter::query()
             ->with('quarterType')
@@ -28,6 +28,9 @@ final class QuarterService
 
         if ($availableOnly) {
             $query->where('status', 'available');
+        } elseif (! $includeInactive) {
+            // Inactive quarters are hidden unless explicitly requested ("Show inactive").
+            $query->where('status', '!=', 'inactive');
         }
 
         return $query->get()->map(fn (HrmsQuarter $q) => $this->formatQuarter($q))->values()->all();
@@ -230,6 +233,53 @@ final class QuarterService
     }
 
     /**
+     * Names of the places that still reference this quarter. Empty means it was
+     * never assigned and never used by payroll, i.e. safe to hard-delete.
+     *
+     * @return list<string>
+     */
+    public function historyLinks(HrmsQuarter $quarter): array
+    {
+        $links = [];
+        if (HrmsQuarterAssignment::query()->where('quarter_id', $quarter->id)->exists()) {
+            $links[] = 'assignment history';
+        }
+        if ($quarter->assigned_employee_id) {
+            $links[] = 'a current assignee';
+        }
+        if (DB::table('cirt_payroll_master')->where('quarter_id', $quarter->id)->exists()) {
+            $links[] = 'Payroll Master rows';
+        }
+        if (DB::table('cirt_monthly_payroll')->where('quarter_id', $quarter->id)->exists()) {
+            $links[] = 'monthly payroll entries';
+        }
+
+        return $links;
+    }
+
+    /** Hard-delete: only INACTIVE quarters that have never been assigned or used by payroll. */
+    public function delete(HrmsQuarter $quarter, string $companyId): void
+    {
+        if ($quarter->company_id !== $companyId) {
+            abort(403, 'Forbidden');
+        }
+
+        DB::transaction(function () use ($quarter, $companyId): void {
+            $locked = HrmsQuarter::query()->where('company_id', $companyId)->whereKey($quarter->id)->lockForUpdate()->firstOrFail();
+            if ($locked->status !== 'inactive') {
+                throw ValidationException::withMessages(['quarter' => 'Only inactive quarters can be deleted. Deactivate it first.']);
+            }
+            $links = $this->historyLinks($locked);
+            if ($links !== []) {
+                throw ValidationException::withMessages([
+                    'quarter' => 'This quarter has '.implode(', ', $links).' and can only stay deactivated, never deleted.',
+                ]);
+            }
+            $locked->delete();
+        });
+    }
+
+    /**
      * Sync quarter assignment from payroll master payload.
      *
      * @param  array<string, mixed>  $payload
@@ -269,8 +319,9 @@ final class QuarterService
             throw ValidationException::withMessages(['quarter_id' => 'This quarter is already assigned to another employee.']);
         }
 
-        $payloadRent = $payload['quarter_rent'] ?? $payload['quarterRent'] ?? null;
-        $effectiveRent = $this->resolveEffectiveMasterQuarterRent($payloadRent, (float) $quarter->monthly_rent);
+        // Rent is owned by the Quarters master. A rent typed on the employee record is
+        // ignored so it can never become a stale deduction source.
+        $effectiveRent = round(max(0, (float) $quarter->monthly_rent), 2);
 
         // Unassign-old / assign-new / mirror update succeed or fail together.
         DB::transaction(function () use ($master, $quarter, $quarterId, $employeeUserId, $companyId, $actorId, $effectiveRent): void {
@@ -376,16 +427,119 @@ final class QuarterService
     }
 
     /**
-     * Resolve the quarter assignment effective on the last day of the payroll month.
-     * cirt_quarter_assignments is the assignment source; Payroll Master flags are mirrors.
+     * Quarter context for a payroll month, from the assignments that OVERLAP the month.
+     * See quarterMetaForDraft(). Kept as the historical entry point.
+     *
      * @return array<string, mixed>
      */
     public function quarterMetaForEmployeePeriod(string $companyId, string $employeeUserId, int $year, int $month): array
     {
-        $this->assertPeriod($year, $month);
-        $asOf = Carbon::create($year, $month, 1)->endOfMonth()->toDateString();
+        return $this->quarterMetaForDraft($companyId, $employeeUserId, $year, $month);
+    }
 
-        return $this->quarterMetaForEmployeeAsOfDate($companyId, $employeeUserId, $asOf);
+    /**
+     * Quarter rent for one payroll month, from the assignments that overlap that month:
+     *   start <= last day of month AND (end is null OR end >= first day of month).
+     * Start and end dates are both inclusive. A part-month occupancy is prorated as
+     * monthly_rent x occupied days / days in month (whole rupees); several quarters in
+     * one month are summed. Several rows for the SAME quarter describe one occupancy
+     * (repeated saves) and are merged by day, never added twice. Inactive quarters
+     * never deduct. The result depends only on the requested month, never on today.
+     *
+     * @return array<string, mixed>
+     */
+    public function quarterMetaForDraft(string $companyId, string $employeeUserId, int $year, int $month): array
+    {
+        $this->assertPeriod($year, $month);
+        if ($employeeUserId === '') {
+            return $this->emptyQuarterMeta();
+        }
+        $first = Carbon::create($year, $month, 1)->startOfDay();
+        $last = $first->copy()->endOfMonth()->startOfDay();
+        $daysInMonth = (int) $first->daysInMonth;
+
+        $assignments = HrmsQuarterAssignment::query()
+            ->with(['quarter.quarterType'])
+            ->where('company_id', $companyId)
+            ->where('employee_id', $employeeUserId)
+            ->where(fn ($query) => $query->whereNull('assigned_from')->orWhereDate('assigned_from', '<=', $last->toDateString()))
+            ->where(fn ($query) => $query->whereNull('assigned_to')->orWhereDate('assigned_to', '>=', $first->toDateString()))
+            ->get();
+
+        /** @var array<string, array{quarter: HrmsQuarter, days: array<int, true>}> $byQuarter */
+        $byQuarter = [];
+        foreach ($assignments as $assignment) {
+            $quarter = $assignment->quarter;
+            if (! $quarter || $quarter->company_id !== $companyId) {
+                throw ValidationException::withMessages([
+                    'quarterAssignment' => ["Quarter assignment for employee {$employeeUserId} has no valid company quarter."],
+                ]);
+            }
+            if ($quarter->status === 'inactive') {
+                continue;
+            }
+            $start = $assignment->assigned_from ? Carbon::parse($assignment->assigned_from)->startOfDay() : $first;
+            $end = $assignment->assigned_to ? Carbon::parse($assignment->assigned_to)->startOfDay() : $last;
+            $fromDay = $start->lessThan($first) ? 1 : (int) $start->day;
+            $toDay = $end->greaterThan($last) ? $daysInMonth : (int) $end->day;
+            for ($d = $fromDay; $d <= $toDay; $d++) {
+                $byQuarter[(string) $quarter->id]['quarter'] = $quarter;
+                $byQuarter[(string) $quarter->id]['days'][$d] = true;
+            }
+        }
+        if ($byQuarter === []) {
+            return $this->emptyQuarterMeta();
+        }
+
+        // Two different quarters held on the same days is a data error. A one-day overlap is the
+        // normal hand-over (unassign and assign both stamp today), so it is tolerated.
+        $ids = array_keys($byQuarter);
+        for ($i = 0; $i < count($ids); $i++) {
+            for ($j = $i + 1; $j < count($ids); $j++) {
+                if (count(array_intersect_key($byQuarter[$ids[$i]]['days'], $byQuarter[$ids[$j]]['days'])) > 1) {
+                    throw ValidationException::withMessages([
+                        'quarterAssignment' => ["Multiple quarter assignments overlap for employee {$employeeUserId} in {$year}-".sprintf('%02d', $month).'; payroll resolution stopped.'],
+                    ]);
+                }
+            }
+        }
+
+        $rent = 0.0;
+        $main = null;
+        $mainDays = -1;
+        $occupied = 0;
+        foreach ($byQuarter as $entry) {
+            /** @var HrmsQuarter $quarter */
+            $quarter = $entry['quarter'];
+            $days = count($entry['days']);
+            $typeName = $quarter->quarterType?->name ?: trim((string) $quarter->quarter_type);
+            // Live Quarters-master rent. rent_at_assignment and the Payroll Master mirror are
+            // snapshots and are never used for payroll.
+            if ($typeName === '' || $quarter->monthly_rent === null || ! is_numeric($quarter->monthly_rent) || (float) $quarter->monthly_rent < 0) {
+                throw ValidationException::withMessages([
+                    'quarterAssignment' => ["Quarter type or rent cannot be resolved for employee {$employeeUserId}; payroll resolution stopped."],
+                ]);
+            }
+            $rent += \App\Support\Money::proportion((float) $quarter->monthly_rent, $days, $daysInMonth);
+            $occupied += $days;
+            if ($days >= $mainDays) {
+                $main = $quarter;
+                $mainDays = $days;
+            }
+        }
+
+        return [
+            'hasQuarter' => true,
+            'quarterAssigned' => true,
+            'quarterId' => (string) $main->id,
+            'quarterName' => (string) $main->quarter_name,
+            'quarterType' => $main->quarterType?->name ?: trim((string) $main->quarter_type),
+            'quarterTypeId' => $main->quarter_type_id,
+            'quarterRent' => \App\Support\Money::roundMoney($rent),
+            'occupiedDays' => $occupied,
+            'daysInMonth' => $daysInMonth,
+            'hraEligible' => false,
+        ];
     }
 
     /** @return array<string, mixed> */
@@ -424,11 +578,14 @@ final class QuarterService
                 'quarterAssignment' => ["Active quarter assignment for employee {$employeeUserId} has no valid company quarter."],
             ]);
         }
-        $typeName = $quarter->quarterType?->name ?: trim((string) $quarter->quarter_type);
-        $rentValue = $assignment->rent_at_assignment;
-        if ($rentValue === null || $rentValue === '' || ! is_numeric($rentValue) || (float) $rentValue < 0) {
-            $rentValue = $quarter->monthly_rent;
+        // Inactive quarters never deduct rent.
+        if ($quarter->status === 'inactive') {
+            return $this->emptyQuarterMeta();
         }
+        $typeName = $quarter->quarterType?->name ?: trim((string) $quarter->quarter_type);
+        // Rent is always the live Quarters-master rent. rent_at_assignment and the Payroll Master
+        // mirror are snapshots that go stale, so payroll must never read them.
+        $rentValue = $quarter->monthly_rent;
         if ($typeName === '' || $rentValue === null || ! is_numeric($rentValue) || (float) $rentValue < 0) {
             throw ValidationException::withMessages([
                 'quarterAssignment' => ["Quarter type or rent cannot be resolved for employee {$employeeUserId}; payroll resolution stopped."],
@@ -639,6 +796,9 @@ final class QuarterService
             'quarterTypeId' => $q->quarter_type_id,
             'monthlyRent' => (float) $q->monthly_rent,
             'status' => $activeAssignment ? 'assigned' : ($q->status === 'inactive' ? 'inactive' : 'available'),
+            'isActive' => $q->status !== 'inactive',
+            // Delete is offered only for inactive quarters with no assignment/payroll history.
+            'canDelete' => $q->status === 'inactive' && $this->historyLinks($q) === [],
             'assignedEmployeeId' => $activeAssignment?->employee_id,
             'assignedEmployeeName' => $employee?->name,
             'assignedEmployeeCode' => $master?->employee_code,

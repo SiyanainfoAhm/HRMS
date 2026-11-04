@@ -8,6 +8,11 @@ export async function PUT(request: NextRequest, ctx: Ctx) {
   return proxyToLaravel(request, `/settings/quarters/${id}`);
 }
 
+export async function DELETE(request: NextRequest, ctx: Ctx) {
+  const { id } = await ctx.params;
+  return proxyToLaravel(request, `/settings/quarters/${id}`);
+}
+
 export async function POST(request: NextRequest, ctx: Ctx) {
   const { id } = await ctx.params;
   const url = new URL(request.url);

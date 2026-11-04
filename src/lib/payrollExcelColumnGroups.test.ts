@@ -48,8 +48,8 @@ assertGroupRules(buildPayrollExcelHeaders([]), payrollExcelHeaderGroups([]), "fi
   assertEq(PAYROLL_EXCEL_GROUPS["Net Arrears"], "info", "Net Arrears is a memo column");
   assertEq(h.indexOf("Net Arrears") > h.indexOf("NetSalary"), true, "after Net Salary, with the other memo columns");
   assertEq(PAYROLL_EXCEL_GROUPS["CPF Arr"], "deduction", "CPF Arr is a deduction");
-  for (const e of ["Incentive", "PRBonus", "Reimbursement"]) assertEq(PAYROLL_EXCEL_GROUPS[e as keyof typeof PAYROLL_EXCEL_GROUPS], "earning", `${e} is an earning`);
-  assertEq(PAYROLL_EXCEL_GROUPS.ProfessionalTax, "deduction", "Professional Tax is a deduction");
+  for (const e of ["Incentive", "PRBonus", "Reimbursement"]) assertEq(PAYROLL_EXCEL_GROUPS[e], "earning", `${e} is an earning`);
+  assertEq(PAYROLL_EXCEL_GROUPS["Professional Tax"], "deduction", "Professional Tax is a deduction");
 }
 
 // 2. Custom fields land in the right block from their Settings group; duplicates get "(Custom)".
@@ -102,12 +102,12 @@ const sheet = buildEmployeeDetailSheet(rows, {
 });
 const grid = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1 });
 const headerRow = grid[3].map(String);
-assertEq(headerRow, buildPayrollExcelHeaders(collectDynamicPayrollExcelColumns([], labels, new Set(labels.keys()), groupsByKey)), "the sheet's header row is the shared header list");
-assertGroupRules(headerRow, payrollExcelHeaderGroups(collectDynamicPayrollExcelColumns([], labels, new Set(labels.keys()), groupsByKey)), "generated sheet");
+assertEq(headerRow, buildPayrollExcelHeaders(collectDynamicPayrollExcelColumns([], labels, new Set(labels.keys()), groupsByKey), ["EncashmentDA"]), "the sheet's header row is the shared header list");
+assertGroupRules(headerRow, payrollExcelHeaderGroups(collectDynamicPayrollExcelColumns([], labels, new Set(labels.keys()), groupsByKey), ["EncashmentDA"]), "generated sheet");
 const cell = (h: string, r = 4) => sheet[XLSX.utils.encode_cell({ r, c: headerRow.indexOf(h) })]?.v;
 assertEq(cell("CPF Arr"), 144, "CPF Arr carries the saved CPF arrear (it used to be 0)");
 assertEq(cell("Net Arrears"), 1056, "Net Arrears carries the saved net arrear");
-assertEq(cell("GrossArrears"), 1200, "GrossArrears carries the saved gross arrear");
+assertEq(cell("Gross Arrears"), 1200, "GrossArrears carries the saved gross arrear");
 assertEq(cell("Brand New Pay"), 25, "custom earning value");
 assertEq(cell("Advance"), 10, "Advance deduction value");
 assertEq(cell("GrossTotal"), gm.totalEarnings, "GrossTotal");

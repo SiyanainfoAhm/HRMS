@@ -1,3 +1,4 @@
+import { percentOf, roundMoney } from "./money";
 /** CPF/PF basis resolution — keep in sync with backend PayrollFieldRegistry / PayrollCalculationService */
 
 export type CpfCalculationMode = "percentage" | "fixed_amount";
@@ -53,7 +54,7 @@ export function resolveRunCpfBasisAmount(
       sum += firstFiniteNumber(amounts[key]) ?? 0;
     }
   }
-  return Math.round(sum);
+  return roundMoney(sum);
 }
 
 export function cpfFormulaPreview(
@@ -63,7 +64,7 @@ export function cpfFormulaPreview(
   fixedAmount = 0,
 ): string {
   if (mode === "fixed_amount") {
-    const amt = Math.round(firstFiniteNumber(fixedAmount) ?? 0);
+    const amt = roundMoney(firstFiniteNumber(fixedAmount) ?? 0);
     return `CPF = Fixed Amount (₹${amt.toLocaleString("en-IN")})`;
   }
   const labels = basisLabels.length ? basisLabels.join(" + ") : "—";
@@ -115,22 +116,22 @@ export function calculateCpfFromBasis(
   opts?: { strictBasis?: boolean },
 ): number {
   if (mode === "fixed_amount") {
-    return Math.round(firstFiniteNumber(fixedAmount) ?? 0);
+    return roundMoney(firstFiniteNumber(fixedAmount) ?? 0);
   }
   // Legacy manual CPF default on master (only when not using fixed mode).
   const legacyDefault = firstFiniteNumber(cpfDefaultFromMaster);
   if (legacyDefault !== undefined && legacyDefault > 0) {
-    return Math.round(legacyDefault);
+    return roundMoney(legacyDefault);
   }
   if (basisAmount > 0) {
     const pct = firstFiniteNumber(cpfPercentage) ?? DEFAULT_CPF_PERCENTAGE;
-    return Math.round(basisAmount * (pct / 100));
+    return percentOf(basisAmount, pct);
   }
   if (opts?.strictBasis) {
     return 0;
   }
   const pct = firstFiniteNumber(cpfPercentage) ?? DEFAULT_CPF_PERCENTAGE;
-  return Math.round(legacyTotalEarnings * (pct / 100));
+  return percentOf(legacyTotalEarnings, pct);
 }
 
 export type MasterCpfConfigInput = {
@@ -153,7 +154,7 @@ export function resolveEffectiveCpfConfigForMaster(input: MasterCpfConfigInput):
       : DEFAULT_CPF_BASIS_KEYS;
   const companyMode: CpfCalculationMode =
     input.companyCpfCalculationMode === "fixed_amount" ? "fixed_amount" : "percentage";
-  const companyFixed = Math.round(firstFiniteNumber(input.companyCpfFixedAmount) ?? 0);
+  const companyFixed = roundMoney(firstFiniteNumber(input.companyCpfFixedAmount) ?? 0);
 
   const customMode = isCpfEmployeeCustomMode(input.cpfUseCompanySettings);
 
@@ -174,7 +175,7 @@ export function resolveEffectiveCpfConfigForMaster(input: MasterCpfConfigInput):
     input.cpfFixedAmountOverride !== undefined &&
     input.cpfFixedAmountOverride !== null &&
     input.cpfFixedAmountOverride !== ""
-      ? Math.round(firstFiniteNumber(input.cpfFixedAmountOverride) ?? 0)
+      ? roundMoney(firstFiniteNumber(input.cpfFixedAmountOverride) ?? 0)
       : companyFixed;
 
   return {
@@ -264,5 +265,5 @@ export function resolveMasterCpfBasisAmount(
     sum += firstFiniteNumber(amounts[key]) ?? 0;
   }
 
-  return Math.round(sum);
+  return roundMoney(sum);
 }

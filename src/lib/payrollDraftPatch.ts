@@ -74,7 +74,13 @@ export function rowsForPayrollDraftSave<T extends PayrollDraftRowForSave>(
   changedByRow: Map<string, Set<string>>,
   rowKeyFor: (employeeUserId: string) => string,
 ): Array<T & { changedFields?: string[] }> {
-  if (!existingDraft) return rows;
+  // The first save sends every row; the operator's typed fields travel with the rows that have them so the audit can tell typed from recalculated.
+  if (!existingDraft) {
+    return rows.map((row) => {
+      const changedFields = changedByRow.get(rowKeyFor(row.employeeUserId));
+      return changedFields?.size ? { ...row, changedFields: [...changedFields] } : row;
+    });
+  }
   return rows.flatMap((row) => {
     const changedFields = changedByRow.get(rowKeyFor(row.employeeUserId));
     return changedFields?.size ? [{ ...row, changedFields: [...changedFields] }] : [];

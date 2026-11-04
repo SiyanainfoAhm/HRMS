@@ -1,424 +1,509 @@
 {
+ "rule": "rupee",
  "percent": [
   {
    "amount": 0,
    "percent": 0,
-   "expected": 0
+   "expectedRupee": 0,
+   "expectedPaise": 0
   },
   {
    "amount": 0,
    "percent": 12,
-   "expected": 0
+   "expectedRupee": 0,
+   "expectedPaise": 0
   },
   {
    "amount": 0,
    "percent": 12.5,
-   "expected": 0
+   "expectedRupee": 0,
+   "expectedPaise": 0
   },
   {
    "amount": 0,
    "percent": 30,
-   "expected": 0
+   "expectedRupee": 0,
+   "expectedPaise": 0
   },
   {
    "amount": 0,
    "percent": 53,
-   "expected": 0
+   "expectedRupee": 0,
+   "expectedPaise": 0
   },
   {
    "amount": 0,
    "percent": 53.5,
-   "expected": 0
+   "expectedRupee": 0,
+   "expectedPaise": 0
   },
   {
    "amount": 0,
    "percent": 100,
-   "expected": 0
+   "expectedRupee": 0,
+   "expectedPaise": 0
   },
   {
    "amount": 0.01,
    "percent": 0,
-   "expected": 0
+   "expectedRupee": 0,
+   "expectedPaise": 0
   },
   {
    "amount": 0.01,
    "percent": 12,
-   "expected": 0
+   "expectedRupee": 0,
+   "expectedPaise": 0
   },
   {
    "amount": 0.01,
    "percent": 12.5,
-   "expected": 0
+   "expectedRupee": 0,
+   "expectedPaise": 0
   },
   {
    "amount": 0.01,
    "percent": 30,
-   "expected": 0
+   "expectedRupee": 0,
+   "expectedPaise": 0
   },
   {
    "amount": 0.01,
    "percent": 53,
-   "expected": 0.01
+   "expectedRupee": 0,
+   "expectedPaise": 0.01
   },
   {
    "amount": 0.01,
    "percent": 53.5,
-   "expected": 0.01
+   "expectedRupee": 0,
+   "expectedPaise": 0.01
   },
   {
    "amount": 0.01,
    "percent": 100,
-   "expected": 0.01
+   "expectedRupee": 0,
+   "expectedPaise": 0.01
   },
   {
    "amount": 1,
    "percent": 0,
-   "expected": 0
+   "expectedRupee": 0,
+   "expectedPaise": 0
   },
   {
    "amount": 1,
    "percent": 12,
-   "expected": 0.12
+   "expectedRupee": 0,
+   "expectedPaise": 0.12
   },
   {
    "amount": 1,
    "percent": 12.5,
-   "expected": 0.13
+   "expectedRupee": 0,
+   "expectedPaise": 0.13
   },
   {
    "amount": 1,
    "percent": 30,
-   "expected": 0.3
+   "expectedRupee": 0,
+   "expectedPaise": 0.3
   },
   {
    "amount": 1,
    "percent": 53,
-   "expected": 0.53
+   "expectedRupee": 1,
+   "expectedPaise": 0.53
   },
   {
    "amount": 1,
    "percent": 53.5,
-   "expected": 0.54
+   "expectedRupee": 1,
+   "expectedPaise": 0.54
   },
   {
    "amount": 1,
    "percent": 100,
-   "expected": 1
+   "expectedRupee": 1,
+   "expectedPaise": 1
   },
   {
    "amount": 99.99,
    "percent": 0,
-   "expected": 0
+   "expectedRupee": 0,
+   "expectedPaise": 0
   },
   {
    "amount": 99.99,
    "percent": 12,
-   "expected": 12
+   "expectedRupee": 12,
+   "expectedPaise": 12
   },
   {
    "amount": 99.99,
    "percent": 12.5,
-   "expected": 12.5
+   "expectedRupee": 12,
+   "expectedPaise": 12.5
   },
   {
    "amount": 99.99,
    "percent": 30,
-   "expected": 30
+   "expectedRupee": 30,
+   "expectedPaise": 30
   },
   {
    "amount": 99.99,
    "percent": 53,
-   "expected": 52.99
+   "expectedRupee": 53,
+   "expectedPaise": 52.99
   },
   {
    "amount": 99.99,
    "percent": 53.5,
-   "expected": 53.49
+   "expectedRupee": 53,
+   "expectedPaise": 53.49
   },
   {
    "amount": 99.99,
    "percent": 100,
-   "expected": 99.99
+   "expectedRupee": 100,
+   "expectedPaise": 99.99
   },
   {
    "amount": 1234.56,
    "percent": 0,
-   "expected": 0
+   "expectedRupee": 0,
+   "expectedPaise": 0
   },
   {
    "amount": 1234.56,
    "percent": 12,
-   "expected": 148.15
+   "expectedRupee": 148,
+   "expectedPaise": 148.15
   },
   {
    "amount": 1234.56,
    "percent": 12.5,
-   "expected": 154.32
+   "expectedRupee": 154,
+   "expectedPaise": 154.32
   },
   {
    "amount": 1234.56,
    "percent": 30,
-   "expected": 370.37
+   "expectedRupee": 370,
+   "expectedPaise": 370.37
   },
   {
    "amount": 1234.56,
    "percent": 53,
-   "expected": 654.32
+   "expectedRupee": 654,
+   "expectedPaise": 654.32
   },
   {
    "amount": 1234.56,
    "percent": 53.5,
-   "expected": 660.49
+   "expectedRupee": 660,
+   "expectedPaise": 660.49
   },
   {
    "amount": 1234.56,
    "percent": 100,
-   "expected": 1234.56
+   "expectedRupee": 1235,
+   "expectedPaise": 1234.56
   },
   {
    "amount": 15000,
    "percent": 0,
-   "expected": 0
+   "expectedRupee": 0,
+   "expectedPaise": 0
   },
   {
    "amount": 15000,
    "percent": 12,
-   "expected": 1800
+   "expectedRupee": 1800,
+   "expectedPaise": 1800
   },
   {
    "amount": 15000,
    "percent": 12.5,
-   "expected": 1875
+   "expectedRupee": 1875,
+   "expectedPaise": 1875
   },
   {
    "amount": 15000,
    "percent": 30,
-   "expected": 4500
+   "expectedRupee": 4500,
+   "expectedPaise": 4500
   },
   {
    "amount": 15000,
    "percent": 53,
-   "expected": 7950
+   "expectedRupee": 7950,
+   "expectedPaise": 7950
   },
   {
    "amount": 15000,
    "percent": 53.5,
-   "expected": 8025
+   "expectedRupee": 8025,
+   "expectedPaise": 8025
   },
   {
    "amount": 15000,
    "percent": 100,
-   "expected": 15000
+   "expectedRupee": 15000,
+   "expectedPaise": 15000
   },
   {
    "amount": 30200,
    "percent": 0,
-   "expected": 0
+   "expectedRupee": 0,
+   "expectedPaise": 0
   },
   {
    "amount": 30200,
    "percent": 12,
-   "expected": 3624
+   "expectedRupee": 3624,
+   "expectedPaise": 3624
   },
   {
    "amount": 30200,
    "percent": 12.5,
-   "expected": 3775
+   "expectedRupee": 3775,
+   "expectedPaise": 3775
   },
   {
    "amount": 30200,
    "percent": 30,
-   "expected": 9060
+   "expectedRupee": 9060,
+   "expectedPaise": 9060
   },
   {
    "amount": 30200,
    "percent": 53,
-   "expected": 16006
+   "expectedRupee": 16006,
+   "expectedPaise": 16006
   },
   {
    "amount": 30200,
    "percent": 53.5,
-   "expected": 16157
+   "expectedRupee": 16157,
+   "expectedPaise": 16157
   },
   {
    "amount": 30200,
    "percent": 100,
-   "expected": 30200
+   "expectedRupee": 30200,
+   "expectedPaise": 30200
   },
   {
    "amount": 33333,
    "percent": 0,
-   "expected": 0
+   "expectedRupee": 0,
+   "expectedPaise": 0
   },
   {
    "amount": 33333,
    "percent": 12,
-   "expected": 3999.96
+   "expectedRupee": 4000,
+   "expectedPaise": 3999.96
   },
   {
    "amount": 33333,
    "percent": 12.5,
-   "expected": 4166.63
+   "expectedRupee": 4167,
+   "expectedPaise": 4166.63
   },
   {
    "amount": 33333,
    "percent": 30,
-   "expected": 9999.9
+   "expectedRupee": 10000,
+   "expectedPaise": 9999.9
   },
   {
    "amount": 33333,
    "percent": 53,
-   "expected": 17666.49
+   "expectedRupee": 17666,
+   "expectedPaise": 17666.49
   },
   {
    "amount": 33333,
    "percent": 53.5,
-   "expected": 17833.16
+   "expectedRupee": 17833,
+   "expectedPaise": 17833.16
   },
   {
    "amount": 33333,
    "percent": 100,
-   "expected": 33333
+   "expectedRupee": 33333,
+   "expectedPaise": 33333
   },
   {
    "amount": 45900,
    "percent": 0,
-   "expected": 0
+   "expectedRupee": 0,
+   "expectedPaise": 0
   },
   {
    "amount": 45900,
    "percent": 12,
-   "expected": 5508
+   "expectedRupee": 5508,
+   "expectedPaise": 5508
   },
   {
    "amount": 45900,
    "percent": 12.5,
-   "expected": 5737.5
+   "expectedRupee": 5738,
+   "expectedPaise": 5737.5
   },
   {
    "amount": 45900,
    "percent": 30,
-   "expected": 13770
+   "expectedRupee": 13770,
+   "expectedPaise": 13770
   },
   {
    "amount": 45900,
    "percent": 53,
-   "expected": 24327
+   "expectedRupee": 24327,
+   "expectedPaise": 24327
   },
   {
    "amount": 45900,
    "percent": 53.5,
-   "expected": 24556.5
+   "expectedRupee": 24557,
+   "expectedPaise": 24556.5
   },
   {
    "amount": 45900,
    "percent": 100,
-   "expected": 45900
+   "expectedRupee": 45900,
+   "expectedPaise": 45900
   },
   {
    "amount": 54900,
    "percent": 0,
-   "expected": 0
+   "expectedRupee": 0,
+   "expectedPaise": 0
   },
   {
    "amount": 54900,
    "percent": 12,
-   "expected": 6588
+   "expectedRupee": 6588,
+   "expectedPaise": 6588
   },
   {
    "amount": 54900,
    "percent": 12.5,
-   "expected": 6862.5
+   "expectedRupee": 6863,
+   "expectedPaise": 6862.5
   },
   {
    "amount": 54900,
    "percent": 30,
-   "expected": 16470
+   "expectedRupee": 16470,
+   "expectedPaise": 16470
   },
   {
    "amount": 54900,
    "percent": 53,
-   "expected": 29097
+   "expectedRupee": 29097,
+   "expectedPaise": 29097
   },
   {
    "amount": 54900,
    "percent": 53.5,
-   "expected": 29371.5
+   "expectedRupee": 29372,
+   "expectedPaise": 29371.5
   },
   {
    "amount": 54900,
    "percent": 100,
-   "expected": 54900
+   "expectedRupee": 54900,
+   "expectedPaise": 54900
   },
   {
    "amount": 100000.5,
    "percent": 0,
-   "expected": 0
+   "expectedRupee": 0,
+   "expectedPaise": 0
   },
   {
    "amount": 100000.5,
    "percent": 12,
-   "expected": 12000.06
+   "expectedRupee": 12000,
+   "expectedPaise": 12000.06
   },
   {
    "amount": 100000.5,
    "percent": 12.5,
-   "expected": 12500.06
+   "expectedRupee": 12500,
+   "expectedPaise": 12500.06
   },
   {
    "amount": 100000.5,
    "percent": 30,
-   "expected": 30000.15
+   "expectedRupee": 30000,
+   "expectedPaise": 30000.15
   },
   {
    "amount": 100000.5,
    "percent": 53,
-   "expected": 53000.27
+   "expectedRupee": 53000,
+   "expectedPaise": 53000.27
   },
   {
    "amount": 100000.5,
    "percent": 53.5,
-   "expected": 53500.27
+   "expectedRupee": 53500,
+   "expectedPaise": 53500.27
   },
   {
    "amount": 100000.5,
    "percent": 100,
-   "expected": 100000.5
+   "expectedRupee": 100001,
+   "expectedPaise": 100000.5
   },
   {
    "amount": 1234567.89,
    "percent": 0,
-   "expected": 0
+   "expectedRupee": 0,
+   "expectedPaise": 0
   },
   {
    "amount": 1234567.89,
    "percent": 12,
-   "expected": 148148.15
+   "expectedRupee": 148148,
+   "expectedPaise": 148148.15
   },
   {
    "amount": 1234567.89,
    "percent": 12.5,
-   "expected": 154320.99
+   "expectedRupee": 154321,
+   "expectedPaise": 154320.99
   },
   {
    "amount": 1234567.89,
    "percent": 30,
-   "expected": 370370.37
+   "expectedRupee": 370370,
+   "expectedPaise": 370370.37
   },
   {
    "amount": 1234567.89,
    "percent": 53,
-   "expected": 654320.98
+   "expectedRupee": 654321,
+   "expectedPaise": 654320.98
   },
   {
    "amount": 1234567.89,
    "percent": 53.5,
-   "expected": 660493.82
+   "expectedRupee": 660494,
+   "expectedPaise": 660493.82
   },
   {
    "amount": 1234567.89,
    "percent": 100,
-   "expected": 1234567.89
+   "expectedRupee": 1234568,
+   "expectedPaise": 1234567.89
   }
  ],
  "proportion": [
@@ -426,368 +511,530 @@
    "amount": 15000,
    "numerator": 30,
    "denominator": 31,
-   "expected": 14516.13
+   "expectedRupee": 14516,
+   "expectedPaise": 14516.13
   },
   {
    "amount": 15000,
    "numerator": 28,
    "denominator": 30,
-   "expected": 14000
+   "expectedRupee": 14000,
+   "expectedPaise": 14000
   },
   {
    "amount": 15000,
    "numerator": 1,
    "denominator": 28,
-   "expected": 535.71
+   "expectedRupee": 536,
+   "expectedPaise": 535.71
   },
   {
    "amount": 15000,
    "numerator": 1,
    "denominator": 31,
-   "expected": 483.87
+   "expectedRupee": 484,
+   "expectedPaise": 483.87
   },
   {
    "amount": 15000,
    "numerator": 2,
    "denominator": 30,
-   "expected": 1000
+   "expectedRupee": 1000,
+   "expectedPaise": 1000
   },
   {
    "amount": 15000,
    "numerator": 1.5,
    "denominator": 30,
-   "expected": 750
+   "expectedRupee": 750,
+   "expectedPaise": 750
   },
   {
    "amount": 15000,
    "numerator": 8.5,
    "denominator": 8,
-   "expected": 15937.5
+   "expectedRupee": 15938,
+   "expectedPaise": 15937.5
   },
   {
    "amount": 15000,
    "numerator": 15,
    "denominator": 31,
-   "expected": 7258.06
+   "expectedRupee": 7258,
+   "expectedPaise": 7258.06
   },
   {
    "amount": 15000,
    "numerator": 0,
    "denominator": 30,
-   "expected": 0
+   "expectedRupee": 0,
+   "expectedPaise": 0
   },
   {
    "amount": 15000,
    "numerator": 30,
    "denominator": 30,
-   "expected": 15000
+   "expectedRupee": 15000,
+   "expectedPaise": 15000
   },
   {
    "amount": 30200,
    "numerator": 30,
    "denominator": 31,
-   "expected": 29225.81
+   "expectedRupee": 29226,
+   "expectedPaise": 29225.81
   },
   {
    "amount": 30200,
    "numerator": 28,
    "denominator": 30,
-   "expected": 28186.67
+   "expectedRupee": 28187,
+   "expectedPaise": 28186.67
   },
   {
    "amount": 30200,
    "numerator": 1,
    "denominator": 28,
-   "expected": 1078.57
+   "expectedRupee": 1079,
+   "expectedPaise": 1078.57
   },
   {
    "amount": 30200,
    "numerator": 1,
    "denominator": 31,
-   "expected": 974.19
+   "expectedRupee": 974,
+   "expectedPaise": 974.19
   },
   {
    "amount": 30200,
    "numerator": 2,
    "denominator": 30,
-   "expected": 2013.33
+   "expectedRupee": 2013,
+   "expectedPaise": 2013.33
   },
   {
    "amount": 30200,
    "numerator": 1.5,
    "denominator": 30,
-   "expected": 1510
+   "expectedRupee": 1510,
+   "expectedPaise": 1510
   },
   {
    "amount": 30200,
    "numerator": 8.5,
    "denominator": 8,
-   "expected": 32087.5
+   "expectedRupee": 32088,
+   "expectedPaise": 32087.5
   },
   {
    "amount": 30200,
    "numerator": 15,
    "denominator": 31,
-   "expected": 14612.9
+   "expectedRupee": 14613,
+   "expectedPaise": 14612.9
   },
   {
    "amount": 30200,
    "numerator": 0,
    "denominator": 30,
-   "expected": 0
+   "expectedRupee": 0,
+   "expectedPaise": 0
   },
   {
    "amount": 30200,
    "numerator": 30,
    "denominator": 30,
-   "expected": 30200
+   "expectedRupee": 30200,
+   "expectedPaise": 30200
   },
   {
    "amount": 54900,
    "numerator": 30,
    "denominator": 31,
-   "expected": 53129.03
+   "expectedRupee": 53129,
+   "expectedPaise": 53129.03
   },
   {
    "amount": 54900,
    "numerator": 28,
    "denominator": 30,
-   "expected": 51240
+   "expectedRupee": 51240,
+   "expectedPaise": 51240
   },
   {
    "amount": 54900,
    "numerator": 1,
    "denominator": 28,
-   "expected": 1960.71
+   "expectedRupee": 1961,
+   "expectedPaise": 1960.71
   },
   {
    "amount": 54900,
    "numerator": 1,
    "denominator": 31,
-   "expected": 1770.97
+   "expectedRupee": 1771,
+   "expectedPaise": 1770.97
   },
   {
    "amount": 54900,
    "numerator": 2,
    "denominator": 30,
-   "expected": 3660
+   "expectedRupee": 3660,
+   "expectedPaise": 3660
   },
   {
    "amount": 54900,
    "numerator": 1.5,
    "denominator": 30,
-   "expected": 2745
+   "expectedRupee": 2745,
+   "expectedPaise": 2745
   },
   {
    "amount": 54900,
    "numerator": 8.5,
    "denominator": 8,
-   "expected": 58331.25
+   "expectedRupee": 58331,
+   "expectedPaise": 58331.25
   },
   {
    "amount": 54900,
    "numerator": 15,
    "denominator": 31,
-   "expected": 26564.52
+   "expectedRupee": 26565,
+   "expectedPaise": 26564.52
   },
   {
    "amount": 54900,
    "numerator": 0,
    "denominator": 30,
-   "expected": 0
+   "expectedRupee": 0,
+   "expectedPaise": 0
   },
   {
    "amount": 54900,
    "numerator": 30,
    "denominator": 30,
-   "expected": 54900
+   "expectedRupee": 54900,
+   "expectedPaise": 54900
   },
   {
    "amount": 45900,
    "numerator": 30,
    "denominator": 31,
-   "expected": 44419.35
+   "expectedRupee": 44419,
+   "expectedPaise": 44419.35
   },
   {
    "amount": 45900,
    "numerator": 28,
    "denominator": 30,
-   "expected": 42840
+   "expectedRupee": 42840,
+   "expectedPaise": 42840
   },
   {
    "amount": 45900,
    "numerator": 1,
    "denominator": 28,
-   "expected": 1639.29
+   "expectedRupee": 1639,
+   "expectedPaise": 1639.29
   },
   {
    "amount": 45900,
    "numerator": 1,
    "denominator": 31,
-   "expected": 1480.65
+   "expectedRupee": 1481,
+   "expectedPaise": 1480.65
   },
   {
    "amount": 45900,
    "numerator": 2,
    "denominator": 30,
-   "expected": 3060
+   "expectedRupee": 3060,
+   "expectedPaise": 3060
   },
   {
    "amount": 45900,
    "numerator": 1.5,
    "denominator": 30,
-   "expected": 2295
+   "expectedRupee": 2295,
+   "expectedPaise": 2295
   },
   {
    "amount": 45900,
    "numerator": 8.5,
    "denominator": 8,
-   "expected": 48768.75
+   "expectedRupee": 48769,
+   "expectedPaise": 48768.75
   },
   {
    "amount": 45900,
    "numerator": 15,
    "denominator": 31,
-   "expected": 22209.68
+   "expectedRupee": 22210,
+   "expectedPaise": 22209.68
   },
   {
    "amount": 45900,
    "numerator": 0,
    "denominator": 30,
-   "expected": 0
+   "expectedRupee": 0,
+   "expectedPaise": 0
   },
   {
    "amount": 45900,
    "numerator": 30,
    "denominator": 30,
-   "expected": 45900
+   "expectedRupee": 45900,
+   "expectedPaise": 45900
   },
   {
    "amount": 33333,
    "numerator": 30,
    "denominator": 31,
-   "expected": 32257.74
+   "expectedRupee": 32258,
+   "expectedPaise": 32257.74
   },
   {
    "amount": 33333,
    "numerator": 28,
    "denominator": 30,
-   "expected": 31110.8
+   "expectedRupee": 31111,
+   "expectedPaise": 31110.8
   },
   {
    "amount": 33333,
    "numerator": 1,
    "denominator": 28,
-   "expected": 1190.46
+   "expectedRupee": 1190,
+   "expectedPaise": 1190.46
   },
   {
    "amount": 33333,
    "numerator": 1,
    "denominator": 31,
-   "expected": 1075.26
+   "expectedRupee": 1075,
+   "expectedPaise": 1075.26
   },
   {
    "amount": 33333,
    "numerator": 2,
    "denominator": 30,
-   "expected": 2222.2
+   "expectedRupee": 2222,
+   "expectedPaise": 2222.2
   },
   {
    "amount": 33333,
    "numerator": 1.5,
    "denominator": 30,
-   "expected": 1666.65
+   "expectedRupee": 1667,
+   "expectedPaise": 1666.65
   },
   {
    "amount": 33333,
    "numerator": 8.5,
    "denominator": 8,
-   "expected": 35416.31
+   "expectedRupee": 35416,
+   "expectedPaise": 35416.31
   },
   {
    "amount": 33333,
    "numerator": 15,
    "denominator": 31,
-   "expected": 16128.87
+   "expectedRupee": 16129,
+   "expectedPaise": 16128.87
   },
   {
    "amount": 33333,
    "numerator": 0,
    "denominator": 30,
-   "expected": 0
+   "expectedRupee": 0,
+   "expectedPaise": 0
   },
   {
    "amount": 33333,
    "numerator": 30,
    "denominator": 30,
-   "expected": 33333
+   "expectedRupee": 33333,
+   "expectedPaise": 33333
   },
   {
    "amount": 1234.56,
    "numerator": 30,
    "denominator": 31,
-   "expected": 1194.74
+   "expectedRupee": 1195,
+   "expectedPaise": 1194.74
   },
   {
    "amount": 1234.56,
    "numerator": 28,
    "denominator": 30,
-   "expected": 1152.26
+   "expectedRupee": 1152,
+   "expectedPaise": 1152.26
   },
   {
    "amount": 1234.56,
    "numerator": 1,
    "denominator": 28,
-   "expected": 44.09
+   "expectedRupee": 44,
+   "expectedPaise": 44.09
   },
   {
    "amount": 1234.56,
    "numerator": 1,
    "denominator": 31,
-   "expected": 39.82
+   "expectedRupee": 40,
+   "expectedPaise": 39.82
   },
   {
    "amount": 1234.56,
    "numerator": 2,
    "denominator": 30,
-   "expected": 82.3
+   "expectedRupee": 82,
+   "expectedPaise": 82.3
   },
   {
    "amount": 1234.56,
    "numerator": 1.5,
    "denominator": 30,
-   "expected": 61.73
+   "expectedRupee": 62,
+   "expectedPaise": 61.73
   },
   {
    "amount": 1234.56,
    "numerator": 8.5,
    "denominator": 8,
-   "expected": 1311.72
+   "expectedRupee": 1312,
+   "expectedPaise": 1311.72
   },
   {
    "amount": 1234.56,
    "numerator": 15,
    "denominator": 31,
-   "expected": 597.37
+   "expectedRupee": 597,
+   "expectedPaise": 597.37
   },
   {
    "amount": 1234.56,
    "numerator": 0,
    "denominator": 30,
-   "expected": 0
+   "expectedRupee": 0,
+   "expectedPaise": 0
   },
   {
    "amount": 1234.56,
    "numerator": 30,
    "denominator": 30,
-   "expected": 1234.56
+   "expectedRupee": 1235,
+   "expectedPaise": 1234.56
   }
  ],
  "named": {
-  "nda_8_5h_at_23_20": 24.65,
-  "nda_120h_at_23_20": 348,
-  "hra_33333_at_30": 9999.9,
-  "hra_15000_30_of_31_days": 14516.13,
-  "eol_54900_1_of_28": 1960.71
- }
+  "nda_8_5h_at_23_20": {
+   "rupee": 25,
+   "paise": 24.65
+  },
+  "nda_120h_at_23_20": {
+   "rupee": 348,
+   "paise": 348
+  },
+  "hra_33333_at_30": {
+   "rupee": 10000,
+   "paise": 9999.9
+  },
+  "hra_15000_30_of_31_days": {
+   "rupee": 14516,
+   "paise": 14516.13
+  },
+  "eol_54900_1_of_28": {
+   "rupee": 1961,
+   "paise": 1960.71
+  }
+ },
+ "round": [
+  {
+   "value": 0,
+   "expectedRupee": 0,
+   "expectedPaise": 0
+  },
+  {
+   "value": 0.49,
+   "expectedRupee": 0,
+   "expectedPaise": 0.49
+  },
+  {
+   "value": 0.5,
+   "expectedRupee": 1,
+   "expectedPaise": 0.5
+  },
+  {
+   "value": 0.51,
+   "expectedRupee": 1,
+   "expectedPaise": 0.51
+  },
+  {
+   "value": 1.5,
+   "expectedRupee": 2,
+   "expectedPaise": 1.5
+  },
+  {
+   "value": 2.5,
+   "expectedRupee": 3,
+   "expectedPaise": 2.5
+  },
+  {
+   "value": 24.65,
+   "expectedRupee": 25,
+   "expectedPaise": 24.65
+  },
+  {
+   "value": 24.5,
+   "expectedRupee": 25,
+   "expectedPaise": 24.5
+  },
+  {
+   "value": 24.49,
+   "expectedRupee": 24,
+   "expectedPaise": 24.49
+  },
+  {
+   "value": 54.09,
+   "expectedRupee": 54,
+   "expectedPaise": 54.09
+  },
+  {
+   "value": 54.5,
+   "expectedRupee": 55,
+   "expectedPaise": 54.5
+  },
+  {
+   "value": 9999.9,
+   "expectedRupee": 10000,
+   "expectedPaise": 9999.9
+  },
+  {
+   "value": 10000.5,
+   "expectedRupee": 10001,
+   "expectedPaise": 10000.5
+  },
+  {
+   "value": 1960.71,
+   "expectedRupee": 1961,
+   "expectedPaise": 1960.71
+  },
+  {
+   "value": -0.5,
+   "expectedRupee": -1,
+   "expectedPaise": -0.5
+  },
+  {
+   "value": -1.5,
+   "expectedRupee": -2,
+   "expectedPaise": -1.5
+  },
+  {
+   "value": -24.65,
+   "expectedRupee": -25,
+   "expectedPaise": -24.65
+  }
+ ]
 }

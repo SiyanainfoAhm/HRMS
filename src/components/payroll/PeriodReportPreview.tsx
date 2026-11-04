@@ -54,7 +54,7 @@ export function PeriodReportPreview({ open, onClose, type, months, employeeUserI
   }, [open, key, type, employeeUserIds]);
 
   const money = useMemo(() => new Set(data?.moneyColumns ?? []), [data]);
-  const title = type === "tds" ? "TDS Data preview" : "Employee Payroll preview";
+  const title = type === "tds" ? "TDS Data preview" : type === "division-wise" ? "Division-Wise Salary preview" : "Employee Payroll preview";
 
   return (
     <Modal

@@ -1,9 +1,9 @@
 /**
  * Run: npx --yes tsx src/lib/postPayrollReportsMenu.test.ts
  *
- * The Run Payroll "Post-payroll reports" button + dropdown (separate from Downloads): its four reports, the
- * enabled/disabled rules (usable whenever ANY month has a generated run), the single-month month selector,
- * and the rendered markup.
+ * The Run Payroll "Post-payroll reports" button + dropdown (separate from Downloads): TDS Data, CPF / VPF
+ * Statement, Division-Wise Salary, Paybill and Bank Letter, the enabled/disabled rules (the reports are usable
+ * whenever ANY month has a generated run), the single-month month selector, and the rendered markup.
  */
 import { readFileSync } from "node:fs";
 import { createElement } from "react";
@@ -11,7 +11,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { ToastProvider } from "../components/ToastProvider";
 import { PostPayrollReportsMenu } from "../components/payroll/PostPayrollReportsMenu";
 import {
+  REASON_BANK_BUSY,
   REASON_BUSY,
+  REASON_NOTHING_TO_EXPORT,
   REASON_NO_MONTH_GENERATED,
   buildDownloadsMenu,
   buildPostPayrollMenu,
@@ -28,35 +30,43 @@ const base: PostPayrollMenuContext = { canManage: true, running: false, generate
 const reasons = (ctx: Partial<PostPayrollMenuContext>) =>
   Object.fromEntries((buildPostPayrollMenu({ ...base, ...ctx })?.items ?? []).map((i) => [i.id, i.disabledReason]));
 
-// ---- contents: the four reports, directly, with their descriptions and the Excel tag
+// ---- contents: the four reports and the Bank Letter, directly, in this order
 {
   const m = buildPostPayrollMenu(base)!;
-  assertEq(m.items.map((i) => i.label), ["TDS Data", "CPF / VPF Statement", "Division-Wise Salary", "Paybill"], "the four reports");
-  assertEq(m.items.map((i) => i.id), ["report-tds", "report-cpf", "report-division-wise", "report-paybill"], "ids");
-  assertEq(m.items.every((i) => i.tag === "Excel"), true, "EXCEL badge on every report");
-  assertEq(m.items.every((i) => Boolean(i.description)), true, "every report keeps its description");
-  assertEq(m.items.map((i) => i.flow), ["multi-month", "single-month", "single-month", "single-month"], "TDS uses the multi-month picker, the others a single month");
+  assertEq(m.items.map((i) => i.label), ["TDS Data", "CPF / VPF Statement", "Division-Wise Salary", "Paybill", "Bank Letter"], "the reports and Bank Letter");
+  assertEq(m.items.map((i) => i.id), ["report-tds", "report-cpf", "report-division-wise", "report-paybill", "bank-letter"], "ids");
+  assertEq(m.items.slice(0, 4).every((i) => i.tag === "Excel"), true, "EXCEL badge on every report");
+  assertEq(m.items.every((i) => Boolean(i.description)), true, "every item keeps its description");
+  assertEq(m.items.map((i) => i.flow), ["multi-month", "single-month", "multi-month", "single-month", "bank-letter"], "TDS and Division-Wise use the multi-month picker, CPF and Paybill a single month, Bank Letter its formats");
+  assertEq(m.bankFormats.map((i) => i.label), ["Word document", "Excel workbook", "PDF letter"], "bank letter formats, same as before");
+  assertEq(m.bankFormats.map((i) => i.id), ["bank-docx", "bank-xlsx", "bank-pdf"], "format ids");
   assertEq(buildPostPayrollMenu({ ...base, canManage: false }), null, "no menu without admin rights");
 }
-// ---- Downloads no longer carries any post-payroll item
+// ---- Downloads keeps only Preview Excel and Extract: no report, no Bank Letter, no Export Employee Payroll
 {
-  const d = buildDownloadsMenu({ canManage: true, running: false, exportDisabled: false, bankLetterLoading: false, ym: "2026-11" });
-  assertEq([...d.payroll, ...d.bank].some((i) => i.id.startsWith("report-")), false, "Downloads has no report item");
-  assertEq(d.payroll.map((i) => i.label), ["Preview Excel", "Extract", "Export Employee Payroll"], "Downloads keeps Export Employee Payroll");
-  assertEq(d.bank.length, 3, "and Bank Letter");
+  const d = buildDownloadsMenu({ running: false, exportDisabled: false, ym: "2026-11" });
+  assertEq(d.payroll.map((i) => i.label), ["Preview Excel", "Extract"], "Downloads has only Preview Excel and Extract");
+  assertEq(d.payroll.some((i) => i.id.startsWith("report-") || i.id.startsWith("bank-")), false, "no report or bank item in Downloads");
 }
 // ---- enabled / disabled rules
 {
+  const reportIds = ["report-tds", "report-cpf", "report-division-wise", "report-paybill"];
+  const reportReasons = (ctx: Partial<PostPayrollMenuContext>) => reportIds.map((id) => reasons(ctx)[id]);
   // The selected month (Nov 2026) is NOT generated, but Sep 2026 is: everything stays usable.
-  const r = reasons({ ym: "2026-11", generatedMonths: ["2026-09"] });
-  assertEq(Object.values(r), [null, null, null, null], "usable when any month is generated, even if the page month is not");
+  assertEq(reportReasons({ ym: "2026-11", generatedMonths: ["2026-09"] }), [null, null, null, null], "usable when any month is generated, even if the page month is not");
   assertEq(buildPostPayrollMenu({ ...base, ym: "2026-11" })!.hint, null, "no 'generate payroll first' hint then");
-  assertEq(Object.values(reasons({ generatedMonths: null })), [null, null, null, null], "usable while the month list is still loading");
-  const none = reasons({ generatedMonths: [] });
-  assertEq(Object.values(none), Array(4).fill(REASON_NO_MONTH_GENERATED), "disabled only when no month has been generated at all");
+  assertEq(reportReasons({ generatedMonths: null }), [null, null, null, null], "usable while the month list is still loading");
+  assertEq(reportReasons({ generatedMonths: [] }), Array(4).fill(REASON_NO_MONTH_GENERATED), "reports disabled only when no month has been generated at all");
   assertEq(buildPostPayrollMenu({ ...base, generatedMonths: [] })!.hint, REASON_NO_MONTH_GENERATED, "with the hint above the list");
-  assertEq(Object.values(reasons({ running: true })), Array(4).fill(REASON_BUSY), "disabled while saving or generating");
+  assertEq(reportReasons({ running: true }), Array(4).fill(REASON_BUSY), "disabled while saving or generating");
   assertEq(buildPostPayrollMenu({ ...base, running: true })!.hint, null, "busy is not a 'generate first' problem");
+  // Bank Letter follows the page month's payroll (preview or draft), exactly as it did in Downloads.
+  assertEq(reasons({})["bank-letter"], null, "bank letter enabled with a calculated page month");
+  assertEq(reasons({ exportDisabled: true })["bank-letter"], REASON_NOTHING_TO_EXPORT, "bank letter: nothing to export");
+  assertEq(reasons({ bankLetterLoading: true })["bank-letter"], REASON_BANK_BUSY, "bank letter: one is already being prepared");
+  assertEq(reasons({ running: true })["bank-letter"], REASON_BUSY, "bank letter: busy");
+  assertEq(reasons({ generatedMonths: [] })["bank-letter"], null, "bank letter does not depend on the generated-month list");
+  assertEq(buildPostPayrollMenu({ ...base, bankLetterLoading: true, exportDisabled: true })!.bankFormats.map((i) => i.disabledReason), Array(3).fill(REASON_NOTHING_TO_EXPORT), "formats carry the same reason");
 }
 // ---- single-month selector: only generated months
 {
@@ -90,9 +100,11 @@ const render = (props: Partial<Parameters<typeof PostPayrollReportsMenu>[0]>) =>
 
   const open = render({ defaultOpen: true, forceLayout: "popover" });
   assertEq(open.includes('aria-expanded="true"'), true, "expanded when open");
-  assertEq((open.match(/role="menuitem"/g) ?? []).length, 4, "four reports listed directly, no submenu");
+  assertEq((open.match(/role="menuitem"/g) ?? []).length, 5, "four reports and Bank Letter listed directly, no submenu");
   assertEq((open.match(/aria-haspopup="menu"/g) ?? []).length, 1, "only the trigger opens a menu");
-  assertEq(["TDS Data", "CPF / VPF Statement", "Division-Wise Salary", "Paybill"].every((l) => open.includes(l)), true, "labels");
+  assertEq(["TDS Data", "CPF / VPF Statement", "Division-Wise Salary", "Paybill", "Bank Letter"].every((l) => open.includes(l)), true, "labels");
+  assertEq(open.includes("Export Employee Payroll"), false, "Export Employee Payroll is not in this menu either");
+  assertEq(open.includes("Word document"), false, "bank formats are one step in, not listed up front");
   assertEq(open.includes("Excel") || open.includes("EXCEL"), true, "Excel badge");
   assertEq(open.includes('aria-disabled="true"'), false, "enabled although Nov 2026 is not generated (Sep 2026 is)");
   assertEq(open.includes("generate payroll for this month first"), false, "no blocking message");
@@ -100,7 +112,14 @@ const render = (props: Partial<Parameters<typeof PostPayrollReportsMenu>[0]>) =>
 
   const none = render({ defaultOpen: true, forceLayout: "popover", initialPeriods: [] });
   assertEq(none.includes(REASON_NO_MONTH_GENERATED), true, "message when no month is generated at all");
-  assertEq(none.includes('aria-disabled="true"'), true, "items disabled then");
+  assertEq((none.match(/aria-disabled="true"/g) ?? []).length, 4, "the four reports are disabled then (Bank Letter is not)");
+
+  const bank = render({ defaultOpen: true, forceLayout: "popover", defaultBankFormats: true });
+  assertEq(bank.includes("Word document") && bank.includes("Excel workbook") && bank.includes("PDF letter"), true, "Bank Letter lists its three formats");
+  assertEq(bank.includes('aria-label="Back to reports"'), true, "with a way back");
+  assertEq(bank.includes("TDS Data"), false, "the report list is replaced while choosing a format");
+  const bankBlocked = render({ defaultOpen: true, forceLayout: "popover", defaultBankFormats: true, exportDisabled: true });
+  assertEq(bankBlocked.includes(REASON_NOTHING_TO_EXPORT), true, "formats show why they are disabled");
 
   const cpf = render({ defaultOpen: true, forceLayout: "popover", defaultReport: "cpf" });
   assertEq(cpf.includes('id="post-payroll-month"'), true, "single-month report shows a month selector");
@@ -113,9 +132,13 @@ const render = (props: Partial<Parameters<typeof PostPayrollReportsMenu>[0]>) =>
   assertEq(tds.includes("This FY") && tds.includes("Last 3 months"), true, "quick options");
   assertEq(tds.includes("Preview"), true, "TDS Data keeps its preview");
 
+  const division = render({ defaultOpen: true, forceLayout: "popover", defaultReport: "division-wise" });
+  assertEq(division.includes('aria-label="Search months"'), true, "Division-Wise Salary opens the same multi-month picker as TDS Data");
+  assertEq(division.includes("Preview") && !division.includes('id="post-payroll-month"'), true, "Division-Wise Salary has a preview and no single-month selector");
+
   const sheet = render({ defaultOpen: true, forceLayout: "sheet" });
   assertEq(sheet.includes('aria-label="Close post-payroll reports"'), true, "phone sheet has a close button");
-  assertEq((sheet.match(/role="menuitem"/g) ?? []).length, 4, "phone sheet lists the four reports");
+  assertEq((sheet.match(/role="menuitem"/g) ?? []).length, 5, "phone sheet lists the four reports and Bank Letter");
   assertEq(sheet.includes("min-h-[44px]"), true, "44px rows on phones");
 
   assertEq(render({ canManage: false }).includes("Post-payroll reports"), false, "hidden for non-admin roles");
@@ -130,6 +153,8 @@ const render = (props: Partial<Parameters<typeof PostPayrollReportsMenu>[0]>) =>
   for (const [name, src] of [["reports", reports], ["downloads", downloads]] as const) {
     assertEq(src.includes('addEventListener("mousedown"'), true, `${name}: outside click closes`);
     assertEq(src.includes('e.key === "Escape"'), true, `${name}: Escape closes`);
+    assertEq(src.includes('document.addEventListener("touchstart"'), true, `${name}: outside tap closes`);
+    assertEq(src.includes("max-w-[calc(100vw-16px)]"), true, `${name}: never wider than the screen`);
   }
 }
 

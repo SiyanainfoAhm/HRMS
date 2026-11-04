@@ -87,7 +87,7 @@ const headerRow = (XLSX.utils.sheet_to_json<string[]>(detail, { header: 1 }) as 
 const acctCol = (XLSX.utils.sheet_to_json<string[]>(detail, { header: 1 }) as string[][])[headerRow].indexOf("AccountNumber");
 const acct = detail[XLSX.utils.encode_cell({ r: headerRow + 1, c: acctCol })] as Cell;
 if (acct.t !== "s" || acct.v !== "001234567891") fail(`Account number must stay text, got ${JSON.stringify(acct)}`);
-const netCol = (XLSX.utils.sheet_to_json<string[]>(detail, { header: 1 }) as string[][])[headerRow].indexOf("NetPay");
+const netCol = (XLSX.utils.sheet_to_json<string[]>(detail, { header: 1 }) as string[][])[headerRow].indexOf("NetSalary");
 const net = detail[XLSX.utils.encode_cell({ r: headerRow + 1, c: netCol })] as Cell;
 if (net.t !== "n") fail("NetPay must be a numeric cell");
 
@@ -116,12 +116,12 @@ const blob = buildBankLetterExcelBlob(emps, 9, 2026, "01/10/2026");
 const bank = XLSX.read(await blob.arrayBuffer(), { type: "array", cellNF: true, cellStyles: true }).Sheets["Bank Letter"];
 const bankAmt = bank["E6"] as Cell;
 if (bankAmt.t !== "n") fail("Bank letter amount must be a number, not text");
-if (!bankAmt.z?.includes("##0.00")) fail(`Bank letter amount needs an explicit number format, got ${bankAmt.z}`);
+if (!bankAmt.z?.includes("##0") || bankAmt.z.includes("0.00")) fail(`Bank letter amount needs an explicit number format, got ${bankAmt.z}`);
 const bankAcct = bank["D6"] as Cell;
 if (bankAcct.t !== "s") fail("Bank letter account number must stay text");
 const bankCols = (bank["!cols"] ?? []) as Array<{ wch?: number }>;
 if (!bankCols.length || bankCols.some((c) => (c.wch ?? 0) < 8 || (c.wch ?? 0) > 50)) fail("Bank letter widths must be set within 8..50");
-const need = Math.max(...emps.map((e) => `${(Math.round(e.netPay * 100) / 100).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`.length));
+const need = Math.max(...emps.map((e) => `${Math.round(e.netPay).toLocaleString("en-IN")}`.length));
 if ((bankCols[4].wch ?? 0) < need + 1) fail(`Bank letter amount column ${bankCols[4].wch} too narrow for ${need} chars`);
 
 }

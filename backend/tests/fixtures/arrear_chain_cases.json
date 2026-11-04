@@ -1,0 +1,95 @@
+{
+ "cases": [
+  {
+   "da": 0,
+   "tr": 0,
+   "cpf": 0,
+   "grossArrear": 0,
+   "netArrear": 0
+  },
+  {
+   "da": 1000,
+   "tr": 0,
+   "cpf": 0,
+   "grossArrear": 1000,
+   "netArrear": 1000
+  },
+  {
+   "da": 0,
+   "tr": 200,
+   "cpf": 0,
+   "grossArrear": 200,
+   "netArrear": 200
+  },
+  {
+   "da": 0,
+   "tr": 0,
+   "cpf": 144,
+   "grossArrear": 0,
+   "netArrear": -144
+  },
+  {
+   "da": 1000,
+   "tr": 200,
+   "cpf": 144,
+   "grossArrear": 1200,
+   "netArrear": 1056
+  },
+  {
+   "da": 1923,
+   "tr": 0,
+   "cpf": 231,
+   "grossArrear": 1923,
+   "netArrear": 1692
+  },
+  {
+   "da": 2040,
+   "tr": 324,
+   "cpf": 258,
+   "grossArrear": 2364,
+   "netArrear": 2106
+  },
+  {
+   "da": 1000.5,
+   "tr": 200.25,
+   "cpf": 144.09,
+   "grossArrear": 1201,
+   "netArrear": 1057
+  },
+  {
+   "da": 0.4,
+   "tr": 0.4,
+   "cpf": 0,
+   "grossArrear": 0,
+   "netArrear": 0
+  },
+  {
+   "da": 100000000,
+   "tr": 50000000,
+   "cpf": 18000000,
+   "grossArrear": 150000000,
+   "netArrear": 132000000
+  },
+  {
+   "da": 999999,
+   "tr": 1,
+   "cpf": 1000000,
+   "grossArrear": 1000000,
+   "netArrear": 0
+  },
+  {
+   "da": 1000,
+   "tr": 200,
+   "cpf": 2000,
+   "grossArrear": 1200,
+   "netArrear": -800
+  },
+  {
+   "da": 12345,
+   "tr": 6789,
+   "cpf": 2300,
+   "grossArrear": 19134,
+   "netArrear": 16834
+  }
+ ]
+}

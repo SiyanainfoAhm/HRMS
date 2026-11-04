@@ -31,9 +31,22 @@ final class SpreadsheetLayout
     public const PADDING = 2;
 
     /** Default formats; a cell that already carries an explicit (non-General) format keeps it. */
-    public const FORMAT_AMOUNT = '#,##0.00';
+    public const FORMAT_AMOUNT = Money::WHOLE_RUPEES ? '#,##0' : '#,##0.00';
 
     public const FORMAT_INTEGER = '#,##0';
+
+    /** Plain whole-number identifiers (Year, YYYYMM, codes, days, levels): never a thousands separator. */
+    public const FORMAT_ID = '0';
+
+    /**
+     * Headers (case-insensitive) whose numeric cells are identifiers, not quantities: 2026 must never show as 2,026.
+     * Matched against the header row, so every export that goes through finish() is covered.
+     */
+    public const ID_HEADERS = [
+        'Year', 'YYYYMM', 'Month No', 'Month Number', 'Pin', 'Pin Code', 'Employee Code', 'Employee ID', 'EX_CODE', 'Emp.Code',
+        'Pay Level', 'PayLevel', 'P Level', 'Through Day', 'Pay Days', 'PayDays', 'Calendar Days', 'CalendarDays',
+        'NCP DAYS', 'Sr', 'Sr No', 'SR NO', 'SL',
+    ];
 
     public const FORMAT_PERCENT = '0.00%';
 
@@ -46,7 +59,7 @@ final class SpreadsheetLayout
      *   header_row?: int, last_header_row?: int, date_columns?: array<string,string>, text_columns?: list<string>,
      *   amount_columns?: list<string>, percent_columns?: list<string>, wrap_columns?: list<string>,
      *   freeze?: string, autofilter?: string|bool, landscape?: bool, fit_width?: bool, header_fill?: string,
-     *   min?: int, max?: int
+     *   min?: int, max?: int, id_columns?: list<string>
      * } $o  Column keys are letters. header_row defaults to 1.
      */
     public static function finish(Worksheet $ws, array $o = []): void
@@ -59,6 +72,7 @@ final class SpreadsheetLayout
         $amountCols = array_fill_keys($o['amount_columns'] ?? [], true);
         $percentCols = array_fill_keys($o['percent_columns'] ?? [], true);
         $wrapCols = array_fill_keys($o['wrap_columns'] ?? [], true);
+        $idCols = array_fill_keys(array_merge($o['id_columns'] ?? [], self::columnsByHeader($ws, $headerRow, self::ID_HEADERS)), true);
 
         // 1. Types and formats (data area only; rows above the header are titles).
         foreach ($ws->getCellCollection()->getCoordinates() as $coord) {
@@ -89,6 +103,12 @@ final class SpreadsheetLayout
                     $style->getNumberFormat()->setFormatCode($dateCols[$col]);
                     $style->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
                 }
+
+                continue;
+            }
+            if (isset($idCols[$col]) && (is_int($value) || is_float($value)) && ! $cell->isFormula()) {
+                $style->getNumberFormat()->setFormatCode(self::FORMAT_ID);
+                $style->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
 
                 continue;
             }
@@ -253,6 +273,82 @@ final class SpreadsheetLayout
         }
 
         return $out;
+    }
+
+    /**
+     * Export-header guard: every header must be a non-empty, non-numeric string. A blank, null, 0 or numeric header
+     * is a column definition bug (a leftover placeholder slot), so building the export fails loudly instead of
+     * shipping a column nobody can name.
+     *
+     * @param  array<int|string, mixed>  $headers
+     */
+    public static function assertHeaders(array $headers, string $where): void
+    {
+        $bad = self::badHeaders($headers);
+        if ($bad !== []) {
+            throw new \LogicException("Export '{$where}' has invalid header(s) at position(s) ".implode(', ', array_keys($bad)).': every header must be a non-empty, non-numeric string.');
+        }
+    }
+
+    /**
+     * @param  array<int|string, mixed>  $headers
+     * @return array<int|string, mixed> the offending entries, keyed like the input
+     */
+    public static function badHeaders(array $headers): array
+    {
+        return array_filter($headers, fn ($h) => ! is_string($h) || trim($h) === '' || is_numeric(trim($h)));
+    }
+
+    /** A user-defined label that is safe as a header: a blank or numeric label falls back to $fallback. */
+    public static function safeHeader(mixed $label, string $fallback): string
+    {
+        $text = trim((string) $label);
+
+        return $text === '' || is_numeric($text) ? $fallback : $text;
+    }
+
+    /**
+     * Header problems of a finished workbook (empty = fine): in each listed sheet's header row, every cell up to the
+     * last header must hold a non-empty, non-numeric string, except cells covered by a merged range (a two-row header).
+     *
+     * @param  array<string, int>  $headerRows  sheet title => header row; sheets not listed are skipped
+     * @return list<string>
+     */
+    public static function auditHeaders(Spreadsheet $wb, array $headerRows): array
+    {
+        $problems = [];
+        foreach ($wb->getAllSheets() as $ws) {
+            $title = $ws->getTitle();
+            if (! isset($headerRows[$title])) {
+                continue;
+            }
+            $row = $headerRows[$title];
+            $merged = [];
+            foreach ($ws->getMergeCells() as $range) {
+                foreach (Coordinate::extractAllCellReferencesInRange($range) as $ref) {
+                    $merged[$ref] = true;
+                }
+            }
+            $last = 0;
+            for ($c = 1, $max = Coordinate::columnIndexFromString($ws->getHighestDataColumn()); $c <= $max; $c++) {
+                $v = $ws->getCell([$c, $row])->getValue();
+                if ($v !== null && $v !== '') {
+                    $last = $c;
+                }
+            }
+            for ($c = 1; $c <= $last; $c++) {
+                $coord = Coordinate::stringFromColumnIndex($c).$row;
+                $v = $ws->getCell($coord)->getValue();
+                if (isset($merged[$coord]) && ($v === null || $v === '')) {
+                    continue;
+                }
+                if (! is_string($v) || trim($v) === '' || is_numeric(trim($v))) {
+                    $problems[] = "{$title}!{$coord}: header is ".($v === null || $v === '' ? 'blank' : var_export($v, true));
+                }
+            }
+        }
+
+        return $problems;
     }
 
     /**

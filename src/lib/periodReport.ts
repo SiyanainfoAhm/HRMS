@@ -1,10 +1,11 @@
+import { formatMoney } from "./money";
 /**
  * Month picking for the multi-period TDS Data and Export Employee Payroll reports.
  * Only months with a generated/finalized run are offered (the server lists them); a month is "YYYY-MM".
  */
 export type ReportPeriod = { ym: string; year: number; month: number; label: string; periodId: string };
 
-export type PeriodReportType = "tds" | "employee-payroll";
+export type PeriodReportType = "tds" | "division-wise" | "employee-payroll";
 
 /** Sorted, de-duplicated month list, as the server expects it ("2026-05,2026-06"). */
 export function monthsQuery(selected: readonly string[]): string {
@@ -71,9 +72,9 @@ export type PeriodReportPreviewData = {
   rowCount: number;
 };
 
-/** Cell text for the preview: money with 2 decimals (Indian grouping), everything else as is. */
+/** Cell text for the preview: money as whole rupees (Indian grouping), everything else as is. */
 export function previewCell(value: string | number | null | undefined, isMoney: boolean): string {
   if (value === null || value === undefined || value === "") return "";
-  if (isMoney && typeof value === "number") return value.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (isMoney && typeof value === "number") return formatMoney(value);
   return String(value);
 }

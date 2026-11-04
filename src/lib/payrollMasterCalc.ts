@@ -2,7 +2,7 @@
  * Payroll master preview calculations (aligned with PayrollCalculationService.php).
  */
 
-import { percentOf, round2 } from "./money";
+import { percentOf, roundMoney } from "./money";
 import {
   calculateCpfFromBasis,
   isCpfEmployeeCustomMode,
@@ -101,18 +101,18 @@ function num(v: unknown, fallback = 0): number {
 
 export function computePayrollMasterPreview(input: PayrollMasterPreviewInput): PayrollMasterPreview {
   const payLevel = Math.max(1, Math.floor(num(input.payLevel, 1)));
-  const grossBasic = Math.max(0, input.grossBasicPay === "" ? 0 : num(input.grossBasicPay, 0));
+  const grossBasic = Math.max(0, input.grossBasicPay === "" ? 0 : roundMoney(num(input.grossBasicPay, 0)));
   const daPercent = num(input.daPercent, DEFAULT_DA_PERCENT);
   const hraPercent = num(input.hraPercent, DEFAULT_HRA_PERCENT);
   // Empty medical while typing → 0 for live totals (do not snap to DEFAULT_MEDICAL mid-edit).
   const medical =
-    input.medical === "" ? 0 : Math.max(0, num(input.medical, DEFAULT_MEDICAL));
+    input.medical === "" ? 0 : Math.max(0, roundMoney(num(input.medical, DEFAULT_MEDICAL)));
 
   const transportSettings = input.transportSettings ?? DEFAULT_TRANSPORT_ALLOWANCE_SETTINGS;
   const slab = deriveTransportSlab(payLevel, grossBasic, transportSettings);
   let transportBase = slab.base;
   let transportDa = percentOf(transportBase, daPercent);
-  let transportTotal = round2(transportBase + transportDa);
+  let transportTotal = roundMoney(transportBase + transportDa);
 
   let daAmount = percentOf(grossBasic, daPercent);
   let hraAmount = percentOf(grossBasic, hraPercent);
@@ -124,35 +124,35 @@ export function computePayrollMasterPreview(input: PayrollMasterPreviewInput): P
 
   if (input.daAmount !== undefined && input.daAmount !== null) {
     // Empty while typing → 0 for live totals (do not keep a stale prior amount).
-    daAmount = input.daAmount === "" ? 0 : Math.max(0, round2(num(input.daAmount, 0)));
+    daAmount = input.daAmount === "" ? 0 : Math.max(0, roundMoney(num(input.daAmount, 0)));
   }
   if (input.hraAmount !== undefined && input.hraAmount !== null) {
-    hraAmount = input.hraAmount === "" ? 0 : Math.max(0, round2(num(input.hraAmount, 0)));
+    hraAmount = input.hraAmount === "" ? 0 : Math.max(0, roundMoney(num(input.hraAmount, 0)));
   }
   if (input.transportBase !== undefined && input.transportBase !== null) {
     transportBase =
-      input.transportBase === "" ? 0 : Math.max(0, round2(num(input.transportBase, 0)));
+      input.transportBase === "" ? 0 : Math.max(0, roundMoney(num(input.transportBase, 0)));
   }
   if (input.transportDa !== undefined && input.transportDa !== null) {
     transportDa =
-      input.transportDa === "" ? 0 : Math.max(0, round2(num(input.transportDa, 0)));
+      input.transportDa === "" ? 0 : Math.max(0, roundMoney(num(input.transportDa, 0)));
   }
   if (input.transportTotal !== undefined && input.transportTotal !== null) {
     // Explicit 0 / empty-while-editing must NOT fall back to slab.
     transportTotal =
-      input.transportTotal === "" ? 0 : Math.max(0, round2(num(input.transportTotal, 0)));
+      input.transportTotal === "" ? 0 : Math.max(0, roundMoney(num(input.transportTotal, 0)));
   } else {
-    transportTotal = round2(transportBase + transportDa);
+    transportTotal = roundMoney(transportBase + transportDa);
   }
 
   // Always derive Total Earnings from CURRENT components (never a stale stored total).
-  let totalEarnings = round2(grossBasic + daAmount + hraAmount + medical + transportTotal);
+  let totalEarnings = roundMoney(grossBasic + daAmount + hraAmount + medical + transportTotal);
   const customEarningsTotal = sumCustomBagForTotal(
     input.customEarnings ?? {},
     input.payrollFieldDefs,
     "earnings",
   );
-  totalEarnings = round2(totalEarnings + customEarningsTotal);
+  totalEarnings = roundMoney(totalEarnings + customEarningsTotal);
   // Optional explicit override only when caller opts in (manual Total Earnings edit).
   if (
     input.useStoredTotalEarnings &&
@@ -160,10 +160,10 @@ export function computePayrollMasterPreview(input: PayrollMasterPreviewInput): P
     input.totalEarnings !== null &&
     input.totalEarnings !== ""
   ) {
-    totalEarnings = Math.max(0, round2(num(input.totalEarnings, totalEarnings)));
+    totalEarnings = Math.max(0, roundMoney(num(input.totalEarnings, totalEarnings)));
   }
 
-  const cpfDefault = num(input.cpfDefault, 0);
+  const cpfDefault = roundMoney(num(input.cpfDefault, 0));
   const cpfConfig = resolveEffectiveCpfConfigForMaster({
     cpfUseCompanySettings: input.cpfUseCompanySettings,
     cpfPercentageOverride: input.cpfPercentageOverride,
@@ -196,37 +196,37 @@ export function computePayrollMasterPreview(input: PayrollMasterPreviewInput): P
     { strictBasis: isCpfEmployeeCustomMode(input.cpfUseCompanySettings) },
   );
 
-  const daCpf = round2(num(input.daCpf, 0));
+  const daCpf = roundMoney(num(input.daCpf, 0));
   // Empty PT while typing → 0 for live totals (do not snap to 200 mid-edit).
   const professionalTax =
     input.professionalTax === ""
       ? 0
-      : round2(num(input.professionalTax, input.professionalTax === undefined ? 200 : 0));
-  const incomeTax = input.incomeTax === "" ? 0 : round2(num(input.incomeTax, 0));
-  const lic = input.lic === "" ? 0 : round2(num(input.lic, 0));
-  const mess = input.mess === "" ? 0 : round2(num(input.mess, 0));
-  const welfare = input.welfare === "" ? 0 : round2(num(input.welfare, 0));
-  const vpf = input.vpf === "" ? 0 : round2(num(input.vpf, 0));
-  const pfLoan = input.pfLoan === "" ? 0 : round2(num(input.pfLoan, 0));
-  const postOffice = input.postOffice === "" ? 0 : round2(num(input.postOffice, 0));
-  const creditSociety = input.creditSociety === "" ? 0 : round2(num(input.creditSociety, 0));
+      : roundMoney(num(input.professionalTax, input.professionalTax === undefined ? 200 : 0));
+  const incomeTax = input.incomeTax === "" ? 0 : roundMoney(num(input.incomeTax, 0));
+  const lic = input.lic === "" ? 0 : roundMoney(num(input.lic, 0));
+  const mess = input.mess === "" ? 0 : roundMoney(num(input.mess, 0));
+  const welfare = input.welfare === "" ? 0 : roundMoney(num(input.welfare, 0));
+  const vpf = input.vpf === "" ? 0 : roundMoney(num(input.vpf, 0));
+  const pfLoan = input.pfLoan === "" ? 0 : roundMoney(num(input.pfLoan, 0));
+  const postOffice = input.postOffice === "" ? 0 : roundMoney(num(input.postOffice, 0));
+  const creditSociety = input.creditSociety === "" ? 0 : roundMoney(num(input.creditSociety, 0));
   const standardLicenceFee =
-    input.standardLicenceFee === "" ? 0 : round2(num(input.standardLicenceFee, 0));
-  const electricity = input.electricity === "" ? 0 : round2(num(input.electricity, 0));
-  const water = input.water === "" ? 0 : round2(num(input.water, 0));
-  const loanRecovery = input.loanRecovery === "" ? 0 : round2(num(input.loanRecovery, 0));
-  const vehicleCharge = input.vehicleCharge === "" ? 0 : round2(num(input.vehicleCharge, 0));
-  const otherDeduction = input.otherDeduction === "" ? 0 : round2(num(input.otherDeduction, 0));
-  const advance = input.advance === "" ? 0 : round2(num(input.advance, 0));
+    input.standardLicenceFee === "" ? 0 : roundMoney(num(input.standardLicenceFee, 0));
+  const electricity = input.electricity === "" ? 0 : roundMoney(num(input.electricity, 0));
+  const water = input.water === "" ? 0 : roundMoney(num(input.water, 0));
+  const loanRecovery = input.loanRecovery === "" ? 0 : roundMoney(num(input.loanRecovery, 0));
+  const vehicleCharge = input.vehicleCharge === "" ? 0 : roundMoney(num(input.vehicleCharge, 0));
+  const otherDeduction = input.otherDeduction === "" ? 0 : roundMoney(num(input.otherDeduction, 0));
+  const advance = input.advance === "" ? 0 : roundMoney(num(input.advance, 0));
 
   const customDeductionsTotal = sumCustomBagForTotal(
     input.customDeductions ?? {},
     input.payrollFieldDefs,
     "deductions",
   );
-  const quarterRentDeduction = hasQuarter ? round2(num(input.quarterRent, 0)) : 0;
+  const quarterRentDeduction = hasQuarter ? roundMoney(num(input.quarterRent, 0)) : 0;
 
-  const totalDeductions = round2(
+  const totalDeductions = roundMoney(
     incomeTax +
       professionalTax +
       lic +
@@ -249,7 +249,7 @@ export function computePayrollMasterPreview(input: PayrollMasterPreviewInput): P
       customDeductionsTotal,
   );
 
-  const takeHome = round2(totalEarnings - totalDeductions);
+  const takeHome = roundMoney(totalEarnings - totalDeductions);
 
   return {
     daAmount,

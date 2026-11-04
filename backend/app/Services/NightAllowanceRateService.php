@@ -12,12 +12,10 @@ final class NightAllowanceRateService
     /**
      * Night Duty Allowance = hours / 8 x rate. The rate (Settings > Night Allowance, 7th CPC table:
      * Level 1 = 23.20) is the amount per DUTY of 8 hours and is stored exactly as typed.
-     * Computed as (hours x rate) / 8 and rounded ONCE, to 2 decimals (paise), at the end. Mirror: src/lib/nightAllowanceCalculation.ts
+     * Computed as (hours x rate) / 8 and rounded ONCE, to the whole rupee (App\Support\Money), at the end. Mirror: src/lib/nightAllowanceCalculation.ts
      * (shared cases: tests/fixtures/night_allowance_cases.json).
      */
     public const DUTY_BASE_HOURS = 8;
-
-    public const ROUND_AMOUNT_TO_RUPEE = false;
 
     /** 'duty' = rate is per 8-hour duty; 'hour' = legacy rows keep hours x rate (history unchanged). */
     public const BASIS_DUTY = 'duty';
@@ -32,12 +30,10 @@ final class NightAllowanceRateService
             return 0.0;
         }
         if ($basis === self::BASIS_HOUR) {
-            return (float) round($hours * $rate);
+            return \App\Support\Money::roundMoney($hours * $rate);
         }
-        // hours x rate / 8 in integer paise (App\Support\Money), rounded once, half up, to paise.
-        $amount = \App\Support\Money::proportion($rate, $hours, self::DUTY_BASE_HOURS);
-
-        return self::ROUND_AMOUNT_TO_RUPEE ? (float) round($amount) : $amount;
+        // hours x rate / 8 in integer paise (App\Support\Money), rounded once to the whole rupee (8.5 h at 23.20 = 24.65 -> 25).
+        return \App\Support\Money::proportion($rate, $hours, self::DUTY_BASE_HOURS);
     }
 
     /**
@@ -395,7 +391,7 @@ final class NightAllowanceRateService
 
         $amount = self::allowanceAmount($hours, $rate, $rateBasis);
         if ($manualOverride && $manualAmount !== null) {
-            $amount = round(max(0, $manualAmount), 2);
+            $amount = \App\Support\Money::roundMoney(max(0, $manualAmount));
         }
 
         return [

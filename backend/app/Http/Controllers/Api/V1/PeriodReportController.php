@@ -27,7 +27,7 @@ final class PeriodReportController extends Controller
 
     public function preview(Request $request, string $type): JsonResponse
     {
-        abort_unless(in_array($type, ['tds', 'employee-payroll'], true), 404);
+        abort_unless(in_array($type, ['tds', 'division-wise', 'employee-payroll'], true), 404);
         $user = $request->user();
         $role = $user->role instanceof UserRole ? $user->role->value : (string) $user->role;
         abort_if($type === 'employee-payroll' && $role !== UserRole::Admin->value, 403, 'Forbidden');
@@ -36,7 +36,10 @@ final class PeriodReportController extends Controller
         $months = $this->periods->parseMonths($request->query('months'));
         $periodIds = $this->periods->periodIdsFor($companyId, $months);
 
-        if ($type === 'tds') {
+        if ($type === 'division-wise') {
+            $rows = $this->tds->rowsForMonths($companyId, $months);
+            $table = $this->tds->divisionWiseTable($rows, $this->tds->settingsDivisionNames($companyId));
+        } elseif ($type === 'tds') {
             $rows = $this->tds->rowsForMonths($companyId, $months);
             $extras = $this->periods->customColumns($companyId, array_map(fn ($r) => [$r['custom_earnings'] ?? null, $r['custom_deductions'] ?? null], $rows));
             $table = $this->tds->tdsTable($rows, $extras);

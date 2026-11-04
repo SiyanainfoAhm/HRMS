@@ -162,9 +162,15 @@ for (const key of [
 }
 
 // TEST 12–16 — arrears
-for (const key of ["daArrear", "transportArrear", "grossArrear", "cpfArrear", "netArrear"] as const) {
+for (const key of ["daArrear", "transportArrear", "cpfArrear"] as const) {
   const r = applyGovernmentSheetMonetaryEdit(baseRow(), key, 0);
   assertEq(r[key], 0, `TEST arrears ${key}=0`);
+}
+// Gross Arrears and Net Arrears are derived (read-only): an edit of either is ignored.
+{
+  const withDa = applyGovernmentSheetMonetaryEdit(baseRow(), "daArrear", 1000);
+  assertEq(applyGovernmentSheetMonetaryEdit(withDa, "grossArrear", 5), withDa, "gross arrears cannot be typed");
+  assertEq(applyGovernmentSheetMonetaryEdit(withDa, "netArrear", 5), withDa, "net arrears cannot be typed");
 }
 row = applyGovernmentSheetMonetaryEdit(baseRow(), "daArrear", 1000);
 assertEq(row.daArrear, 1000, "TEST12 DA arrear");
@@ -257,21 +263,7 @@ assertEq(customTotals.totalEarnings, baseRow().grossPay + 1200, "included custom
 assertEq(customTotals.totalDeductions, baseRow().deductions + 350, "included custom deduction total");
 assertEq(customTotals.netSalary, baseRow().netPay + 850, "custom fields net total");
 
-// Historical/manual Gross Arrear is not represented by the DA/Transport
-// arrear lines, so it must be included once; its CPF arrear must be deducted.
-const historicalArrear = applyGovernmentSheetMonetaryEdit(baseRow(), "grossArrear", 1200);
-const historicalArrearWithCpf = applyGovernmentSheetMonetaryEdit(historicalArrear, "cpfArrear", 120);
-const historicalGm = historicalArrearWithCpf.governmentMonthly as {
-  totalEarnings: number;
-  totalDeductions: number;
-  netSalary: number;
-};
-assertEq(historicalGm.totalEarnings, baseRow().grossPay + 1200, "historical arrear adds to earnings once");
-assertEq(historicalGm.totalDeductions, baseRow().deductions + 120, "CPF arrear adds to deductions");
-assertEq(historicalGm.netSalary, baseRow().netPay + 1080, "historical arrear changes net pay");
-
-// When Gross Arrear is the DA + Transport reporting total it must not be
-// double-counted. Editing the displayed Net Arrear derives CPF Arrear.
+// Gross Arrears = DA + TR is counted once; CPF Arr is deducted once; Net Arrears is a memo.
 const detailedArrear = applyGovernmentSheetMonetaryEdit(baseRow(), "daArrear", 400);
 const detailedArrear2 = applyGovernmentSheetMonetaryEdit(detailedArrear, "transportArrear", 100);
 assertEq(
@@ -279,9 +271,10 @@ assertEq(
   baseRow().grossPay + 500,
   "detailed arrear included once",
 );
-const netArrearEdit = applyGovernmentSheetMonetaryEdit(detailedArrear2, "netArrear", 450);
-assertEq(netArrearEdit.cpfArrear, 50, "net arrear derives CPF arrear");
-assertEq(netArrearEdit.netPay, baseRow().netPay + 450, "net arrear edit changes net pay");
+const withCpf = applyGovernmentSheetMonetaryEdit(detailedArrear2, "cpfArrear", 50);
+assertEq(withCpf.grossArrear, 500, "gross arrears = DA + TR");
+assertEq(withCpf.netArrear, 450, "net arrears = gross - CPF arr");
+assertEq(withCpf.netPay, baseRow().netPay + 450, "net pay moves by gross arrears - CPF arr");
 
 // Side-panel payment fields are named earnings and must update the actual
 // monthly Net Pay, not merely a transient take-home display.

@@ -114,7 +114,7 @@ final class PayrollDraftServiceLogicTest extends TestCase
         $unassigned = $service->applyAuthoritativeQuarterValues($assigned, [
             'hasQuarter' => false, 'quarterId' => null, 'quarterName' => null, 'quarterType' => null, 'quarterRent' => 0,
         ], 2026, 10);
-        $this->assertSame(14516.13, $unassigned['governmentMonthly']['hraPaid'], 'restored HRA is prorated for 30 of 31 days in October, to paise');
+        $this->assertSame(14516.0, $unassigned['governmentMonthly']['hraPaid'], 'restored HRA is prorated for 30 of 31 days in October, to the rupee');
         $this->assertSame(0.0, $unassigned['governmentMonthly']['deductions']['quarterRent']);
         $this->assertSame(11750, $unassigned['governmentMonthly']['deductions']['creditSociety']);
     }
@@ -129,7 +129,7 @@ final class PayrollDraftServiceLogicTest extends TestCase
         $this->assertSame(0.0, $method->invoke($service, 0));
         $this->assertSame(0.0, $method->invoke($service, '0'));
         $this->assertNull($method->invoke($service, null));
-        $this->assertSame(12.5, $method->invoke($service, '12.5'));
+        $this->assertSame(13.0, $method->invoke($service, '12.5'), 'a typed amount is a whole rupee (12.50 rounds up)');
     }
 
     public function test_partial_snapshot_merge_preserves_unrelated_values_and_explicit_zero(): void

@@ -89,23 +89,22 @@ if (detailSheet[XLSX.utils.encode_cell({ r: 4, c: zeroColumn })]?.v !== 0) throw
 if (sheetHeaders.includes("Inactive Component")) throw new Error("Inactive payroll fields must not appear in the detailed workbook.");
 if (sheetHeaders.includes("PAN")) throw new Error("Text statutory fields must not be exported as numeric payroll components.");
 
+// Columns are the Run Payroll lines (screen order and labels); StdLicenceFee, NetPay, QuarterRentDeduction etc. are gone.
 const expected: Record<string, string | number> = {
   AccountNumber: "00123", EmployeeName: "Employee One", PayLevel: 9, PayDays: 29,
-  Basic: 100, DA: 101, HRA: 102, Medical: 103, TransportTA: 104, SPPay: 105,
-  ExtraWorkAllowance: 106, NightAllowance: 107, NightHours: 1.5,
-  NightAllowanceRate: 108, NightAllowanceCeiling: 109, NightAllowanceEligible: "Yes",
-  UniformAllowance: 110, EducationAllowance: 111, TelephoneAllowance: 136,
-  DAArrears: 112, TransportArrears: 113, GrossArrears: 114, Encashment: 115,
-  EncashmentDA: 116, GrossTotal: 117, IncomeTax: 118, LIC: 119, CPF: 120, DACPF: 121,
-  GPF: 137, VPF: 122, PFLoan: 123, PostOffice: 124, CreditSociety: 125,
-  StdLicenceFee: 126, Electricity: 127, ElectricityUnits: 12, Water: 128, Mess: 129,
-  BankRecovery: 130, Welfare: 131, HPL: 0, EOL: 0, Remarks: "Payroll period leave",
-  VehCharge: 132, OtherDeduction: 133, TotalDeductions: 134, NetSalary: -17,
-  ProfessionalTax: 135, QuarterAssigned: "Yes", QuarterName: "Q-1", QuarterType: "Type-A",
-  QuarterRent: 138, QuarterRentDeduction: 138, NetPay: -17,
-  CalendarDays: 31, EOLDays: 1, HPLDays: 2, EquivalentPayableDays: 29,
-  EOLSalaryAdjustment: 3.23, HPLSalaryAdjustment: 3.23,
+  Basic: 100, "Special Pay": 105, DA: 101, Transport: 104, HRA: 102, Medical: 103, EWA: 106, "N. All.": 107,
+  Uniform: 110, Education: 111, TelephoneAllowance: 136, "DA Arrears": 112, "TR Arrears": 113,
+  "Encash.": 115, EncashmentDA: 116, "Gross Arrears": 114, GrossTotal: 117,
+  "Inc. tax": 118, "Professional Tax": 135, LIC: 119, CPF: 120, "DA CPF": 121, VPF: 122, "PF Loan": 123,
+  "Post off.": 124, "Cr. society": 125, Electricity: 127, Water: 128, Mess: 129, "Bank Recovery": 130,
+  Welfare: 131, HPL: 0, EOL: 0, "Veh. chg.": 132, "Quarter Rent": 138, Other: 133, GPF: 137,
+  TotalDeductions: 134, NetSalary: -17,
 };
+for (const gone of ["StdLicenceFee", "NetPay", "QuarterRentDeduction", "QuarterRent", "CTC", "TDS", "EmployeePF", "EmployerPF", "EmployeeESIC", "EmployerESIC",
+  "NightHours", "NightAllowanceRate", "NightAllowanceCeiling", "NightAllowanceEligible", "ElectricityUnits", "CalendarDays", "EOLDays", "HPLDays",
+  "EquivalentPayableDays", "EOLSalaryAdjustment", "HPLSalaryAdjustment", "Remarks", "QuarterAssigned", "QuarterName", "QuarterType"]) {
+  if (gone in row || PAYROLL_EXCEL_HEADER.includes(gone)) throw new Error(`${gone} is not on Run Payroll and must not be exported`);
+}
 
 for (const [field, value] of Object.entries(expected)) {
   if (row[field] !== value) throw new Error(`${field}: expected ${String(value)}, received ${String(row[field])}`);

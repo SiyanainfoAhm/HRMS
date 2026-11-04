@@ -6,6 +6,7 @@
  * (backend/tests/fixtures/night_allowance_cases.json, also read by the PHP test), ceiling,
  * Level 1 x 120h = 348, label, open-draft normalisation (basis, never a rate threshold), draft reload.
  */
+import { MONEY_WHOLE_RUPEES } from "./money";
 import { readFileSync } from "node:fs";
 import {
   calculateNightAllowanceAmount,
@@ -23,7 +24,7 @@ function assertEq(a: unknown, b: unknown, msg: string) {
 
 const fixture = JSON.parse(
   readFileSync(new URL("../../backend/tests/fixtures/night_allowance_cases.json", import.meta.url), "utf8"),
-) as { anchors: { level1_120h: number }; cases: Array<{ slab: number; level: number; perDuty: number; hours: number; expected: number }> };
+) as { anchors: { level1_120h: { rupee: number; paise: number } }; cases: Array<{ slab: number; level: number; perDuty: number; hours: number; expectedRupee: number; expectedPaise: number }> };
 
 // 14 slabs x 4 hour values; the fixture carries the table values themselves (23.20 ... 63.60).
 assertEq(fixture.cases.length, 56, "14 slabs x 4 hour values");
@@ -32,12 +33,12 @@ fixture.cases.filter((c) => c.hours === 0).forEach((c, i) => assertEq(c.perDuty,
 for (const c of fixture.cases) {
   assertEq(
     calculateNightAllowanceAmount(c.hours, c.perDuty, "duty"),
-    c.expected,
+    MONEY_WHOLE_RUPEES ? c.expectedRupee : c.expectedPaise,
     `slab ${c.slab} level ${c.level} ${c.hours}h at ${c.perDuty}/duty`,
   );
 }
 assertEq(calculateNightAllowanceAmount(120, 23.2, "duty"), 348, "Level 1, 120h = 15 duties x 23.20 = 348");
-assertEq(fixture.anchors.level1_120h, 348, "fixture anchor");
+assertEq(MONEY_WHOLE_RUPEES ? fixture.anchors.level1_120h.rupee : fixture.anchors.level1_120h.paise, 348, "fixture anchor");
 assertEq(nightAllowanceRateLabel(23.2, "duty"), "₹23.20/duty", "label shows the per-duty rate");
 assertEq(nightAllowanceRateLabel(28.85, undefined), "₹28.85/hr", "legacy hour-basis row keeps its label");
 
@@ -72,10 +73,10 @@ const fgm = fixed.governmentMonthly as Record<string, number>;
 assertEq(fixed.govRecalc?.nightAllowanceRateBasis, "duty", "basis forced to duty");
 assertEq(fixed.govRecalc?.nightAllowanceRate, 28.85, "rate from the slab");
 assertEq(fixed.govRecalc?.nightHours, 15, "typed hours kept");
-assertEq(fgm.nightAllowancePaid, 54.09, "15h / 8 x 28.85 = 54.09375 -> 54.09 (paise, not rupee)");
-assertEq(Math.round(fgm.totalEarnings * 100) / 100, 50000 - 433 + 54.09, "gross moves by exactly the NDA change");
-assertEq(Math.round(fgm.netSalary * 100) / 100, 40000 - 433 + 54.09, "net moves by exactly the NDA change");
-assertEq(Math.round(Number(fixed.grossPay) * 100) / 100, 50000 - 433 + 54.09, "row gross");
+assertEq(fgm.nightAllowancePaid, 54, "15h / 8 x 28.85 = 54.09375 -> 54 (whole rupee)");
+assertEq(Math.round(fgm.totalEarnings * 100) / 100, 50000 - 433 + 54, "gross moves by exactly the NDA change");
+assertEq(Math.round(fgm.netSalary * 100) / 100, 40000 - 433 + 54, "net moves by exactly the NDA change");
+assertEq(Math.round(Number(fixed.grossPay) * 100) / 100, 50000 - 433 + 54, "row gross");
 assertEq(ensureOpenRowNightAllowanceDuty(fixed, fresh), fixed, "idempotent");
 
 // A row saved on 'duty' while the slabs were 8x too high (230.80) is corrected; a rate that is not 8x is left alone.
@@ -86,7 +87,7 @@ const eight = {
 } as unknown as RunPayrollRowLike;
 const eightFixed = ensureOpenRowNightAllowanceDuty(eight, fresh);
 assertEq(eightFixed.govRecalc?.nightAllowanceRate, 28.85, "8x rate corrected");
-assertEq((eightFixed.governmentMonthly as Record<string, number>).nightAllowancePaid, 54.09, "8x amount recalculated");
+assertEq((eightFixed.governmentMonthly as Record<string, number>).nightAllowancePaid, 54, "8x amount recalculated");
 const custom = { ...eight, govRecalc: { ...eight.govRecalc, nightAllowanceRate: 100 } } as unknown as RunPayrollRowLike;
 assertEq(ensureOpenRowNightAllowanceDuty(custom, fresh), custom, "a duty row that is not exactly 8x the slab is untouched (no threshold)");
 
@@ -132,7 +133,7 @@ assertEq(run(gr({ nightHours: 120, nightAllowanceRate: 23.2 })).nightAllowancePa
 // Draft save/reload keeps the typed hours exactly.
 const payload = {
   govRecalc: { nightHours: 8.5, nightAllowanceRate: 23.2, nightAllowanceRateBasis: "duty" },
-  governmentMonthly: { nightHours: 8.5, nightAllowanceRate: 23.2, nightAllowanceRateBasis: "duty", nightAllowancePaid: 25.2 },
+  governmentMonthly: { nightHours: 8.5, nightAllowanceRate: 23.2, nightAllowanceRateBasis: "duty", nightAllowancePaid: 25 },
 };
 const reloaded = deserializePayrollDraftEmployee(
   { employeeUserId: "u", rowPayload: JSON.parse(JSON.stringify(payload)) } as never,

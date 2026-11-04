@@ -103,12 +103,12 @@ final class PeriodReportTest extends DatabaseTestCase
         $rows = [$this->row('001', '2026-05', 1000), $this->row('002', '2026-05', 2000)];
         $before = $this->tds()->tdsTable($rows, null);
         $after = $this->tds()->tdsTable($rows, $this->extras());
-        $this->assertCount(44, $before['headers']);
-        $this->assertSame($before['headers'], array_slice($after['headers'], 0, 44));
+        $this->assertCount(43, $before['headers']);
+        $this->assertSame($before['headers'], array_slice($after['headers'], 0, 43));
         foreach ($rows as $i => $_) {
-            $this->assertSame($before['rows'][$i], array_slice($after['rows'][$i], 0, 44), 'the 44 TDS values are unchanged');
+            $this->assertSame($before['rows'][$i], array_slice($after['rows'][$i], 0, 43), 'the 43 TDS values are unchanged');
         }
-        $this->assertSame(['Month', 'Year'], array_slice($after['headers'], 44, 2));
+        $this->assertSame(['Month', 'Year'], array_slice($after['headers'], 43, 2));
     }
 
     public function test_month_list_parsing_and_file_name_range(): void
@@ -171,12 +171,12 @@ final class PeriodReportTest extends DatabaseTestCase
         $path = $this->tds()->save($this->tds()->buildTds($rows, $all));
         $sheet = IOFactory::load($path)->getActiveSheet();
         @unlink($path);
-        $headerRow = $sheet->rangeToArray('A2:'.$sheet->getHighestColumn().'2', null, true, false)[0];
+        $headerRow = $sheet->rangeToArray('A1:'.$sheet->getHighestColumn().'1', null, true, false)[0];
         $this->assertContains('Brand New Earning', $headerRow);
         $col = array_search('Brand New Earning', $headerRow, true);
-        $this->assertSame(40.0, (float) $sheet->getCell([$col + 1, 3])->getValue(), 'a real numeric cell');
-        $this->assertSame('TOTAL', $sheet->getCell([1, 4])->getValue(), 'totals row');
-        $this->assertSame('B3', $sheet->getFreezePane());
+        $this->assertSame(40.0, (float) $sheet->getCell([$col + 1, 2])->getValue(), 'a real numeric cell');
+        $this->assertSame('TOTAL', $sheet->getCell([1, 3])->getValue(), 'totals row');
+        $this->assertSame('E2', $sheet->getFreezePane());
 
         // Export Employee Payroll: header row.
         $headers = app(EmployeePayrollExportService::class)->buildHeaders([
@@ -198,10 +198,10 @@ final class PeriodReportTest extends DatabaseTestCase
 
         $this->assertSame(
             ['Month', 'Year', 'Alpha Earn', 'Arrears', 'HRA (Custom)', 'Total Earnings', 'Beta Ded', 'GPF', 'Total Deductions', 'Net Pay'],
-            array_slice($t['headers'], 44),
+            array_slice($t['headers'], 43),
             'Month | Year | custom earnings | Total Earnings | custom deductions | Total Deductions | Net Pay',
         );
-        $this->assertSame(PostPayrollDownloadService::TDS_COLUMNS, array_slice($t['headers'], 0, 44), 'the 44 TDS columns keep their order');
+        $this->assertSame(PostPayrollDownloadService::TDS_COLUMNS, array_slice($t['headers'], 0, 43), 'the 43 TDS columns keep their order');
         $h = array_flip($t['headers']);
         $this->assertSame(1010.0, $t['rows'][0][$h['Total Earnings']]);
         $this->assertSame(10.0, $t['rows'][0][$h['Alpha Earn']]);
@@ -211,9 +211,9 @@ final class PeriodReportTest extends DatabaseTestCase
         $path = $this->tds()->save($this->tds()->buildTds($rows, $extras));
         $sheet = IOFactory::load($path)->getActiveSheet();
         @unlink($path);
-        $excelHeaders = array_map('strval', $sheet->rangeToArray('A2:'.$sheet->getHighestColumn().'2', null, true, false)[0]);
+        $excelHeaders = array_map('strval', $sheet->rangeToArray('A1:'.$sheet->getHighestColumn().'1', null, true, false)[0]);
         $this->assertSame($t['headers'], $excelHeaders, 'preview and Excel use exactly the same column order');
-        $excelRow = $sheet->rangeToArray('A3:'.$sheet->getHighestColumn().'3', null, true, false)[0];
+        $excelRow = $sheet->rangeToArray('A2:'.$sheet->getHighestColumn().'2', null, true, false)[0];
         $this->assertSame(1010.0, (float) $excelRow[$h['Total Earnings']]);
     }
 
@@ -269,8 +269,18 @@ final class PeriodReportTest extends DatabaseTestCase
         ]);
         $masters = ['u1' => ['employeeCode' => '001', 'name' => 'Emp 1']];
         $table = $svc->buildTable([$period], ['p-may' => [$gov]], $masters, [], [], $keys);
-        $this->assertSame($headers, $table['headers'], 'preview headers are the shared column definition');
-        $this->assertSame($groups, $table['groups']);
+        // Encashment DA is retired: its column is left out of preview and Excel unless a row carries an amount.
+        $retired = array_search('Encashment DA', $headers, true);
+        $without = fn (array $list): array => array_values(array_filter($list, fn ($k) => $k !== $retired, ARRAY_FILTER_USE_KEY));
+        $this->assertNotFalse($retired);
+        $this->assertSame($without($headers), $table['headers'], 'preview headers are the shared column definition minus the empty retired column');
+        $this->assertSame($without($groups), $table['groups']);
+
+        $withAmount = clone $gov;
+        $withAmount->forceFill(['encashment_da_paid' => 700, 'total_earnings' => 1710, 'net_salary' => 1705]);
+        $kept = $svc->buildTable([$period], ['p-may' => [$withAmount]], $masters, [], [], $keys);
+        $this->assertSame($headers, $kept['headers'], 'a stored Encashment DA amount keeps its column');
+        $this->assertSame(700.0, (float) $kept['rows'][0][$retired]);
         $sheet = $svc->buildSpreadsheet([$period], ['p-may' => [$gov]], $masters, [], [], $keys)->getActiveSheet();
         $excelHeaders = array_map('strval', $sheet->rangeToArray('A1:'.$sheet->getHighestColumn().'1', null, true, false)[0]);
         $this->assertSame($table['headers'], $excelHeaders, 'preview and Excel use exactly the same column order');
@@ -303,18 +313,18 @@ final class PeriodReportTest extends DatabaseTestCase
         $this->assertSame($table['headers'], $excel, 'preview headers equal the Excel headers');
         $this->assertSame('Total', $sheet->getCell([1, $sheet->getHighestRow()])->getValue(), 'bottom totals row');
 
-        // TDS Data: the 44 legacy columns, then the grouped tail.
+        // TDS Data: the 43 legacy columns, then the grouped tail.
         $tds = new PostPayrollDownloadService;
         $rows = $tds->rowsForMonths($company, [$month]);
         $extras = $periods->customColumns($company, array_map(fn ($r) => [$r['custom_earnings'], $r['custom_deductions']], $rows));
         $t = $tds->tdsTable($rows, $extras);
         $layout = PostPayrollDownloadService::tdsExtraLayout($extras);
-        $groups = array_merge(array_fill(0, 44, 'identity'), array_map(fn ($c) => match ($c['kind']) {
+        $groups = array_merge(array_fill(0, 43, 'identity'), array_map(fn ($c) => match ($c['kind']) {
             'month', 'year' => 'info', 'earning' => 'earning', 'total_earnings' => 'total_earnings',
             'deduction' => 'deduction', 'total_deductions' => 'total_deductions', 'net' => 'net',
         }, $layout));
-        $tail = array_slice($t['headers'], 44);
-        $tailGroups = array_slice($groups, 44);
+        $tail = array_slice($t['headers'], 43);
+        $tailGroups = array_slice($groups, 43);
         $te = array_search('total_earnings', $tailGroups, true);
         $td = array_search('total_deductions', $tailGroups, true);
         foreach ($tailGroups as $i => $g) {
@@ -327,7 +337,7 @@ final class PeriodReportTest extends DatabaseTestCase
         $path = $tds->save($tds->buildTds($rows, $extras));
         $tsheet = IOFactory::load($path)->getActiveSheet();
         @unlink($path);
-        $this->assertSame($t['headers'], array_map('strval', $tsheet->rangeToArray('A2:'.$tsheet->getHighestColumn().'2', null, true, false)[0]), 'TDS preview headers equal Excel headers');
+        $this->assertSame($t['headers'], array_map('strval', $tsheet->rangeToArray('A1:'.$tsheet->getHighestColumn().'1', null, true, false)[0]), 'TDS preview headers equal Excel headers');
     }
 
     public function test_real_september_preview_totals_reconcile_and_match_the_workbook(): void

@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Support\SchemaVersion;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 /**
  * Read-only post-deploy verification. Exit code 0 only when the database matches
@@ -28,6 +29,21 @@ class PayrollSchemaCheck extends Command
         $tz = (string) config('app.timezone');
         if ($tz !== 'Asia/Kolkata') {
             $failures[] = "APP_TIMEZONE is '{$tz}', not Asia/Kolkata: quarter assignment and effective dates use the server date and fall on the wrong day. Set APP_TIMEZONE=Asia/Kolkata in backend/.env.";
+        }
+
+        // Production hygiene (warnings, never failures): debug mode leaks stack traces and a debug log level fills the disk.
+        if (config('app.debug')) $warnings[] = 'APP_DEBUG=true. Set APP_DEBUG=false in backend/.env on the live server.';
+        if (strtolower((string) config('logging.channels.single.level', config('logging.channels.stack.level', 'debug'))) === 'debug' || strtolower((string) env('LOG_LEVEL', 'debug')) === 'debug') {
+            $warnings[] = 'LOG_LEVEL=debug. Set LOG_LEVEL=warning (or error) in backend/.env on the live server.';
+        }
+        if (config('logging.payroll_trace')) $warnings[] = 'PAYROLL_TRACE=true writes one log line per employee and month. Remove it unless you are diagnosing.';
+        // The Activity Log field-diff columns (migration 2026_11_03_150000) are optional for the code but needed for stored diffs.
+        foreach (['cirt_activity_log_entries' => ['summary', 'subject'], 'cirt_activity_log_details' => ['diff', 'change_kind']] as $table => $cols) {
+            foreach ($cols as $col) {
+                if (Schema::hasTable($table) && ! Schema::hasColumn($table, $col)) {
+                    $warnings[] = "Activity Log column {$table}.{$col} is missing: run php artisan migrate --force (changes are logged without their stored diff until then).";
+                }
+            }
         }
 
         if ($schema['ok']) {

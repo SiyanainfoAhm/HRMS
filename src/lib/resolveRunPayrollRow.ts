@@ -2,6 +2,7 @@
  * Resolve a Run Payroll API row into the editable government/private shape.
  * Ensures governmentMonthly is computed when the API returns zero stubs.
  */
+import { roundMoney, sumMoney } from "./money";
 import { applyAutoArrearsToGovernmentMonthly } from "@/lib/payrollArrearCalc";
 import {
   runGovernmentPayrollCompute,
@@ -72,7 +73,7 @@ function computeGovernmentRow(
     ...r,
     grossMonthly:
       r.grossMonthly ??
-      Math.round((Number(r.grossPay || 0) * denom) / (Number(r.payDays || r.rawPayDays || 1) || 1)),
+      roundMoney((Number(r.grossPay || 0) * denom) / (Number(r.payDays || r.rawPayDays || 1) || 1)),
     grossPay: Number(r.grossPay ?? 0),
     netPay: Number(r.netPay ?? 0),
     pfEmployee: Number(r.pfEmployee ?? 0),
@@ -176,7 +177,7 @@ function computeGovernmentRow(
     };
     base.tds = ded.incomeTax;
     base.profTax = ded.pt;
-    base.pfEmployee = Math.round(ded.cpf + ded.daCpf + ded.vpf);
+    base.pfEmployee = sumMoney(ded.cpf, ded.daCpf, ded.vpf);
     base.takeHome = Number(frozen.netSalary) || 0;
   }
 
@@ -243,10 +244,10 @@ function overlayAuthoritativeQuarterContext(
     hraActual: hasQuarter ? 0 : Number(calculatedGm.hraActual ?? 0),
     hraPaid: hasQuarter ? 0 : Number(calculatedGm.hraPaid ?? 0),
     hasQuarter,
-    quarterId: hasQuarter ? calculated.quarterId ?? null : null,
-    quarterName: hasQuarter ? calculated.quarterName ?? null : null,
-    quarterType: hasQuarter ? calculated.quarterType ?? null : null,
-    quarterTypeId: hasQuarter ? calculated.quarterTypeId ?? null : null,
+    quarterId: hasQuarter ? calculated.quarterId ?? calculatedGm.quarterId ?? calculated.govRecalc?.quarterId ?? null : null,
+    quarterName: hasQuarter ? calculated.quarterName ?? calculatedGm.quarterName ?? calculated.govRecalc?.quarterName ?? null : null,
+    quarterType: hasQuarter ? calculated.quarterType ?? calculatedGm.quarterType ?? calculated.govRecalc?.quarterType ?? null : null,
+    quarterTypeId: hasQuarter ? calculated.quarterTypeId ?? calculatedGm.quarterTypeId ?? null : null,
     quarterRent,
     quarter_rent: quarterRent,
     deductions: { ...savedDeductions, quarterRent },
@@ -276,10 +277,10 @@ function overlayAuthoritativeQuarterContext(
     ...saved,
     hasQuarter,
     quarterAssigned: hasQuarter,
-    quarterId: hasQuarter ? calculated.quarterId ?? null : null,
-    quarterName: hasQuarter ? calculated.quarterName ?? null : null,
-    quarterType: hasQuarter ? calculated.quarterType ?? null : null,
-    quarterTypeId: hasQuarter ? calculated.quarterTypeId ?? null : null,
+    quarterId: hasQuarter ? calculated.quarterId ?? calculatedGm.quarterId ?? calculated.govRecalc?.quarterId ?? null : null,
+    quarterName: hasQuarter ? calculated.quarterName ?? calculatedGm.quarterName ?? calculated.govRecalc?.quarterName ?? null : null,
+    quarterType: hasQuarter ? calculated.quarterType ?? calculatedGm.quarterType ?? calculated.govRecalc?.quarterType ?? null : null,
+    quarterTypeId: hasQuarter ? calculated.quarterTypeId ?? calculatedGm.quarterTypeId ?? null : null,
     quarterRent,
     govRecalc: gr,
     governmentMonthly: totals,

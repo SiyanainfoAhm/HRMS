@@ -17,7 +17,7 @@ class HrmsActivityLogEntry extends Model
     public $timestamps = false;
     protected $guarded = [];
 
-    protected $casts = ['metadata' => 'array', 'performed_at' => 'datetime'];
+    protected $casts = ['metadata' => 'array', 'summary' => 'array', 'performed_at' => 'datetime'];
 
     public function details(): HasMany
     {

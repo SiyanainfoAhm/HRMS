@@ -42,11 +42,30 @@ final class PostPayrollDownloadController extends Controller
         ])->deleteFileAfterSend(true);
     }
 
+    /** Division-Wise Salary for any set of generated months: employees under each real division, one workbook. */
+    private function downloadDivisionMonths(Request $request): BinaryFileResponse
+    {
+        $companyId = (string) $request->user()->company_id;
+        $periods = app(PeriodReportService::class);
+        $months = $periods->parseMonths($request->query('months'));
+        $periods->periodIdsFor($companyId, $months);
+        $rows = $this->service->rowsForMonths($companyId, $months);
+        abort_if($rows === [], 404, 'No generated payroll was found for the selected months.');
+        $book = $this->service->buildDivisionWise($rows, null, $this->service->settingsDivisionNames($companyId));
+
+        return response()->download($this->service->save($book), 'Division_Wise_'.PeriodReportService::rangeLabel($months).'.xlsx', [
+            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        ])->deleteFileAfterSend(true);
+    }
+
     public function download(Request $request, string $type): BinaryFileResponse
     {
         abort_unless(in_array($type, ['cpf', 'division-wise', 'tds', 'paybill'], true), 404);
         if ($type === 'tds' && $request->filled('months')) {
             return $this->downloadTdsMonths($request);
+        }
+        if ($type === 'division-wise' && $request->filled('months')) {
+            return $this->downloadDivisionMonths($request);
         }
         $d = $request->validate([
             'year' => ['required', 'integer', 'min:2000', 'max:2100'],
@@ -64,7 +83,7 @@ final class PostPayrollDownloadController extends Controller
 
         $book = match ($type) {
             'cpf' => $this->service->buildCpf($rows, $from),
-            'division-wise' => $this->service->buildDivisionWise($rows, $from),
+            'division-wise' => $this->service->buildDivisionWise($rows, $from, $this->service->settingsDivisionNames((string) $request->user()->company_id)),
             'tds' => $this->service->buildTds($rows),
             'paybill' => $this->service->buildPaybill($rows, $from),
         };

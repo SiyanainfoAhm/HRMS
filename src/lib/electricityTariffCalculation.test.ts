@@ -73,7 +73,7 @@ for (const [units, expected] of boundaries) {
   assertClose(bill.subtotal, 4198.2, "subtotal");
   assertClose(bill.dutyAmount, 671.71, "duty 16%");
   assertClose(bill.totalExact, 4869.91, "exact total");
-  assertEq(bill.total, 4869.91, "exact deduction to paise");
+  assertEq(bill.total, 4870, "final deduction: 4,869.91 rounded once to the whole rupee");
 }
 
 // Zero units still applies fixed charges when applicable
@@ -85,7 +85,7 @@ for (const [units, expected] of boundaries) {
   assertEq(bill.vahanAakar, 0, "0u vahan");
   assertClose(bill.subtotal, 330.7, "0u subtotal");
   assertClose(bill.dutyAmount, 52.91, "0u duty");
-  assertEq(bill.total, bill.totalExact, "0u: the final deduction is the exact bill to paise");
+  assertEq(bill.total, Math.round(bill.totalExact), "0u: the final deduction is the exact bill rounded once to the rupee");
   assert(bill.total > 0, "0 units is not zero bill when applicable");
 }
 

@@ -4,13 +4,12 @@ export const DEFAULT_NIGHT_ALLOWANCE_BASIC_CEILING = 43600;
 /**
  * Night Duty Allowance = hours / 8 x rate. The rate (Settings > Night Allowance, 7th CPC table:
  * Level 1 = 23.20) is the amount per DUTY of 8 hours and is stored exactly as typed.
- * Computed as (hours x rate) / 8 and rounded ONCE, to 2 decimals (paise), at the end
+ * Computed as (hours x rate) / 8 and rounded ONCE, to the whole rupee (src/lib/money.ts), at the end
  * (no rounded duty count in between).
  * Mirror: NightAllowanceRateService::allowanceAmount (shared cases in
  * backend/tests/fixtures/night_allowance_cases.json).
  */
 export const NIGHT_DUTY_BASE_HOURS = 8;
-export const NIGHT_ALLOWANCE_ROUND_TO_RUPEE = false;
 
 /**
  * 'duty' = rate is per 8-hour duty (all new rows). 'hour' = legacy rows whose stored rate is per
@@ -26,10 +25,9 @@ export function calculateNightAllowanceAmount(
   const h = Math.max(0, Number(hours) || 0);
   const r = Math.max(0, Number(rate) || 0);
   if (h <= 0) return 0;
-  if (basis === "hour") return Math.round(h * r);
+  if (basis === "hour") return roundMoney(h * r);
   // hours x rate / 8 in integer paise (src/lib/money.ts), rounded once, half up, to paise.
-  const amount = proportion(r, h, NIGHT_DUTY_BASE_HOURS);
-  return NIGHT_ALLOWANCE_ROUND_TO_RUPEE ? Math.round(amount) : amount;
+  return proportion(r, h, NIGHT_DUTY_BASE_HOURS);
 }
 
 /** Label under NIGHT HRS: "₹23.20/duty"; legacy 'hour'-basis rows (hours x rate) show "/hr". */
@@ -38,7 +36,7 @@ export function nightAllowanceRateLabel(rate: number | null | undefined, basis: 
   return `₹${r.toFixed(2)}/${basis === "duty" ? "duty" : "hr"}`;
 }
 
-import { proportion } from "./money";
+import { proportion, roundMoney } from "./money";
 import { isValidGovernmentPayLevel } from "./payLevel";
 
 export function formatNightAllowanceSlabLabel(slabNo: number, payLevel: number, ratePerDuty: number): string {
@@ -166,7 +164,7 @@ export function resolveNightAllowanceAmount(params: {
     params.manualAmount != null &&
     Number.isFinite(Number(params.manualAmount))
   ) {
-    amount = Math.round(Math.max(0, Number(params.manualAmount)) * 100) / 100;
+    amount = roundMoney(Math.max(0, Number(params.manualAmount)));
   }
 
   return {

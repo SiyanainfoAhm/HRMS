@@ -54,15 +54,15 @@ final class ArrearsLabelsMigrationTest extends DatabaseTestCase
         $this->assertFinalizedUnchanged($before, 'the CIRT-05/06/07 migration');
     }
 
-    public function test_net_arrear_is_derived_from_gross_minus_cpf_arrear(): void
+    public function test_net_arrear_is_derived_from_da_plus_tr_minus_cpf_arrear(): void
     {
-        // Sept 2026 employee 037: gross 22636 typed, net saved as 0 by the old path.
-        $this->assertSame(22636.0, PayrollTotals::netArrear(['grossArrear' => 22636, 'cpfArrear' => 0, 'netArrear' => 0]));
-        $this->assertSame(1056.0, PayrollTotals::netArrear(['gross_arrear' => 1200, 'cpf_arrear' => 144, 'net_arrear' => 999]));
-        $this->assertSame(0.0, PayrollTotals::netArrear(['grossArrear' => 100, 'cpfArrear' => 150]));
+        // Sept 2026 employee 037: gross 22636 typed, net saved as 0 by the old path. Gross = DA + TR, Net = Gross - CPF Arr.
+        $this->assertSame(22636.0, PayrollTotals::netArrear(['daArrearsPaid' => 20000, 'transportArrearsPaid' => 2636, 'cpfArrear' => 0, 'netArrear' => 0]));
+        $this->assertSame(1056.0, PayrollTotals::netArrear(['da_arrears_paid' => 1000, 'transport_arrears_paid' => 200, 'cpf_arrear' => 144, 'net_arrear' => 999]));
+        $this->assertSame(-50.0, PayrollTotals::netArrear(['daArrearsPaid' => 100, 'cpfArrear' => 150]), 'CPF Arr above gross: net arrears is a memo and goes negative');
         $this->assertSame(0.0, PayrollTotals::netArrear([]));
-        // Net Arrears never enters Gross or Deductions.
-        $gm = ['grossArrear' => 1200, 'cpfArrear' => 144, 'netArrear' => 1056];
+        // Net Arrears never enters Gross or Deductions; Gross Arrears is DA + TR, counted once.
+        $gm = ['daArrearsPaid' => 1000, 'transportArrearsPaid' => 200, 'grossArrear' => 1200, 'cpfArrear' => 144, 'netArrear' => 1056];
         $this->assertSame(1200.0, PayrollTotals::fixedEarnings($gm));
         $this->assertSame(144.0, PayrollTotals::fixedDeductions($gm));
     }

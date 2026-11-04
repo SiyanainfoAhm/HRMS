@@ -6,6 +6,7 @@ import {
   buildPayrollExcelRow,
   buildPayrollExcelHeaders,
   collectDynamicPayrollExcelColumns,
+  retiredEmptyExcelColumns,
   payrollExcelAmountColumnIndices,
   type GovernmentMonthlyRow,
 } from "@/lib/payrollExcelExport";
@@ -15,10 +16,12 @@ import {
   type PayrollRunExportRow,
 } from "@/lib/payrollRunWorkbook";
 import * as XLSX from "xlsx-js-style";
+import { assertExportHeaders } from "@/lib/exportHeaderGuard";
 import {
   applyBodyCellStyle,
   applyColumnHeaderStyle,
   applyCurrencyCellStyle,
+  applyIdentifierCellStyle,
   applyIntegerCellStyle,
   applyMetaStyle,
   applyReportTitleStyle,
@@ -29,6 +32,7 @@ import {
   contentColumnWidths,
   mergeCells,
   writeStyledCell,
+  INR_NUM_FMT,
 } from "@/lib/payrollExcelStyles";
 
 import { getApiBaseUrl } from "@/lib/apiBase";
@@ -158,6 +162,7 @@ function buildFinalizedDetailSheet(opts: {
   status: "Finalized" | "Draft";
 }): XLSX.WorkSheet {
   const { excelHeaders: headers, rowObjects, month, year } = opts;
+  assertExportHeaders(headers, "Run Payroll finalized export");
   const amountCols = new Set(payrollExcelAmountColumnIndices(headers));
   const ws = XLSX.utils.aoa_to_sheet([]) as XLSX.WorkSheet;
   const merges: Array<{ s: { r: number; c: number }; e: { r: number; c: number } }> = [];
@@ -219,7 +224,9 @@ function buildFinalizedDetailSheet(opts: {
         const style = applyBodyCellStyle({ align: "left", alt });
         style.numFmt = "@";
         write(excelRow, c, acct, style);
-      } else if (h === "PayDays" || h === "PayLevel" || h === "NightHours" || h === "ElectricityUnits") {
+      } else if (h === "PayDays" || h === "PayLevel") {
+        write(excelRow, c, num(raw), applyIdentifierCellStyle()); // day count / level: format '0', no thousands separator
+      } else if (h === "NightHours" || h === "ElectricityUnits") {
         write(excelRow, c, num(raw), applyIntegerCellStyle());
       } else {
         write(excelRow, c, value, applyBodyCellStyle({ align: "left", alt }));
@@ -254,7 +261,7 @@ function buildFinalizedDetailSheet(opts: {
       t: "n",
       f: `SUM(${start}:${end})`,
       s: applyTotalCurrencyStyle("gross"),
-      z: '"₹"#,##0.00',
+      z: INR_NUM_FMT,
     };
   }
 
@@ -388,7 +395,7 @@ export async function GET(request: NextRequest) {
     ]),
   );
   const dynamicCols = collectDynamicPayrollExcelColumns(govList, fieldLabelByKey, exportableKeys, fieldGroupByKey);
-  const excelHeaders = buildPayrollExcelHeaders(dynamicCols);
+  const excelHeaders = buildPayrollExcelHeaders(dynamicCols, retiredEmptyExcelColumns(govList));
 
   const periodStart = String(payload.period?.periodStart ?? payload.period?.period_start ?? "");
   const payrollStatus: "Finalized" | "Draft" = Boolean(payload.period?.isLocked ?? payload.period?.is_locked) ? "Finalized" : "Draft";

@@ -3,7 +3,8 @@
  * editable entry sheet. Only aggregate totals recalculate — never full payroll
  * recompute that would overwrite other components.
  */
-import { round2 } from "./money";
+import { roundMoney } from "./money";
+import { arrearChain } from "./payrollArrearCalc";
 import type {
   GovernmentDeductionDefaults,
   GovernmentEarningPaidOverrides,
@@ -44,6 +45,14 @@ export const SHEET_EARNING_KEYS = [
 ] as const;
 
 export type SheetEarningKey = (typeof SHEET_EARNING_KEYS)[number];
+
+/**
+ * Encashment DA was retired from Run Payroll: it can no longer be typed. The key stays in SHEET_EARNING_KEYS only so that an
+ * amount already saved on a row (an older month, or an open draft that held one) keeps counting in its totals and is
+ * carried through recalculation unchanged. Nothing may change it.
+ */
+export const RETIRED_EARNING_KEYS = ["encashmentDaPaid"] as const;
+const isRetiredEarningKey = (key: string): boolean => (RETIRED_EARNING_KEYS as readonly string[]).includes(key);
 
 export const SHEET_DEDUCTION_KEYS = [
   "incomeTax",
@@ -98,27 +107,13 @@ export type SheetArrearKey = (typeof SHEET_ARREAR_KEYS)[number];
 
 function amount(v: unknown): number {
   const n = Number(v);
-  return Number.isFinite(n) ? Math.max(0, round2(n)) : 0;
+  return Number.isFinite(n) ? Math.max(0, roundMoney(n)) : 0;
 }
 
 function asRecord(v: unknown): Record<string, unknown> {
   return v !== null && typeof v === "object" && !Array.isArray(v)
     ? (v as Record<string, unknown>)
     : {};
-}
-
-/**
- * `grossArrear` is the reported total of DA and Transport arrears in the
- * normal arrear workflow.  A manually-recorded historical arrear can instead
- * exist only in `grossArrear`.  Include only the part not already represented
- * by the two earning lines, so either form affects pay exactly once.
- */
-function supplementalGrossArrear(gm: Record<string, unknown>): number {
-  const gross = amount(gm.grossArrear ?? gm.gross_arrear);
-  const detailed =
-    amount(gm.daArrearsPaid ?? gm.da_arrears_paid) +
-    amount(gm.transportArrearsPaid ?? gm.transport_arrears_paid);
-  return Math.max(0, round2(gross - detailed));
 }
 
 /** Sum current earning paid lines + custom earnings included in totals. */
@@ -135,10 +130,9 @@ export function sumSheetEarnings(
   for (const key of SHEET_SETTLEMENT_EARNING_KEYS) {
     sum += amount(gm[key]);
   }
-  sum += supplementalGrossArrear(gm);
   const custom = asRecord(gm.customEarnings ?? gm.custom_earnings) as Record<string, number>;
   sum += sumCustomBagForTotal(custom, payrollFieldDefs, "earnings");
-  return round2(sum);
+  return roundMoney(sum);
 }
 
 /** Sum current deduction lines + custom deductions included in totals. */
@@ -155,7 +149,7 @@ export function sumSheetDeductions(
   sum += amount(gm.cpfArrear ?? gm.cpf_arrear);
   const custom = asRecord(gm.customDeductions ?? gm.custom_deductions) as Record<string, number>;
   sum += sumCustomBagForTotal(custom, payrollFieldDefs, "deductions");
-  return round2(sum);
+  return roundMoney(sum);
 }
 
 /**
@@ -168,7 +162,7 @@ export function recalculateGovernmentSheetTotals(
 ): GovernmentMonthlySheetState {
   const totalEarnings = sumSheetEarnings(gm, payrollFieldDefs);
   const totalDeductions = sumSheetDeductions(gm, payrollFieldDefs);
-  const netSalary = round2(totalEarnings - totalDeductions);
+  const netSalary = roundMoney(totalEarnings - totalDeductions);
   const ded = asRecord(gm.deductions);
   const quarterRent = hasOwn(ded, "quarterRent") ? amount(ded.quarterRent) : amount(gm.quarterRent);
   return {
@@ -220,7 +214,7 @@ export function mergeDeductionDefaultsWithPaidOverrides(
   for (const key of SHEET_DEDUCTION_KEYS) {
     if (hasOwn(paidOverrides, key)) {
       const v = Number((paidOverrides as Record<string, number>)[key]);
-      if (Number.isFinite(v)) (base as Record<string, number>)[key] = Math.max(0, round2(v));
+      if (Number.isFinite(v)) (base as Record<string, number>)[key] = Math.max(0, roundMoney(v));
     }
   }
   return base;
@@ -288,7 +282,7 @@ function syncRowAggregatesFromGm<T extends GovernmentSheetRow>(
     netPay: netSalary,
     tds: amount(ded.incomeTax),
     profTax: amount(ded.pt),
-    pfEmployee: round2(amount(ded.cpf) + amount(ded.daCpf) + amount(ded.vpf)),
+    pfEmployee: roundMoney(amount(ded.cpf) + amount(ded.daCpf) + amount(ded.vpf)),
     // Net Salary already contains the named side-panel payments.
     takeHome: netSalary,
   };
@@ -318,13 +312,14 @@ export function applyGovernmentSheetMonetaryEdit<T extends GovernmentSheetRow>(
   let gr: GovRecalcPayload = { ...gr0 };
   let daArrear = amount(row.daArrear ?? gm.daArrearsPaid ?? gm.da_arrears_paid);
   let transportArrear = amount(row.transportArrear ?? gm.transportArrearsPaid ?? gm.transport_arrears_paid);
-  let grossArrear = amount(row.grossArrear ?? gm.grossArrear ?? gm.gross_arrear);
+  let grossArrear = 0;
   let cpfArrear = amount(row.cpfArrear ?? gm.cpfArrear ?? gm.cpf_arrear);
-  let netArrear = amount(row.netArrear ?? gm.netArrear ?? gm.net_arrear);
+  let netArrear = 0;
+  ({ grossArrear, netArrear } = arrearChain(daArrear, transportArrear, cpfArrear));
 
   if (field.startsWith("govEarning_")) {
     const key = field.slice("govEarning_".length) as SheetEarningKey;
-    if (!(SHEET_EARNING_KEYS as readonly string[]).includes(key)) return row;
+    if (!(SHEET_EARNING_KEYS as readonly string[]).includes(key) || isRetiredEarningKey(key)) return row;
     gm[key] = value;
     // Keep actual mirrors in sync for payslip display where used.
     const actualKey = key.replace(/Paid$/, "Actual");
@@ -390,36 +385,13 @@ export function applyGovernmentSheetMonetaryEdit<T extends GovernmentSheetRow>(
     row = { ...row, [key]: value } as T;
   } else if ((SHEET_ARREAR_KEYS as readonly string[]).includes(field)) {
     const arrearKey = field as SheetArrearKey;
-    const next = {
-      daArrear,
-      transportArrear,
-      grossArrear,
-      cpfArrear,
-      netArrear,
-      [arrearKey]: value,
-    };
-    if (arrearKey === "daArrear" || arrearKey === "transportArrear") {
-      const prevAuto = amount(row.grossArrear) === amount(row.daArrear) + amount(row.transportArrear);
-      if (prevAuto) {
-        next.grossArrear = round2(next.daArrear + next.transportArrear);
-      }
-    }
-    if (arrearKey === "netArrear") {
-      // Net arrear is a derived amount.  Editing it changes only the matching
-      // CPF-arrear deduction, never adds a second earnings line.
-      next.cpfArrear = Math.max(0, round2(next.grossArrear - next.netArrear));
-    } else if (arrearKey === "grossArrear" || arrearKey === "cpfArrear") {
-      const prevAutoNet =
-        amount(row.netArrear) === Math.max(0, amount(row.grossArrear) - amount(row.cpfArrear));
-      if (prevAutoNet) {
-        next.netArrear = Math.max(0, round2(next.grossArrear - next.cpfArrear));
-      }
-    }
-    daArrear = next.daArrear;
-    transportArrear = next.transportArrear;
-    grossArrear = next.grossArrear;
-    cpfArrear = next.cpfArrear;
-    netArrear = next.netArrear;
+    // Only DA, TR and CPF Arrears are inputs. Gross Arrears (= DA + TR) and Net Arrears (= Gross - CPF Arr)
+    // are read-only results of arrearChain, so an edit of either is ignored.
+    if (arrearKey === "grossArrear" || arrearKey === "netArrear") return row;
+    if (arrearKey === "daArrear") daArrear = value;
+    else if (arrearKey === "transportArrear") transportArrear = value;
+    else cpfArrear = value;
+    ({ grossArrear, netArrear } = arrearChain(daArrear, transportArrear, cpfArrear));
     gm = {
       ...gm,
       daArrearsPaid: daArrear,
@@ -439,6 +411,14 @@ export function applyGovernmentSheetMonetaryEdit<T extends GovernmentSheetRow>(
     return row;
   }
 
+  // One arrears chain for every edit: Gross Arrears = DA + TR, Net Arrears = Gross - CPF Arr.
+  gm = {
+    ...gm,
+    grossArrear,
+    gross_arrear: grossArrear,
+    netArrear,
+    net_arrear: netArrear,
+  };
   gm = recalculateGovernmentSheetTotals(gm, opts?.payrollFieldDefs);
   const nextRow = syncRowAggregatesFromGm(
     {
@@ -458,7 +438,8 @@ export function applyGovernmentSheetMonetaryEdit<T extends GovernmentSheetRow>(
 /** Whether this field should use the sheet (totals-only) path. */
 export function isGovernmentSheetMonetaryField(field: string): boolean {
   if (field.startsWith("govEarning_")) {
-    return (SHEET_EARNING_KEYS as readonly string[]).includes(field.slice("govEarning_".length));
+    const key = field.slice("govEarning_".length);
+    return (SHEET_EARNING_KEYS as readonly string[]).includes(key) && !isRetiredEarningKey(key);
   }
   if (field.startsWith("govDeduction_")) {
     return (SHEET_DEDUCTION_KEYS as readonly string[]).includes(field.slice("govDeduction_".length));
@@ -474,6 +455,7 @@ export function isGovernmentCalculationDriverField(field: string): boolean {
     field === "payDays" ||
     field === "unpaidLeaveDays" ||
     field === "hplDays" ||
+    field === "leaveLines" ||
     field === "eolDays" ||
     field === "eolReferenceMonth" ||
     field === "eolReferenceYear" ||
@@ -572,7 +554,7 @@ export function applyFrozenSheetOverridesToComputed(
       if (hasOwn(eo, key)) {
         const v = Number((eo as Record<string, number>)[key]);
         // Night allowance keeps paise (a typed 54.09 stays 54.09); other lines stay whole-rupee.
-        if (Number.isFinite(v)) gm[key] = Math.max(0, round2(v));
+        if (Number.isFinite(v)) gm[key] = Math.max(0, roundMoney(v));
       }
     }
   }

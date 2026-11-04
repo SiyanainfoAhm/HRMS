@@ -131,6 +131,7 @@ Route::prefix('v1')->group(function () {
             Route::get('settings/quarters', [QuarterController::class, 'index']);
             Route::post('settings/quarters', [QuarterController::class, 'store']);
             Route::put('settings/quarters/{id}', [QuarterController::class, 'update']);
+            Route::delete('settings/quarters/{id}', [QuarterController::class, 'destroy']);
             Route::post('settings/quarters/{id}/assign', [QuarterController::class, 'assign']);
             Route::post('settings/quarters/{id}/unassign', [QuarterController::class, 'unassign']);
             Route::post('settings/quarters/{id}/deactivate', [QuarterController::class, 'deactivate']);

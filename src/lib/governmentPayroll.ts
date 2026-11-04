@@ -1,4 +1,4 @@
-import { percentOf, proportion, round2, sumMoney } from "./money";
+import { percentOf, proportion, roundMoney, sumMoney } from "./money";
 import {
   calculateCpfFromBasis,
   DEFAULT_CPF_BASIS_KEYS,
@@ -9,13 +9,8 @@ import {
 } from "./payrollCpfCalculation";
 import type { PayrollConfig } from "./payrollFieldTypes";
 import { sumCustomBagForTotal } from "./payrollFieldTypes";
-import {
-  computeEolHplDeductions,
-  applyProportionalEarningsCut,
-  applyBasicDaEarningsCut,
-  isSamePayrollReferencePeriod,
-  type EolHplReferenceSalary,
-} from "./hplEolDeductions";
+import type { EolHplReferenceSalary } from "./hplEolDeductions";
+import { computeLeaveCuts, normalizeLeaveLines, type LeaveLine } from "./leaveDeductions";
 import { DEFAULT_NIGHT_ALLOWANCE_BASIC_CEILING, resolveNightAllowanceAmount } from "./nightAllowanceCalculation";
 import { masterRecordToDeductionDefaults } from "./masterRunPayrollMapping";
 import {
@@ -156,6 +151,8 @@ export type GovernmentMonthlyInput = {
   hplDays?: number;
   /** Extra ordinary leave days — deducted using reference month salary basis. */
   eolDays?: number;
+  /** Leave lines (type, month/year, days). When present they replace hplDays/eolDays + the reference months. */
+  leaveLines?: LeaveLine[];
   eolReferenceMonth?: number;
   eolReferenceYear?: number;
   hplReferenceMonth?: number;
@@ -269,8 +266,13 @@ export type GovernmentMonthlyComputed = {
   eolReferenceYear?: number;
   hplReferenceMonth?: number;
   hplReferenceYear?: number;
+  /** Total taken off the paid lines for EOL (Basic + DA + HRA + Medical) / HPL (Basic + DA), all leave lines summed. */
   eolBasisAmount?: number;
   hplBasisAmount?: number;
+  eolAdjustment?: number;
+  hplAdjustment?: number;
+  /** The leave lines the deduction was calculated from, with the resolved Basic / DA % / days per line. */
+  leaveLines?: LeaveLine[];
   eolReferenceWarning?: string;
   hplReferenceWarning?: string;
   electricityUnitsConsumed?: number;
@@ -297,7 +299,7 @@ export type GovernmentMonthlyComputed = {
 };
 
 export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): GovernmentMonthlyComputed {
-  const gb = Number(input.grossBasic) || 0;
+  const gb = roundMoney(Number(input.grossBasic) || 0);
   const slab = deriveTransportSlabFromLevel(
     input.payLevel,
     gb,
@@ -305,12 +307,12 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
   );
   const daPctForTransport = Number(input.daPercent) || 0;
   const transportDa = percentOf(slab.transportBase, daPctForTransport);
-  const transportActual = round2(slab.transportBase + transportDa);
+  const transportActual = roundMoney(slab.transportBase + transportDa);
   const transportPaid = transportActual;
 
   const daPct = Number(input.daPercent) || 0;
   const hraPct = Number(input.hraPercent) || 0;
-  const medFixed = Number(input.medicalFixed) || 0;
+  const medFixed = roundMoney(Number(input.medicalFixed) || 0);
 
   const basicActual = gb;
   const daActual = percentOf(gb, daPct);
@@ -327,19 +329,19 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
   const medicalPaid = paidAfterUnpaidDays(medicalActual, dim, unpaid);
 
   const opt = input.optionalEarnings ?? {};
-  const sp = Number(opt.spPay) || 0;
-  const ewa = Number(opt.extraWorkAllowance) || 0;
-  const ua = Number(opt.uniformAllowance) || 0;
-  const eda = Number(opt.educationAllowance) || 0;
-  const daa = Number(opt.daArrears) || 0;
-  const tra = Number(opt.transportArrears) || 0;
-  const enc = Number(opt.encashment) || 0;
-  const encDa = Number(opt.encashmentDa) || 0;
+  const sp = roundMoney(Number(opt.spPay) || 0);
+  const ewa = roundMoney(Number(opt.extraWorkAllowance) || 0);
+  const ua = roundMoney(Number(opt.uniformAllowance) || 0);
+  const eda = roundMoney(Number(opt.educationAllowance) || 0);
+  const daa = roundMoney(Number(opt.daArrears) || 0);
+  const tra = roundMoney(Number(opt.transportArrears) || 0);
+  const enc = roundMoney(Number(opt.encashment) || 0);
+  const encDa = roundMoney(Number(opt.encashmentDa) || 0);
 
   const eo = input.earningPaidOverrides ?? {};
   const pickPaid = (computed: number, key: keyof GovernmentEarningPaidOverrides): number => {
     const v = eo[key];
-    if (v != null && Number.isFinite(Number(v))) return round2(Number(v));
+    if (v != null && Number.isFinite(Number(v))) return roundMoney(Number(v));
     return computed;
   };
 
@@ -371,72 +373,54 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
   const eolRefYear = input.eolReferenceYear ?? runYear;
   const hplRefMonth = input.hplReferenceMonth ?? runMonth;
   const hplRefYear = input.hplReferenceYear ?? runYear;
-  const eolIsCurrent = isSamePayrollReferencePeriod(eolRefMonth, eolRefYear, runMonth, runYear);
-  const hplIsCurrent = isSamePayrollReferencePeriod(hplRefMonth, hplRefYear, runMonth, runYear);
+  // Leave (HPL / EOL) per the CIRT leave calculation: each line is cut on its own leave month, Basic first,
+  // then DA / HRA / Medical derived from the Basic cut (see leaveDeductions.ts). The cut is taken off the paid
+  // earnings lines, so the auto HPL / EOL deduction lines stay 0 (no double counting). A manual HPL / EOL
+  // override skips the earnings cut for that leave type and uses the typed deduction instead.
+  const leaveLines = normalizeLeaveLines(
+    {
+      leaveLines: input.leaveLines,
+      hplDays: input.hplDays,
+      eolDays: input.eolDays,
+      hplReferenceMonth: hplRefMonth,
+      hplReferenceYear: hplRefYear,
+      eolReferenceMonth: eolRefMonth,
+      eolReferenceYear: eolRefYear,
+      hplReferenceSalary: input.hplReferenceSalary,
+      eolReferenceSalary: input.eolReferenceSalary,
+      hplReferenceDaysInMonth: input.hplReferenceDaysInMonth,
+      eolReferenceDaysInMonth: input.eolReferenceDaysInMonth,
+    },
+    runMonth,
+    runYear,
+  );
+  const leaveCtx = { runMonth, runYear, grossBasic: gb, daPercent: daPct, hraPercent: hraPct, medicalFixed: medFixed };
+  const hplAuto = computeLeaveCuts(leaveLines.filter((l) => l.type === "HPL"), leaveCtx);
+  const eolAuto = computeLeaveCuts(leaveLines.filter((l) => l.type === "EOL"), leaveCtx);
+  const leaveAll = computeLeaveCuts(leaveLines, leaveCtx);
+  const hplLeave = { hplDays: hplAuto.hplDays, hplBasisAmount: hplAuto.hplAdjustment, hplDeduction: 0 };
+  const eolLeave = { eolDays: eolAuto.eolDays, eolBasisAmount: eolAuto.eolAdjustment, eolDeduction: 0 };
 
-  const fullMonthRef: EolHplReferenceSalary = {
-    basic: basicActual,
-    da: daActual,
-    hra: hraActual,
-    medical: medicalActual,
-  };
-  const eolRefSalary: EolHplReferenceSalary = eolIsCurrent
-    ? fullMonthRef
-    : (input.eolReferenceSalary ?? fullMonthRef);
-  const hplRefSalary: EolHplReferenceSalary = hplIsCurrent
-    ? fullMonthRef
-    : (input.hplReferenceSalary ?? eolRefSalary);
+  let eolDeduction = input.eolDeductionManualOverride ? roundMoney(d.eol) : 0;
+  let hplDeduction = input.hplDeductionManualOverride ? roundMoney(d.hpl) : 0;
 
-  const eolLeave = computeEolHplDeductions({
-    referenceSalary: eolRefSalary,
-    daysInReferenceMonth: eolIsCurrent ? dim : (input.eolReferenceDaysInMonth ?? dim),
-    eolDays: input.eolDays,
-    hplDays: 0,
-  });
-  const hplLeave = computeEolHplDeductions({
-    referenceSalary: hplRefSalary,
-    daysInReferenceMonth: hplIsCurrent ? dim : (input.hplReferenceDaysInMonth ?? dim),
-    eolDays: 0,
-    hplDays: input.hplDays,
-  });
-
-  // Always reduce paid earnings for EOL/HPL (current or prior-month reference) so Basic/DA/HRA/Medical
-  // show the cut in Earnings. Auto HPL/EOL deduction lines stay 0 to avoid double-counting;
-  // manual HPL/EOL overrides skip the earnings cut and use the typed deduction amounts.
-  let eolDeduction = input.eolDeductionManualOverride
-    ? round2(d.eol)
-    : eolLeave.eolDeduction;
-  let hplDeduction = input.hplDeductionManualOverride
-    ? round2(d.hpl)
-    : hplLeave.hplDeduction;
-
+  const cutOf = (c: ReturnType<typeof computeLeaveCuts>, paid: number, key: "basic" | "da" | "hra" | "medical") =>
+    Math.min(Math.max(0, paid), c[key]);
   let basicOut = basicPaidF;
   let daOut = daPaidF;
   let hraOut = hraPaidF;
   let medicalOut = medicalPaidF;
-
-  if (eolLeave.eolDays > 0 && !input.eolDeductionManualOverride) {
-    const cut = applyProportionalEarningsCut(
-      { basic: basicOut, da: daOut, hra: hraOut, medical: medicalOut },
-      eolDeduction,
-    );
-    basicOut = cut.basic;
-    daOut = cut.da;
-    hraOut = cut.hra;
-    medicalOut = cut.medical;
-    eolDeduction = 0;
+  if (!input.eolDeductionManualOverride) {
+    basicOut = sumMoney(basicOut, -cutOf(eolAuto, basicOut, "basic"));
+    daOut = sumMoney(daOut, -cutOf(eolAuto, daOut, "da"));
+    hraOut = sumMoney(hraOut, -cutOf(eolAuto, hraOut, "hra"));
+    medicalOut = sumMoney(medicalOut, -cutOf(eolAuto, medicalOut, "medical"));
   }
-  if (hplLeave.hplDays > 0 && !input.hplDeductionManualOverride) {
-    const cut = applyBasicDaEarningsCut(
-      { basic: basicOut, da: daOut, hra: hraOut, medical: medicalOut },
-      hplDeduction,
-    );
-    basicOut = cut.basic;
-    daOut = cut.da;
-    hraOut = cut.hra;
-    medicalOut = cut.medical;
-    hplDeduction = 0;
+  if (!input.hplDeductionManualOverride) {
+    basicOut = sumMoney(basicOut, -cutOf(hplAuto, basicOut, "basic"));
+    daOut = sumMoney(daOut, -cutOf(hplAuto, daOut, "da"));
   }
+  const leaveWarning = leaveAll.lines.map((l) => l.warning).find(Boolean);
 
   const nightRate = Math.max(0, Number(input.nightAllowanceRate) || 0);
   const nightHours = Math.max(0, Number(input.nightHours) || 0);
@@ -498,7 +482,7 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
   const cpfFixedRaw = input.cpfConfig?.cpfFixedAmount;
   const cpfFixed =
     cpfFixedRaw !== undefined && cpfFixedRaw !== null
-      ? Math.round(Number(cpfFixedRaw))
+      ? roundMoney(Number(cpfFixedRaw))
       : 0;
   // Prefer explicit CPF config from master resolve over stale deductionDefaults.cpf —
   // unless admin set a Run Payroll CPF override (0 is valid).
@@ -506,7 +490,7 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
   if (input.cpfManualOverride) {
     const raw = d.cpf;
     const n = Number(raw);
-    cpfAmount = Number.isFinite(n) ? Math.max(0, round2(n)) : 0;
+    cpfAmount = Number.isFinite(n) ? Math.max(0, roundMoney(n)) : 0;
   } else if (cpfMode === "fixed_amount") {
     // Explicit fixed amount — including intentional ₹0.
     cpfAmount = Number.isFinite(cpfFixed) ? cpfFixed : 0;
@@ -536,7 +520,7 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
 
   // Priority: run/input rent → deduction default → 0. Explicit 0 stays 0.
   const quarterRentAmount = hasQuarter
-    ? round2(
+    ? roundMoney(
         (() => {
           const raw = input.quarterRent ?? d.quarterRent;
           if (raw === null || raw === undefined) return 0;
@@ -547,25 +531,25 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
     : 0;
 
   const deductions: GovernmentDeductionDefaults = {
-    incomeTax: round2(d.incomeTax),
-    pt: round2(d.pt),
-    lic: round2(d.lic),
+    incomeTax: roundMoney(d.incomeTax),
+    pt: roundMoney(d.pt),
+    lic: roundMoney(d.lic),
     cpf: cpfAmount,
-    daCpf: round2(d.daCpf),
-    vpf: round2(d.vpf),
-    pfLoan: round2(d.pfLoan),
-    postOffice: round2(d.postOffice),
-    creditSociety: round2(d.creditSociety),
-    stdLicenceFee: round2(d.stdLicenceFee),
+    daCpf: roundMoney(d.daCpf),
+    vpf: roundMoney(d.vpf),
+    pfLoan: roundMoney(d.pfLoan),
+    postOffice: roundMoney(d.postOffice),
+    creditSociety: roundMoney(d.creditSociety),
+    stdLicenceFee: roundMoney(d.stdLicenceFee),
     electricity: electricityAmount,
-    water: round2(d.water),
-    mess: round2(d.mess),
-    loanRecovery: round2(d.loanRecovery),
-    welfare: round2(d.welfare),
+    water: roundMoney(d.water),
+    mess: roundMoney(d.mess),
+    loanRecovery: roundMoney(d.loanRecovery),
+    welfare: roundMoney(d.welfare),
     hpl: hplDeduction,
     eol: eolDeduction,
-    vehCharge: round2(d.vehCharge),
-    other: round2(d.other),
+    vehCharge: roundMoney(d.vehCharge),
+    other: roundMoney(d.other),
     quarterRent: quarterRentAmount,
   };
 
@@ -593,7 +577,7 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
     customDeductionsTotal,
   );
 
-  const netSalary = round2(totalEarnings - totalDeductions);
+  const netSalary = roundMoney(totalEarnings - totalDeductions);
 
   return {
     transportSlab: slab,
@@ -642,7 +626,12 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
     hplReferenceYear: hplRefYear,
     eolBasisAmount: eolLeave.eolBasisAmount,
     hplBasisAmount: hplLeave.hplBasisAmount,
-    eolReferenceWarning: input.eolReferenceWarning,
+    eolAdjustment: eolAuto.eolAdjustment,
+    hplAdjustment: hplAuto.hplAdjustment,
+    leaveLines: leaveAll.lines.map(({ type, month, year, days, grossBasic, daPercent, daysInMonth, warning }) => ({
+      type, month, year, days, grossBasic, daPercent, daysInMonth, ...(warning ? { warning } : {}),
+    })),
+    eolReferenceWarning: input.eolReferenceWarning ?? leaveWarning,
     hplReferenceWarning: input.hplReferenceWarning,
     electricityUnitsConsumed: units,
     electricityUnitRate: unitRate,

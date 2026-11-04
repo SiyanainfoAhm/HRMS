@@ -72,3 +72,7 @@ apps/hrms_mobile/assets/config.json
 *.log
 *.tmp
 
+
+# One-off arrears entry sheet (contains payroll data)
+DA_Arrears_Entry_Oct2026.xlsx
+Encashment_Entry_Oct2026.xlsx

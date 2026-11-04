@@ -55,24 +55,24 @@ assertEq(cleared.totalEarnings, base.totalEarnings, "clearing arrears restores g
 assertEq(cleared.netSalary, base.netSalary, "clearing arrears restores net");
 assertEq(cleared.daArrearsPaid, 0, "DA arrear line cleared");
 
-// Gross arrear recorded without DA/TR split counts once.
+// A gross-only arrear (no DA/TR) no longer exists: Gross Arrears = DA + TR, so a passed-in gross is ignored.
 const grossOnly = applyAutoArrearsToGovernmentMonthly(base, { grossArrear: 500, cpfArrear: 60, netArrear: 440 });
-assertEq(grossOnly.totalEarnings, base.totalEarnings + 500, "gross-only arrear");
-assertEq(grossOnly.netSalary, base.netSalary + 440, "gross-only net");
+assertEq(grossOnly.totalEarnings, base.totalEarnings, "a gross-only arrear adds nothing");
+assertEq(grossOnly.netSalary, base.netSalary - 60, "only the CPF arrear moves net pay");
 
-// Month arrear arithmetic: whole-rupee DA/TR, CPF rounded to 2dp (no float drift).
+// Month arrear arithmetic: every arrear line is a whole rupee (CPF arrear 12% of gross, rounded once, no float drift).
 const m = calculateMonthDaArrear(34590, 3600, 50, 53);
 assertEq(m.grossArrear, m.daArrear + m.transportArrear, "gross = DA + TR");
-assertEq(m.cpfArrear, Math.round(m.grossArrear * 12) / 100, "cpf arrear rounded to 2dp");
-assertEq(m.netArrear, Math.round((m.grossArrear - m.cpfArrear) * 100) / 100, "net = gross - cpf");
+assertEq(m.cpfArrear, Math.round(m.grossArrear * 12 / 100), "cpf arrear is a whole rupee");
+assertEq(m.netArrear, m.grossArrear - m.cpfArrear, "net = gross - cpf");
 assertEq(calculateMonthDaArrear(0, 0, 50, 53).grossArrear, 0, "zero basic");
 assertEq(calculateMonthDaArrear(34590, 3600, 53, 53).grossArrear, 0, "no DA change");
 assertEq(calculateMonthDaArrear(34590, 3600, 53, 50).daArrear < 0, true, "DA decrease is a negative arrear (recovery)");
 
 // Total arrears: gross already contains DA + TR, so it is never added on top of them.
 assertEq(totalArrearsPaid(1000, 200, 1200), 1200, "gross == da + tr counts once");
-assertEq(totalArrearsPaid(1000, 200, 1500), 1500, "gross-only remainder added once");
-assertEq(totalArrearsPaid(0, 0, 500), 500, "gross only");
+assertEq(totalArrearsPaid(1000, 200, 1500), 1200, "gross is ignored: total arrears = DA + TR");
+assertEq(totalArrearsPaid(0, 0, 500), 0, "gross only is nothing");
 assertEq(totalArrearsPaid(0, 0, 0), 0, "none");
 assertEq(totalArrearsPaid(null, "", undefined), 0, "blank inputs");
 assertEq(totalArrearsPaid(-5, 10, 0), 10, "negative clamps to 0");

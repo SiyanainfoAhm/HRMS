@@ -1,3 +1,4 @@
+import { roundMoney } from "./money";
 /**
  * Progressive electricity tariff calculation for CIRT Payroll.
  * Intermediate amounts use 2-decimal money; final deduction uses whole-rupee rounding
@@ -62,9 +63,9 @@ export function roundMoney2(n: number): number {
   return Math.round(Math.max(0, n) * 100) / 100;
 }
 
-/** Final electricity deduction: the exact bill to 2 decimals (no whole-rupee rounding). */
+/** Final electricity deduction: the exact bill (kept to paise inside the tariff build-up) rounded ONCE to the money rule. */
 export function roundElectricityDeduction(n: number): number {
-  return roundMoney2(Number.isFinite(n) ? n : 0);
+  return roundMoney(Math.max(0, Number.isFinite(n) ? n : 0));
 }
 
 export function normalizeElectricitySlabs(slabs: ElectricityTariffSlab[]): ElectricityTariffSlab[] {

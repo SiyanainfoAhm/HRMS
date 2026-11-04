@@ -15,6 +15,7 @@ final class RecordActivityLog
     {
         $before = $this->activityLogs->captureConfigurationSnapshot($request);
         $draftBefore = $this->activityLogs->captureDraftSnapshot($request);
+        $auditBefore = $this->activityLogs->captureAuditBefore($request);
         try {
             $response = $next($request);
         } catch (\Throwable $exception) {
@@ -23,7 +24,7 @@ final class RecordActivityLog
             }
             throw $exception;
         }
-        $this->activityLogs->recordRequest($request, $response, $before, $draftBefore);
+        $this->activityLogs->recordRequest($request, $response, $before, $draftBefore, $auditBefore);
         if (! $response->headers->has('X-Request-ID')) {
             $response->headers->set('X-Request-ID', (string) $request->header('X-Request-ID', \Illuminate\Support\Str::uuid()));
         }
