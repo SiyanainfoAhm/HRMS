@@ -24,6 +24,9 @@ class HrmsPayrollCalculationSetting extends Model
         'cpf_fixed_amount',
         'electricity_unit_rate',
         'night_allowance_basic_ceiling',
+        'pension_percentage',
+        'pension_wage_ceiling',
+        'employer_contribution_percentage',
     ];
 
     protected function casts(): array
@@ -34,6 +37,9 @@ class HrmsPayrollCalculationSetting extends Model
             'cpf_fixed_amount' => 'decimal:2',
             'electricity_unit_rate' => 'decimal:2',
             'night_allowance_basic_ceiling' => 'decimal:2',
+            'pension_percentage' => 'decimal:4',
+            'pension_wage_ceiling' => 'decimal:2',
+            'employer_contribution_percentage' => 'decimal:4',
             'created_at' => 'datetime',
             'updated_at' => 'datetime',
         ];

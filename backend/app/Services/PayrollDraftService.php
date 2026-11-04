@@ -869,6 +869,104 @@ class PayrollDraftService
      * @param array<string, mixed> $quarterMeta
      * @return array<string, mixed>
      */
+    /**
+     * CPF = configured % of the PAID basis lines (default: Basic + DA + HRA + Medical + Transport as paid), exactly as the
+     * Run Payroll calculation does. A quarter holder's HRA is 0, so it is not in the basis. Left alone when the
+     * operator typed CPF (manual override / paid override), when the mode is a fixed amount, or when no CPF config is stored.
+     *
+     * @param array<string, mixed> $gm
+     * @param array<string, mixed> $gr
+     * @return array<string, mixed>
+     */
+    public function rederiveCpfFromPaidLines(array $gm, array $gr): array
+    {
+        if (($gr['cpfManualOverride'] ?? false) === true) return $gm;
+        if (is_array($gr['deductionPaidOverrides'] ?? null) && array_key_exists('cpf', $gr['deductionPaidOverrides'])) return $gm;
+        $cfg = $gr['cpfConfig'] ?? null;
+        if (! is_array($cfg) || ($cfg['cpfCalculationMode'] ?? 'percentage') !== 'percentage') return $gm;
+        $keys = $cfg['cpfBasisFieldKeys'] ?? null;
+        if (! is_array($keys) || $keys === []) return $gm;
+
+        $lines = [
+            'gross_basic' => 'basicPaid', 'da' => 'daPaid', 'hra' => 'hraPaid', 'medical' => 'medicalPaid', 'transport' => 'transportPaid',
+            'sp_pay' => 'spPayPaid', 'extra_work_allowance' => 'extraWorkAllowancePaid', 'night_allowance' => 'nightAllowancePaid',
+            'uniform_allowance' => 'uniformAllowancePaid', 'education_allowance' => 'educationAllowancePaid',
+            'da_arrears' => 'daArrearsPaid', 'transport_arrears' => 'transportArrearsPaid',
+        ];
+        $custom = is_array($gm['customEarnings'] ?? null) ? $gm['customEarnings'] : [];
+        $basis = 0.0;
+        foreach ($keys as $key) {
+            if (isset($custom[$key])) $basis += (float) $custom[$key];
+            elseif (isset($lines[$key])) $basis += (float) ($gm[$lines[$key]] ?? 0);
+        }
+        if ($basis <= 0) return $gm;
+
+        // CIRT rule (confirmed against FoxPro): whenever TR arrears are paid, CPF = % of (basis + TR arrears) rounded UP to the next
+        // rupee. Without TR arrears the configured basis and normal rounding apply.
+        $trArrears = (float) ($gm['transportArrearsPaid'] ?? 0);
+        $pct = (float) ($cfg['cpfPercentage'] ?? 12);
+        $cpf = $trArrears > 0
+            ? \App\Support\Money::percentOfCeil($basis + (in_array('transport_arrears', $keys, true) ? 0.0 : $trArrears), $pct)
+            : \App\Support\Money::percentOf($basis, $pct);
+        $deductions = is_array($gm['deductions'] ?? null) ? $gm['deductions'] : [];
+        if (abs((float) ($deductions['cpf'] ?? 0) - $cpf) < 0.004) return $gm;
+        $deductions['cpf'] = $cpf;
+        $gm['deductions'] = $deductions;
+
+        return $gm;
+    }
+
+    /**
+     * One stored draft row: re-derive CPF from its paid lines and report what changed (Total Deductions / Net follow).
+     * Writes only when $apply; never touches a finalized month.
+     *
+     * @return array{changed: bool, before: array<string, float>, after: array<string, float>}
+     */
+    public function repairStoredDraftCpf(string $companyId, HrmsPayrollDraftEmployee $row, bool $apply, ?string $userId = null, ?string $reason = null): array
+    {
+        $before = is_array($row->row_payload) ? $row->row_payload : [];
+        $gmBefore = $before['governmentMonthly'] ?? $before['government_monthly'] ?? null;
+        if (! is_array($gmBefore)) return ['changed' => false, 'before' => [], 'after' => []];
+        $gr = is_array($before['govRecalc'] ?? null) ? $before['govRecalc'] : [];
+        $gmAfter = $this->rederiveCpfFromPaidLines($gmBefore, $gr);
+        $pick = static fn (array $gm): array => [
+            'cpf' => (float) ($gm['deductions']['cpf'] ?? 0), 'totalDeductions' => (float) ($gm['totalDeductions'] ?? 0), 'net' => (float) ($gm['netSalary'] ?? 0),
+        ];
+        if ((float) ($gmAfter['deductions']['cpf'] ?? 0) === (float) ($gmBefore['deductions']['cpf'] ?? 0)) {
+            return ['changed' => false, 'before' => $pick($gmBefore), 'after' => $pick($gmBefore)];
+        }
+        $definitions = HrmsPayrollFieldDefinition::query()->where('company_id', $companyId)->where('is_active', true)
+            ->get(['field_key', 'field_group', 'field_type', 'include_in_total_earnings', 'include_in_total_deductions'])->all();
+        $after = $this->recalculateDraftTotals(['governmentMonthly' => $gmAfter] + $before, $definitions);
+        $gmAfter = $after['governmentMonthly'];
+        $after['grossPay'] = $gmAfter['totalEarnings'] ?? ($after['grossPay'] ?? 0);
+        $after['deductions'] = $gmAfter['totalDeductions'] ?? ($after['deductions'] ?? 0);
+        $after['netPay'] = $after['takeHome'] = $gmAfter['netSalary'] ?? ($after['netPay'] ?? 0);
+        $result = ['changed' => true, 'before' => $pick($gmBefore), 'after' => $pick($gmAfter)];
+        if ($apply) {
+            $changes = $this->diffSnapshot($before, $after);
+            $row->update([
+                'row_payload' => $after,
+                'total_deductions' => $this->num($gmAfter['totalDeductions'] ?? $row->total_deductions),
+                'net_pay' => $this->num($gmAfter['netSalary'] ?? $row->net_pay),
+                'version' => (int) $row->version + 1,
+            ]);
+            HrmsPayrollDraftAudit::create([
+                'id' => (string) Str::uuid(), 'company_id' => $companyId, 'payroll_draft_id' => $row->payroll_draft_id,
+                'payroll_year' => (int) HrmsPayrollDraft::query()->whereKey($row->payroll_draft_id)->value('payroll_year'),
+                'payroll_month' => (int) HrmsPayrollDraft::query()->whereKey($row->payroll_draft_id)->value('payroll_month'),
+                'action' => 'employee_updated', 'employee_count' => 1,
+                'employee_snapshot' => [[
+                    'employeeUserId' => (string) $row->employee_user_id, 'employeeCode' => $row->employee_code, 'changes' => $changes,
+                    'reason' => $reason ?? 'CPF re-derived from paid lines',
+                ]],
+                'performed_by' => $userId,
+            ]);
+        }
+
+        return $result;
+    }
+
     public function applyAuthoritativeQuarterValues(
         array $payload,
         array $quarterMeta,
@@ -927,6 +1025,8 @@ class PayrollDraftService
             'hraPaid' => $hraPaid,
             'deductions' => array_merge($deductions, ['quarterRent' => $rent]),
         ]);
+        // CPF follows the lines actually paid (a quarter holder's HRA is 0), the same rule the Run Payroll screen and Generate use.
+        $gm = $this->rederiveCpfFromPaidLines($gm, $gr);
         $recalculated = $this->recalculateDraftTotals(['governmentMonthly' => $gm], $definitions);
         $gm = $recalculated['governmentMonthly'] ?? $gm;
 

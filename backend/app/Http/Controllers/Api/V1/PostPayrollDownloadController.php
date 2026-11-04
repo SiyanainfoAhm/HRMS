@@ -82,7 +82,7 @@ final class PostPayrollDownloadController extends Controller
         abort_if($rows === [], 404, 'No generated payroll was found for the selected month.');
 
         $book = match ($type) {
-            'cpf' => $this->service->buildCpf($rows, $from),
+            'cpf' => $this->service->buildCpf($rows, $from, $this->service->employerShareRule((string) $request->user()->company_id)),
             'division-wise' => $this->service->buildDivisionWise($rows, $from, $this->service->settingsDivisionNames((string) $request->user()->company_id)),
             'tds' => $this->service->buildTds($rows),
             'paybill' => $this->service->buildPaybill($rows, $from),

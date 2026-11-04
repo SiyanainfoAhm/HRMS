@@ -21,12 +21,13 @@ const gr: GovRecalcPayload = {
   grossBasic: 30000, daPercent: 50, hraPercent: 30, medicalFixed: 0, payLevel: 10, deductionDefaults: ded,
   cpfConfig: { cpfPercentage: 12, cpfBasisFieldKeys: ["gross_basic", "da"], cpfCalculationMode: "percentage", cpfFixedAmount: 0 },
 };
-const compute = (gm: Record<string, unknown> | null) =>
+// CPF counts TR arrears (CIRT rule), so every caller tells the calculation the TR arrears the row will carry.
+const arrear = { daArrear: 1000, transportArrear: 200, grossArrear: 1200, cpfArrear: 144, netArrear: 1056 };
+const compute = (gm: Record<string, unknown> | null, transportArrear = arrear.transportArrear) =>
   runGovernmentPayrollCompute(gr, {
-    daysInMonth: 30, payDays: 30, runYear: 2026, runMonth: 9, payrollConfig: null, governmentMonthly: gm,
+    daysInMonth: 30, payDays: 30, runYear: 2026, runMonth: 9, payrollConfig: null, governmentMonthly: gm, transportArrear,
   }).comp as unknown as Record<string, number>;
 
-const arrear = { daArrear: 1000, transportArrear: 200, grossArrear: 1200, cpfArrear: 144, netArrear: 1056 };
 const base = compute(null);
 const first = applyAutoArrearsToGovernmentMonthly(base, arrear);
 assertEq(first.totalEarnings, base.totalEarnings + 1200, "gross includes arrears once");

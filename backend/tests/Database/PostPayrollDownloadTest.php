@@ -101,11 +101,12 @@ final class PostPayrollDownloadTest extends DatabaseTestCase
         $ws = $this->roundTrip($this->svc->buildCpf($this->rows, self::YM))->getSheet(0);
         $this->assertSame(PostPayrollDownloadService::INSTITUTE, $ws->getCell('A1')->getValue());
         $this->assertSame('Details of CPF, VPF, etc. for the month September 2026', $ws->getCell('A2')->getValue());
-        $this->assertSame(['SR NO', 'UAN', 'NAME AS PER UAN', 'CPF  NO', 'GBASIC', 'NCP DAYS', 'BASIC', 'DA', 'HRA', 'TPT', 'MEDICAL', 'Total', 'CPF', 'VPF', 'PENSION', 'EMP_ CONTR.'],
-            array_map(fn ($c) => $ws->getCell([$c, 4])->getValue(), range(1, 16)));
+        $this->assertSame(['SR NO', 'UAN', 'NAME AS PER UAN', 'CPF  NO', 'GBASIC', 'NCP DAYS', 'BASIC', 'DA', 'HRA', 'TPT', 'MEDICAL', 'Total', 'CPF', 'DA CPF', 'VPF', 'PENSION', 'EMP_ CONTR.'],
+            array_map(fn ($c) => $ws->getCell([$c, 4])->getValue(), range(1, 17)));
         $n = count($this->rows);
         $this->assertSame($this->sum('cpf_amount'), $this->columnSum($ws, 13, 5, 4 + $n), 'CPF column = payroll CPF');
-        $this->assertSame($this->sum('vpf_amount'), $this->columnSum($ws, 14, 5, 4 + $n));
+        $this->assertSame($this->sum('cpf_arrear'), $this->columnSum($ws, 14, 5, 4 + $n), 'DA CPF column = CPF Arr (CPF on DA arrears)');
+        $this->assertSame($this->sum('vpf_amount'), $this->columnSum($ws, 15, 5, 4 + $n));
         $this->assertSame($this->sum('basic_paid'), $this->columnSum($ws, 7, 5, 4 + $n));
         $this->assertStringStartsWith('=SUBTOTAL(109,M5:M', (string) $ws->getCell('M'.(5 + $n + 0))->getValue(), 'CIRT TOTAL row is a live formula');
         $this->assertStringContainsString('GRAND TOTAL', (string) $ws->getCell('C'.(5 + $n + 2 + 1 + 2 + 0))->getValue() ?: 'GRAND TOTAL');

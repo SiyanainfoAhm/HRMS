@@ -21,7 +21,7 @@ final class QuarterDeleteTest extends DatabaseTestCase
     /** @return array{0: string, 1: string, 2: string} company, employee (no assignments), quarter type id */
     private function context(): array
     {
-        ['company' => $company, 'users' => $users] = $this->sampleEmployees(25);
+        ['company' => $company, 'users' => $users] = $this->sampleEmployees(4);
         $employee = null;
         foreach ($users as $uid) {
             if (! DB::table('cirt_quarter_assignments')->where('employee_id', $uid)->exists()) { $employee = $uid; break; }

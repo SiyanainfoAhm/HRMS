@@ -1,4 +1,4 @@
-import { percentOf, proportion, roundMoney, sumMoney } from "./money";
+import { percentOf, percentOfCeil, proportion, roundMoney, sumMoney } from "./money";
 import {
   calculateCpfFromBasis,
   DEFAULT_CPF_BASIS_KEYS,
@@ -153,6 +153,11 @@ export type GovernmentMonthlyInput = {
   eolDays?: number;
   /** Leave lines (type, month/year, days). When present they replace hplDays/eolDays + the reference months. */
   leaveLines?: LeaveLine[];
+  /**
+   * TR arrears that are added to the row AFTER this calculation (the Run Payroll arrear path). CPF counts them
+   * (CIRT rule), so they are passed in here; when they are already in the optional earnings the larger of the two is used.
+   */
+  transportArrearForCpf?: number;
   eolReferenceMonth?: number;
   eolReferenceYear?: number;
   hplReferenceMonth?: number;
@@ -499,7 +504,13 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
       if (customEarnings[k] != null) return s + (Number(customEarnings[k]) || 0);
       return s + (basisAmounts[k] ?? 0);
     }, 0);
-    cpfAmount = calculateCpfFromBasis(0, basisSum, cpfPct, totalEarnings, cpfMode, cpfFixed);
+    // CIRT rule (confirmed against FoxPro): whenever TR arrears are paid in the month, CPF = % of (basis + TR arrears), rounded UP
+    // to the next rupee. Without TR arrears the configured basis and normal rounding apply, as before.
+    const trArrearsForCpf = Math.max(traF, roundMoney(Number(input.transportArrearForCpf) || 0));
+    cpfAmount =
+      basisSum > 0 && trArrearsForCpf > 0
+        ? percentOfCeil(basisSum + (cpfBasis.includes("transport_arrears") ? trArrearsForCpf - traF : trArrearsForCpf), cpfPct)
+        : calculateCpfFromBasis(0, basisSum, cpfPct, totalEarnings, cpfMode, cpfFixed);
   }
 
   const unitRate = Math.max(0, Number(input.electricityUnitRate) || 0);
