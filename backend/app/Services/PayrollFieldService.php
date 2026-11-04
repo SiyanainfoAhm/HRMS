@@ -417,6 +417,23 @@ class PayrollFieldService
         if (self::schemaHasColumn('cirt_payroll_calculation_settings', 'night_allowance_basic_ceiling')) {
             $update['night_allowance_basic_ceiling'] = max(0, $nightCeiling);
         }
+        // Employer share of the CPF remittance sheet. Empty (NULL) until the ASRTU CPF Trust rule is decided; sending null / '' clears it.
+        foreach ([
+            'pension_percentage' => ['pension_percentage', 'pensionPercentage'],
+            'pension_wage_ceiling' => ['pension_wage_ceiling', 'pensionWageCeiling'],
+            'employer_contribution_percentage' => ['employer_contribution_percentage', 'employerContributionPercentage'],
+        ] as $column => [$snake, $camel]) {
+            if (! self::schemaHasColumn('cirt_payroll_calculation_settings', $column)) continue;
+            foreach ([$snake, $camel] as $key) {
+                if (! array_key_exists($key, $data)) continue;
+                $value = $data[$key];
+                if ($value !== null && $value !== '' && (! is_numeric($value) || (float) $value < 0)) {
+                    throw ValidationException::withMessages([$snake => ['Must be a number ≥ 0, or empty.']]);
+                }
+                $update[$column] = ($value === null || $value === '') ? null : (float) $value;
+                break;
+            }
+        }
 
         $settings->update($update);
 
@@ -984,6 +1001,12 @@ class PayrollFieldService
             'nightAllowanceBasicCeiling' => self::schemaHasColumn('cirt_payroll_calculation_settings', 'night_allowance_basic_ceiling')
                 ? (float) ($settings->night_allowance_basic_ceiling ?? NightAllowanceRateService::DEFAULT_BASIC_CEILING)
                 : NightAllowanceRateService::DEFAULT_BASIC_CEILING,
+            'pensionPercentage' => self::schemaHasColumn('cirt_payroll_calculation_settings', 'pension_percentage') && $settings->pension_percentage !== null
+                ? (float) $settings->pension_percentage : null,
+            'pensionWageCeiling' => self::schemaHasColumn('cirt_payroll_calculation_settings', 'pension_wage_ceiling') && $settings->pension_wage_ceiling !== null
+                ? (float) $settings->pension_wage_ceiling : null,
+            'employerContributionPercentage' => self::schemaHasColumn('cirt_payroll_calculation_settings', 'employer_contribution_percentage') && $settings->employer_contribution_percentage !== null
+                ? (float) $settings->employer_contribution_percentage : null,
             'cpfFormulaPreview' => PayrollFieldRegistry::cpfFormulaPreview(
                 $basisLabels,
                 (float) $settings->cpf_percentage,

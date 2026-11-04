@@ -42,7 +42,8 @@ final class DraftLeaveLinesTest extends DatabaseTestCase
 
     private function seedDraft(): array
     {
-        ['company' => $company, 'users' => [$user]] = $this->sampleEmployees(1);
+        $company = $this->world->company;
+        $user = $this->world->employees[0]['id'];
         $actor = (string) DB::table('cirt_users')->where('company_id', $company)->value('id');
         app(PayrollDraftService::class)->saveDraft($company, self::YEAR, self::MONTH, $actor, [$this->row($user)], null, true);
 
@@ -53,7 +54,7 @@ final class DraftLeaveLinesTest extends DatabaseTestCase
     {
         $version = (int) DB::table('cirt_payroll_drafts')->where('payroll_year', self::YEAR)->where('payroll_month', self::MONTH)->value('version');
         app(PayrollDraftService::class)->saveDraft($company, self::YEAR, self::MONTH, $actor, [[
-            'employeeUserId' => $user, 'employeeCode' => '001', 'rowPayload' => $this->row($user, $lines), 'changedFields' => ['leaveLines'],
+            'employeeUserId' => $user, 'employeeCode' => $this->world->employees[0]['code'], 'rowPayload' => $this->row($user, $lines), 'changedFields' => ['leaveLines'],
         ]], $version, false);
     }
 
@@ -81,7 +82,7 @@ final class DraftLeaveLinesTest extends DatabaseTestCase
             $this->fail('A 45-day leave line in September must be rejected.');
         } catch (ValidationException $e) {
             $message = $e->errors()['leaveLines'][0] ?? '';
-            $this->assertStringContainsString('Fix leave lines for 001 before saving', $message);
+            $this->assertStringContainsString('Fix leave lines for T1 before saving', $message);
             $this->assertStringContainsString('whole number from 1 to the days in that month', $message);
         }
 

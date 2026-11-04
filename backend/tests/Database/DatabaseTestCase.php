@@ -4,6 +4,7 @@ namespace Tests\Database;
 
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Foundation\Application;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\TestCase;
 use Tests\Support\TestWorld;
@@ -51,6 +52,8 @@ abstract class DatabaseTestCase extends TestCase
         } catch (\Throwable $e) {
             $this->markTestSkipped('Local database unavailable: '.$e->getMessage());
         }
+        // The cache (in-memory under phpunit) must not remember a company id from a previous, rolled-back test.
+        Cache::flush();
         DB::beginTransaction();
         $this->world = TestWorld::seed();
     }

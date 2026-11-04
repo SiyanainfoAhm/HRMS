@@ -32,7 +32,7 @@ final class QuarterPayrollRentTest extends DatabaseTestCase
     /** @return array{0: string, 1: string, 2: string, 3: string} company, employee without assignments, quarter A, quarter B (rents set to 3000 / 6000) */
     private function sandbox(): array
     {
-        ['company' => $company, 'users' => $users] = $this->sampleEmployees(40);
+        ['company' => $company, 'users' => $users] = $this->sampleEmployees(4);
         $employee = null;
         foreach ($users as $uid) {
             if (! DB::table('cirt_quarter_assignments')->where('employee_id', $uid)->exists()) { $employee = $uid; break; }

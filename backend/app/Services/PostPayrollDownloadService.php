@@ -226,15 +226,44 @@ final class PostPayrollDownloadService
 
     // ---------------------------------------------------------------- CPF
 
-    public function buildCpf(array $rows, int $ym): Spreadsheet
+    /**
+     * The employer-share rule from Settings (cirt_payroll_calculation_settings), or null when none of it is filled in.
+     * Until the ASRTU CPF Trust rule is decided the three settings are empty and PENSION / EMP_ CONTR. stay blank.
+     *
+     * @return array{pensionPercentage: ?float, pensionWageCeiling: ?float, employerContributionPercentage: ?float}|null
+     */
+    public function employerShareRule(string $companyId): ?array
+    {
+        foreach (['pension_percentage', 'pension_wage_ceiling', 'employer_contribution_percentage'] as $column) {
+            if (! \Illuminate\Support\Facades\Schema::hasColumn('cirt_payroll_calculation_settings', $column)) return null;
+        }
+        $s = DB::table('cirt_payroll_calculation_settings')->where('company_id', $companyId)->first();
+        if (! $s) return null;
+        $rule = [
+            'pensionPercentage' => $s->pension_percentage !== null ? (float) $s->pension_percentage : null,
+            'pensionWageCeiling' => $s->pension_wage_ceiling !== null ? (float) $s->pension_wage_ceiling : null,
+            'employerContributionPercentage' => $s->employer_contribution_percentage !== null ? (float) $s->employer_contribution_percentage : null,
+        ];
+
+        return $rule['pensionPercentage'] === null && $rule['employerContributionPercentage'] === null ? null : $rule;
+    }
+
+    /**
+     * @param  array{pensionPercentage?: ?float, pensionWageCeiling?: ?float, employerContributionPercentage?: ?float}|null  $employerRule
+     *         null = no employer-share rule configured: PENSION and EMP_ CONTR. are left empty and the sheet says so.
+     */
+    public function buildCpf(array $rows, int $ym, ?array $employerRule = null): Spreadsheet
     {
         $wb = new Spreadsheet;
         $ws = $wb->getActiveSheet()->setTitle('Sheet1');
-        $ws->setCellValue('A1', self::INSTITUTE)->mergeCells('A1:P1');
-        $ws->setCellValue('A2', 'Details of CPF, VPF, etc. for the month '.self::monthName($ym))->mergeCells('A2:P2');
+        $ws->setCellValue('A1', self::INSTITUTE)->mergeCells('A1:Q1');
+        $ws->setCellValue('A2', 'Details of CPF, VPF, etc. for the month '.self::monthName($ym))->mergeCells('A2:Q2');
         $ws->getStyle('A1:A2')->getFont()->setBold(true)->setSize(12);
         $ws->getStyle('A1:A2')->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
-        $this->sheetHeader($ws, 4, ['SR NO', 'UAN', 'NAME AS PER UAN', 'CPF  NO', 'GBASIC', 'NCP DAYS', 'BASIC', 'DA', 'HRA', 'TPT', 'MEDICAL', 'Total', 'CPF', 'VPF', 'PENSION', 'EMP_ CONTR.']);
+        $this->sheetHeader($ws, 4, ['SR NO', 'UAN', 'NAME AS PER UAN', 'CPF  NO', 'GBASIC', 'NCP DAYS', 'BASIC', 'DA', 'HRA', 'TPT', 'MEDICAL', 'Total', 'CPF', 'DA CPF', 'VPF', 'PENSION', 'EMP_ CONTR.']);
+        $pensionPct = $employerRule['pensionPercentage'] ?? null;
+        $pensionCeiling = $employerRule['pensionWageCeiling'] ?? null;
+        $employerPct = $employerRule['employerContributionPercentage'] ?? null;
 
         $groups = ['CIRT' => [], 'CONTRACT' => []];
         foreach ($rows as $r) {
@@ -260,40 +289,57 @@ final class PostPayrollDownloadService
                 foreach ([
                     'E' => self::n($r, 'basic_actual'), 'F' => self::n($r, 'unpaid_days'), 'G' => self::n($r, 'basic_paid'),
                     'H' => self::n($r, 'da_paid'), 'I' => self::n($r, 'hra_paid'), 'J' => self::n($r, 'transport_paid'),
-                    'K' => self::n($r, 'medical_paid'), 'L' => $basis, 'M' => self::n($r, 'cpf_amount'), 'N' => self::n($r, 'vpf_amount'),
+                    'K' => self::n($r, 'medical_paid'), 'L' => $basis, 'M' => self::n($r, 'cpf_amount'),
+                    // DA CPF = CPF on the DA arrears (the Run Payroll "CPF Arr" line).
+                    'N' => self::n($r, 'cpf_arrear'), 'O' => self::n($r, 'vpf_amount'),
                 ] as $col => $v) {
                     $ws->setCellValue("{$col}{$line}", $v);
+                }
+                // Employer share: only when a rule is configured, and only for an employee who pays CPF (GPF members have none).
+                if ($employerRule !== null && self::n($r, 'cpf_amount') > 0) {
+                    if ($pensionPct !== null) {
+                        $wage = $pensionCeiling !== null && $pensionCeiling > 0 ? min($basis, $pensionCeiling) : $basis;
+                        $ws->setCellValue("P{$line}", \App\Support\Money::percentOf($wage, $pensionPct));
+                    }
+                    if ($employerPct !== null) {
+                        $ws->setCellValue("Q{$line}", \App\Support\Money::percentOf($basis, $employerPct));
+                    }
                 }
                 $line++;
             }
             $last = $line - 1;
             $ws->setCellValue('B'.$line, $name.' TOTAL');
-            foreach (['E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P'] as $col) {
+            foreach (['E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q'] as $col) {
                 $ws->setCellValue("{$col}{$line}", $last >= $first ? "=SUBTOTAL(109,{$col}{$first}:{$col}{$last})" : 0);
             }
-            $ws->getStyle("A{$line}:P{$line}")->getFont()->setBold(true);
+            $ws->getStyle("A{$line}:Q{$line}")->getFont()->setBold(true);
             $totalRows[] = $line;
             $line += 2;
         }
         $grand = $line - 1;
         $ws->setCellValue('C'.$grand, 'GRAND TOTAL');
-        foreach (['E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P'] as $col) {
+        foreach (['E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q'] as $col) {
             $ws->setCellValue("{$col}{$grand}", "={$col}{$totalRows[0]}+{$col}{$totalRows[1]}");
         }
-        $ws->getStyle("A{$grand}:P{$grand}")->getFont()->setBold(true);
+        $ws->getStyle("A{$grand}:Q{$grand}")->getFont()->setBold(true);
         $s = $grand + 3;
         $this->sheetHeader($ws, $s, ['SL', 'PARTICULAR', 'AMOUNT'], 2); // the summary table starts in column B: no blank header cell in A
-        $ws->setCellValue('B'.($s + 1), 1)->setCellValue('C'.($s + 1), 'Employers P F Contribution')->setCellValue('D'.($s + 1), "=M{$grand}");
-        $ws->setCellValue('B'.($s + 2), 2)->setCellValue('C'.($s + 2), 'CPF Recovery')->setCellValue('D'.($s + 2), "=O{$grand}+P{$grand}");
-        $ws->setCellValue('B'.($s + 3), 3)->setCellValue('C'.($s + 3), 'VPF Recovery')->setCellValue('D'.($s + 3), "=N{$grand}");
-        $ws->setCellValue('C'.($s + 5), 'TOTAL')->setCellValue('D'.($s + 5), 'SUM(D'.($s + 1).':D'.($s + 4).')');
-        $ws->setCellValue('D'.($s + 5), '=SUM(D'.($s + 1).':D'.($s + 4).')');
+        // Employee deductions first (CPF + DA CPF, then VPF); the employer's share is Pension + Employer contribution.
+        $ws->setCellValue('B'.($s + 1), 1)->setCellValue('C'.($s + 1), 'CPF Recovery')->setCellValue('D'.($s + 1), "=M{$grand}+N{$grand}");
+        $ws->setCellValue('B'.($s + 2), 2)->setCellValue('C'.($s + 2), 'VPF Recovery')->setCellValue('D'.($s + 2), "=O{$grand}");
+        $ws->setCellValue('B'.($s + 3), 3)->setCellValue('C'.($s + 3), 'Employers P F Contribution')->setCellValue('D'.($s + 3), "=P{$grand}+Q{$grand}");
+        $ws->setCellValue('C'.($s + 5), 'TOTAL');
+        $ws->setCellValue('D'.($s + 5), '=SUM(D'.($s + 1).':D'.($s + 3).')');
         $ws->getStyle('C'.($s + 5).':D'.($s + 5))->getFont()->setBold(true);
-        $ws->setCellValue('A'.($s + 7), 'Put up for approval for remittance to ASRTU CPF Trust')->getStyle('A'.($s + 7))->getFont()->setBold(true);
-        $ws->getStyle("E5:P{$grand}")->getNumberFormat()->setFormatCode('#,##0');
+        if ($employerRule === null) {
+            $ws->setCellValue('C'.($s + 6), 'Employer share (Pension / Employer contribution) not configured — confirm ASRTU CPF Trust rule.');
+            $ws->getStyle('C'.($s + 6))->getFont()->setBold(true)->setItalic(true)->getColor()->setRGB('C00000');
+        }
+        $ws->setCellValue('A'.($s + 8), 'Put up for approval for remittance to ASRTU CPF Trust')->getStyle('A'.($s + 8))->getFont()->setBold(true);
+        $ws->getStyle("E5:Q{$grand}")->getNumberFormat()->setFormatCode('#,##0');
         $ws->getStyle("F5:F{$grand}")->getNumberFormat()->setFormatCode(SpreadsheetLayout::FORMAT_ID); // NCP DAYS: a day count, no separator
         SpreadsheetLayout::finish($ws, [
-            'header_row' => 4, 'last_header_row' => $s, 'freeze' => 'D5', 'autofilter' => 'A4:P'.($grand - 1),
+            'header_row' => 4, 'last_header_row' => $s, 'freeze' => 'D5', 'autofilter' => 'A4:Q'.($grand - 1),
             'landscape' => true, 'fit_width' => true,
         ]);
 

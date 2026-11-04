@@ -130,6 +130,7 @@ function computeGovernmentRow(
     const dim = Math.max(1, Math.floor(Number(denom) || 30));
     const payDays = Number(r.payDays ?? dim);
     const { comp, capped, unpaidDays } = runGovernmentPayrollCompute(gr, {
+      transportArrear: arrearSnapshotFromRow(r).transportArrear,
       daysInMonth: dim,
       payDays,
       payrollConfig: payrollConfig as never,

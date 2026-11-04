@@ -74,6 +74,17 @@ export function percentOf(amount: number, percent: number): number {
   return stepResult(toPaise(amount) * hundredths, 10000);
 }
 
+/**
+ * amount x percent / 100 rounded UP to the next whole rupee (ceiling): the CPF rule. Exact integer arithmetic on paise,
+ * so 12% of 75,698.00 is 9,083.76 -> 9,084 and an exact amount stays as it is.
+ */
+export function percentOfCeil(amount: number, percent: number): number {
+  const hundredths = Math.round((Number(percent) || 0) * 100);
+  const numerator = toPaise(amount) * hundredths; // paise x hundredths-of-a-percent
+  if (numerator <= 0) return 0;
+  return Math.trunc((numerator + 999999) / 1000000); // / 10,000 (percent) / 100 (paise per rupee), rounded up
+}
+
 /** amount x numerator / denominator (pay days / days in month, leave days / calendar days, hours / 8) rounded once. */
 export function proportion(amount: number, numerator: number, denominator: number): number {
   const n = Math.round((Number(numerator) || 0) * 100);

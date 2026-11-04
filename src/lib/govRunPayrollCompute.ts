@@ -105,6 +105,8 @@ export function runGovernmentPayrollCompute(
     runMonth: number;
     governmentMonthly?: Record<string, unknown> | null;
     transportSettings?: import("./transportAllowanceSettings").TransportAllowanceSettings;
+    /** TR arrears applied after this calculation; CPF counts them (see GovernmentMonthlyInput.transportArrearForCpf). */
+    transportArrear?: number;
   },
 ) {
   const dim = Math.max(1, Math.floor(opts.daysInMonth));
@@ -131,6 +133,7 @@ export function runGovernmentPayrollCompute(
     hplDays: gr.hplDays ?? 0,
     eolDays: gr.eolDays ?? 0,
     leaveLines: gr.leaveLines,
+    transportArrearForCpf: opts.transportArrear,
     eolReferenceMonth: gr.eolReferenceMonth ?? opts.runMonth,
     eolReferenceYear: gr.eolReferenceYear ?? opts.runYear,
     hplReferenceMonth: gr.hplReferenceMonth ?? opts.runMonth,

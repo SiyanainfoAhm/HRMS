@@ -68,6 +68,16 @@ final class Money
         return self::stepResult(self::toPaise($amount) * $hundredths, 10000);
     }
 
+    /** amount x percent / 100 rounded UP to the next whole rupee (the CPF rule); exact integer arithmetic on paise. */
+    public static function percentOfCeil(float|int|string|null $amount, float|int|string|null $percent): float
+    {
+        $hundredths = (int) round((is_numeric($percent) ? (float) $percent : 0.0) * 100);
+        $numerator = self::toPaise($amount) * $hundredths;
+        if ($numerator <= 0) return 0.0;
+
+        return (float) intdiv($numerator + 999999, 1000000);
+    }
+
     /** amount x numerator / denominator (pay days / days in month, leave days / calendar days, hours / 8) rounded once. */
     public static function proportion(float|int|string|null $amount, float|int|string|null $numerator, float|int|string|null $denominator): float
     {

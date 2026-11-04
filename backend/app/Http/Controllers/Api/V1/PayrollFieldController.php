@@ -165,6 +165,12 @@ class PayrollFieldController extends Controller
             'electricityUnitRate' => ['sometimes', 'numeric', 'min:0'],
             'night_allowance_basic_ceiling' => ['sometimes', 'numeric', 'min:0'],
             'nightAllowanceBasicCeiling' => ['sometimes', 'numeric', 'min:0'],
+            'pension_percentage' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'pensionPercentage' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'pension_wage_ceiling' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'pensionWageCeiling' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'employer_contribution_percentage' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'employerContributionPercentage' => ['sometimes', 'nullable', 'numeric', 'min:0'],
         ]);
 
         $settings = $this->service->saveCalculationSettings($request->user()->company_id, $data);

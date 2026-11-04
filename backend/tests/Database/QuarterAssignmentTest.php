@@ -24,7 +24,7 @@ final class QuarterAssignmentTest extends DatabaseTestCase
     /** @return array{0: string, 1: string, 2: string, 3: string} company, employee, quarter A, quarter B (employee has no assignment) */
     private function fixtures(): array
     {
-        ['company' => $company, 'users' => $users] = $this->sampleEmployees(25);
+        ['company' => $company, 'users' => $users] = $this->sampleEmployees(4);
         $employee = null;
         foreach ($users as $uid) {
             if (! DB::table('cirt_quarter_assignments')->where('employee_id', $uid)->exists()) { $employee = $uid; break; }
