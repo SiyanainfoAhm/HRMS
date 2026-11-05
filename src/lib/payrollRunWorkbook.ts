@@ -567,23 +567,6 @@ export function buildMonthlySummarySheet(
     row += 1;
   }
 
-  // D. Arrears: information only. Already inside the earnings above (DA Arrears row, TR Arrears inside Transport) and the
-  // deductions (CPF Arr inside DA CPF); never added a second time.
-  row += 1;
-  fillMergedRange(ws, merges, row, 0, LAST_COL, "D. ARREARS (information only: already included in the earnings and deductions above)", applySectionHeaderStyle());
-  (ws["!rows"] as Array<{ hpt?: number }>)[row] = { hpt: 22 };
-  row += 1;
-  for (let c = 0; c < 4; c++) cell(ws, row, c, c % 2 === 0 ? "Particulars" : "Amount (₹)", applyColumnHeaderStyle());
-  (ws["!rows"] as Array<{ hpt?: number }>)[row] = { hpt: 18 };
-  row += 1;
-  row = writePairedAmountRows(ws, row, [
-    { label: PAYROLL_LABELS.daArrears, amount: summary.arrearsInfo.daArrears },
-    { label: `${PAYROLL_LABELS.transportArrears} (in Transport)`, amount: summary.arrearsInfo.trArrears },
-    { label: PAYROLL_LABELS.grossArrears, amount: summary.arrearsInfo.grossArrears },
-    { label: `${PAYROLL_LABELS.cpfArrears} (in DA CPF)`, amount: summary.arrearsInfo.cpfArrear },
-    { label: PAYROLL_LABELS.netArrears, amount: summary.arrearsInfo.netArrears },
-  ]);
-
   // E. Leave adjustments: information only. Leave is already deducted from Basic / DA / HRA / Medical.
   row += 1;
   fillMergedRange(ws, merges, row, 0, LAST_COL, "E. LEAVE ADJUSTMENTS (already deducted from earnings; not part of Total Deductions)", applySectionHeaderStyle());
