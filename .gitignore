@@ -76,3 +76,6 @@ apps/hrms_mobile/assets/config.json
 # One-off arrears entry sheet (contains payroll data)
 DA_Arrears_Entry_Oct2026.xlsx
 Encashment_Entry_Oct2026.xlsx
+
+# Scratch space: Playwright replays, verification copies and payroll backups (confidential payroll data)
+/tmp/
