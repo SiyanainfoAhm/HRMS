@@ -201,6 +201,10 @@ export function aggregatePayrollSummary(rows: PayrollRunExportRow[]) {
   const standardDeductionLabels = new Set(Object.keys(deductions));
   // CIRT-06: the CPF Arr (CPF on arrears) is reported in the DA CPF row, as in the paybill, so the rows add up to Total Deductions.
   const daCpfLabel = RUN_PAYROLL_DEDUCTION_LINES.find((l) => l.key === "daCpf")?.label;
+  const labelOf = (key: string): string => RUN_PAYROLL_EARNING_LINES.find((l) => l.key === key)?.label ?? key;
+  let cpfArrearTotal = 0;
+  // Leave is already deducted from Basic / DA / HRA / Medical, so it is reported as information, never as a deduction.
+  const leave = { hpl: { employees: 0, days: 0, amount: 0 }, eol: { employees: 0, days: 0, amount: 0 } };
 
   let totalEarnings = 0;
   let totalDeductions = 0;
@@ -223,7 +227,17 @@ export function aggregatePayrollSummary(rows: PayrollRunExportRow[]) {
 
       const d = gmDeductions(gm);
       for (const l of RUN_PAYROLL_DEDUCTION_LINES) deductions[l.label] += d[l.key] ?? 0;
-      if (daCpfLabel) deductions[daCpfLabel] += gmNum(gm, "cpfArrear", "cpf_arrear");
+      const cpfArr = gmNum(gm, "cpfArrear", "cpf_arrear");
+      cpfArrearTotal += cpfArr;
+      if (daCpfLabel) deductions[daCpfLabel] += cpfArr;
+      for (const t of ["hpl", "eol"] as const) {
+        const days = gmNum(gm, `${t}Days`, `${t}_days`);
+        // hplAdjustment / eolAdjustment is the amount cut for leave; hplBasisAmount / eolBasisAmount is only the reference basis.
+        const amount = gmNum(gm, `${t}Adjustment`, `${t}_adjustment`);
+        if (days > 0 || amount > 0) leave[t].employees += 1;
+        leave[t].days += days;
+        leave[t].amount += amount;
+      }
 
       for (const [key, amount] of Object.entries(
         parseCustomBag(gm.customDeductions ?? gm.custom_deductions),
@@ -247,6 +261,29 @@ export function aggregatePayrollSummary(rows: PayrollRunExportRow[]) {
   }
 
   if (encashmentDaTotal !== 0) earnings["Encashment DA"] = encashmentDaTotal;
+
+  // FoxPro / CIRT printed summary: TR Arrears are part of the Transport row, DA Arrears stay a row of their own, and there
+  // are no separate TR Arrears / Gross Arrears rows in the earnings, so the earnings rows add up to Gross Salary Payable.
+  const daArrears = roundMoney(arrears[labelOf("daArrearsPaid")] ?? 0);
+  const trArrears = roundMoney(arrears[labelOf("transportArrearsPaid")] ?? 0);
+  earnings[labelOf("transportPaid")] = roundMoney((earnings[labelOf("transportPaid")] ?? 0) + trArrears);
+  const grossArrears = roundMoney(daArrears + trArrears);
+  const arrearsInfo = {
+    daArrears,
+    trArrears,
+    grossArrears,
+    cpfArrear: roundMoney(cpfArrearTotal),
+    netArrears: roundMoney(grossArrears - cpfArrearTotal),
+  };
+  // HPL / EOL are not deduction lines (see above). A legacy typed HPL / EOL deduction is kept as a row, so the rows still add up.
+  for (const l of RUN_PAYROLL_DEDUCTION_LINES) {
+    if ((l.key === "hpl" || l.key === "eol") && roundMoney(deductions[l.label] ?? 0) === 0) delete deductions[l.label];
+  }
+  const leaveInfo = {
+    hpl: { employees: leave.hpl.employees, days: leave.hpl.days, amount: roundMoney(leave.hpl.amount) },
+    eol: { employees: leave.eol.employees, days: leave.eol.days, amount: roundMoney(leave.eol.amount) },
+    total: roundMoney(leave.hpl.amount + leave.eol.amount),
+  };
   for (const [map, standard] of [[earnings, standardEarningLabels], [deductions, standardDeductionLabels]] as const) {
     for (const label of Object.keys(map)) if (!standard.has(label) && roundMoney(map[label]) === 0) delete map[label];
   }
@@ -254,7 +291,10 @@ export function aggregatePayrollSummary(rows: PayrollRunExportRow[]) {
   return {
     employeeCount: rows.length,
     earnings,
-    arrears,
+    /** Earnings-block arrears row: DA Arrears only (TR Arrears are inside Transport, Gross Arrears is an information line). */
+    arrears: { [labelOf("daArrearsPaid")]: daArrears } as Record<string, number>,
+    arrearsInfo,
+    leaveInfo,
     deductions,
     totalEarnings: roundMoney(totalEarnings),
     totalArrears: roundMoney(totalArrears),
@@ -524,6 +564,45 @@ export function buildMonthlySummarySheet(
       mergeCells(merges, row, 2, row, 3);
       (ws["!rows"] as Array<{ hpt?: number }>)[row] = { hpt: 20 };
     }
+    row += 1;
+  }
+
+  // D. Arrears: information only. Already inside the earnings above (DA Arrears row, TR Arrears inside Transport) and the
+  // deductions (CPF Arr inside DA CPF); never added a second time.
+  row += 1;
+  fillMergedRange(ws, merges, row, 0, LAST_COL, "D. ARREARS (information only: already included in the earnings and deductions above)", applySectionHeaderStyle());
+  (ws["!rows"] as Array<{ hpt?: number }>)[row] = { hpt: 22 };
+  row += 1;
+  for (let c = 0; c < 4; c++) cell(ws, row, c, c % 2 === 0 ? "Particulars" : "Amount (₹)", applyColumnHeaderStyle());
+  (ws["!rows"] as Array<{ hpt?: number }>)[row] = { hpt: 18 };
+  row += 1;
+  row = writePairedAmountRows(ws, row, [
+    { label: PAYROLL_LABELS.daArrears, amount: summary.arrearsInfo.daArrears },
+    { label: `${PAYROLL_LABELS.transportArrears} (in Transport)`, amount: summary.arrearsInfo.trArrears },
+    { label: PAYROLL_LABELS.grossArrears, amount: summary.arrearsInfo.grossArrears },
+    { label: `${PAYROLL_LABELS.cpfArrears} (in DA CPF)`, amount: summary.arrearsInfo.cpfArrear },
+    { label: PAYROLL_LABELS.netArrears, amount: summary.arrearsInfo.netArrears },
+  ]);
+
+  // E. Leave adjustments: information only. Leave is already deducted from Basic / DA / HRA / Medical.
+  row += 1;
+  fillMergedRange(ws, merges, row, 0, LAST_COL, "E. LEAVE ADJUSTMENTS (already deducted from earnings; not part of Total Deductions)", applySectionHeaderStyle());
+  (ws["!rows"] as Array<{ hpt?: number }>)[row] = { hpt: 22 };
+  row += 1;
+  ["Type", "Employees", "Days", "Amount (₹)"].forEach((h, c) => cell(ws, row, c, h, applyColumnHeaderStyle()));
+  (ws["!rows"] as Array<{ hpt?: number }>)[row] = { hpt: 18 };
+  row += 1;
+  const leaveRows: Array<{ label: string; employees: number | ""; days: number | ""; amount: number; bold?: boolean }> = [
+    { label: "HPL (half pay leave)", ...summary.leaveInfo.hpl },
+    { label: "EOL (extraordinary leave)", ...summary.leaveInfo.eol },
+    { label: "Total leave adjustments", employees: "", days: "", amount: summary.leaveInfo.total, bold: true },
+  ];
+  for (const lr of leaveRows) {
+    cell(ws, row, 0, lr.label, applyBodyCellStyle({ align: "left" }));
+    cell(ws, row, 1, lr.employees, applyIntegerCellStyle({ bold: lr.bold }));
+    cell(ws, row, 2, lr.days, applyIntegerCellStyle({ bold: lr.bold }));
+    cell(ws, row, 3, lr.amount, applyCurrencyCellStyle({ bold: lr.bold }));
+    (ws["!rows"] as Array<{ hpt?: number }>)[row] = { hpt: 18 };
     row += 1;
   }
 
