@@ -412,6 +412,9 @@ export function buildMonthlySummarySheet(
   ws["!rows"] = [];
 
   const LAST_COL = 3;
+  // Section letters are generated in order, so adding/removing a section never leaves a gap.
+  let sectionIndex = 0;
+  const sectionTitle = (title: string) => `${String.fromCharCode(65 + sectionIndex++)}. ${title}`;
   const monthName = (MONTH_NAMES[opts.month] ?? String(opts.month)).toUpperCase();
 
   // Title (two lines, matching official statement)
@@ -458,7 +461,7 @@ export function buildMonthlySummarySheet(
   row += 1;
 
   // A. Earnings
-  fillMergedRange(ws, merges, row, 0, LAST_COL, "A. GROSS SALARY / EARNINGS", applySectionHeaderStyle());
+  fillMergedRange(ws, merges, row, 0, LAST_COL, sectionTitle("GROSS SALARY / EARNINGS"), applySectionHeaderStyle());
   (ws["!rows"] as Array<{ hpt?: number }>)[row] = { hpt: 22 };
   row += 1;
 
@@ -487,7 +490,7 @@ export function buildMonthlySummarySheet(
   row += 1;
 
   // B. Deductions
-  fillMergedRange(ws, merges, row, 0, LAST_COL, "B. DEDUCTIONS", applySectionHeaderStyle());
+  fillMergedRange(ws, merges, row, 0, LAST_COL, sectionTitle("DEDUCTIONS"), applySectionHeaderStyle());
   (ws["!rows"] as Array<{ hpt?: number }>)[row] = { hpt: 22 };
   row += 1;
 
@@ -512,7 +515,7 @@ export function buildMonthlySummarySheet(
   row += 1;
 
   // C. Final totals
-  fillMergedRange(ws, merges, row, 0, LAST_COL, "C. FINAL TOTALS", applySectionHeaderStyle());
+  fillMergedRange(ws, merges, row, 0, LAST_COL, sectionTitle("FINAL TOTALS"), applySectionHeaderStyle());
   (ws["!rows"] as Array<{ hpt?: number }>)[row] = { hpt: 22 };
   row += 1;
 
@@ -567,9 +570,9 @@ export function buildMonthlySummarySheet(
     row += 1;
   }
 
-  // E. Leave adjustments: information only. Leave is already deducted from Basic / DA / HRA / Medical.
+  // Leave adjustments: information only. Leave is already deducted from Basic / DA / HRA / Medical.
   row += 1;
-  fillMergedRange(ws, merges, row, 0, LAST_COL, "E. LEAVE ADJUSTMENTS (already deducted from earnings; not part of Total Deductions)", applySectionHeaderStyle());
+  fillMergedRange(ws, merges, row, 0, LAST_COL, sectionTitle("LEAVE ADJUSTMENTS (already deducted from earnings; not part of Total Deductions)"), applySectionHeaderStyle());
   (ws["!rows"] as Array<{ hpt?: number }>)[row] = { hpt: 22 };
   row += 1;
   ["Type", "Employees", "Days", "Amount (₹)"].forEach((h, c) => cell(ws, row, c, h, applyColumnHeaderStyle()));
