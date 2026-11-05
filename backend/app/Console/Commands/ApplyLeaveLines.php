@@ -11,12 +11,20 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 /**
- * One-off: enter leave lines (and Lokhande's zero Transport) into an open draft through the normal draft save path.
+ * One-off: enter leave lines (and a zero Transport override) into an open draft through the normal draft save path.
  *
  * The row for each edit is produced by the SAME code the Run Payroll screen runs when you edit (scripts/draft-edit-replay.ts
  * calls the shared row calculation), then saved with PayrollDraftService::saveDraft and the field token the screen sends
  * (`leaveLines`, `govEarning_transportPaid`). The dry run executes that real save in a transaction and rolls it back, so the
  * printed values (including CPF, Total Deductions and Net) are what --apply stores.
+ *
+ * The edits come from a JSON file (--edits=...), keyed by employee name exactly as in the draft, so no employee data is kept in the repo:
+ *   {
+ *     "Sample Employee A": {"kind": "leaveLines", "lines": [{"type": "HPL", "month": 9, "year": 2026, "days": 1}]},
+ *     "Sample Employee B": {"kind": "leaveLines", "lines": [{"type": "HPL", "month": 9, "year": 2026, "days": 4}, {"type": "EOL", "month": 10, "year": 2026, "days": 2}]},
+ *     "Sample Employee C": {"kind": "transportZero"}
+ *   }
+ * HPL / EOL days are per leave month; transportZero sets Transport to a manual override of 0.
  */
 class ApplyLeaveLines extends Command
 {
@@ -24,19 +32,10 @@ class ApplyLeaveLines extends Command
         {--year=2026} {--month=10}
         {--user= : Email or id of the audit user (required)}
         {--note= : Reason stored in each audit entry}
+        {--edits= : JSON file with the edits (see the class comment; required)}
         {--apply : Save (default is a dry run)}';
 
     protected $description = 'Enter the agreed leave lines / zero Transport into the open draft (dry run unless --apply)';
-
-    /** name => edits. HPL/EOL days per leave month; Lokhande's Transport is a manual override to 0. */
-    private const EDITS = [
-        'Veena Ranganath Jade' => ['kind' => 'leaveLines', 'lines' => [['type' => 'HPL', 'month' => 9, 'year' => 2026, 'days' => 1]]],
-        'Pradip Narayan Masalkar' => ['kind' => 'leaveLines', 'lines' => [
-            ['type' => 'HPL', 'month' => 9, 'year' => 2026, 'days' => 4], ['type' => 'EOL', 'month' => 9, 'year' => 2026, 'days' => 2],
-            ['type' => 'HPL', 'month' => 10, 'year' => 2026, 'days' => 1], ['type' => 'EOL', 'month' => 10, 'year' => 2026, 'days' => 2],
-        ]],
-        'Rupali Vishal Lokhande' => ['kind' => 'transportZero'],
-    ];
 
     public function handle(PayrollDraftService $drafts): int
     {
@@ -50,6 +49,12 @@ class ApplyLeaveLines extends Command
         $user = $u === '' ? null : HrmsUser::query()->where('company_id', $companyId)->where(str_contains($u, '@') ? 'email' : 'id', $u)->first();
         if (! $user) { $this->error('--user (email or id) is required.'); return self::FAILURE; }
         $note = (string) $this->option('note');
+        $editsFile = (string) $this->option('edits');
+        $specs = $editsFile !== '' && is_file($editsFile) ? json_decode((string) file_get_contents($editsFile), true) : null;
+        if (! is_array($specs) || $specs === []) { $this->error('--edits=<json file> is required (see the class comment for the format).'); return self::FAILURE; }
+        foreach ($specs as $name => $spec) {
+            if (! in_array($spec['kind'] ?? null, ['leaveLines', 'transportZero'], true)) { $this->error("Unknown kind for '{$name}' in the edits file."); return self::FAILURE; }
+        }
         $this->line("Audit user: {$user->name} <{$user->email}>");
 
         $controller = app(PayrollController::class);
@@ -64,7 +69,7 @@ class ApplyLeaveLines extends Command
         $preview = $call('runPreview', ['year' => $year, 'month' => $month, 'runDay' => cal_days_in_month(CAL_GREGORIAN, $month, $year), 'all' => 1]);
 
         $edits = [];
-        foreach (self::EDITS as $name => $spec) {
+        foreach ($specs as $name => $spec) {
             $e = $byName->get($name);
             if (! $e) { $this->error("'{$name}' is not in the {$year}-{$month} draft."); return self::FAILURE; }
             $edit = ['userId' => (string) $e['employeeUserId'], 'kind' => $spec['kind']];

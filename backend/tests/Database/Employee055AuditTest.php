@@ -5,14 +5,14 @@ namespace Tests\Database;
 use Illuminate\Support\Facades\DB;
 
 /**
- * CIRT-02 regression on the real local record of employee code 055 (Prakash Daji Jangam):
+ * CIRT-02 regression on the real local record of employee code 055 (a real local record):
  * input (Master) -> rule -> saved (monthly payroll) for DA, Quarter Rent, Credit Society, Mess, Electricity.
  */
-final class PrakashAuditTest extends DatabaseTestCase
+final class Employee055AuditTest extends DatabaseTestCase
 {
     use FinalizedPayrollSnapshot;
 
-    private function prakash(): object
+    private function employee055(): object
     {
         $m = DB::table('cirt_payroll_master')->where('employee_code', '055')->whereNull('effective_to')->first();
         $m !== null || $this->markTestSkipped('Employee 055 is not in the local database.');
@@ -27,7 +27,7 @@ final class PrakashAuditTest extends DatabaseTestCase
 
     public function test_da_credit_society_mess_and_quarter_rent_follow_their_rules_every_month(): void
     {
-        $m = $this->prakash();
+        $m = $this->employee055();
         $months = DB::table('cirt_monthly_payroll')->where('employee_user_id', $m->employee_user_id)->orderBy('month_year')->get();
         $this->assertGreaterThanOrEqual(1, $months->count());
         $quarter = DB::table('cirt_quarters')->where('id', $m->quarter_id)->first();
@@ -54,7 +54,7 @@ final class PrakashAuditTest extends DatabaseTestCase
 
     public function test_electricity_is_unit_billed_or_the_master_default(): void
     {
-        $m = $this->prakash();
+        $m = $this->employee055();
         $rows = DB::table('cirt_monthly_payroll')->where('employee_user_id', $m->employee_user_id)->orderBy('month_year')->get();
         foreach ($rows as $row) {
             if ((float) $row->electricity_units_consumed > 0) {
@@ -72,13 +72,13 @@ final class PrakashAuditTest extends DatabaseTestCase
     public function test_quarter_identity_is_saved_on_regenerated_rows(): void
     {
         $before = $this->finalizedSnapshot();
-        $m = $this->prakash();
+        $m = $this->employee055();
         $quarter = DB::table('cirt_quarters')->where('id', $m->quarter_id)->first();
         $this->assertSame('B1/7', $quarter->quarter_name);
         $this->assertSame('B1', $quarter->quarter_type);
 $this->assertSame(0, DB::table('cirt_monthly_payroll')->where('has_quarter', true)->where('quarter_rent_amount', '>', 0)->whereNull('quarter_name')->count(), 'every quarter-holder row that pays rent carries its quarter name');
         $source = (string) file_get_contents(base_path('app/Http/Controllers/Api/V1/PayrollController.php'));
         $this->assertStringContainsString("value('quarter_id')", $source, 'new runs resolve the quarter from the Master');
-        $this->assertFinalizedUnchanged($before, 'the Prakash audit');
+        $this->assertFinalizedUnchanged($before, 'the employee 055 audit');
     }
 }

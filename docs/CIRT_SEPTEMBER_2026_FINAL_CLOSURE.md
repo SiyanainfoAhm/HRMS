@@ -56,7 +56,7 @@ DA is `2,559,666` from the `DA` field; `DA_PAY` is not the comparison field.
 
 ## Manual identity review
 
-Codes `082` Devendra Singh, `083` Vipin Kumar, and `084` Aditya Kumar remain
+Codes `082`, `083`, and `084` remain
 Manual Review. They are included in CIRT payroll but excluded from matched
 FoxPro employee-variance totals.
 

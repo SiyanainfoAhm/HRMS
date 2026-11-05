@@ -10,22 +10,22 @@ function eq(a: unknown, b: unknown, msg: string) {
 
 const run = { runMonth: 10, runYear: 2026, hraPercent: 30, medicalFixed: 3000 };
 
-// Veena Jade: GBasic 76,500; 1 HPL day in Sep 2026 (30 days, DA 63%).
+// Case A: GBasic 76,500; 1 HPL day in Sep 2026 (30 days, DA 63%).
 {
   const ctx = { ...run, grossBasic: 76500, daPercent: 63 };
   const c = computeLeaveCuts([{ type: "HPL", month: 9, year: 2026, days: 1, grossBasic: 76500, daPercent: 63, daysInMonth: 30 }], ctx);
-  eq(c.basic, 1275, "Veena Basic cut");
-  eq(c.da, 803, "Veena DA cut");
-  eq(c.hplAdjustment, 2078, "Veena HPL adjustment");
-  eq(76500 - c.basic, 75225, "Veena Basic");
-  eq(Math.round(76500 * 0.63) - c.da, 47392, "Veena DA");
+  eq(c.basic, 1275, "Case A Basic cut");
+  eq(c.da, 803, "Case A DA cut");
+  eq(c.hplAdjustment, 2078, "Case A HPL adjustment");
+  eq(76500 - c.basic, 75225, "Case A Basic");
+  eq(Math.round(76500 * 0.63) - c.da, 47392, "Case A DA");
   eq(c.hra, 0, "HPL leaves HRA");
   eq(c.medical, 0, "HPL leaves Medical");
-  eq(22950 - c.hra, 22950, "Veena HRA");
-  eq(3000 - c.medical, 3000, "Veena Medical");
+  eq(22950 - c.hra, 22950, "Case A HRA");
+  eq(3000 - c.medical, 3000, "Case A Medical");
 }
 
-// Masalkar: GBasic 43,100; HPL 4 + EOL 2 in Sep (30 days), HPL 1 + EOL 2 in Oct (31 days). DA 63% both months.
+// Case B: GBasic 43,100; HPL 4 + EOL 2 in Sep (30 days), HPL 1 + EOL 2 in Oct (31 days). DA 63% both months.
 {
   const ctx = { ...run, grossBasic: 43100, daPercent: 63 };
   const lines: LeaveLine[] = [
@@ -35,10 +35,10 @@ const run = { runMonth: 10, runYear: 2026, hraPercent: 30, medicalFixed: 3000 };
     { type: "EOL", month: 10, year: 2026, days: 2 },
   ];
   const c = computeLeaveCuts(lines, ctx);
-  eq(43100 - c.basic, 33878, "Masalkar Basic");
-  eq(percentOfDa(43100) - c.da, 21343, "Masalkar DA");
-  eq(12930 - c.hra, 11234, "Masalkar HRA");
-  eq(3000 - c.medical, 2606, "Masalkar Medical");
+  eq(43100 - c.basic, 33878, "Case B Basic");
+  eq(percentOfDa(43100) - c.da, 21343, "Case B DA");
+  eq(12930 - c.hra, 11234, "Case B HRA");
+  eq(3000 - c.medical, 2606, "Case B Medical");
   eq(c.hplDays, 5, "HPL days");
   eq(c.eolDays, 4, "EOL days");
   // Each line is calculated on its own month: Sep EOL 2 / 30 vs Oct EOL 2 / 31.
@@ -100,15 +100,15 @@ import { runGovernmentPayrollCompute, type GovRecalcPayload } from "./govRunPayr
   eq(none.daPaid, 48195, "no leave: DA unchanged");
   eq(none.hplAdjustment, 0, "no leave: no HPL adjustment");
 
-  const veena = go(gr(76500, { leaveLines: [{ type: "HPL", month: 9, year: 2026, days: 1, ...sep, grossBasic: 76500 }], hplDays: 1 }));
-  eq(veena.basicPaid, 75225, "Veena Basic");
-  eq(veena.daPaid, 47392, "Veena DA");
-  eq(veena.hraPaid, 22950, "Veena HRA");
-  eq(veena.medicalPaid, 3000, "Veena Medical");
-  eq(veena.hplAdjustment, 2078, "Veena HPL adjustment");
-  eq(veena.hplDays, 1, "Veena HPL days");
+  const caseA = go(gr(76500, { leaveLines: [{ type: "HPL", month: 9, year: 2026, days: 1, ...sep, grossBasic: 76500 }], hplDays: 1 }));
+  eq(caseA.basicPaid, 75225, "Case A Basic");
+  eq(caseA.daPaid, 47392, "Case A DA");
+  eq(caseA.hraPaid, 22950, "Case A HRA");
+  eq(caseA.medicalPaid, 3000, "Case A Medical");
+  eq(caseA.hplAdjustment, 2078, "Case A HPL adjustment");
+  eq(caseA.hplDays, 1, "Case A HPL days");
 
-  const masalkar = go(gr(43100, {
+  const caseB = go(gr(43100, {
     leaveLines: [
       { type: "HPL", month: 9, year: 2026, days: 4, ...sep, grossBasic: 43100 },
       { type: "EOL", month: 9, year: 2026, days: 2, ...sep, grossBasic: 43100 },
@@ -116,11 +116,11 @@ import { runGovernmentPayrollCompute, type GovRecalcPayload } from "./govRunPayr
       { type: "EOL", month: 10, year: 2026, days: 2 },
     ],
   }));
-  eq(masalkar.basicPaid, 33878, "Masalkar Basic");
-  eq(masalkar.daPaid, 21343, "Masalkar DA");
-  eq(masalkar.hraPaid, 11234, "Masalkar HRA");
-  eq(masalkar.medicalPaid, 2606, "Masalkar Medical");
-  eq(masalkar.hplDays + masalkar.eolDays, 9, "Masalkar leave days");
+  eq(caseB.basicPaid, 33878, "Case B Basic");
+  eq(caseB.daPaid, 21343, "Case B DA");
+  eq(caseB.hraPaid, 11234, "Case B HRA");
+  eq(caseB.medicalPaid, 2606, "Case B Medical");
+  eq(caseB.hplDays + caseB.eolDays, 9, "Case B leave days");
 
   // Old single-month data (no leaveLines): 1 HPL day with reference Sep 2026 gives the same lines.
   const legacy = go(gr(76500, { hplDays: 1, hplReferenceMonth: 9, hplReferenceYear: 2026, hplReferenceSalary: { basic: 76500, da: 45900, hra: 22950, medical: 3000 }, hplReferenceDaysInMonth: 30 }));

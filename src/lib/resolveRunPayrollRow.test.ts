@@ -352,7 +352,7 @@ function testSavedUnitBillOutranksMasterManualFixedDefaultAcrossReloadAndExport(
   assertEq(expectedBill.totalExact, 710.85, "fixture tariff exact total");
   assertEq(expectedBill.total, 711, "configured tariff gives the exact bill 710.85 rounded once to the whole rupee (₹711)");
 
-  const masterRow = stubApiRow("subhash");
+  const masterRow = stubApiRow("emp-a");
   masterRow.govRecalc = {
     ...masterRow.govRecalc!,
     electricityUnitsConsumed: 0,
@@ -360,9 +360,9 @@ function testSavedUnitBillOutranksMasterManualFixedDefaultAcrossReloadAndExport(
     deductionDefaults: { ...masterRow.govRecalc!.deductionDefaults, electricity: 49 },
   };
   const savedDraft = {
-    employeeUserId: "subhash",
+    employeeUserId: "emp-a",
     rowPayload: {
-      employeeUserId: "subhash",
+      employeeUserId: "emp-a",
       payrollMode: "government",
       quarterContextVersion: 1,
       governmentMonthly: {
@@ -407,9 +407,9 @@ function testSavedUnitBillOutranksMasterManualFixedDefaultAcrossReloadAndExport(
   assertEq(ded.quarterRent, 400, "Quarter Rent preserved");
 
   const excelRow = buildPayrollExcelRow({
-    payroll_mode: "government", employee_user_id: "subhash", gross_pay: Number(gm.totalEarnings),
+    payroll_mode: "government", employee_user_id: "emp-a", gross_pay: Number(gm.totalEarnings),
     deductions: Number(gm.totalDeductions), net_pay: Number(gm.netSalary),
-  }, "Subhash Duryodhan Katkar", { kind: "row", row: {
+  }, "Ravi Demokumar Sampleson", { kind: "row", row: {
     electricity_amount: ded.electricity,
     electricity_units_consumed: Number(gm.electricityUnitsConsumed),
     total_deductions: Number(gm.totalDeductions),

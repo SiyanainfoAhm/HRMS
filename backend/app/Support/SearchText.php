@@ -4,8 +4,8 @@ namespace App\Support;
 
 /**
  * Text normalisation for name searches: case-insensitive, and any run of whitespace (spaces, tabs, non-breaking
- * spaces) counts as one space, with leading / trailing space ignored. "Prakashchandra Sukanraj" therefore finds a
- * master record stored as "Prakashchandra  Sukanraj Dahiya" (two spaces).
+ * spaces) counts as one space, with leading / trailing space ignored. "Aaravchandra Testkumar" therefore finds a
+ * master record stored as "Aaravchandra  Testkumar Sample" (two spaces).
  */
 final class SearchText
 {

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { actionLabel, auditChanges, buildActivityLogQueryParams, changeClassification, eventSummary, fieldLabel, formatTimestamp, payrollMonth, safeValue } from "./activityLogPresentation";
 
 const event = {
-  eventId: "event-1", timestamp: "2026-10-27T11:52:00Z", actor: "Admin", actorRole: "admin", action: "payroll.generated.amended", outcome: "succeeded", employee: "Harshal Vishnu Karalkar", payrollYear: 2026, payrollMonth: 11,
+  eventId: "event-1", timestamp: "2026-10-27T11:52:00Z", actor: "Admin", actorRole: "admin", action: "payroll.generated.amended", outcome: "succeeded", employee: "Test Employee Sample", payrollYear: 2026, payrollMonth: 11,
   changedFields: [{ field: "basicPaid", label: "Basic Pay", before: 43027, after: 41490 }, { field: "eolDays", before: 2, after: 3 }, { field: "leaveRemarks", before: "Old remark", after: "New remark" }, { field: "mess", before: 0, after: 0 }],
 };
 
@@ -30,7 +30,7 @@ assert.deepEqual(changeClassification(classified), { direct: ["eolDays"], recalc
 assert.match(eventSummary(classified), /EOL Days changed from 2 days to 3 days/);
 assert.equal(payrollMonth(2026, 11), "November 2026");
 assert.ok(formatTimestamp(event.timestamp).includes("27"));
-const filters = buildActivityLogQueryParams({ search: " Admin ", action: "auth.login", actor: "Admin", employee: "Harshal", period: "2026-11", from: "2026-10-01", to: "2026-10-31", category: "security", outcome: "failed" }, 3, 50);
+const filters = buildActivityLogQueryParams({ search: " Admin ", action: "auth.login", actor: "Admin", employee: "Test", period: "2026-11", from: "2026-10-01", to: "2026-10-31", category: "security", outcome: "failed" }, 3, 50);
 assert.equal(filters.get("page"), "3", "server pagination page is sent");
 assert.equal(filters.get("per_page"), "50");
 assert.equal(filters.get("year"), "2026");

@@ -4,8 +4,8 @@
 
 Rules: finalized payroll never changes (proved: md5 of monthly/payslips/periods/finalized drafts identical to the pre-change dump); fields are marked inactive, never deleted; unconfirmed rules sit behind one named constant.
 
-- [x] CIRT-01 Electricity units 80 -> 49: Not reproduced on this branch (fixed by earlier commits); chain test SubhashElectricityUnitsTest (save, reload x2, generate, reset)
-- [x] CIRT-02 Prakash audit: DA, Credit Society, Mess, Quarter Rent match their rules; FIXED quarter id/name/type missing on every quarter-holder row (new runs); Sept Electricity 1484 with 0 units unexplained (clarification)
+- [x] CIRT-01 Electricity units 80 -> 49: Not reproduced on this branch (fixed by earlier commits); chain test Employee001ElectricityUnitsTest (save, reload x2, generate, reset)
+- [x] CIRT-02 Employee 055 audit: DA, Credit Society, Mess, Quarter Rent match their rules; FIXED quarter id/name/type missing on every quarter-holder row (new runs); Sept Electricity 1484 with 0 units unexplained (clarification)
 - [x] CIRT-03 Performance: Run preview 65 -> 14 queries, Master list 309 -> ~100; defaults check 44 -> 1 query; report indexes. Remaining N+1s listed in the reply
 - [x] CIRT-04 Inactive fields: is_active already existed; payroll:field-usage report; Unpaid Arrears made inactive if present (none locally); candidates listed in reply
 - [x] CIRT-05 Arrears labels: one source (payrollLabels.ts / PayrollLabels.php); Gross Arrears, TR Arrears, Past Arrears (free-entry field)
@@ -24,4 +24,4 @@ Unpaid Arrears exact field; the two extra arrears fields (which is "second" = Pa
 - [x] Restore -> `migrate` (8 pending) -> counts, per-row hashes, rendering and catalog diff: see the report. Closed Sept 2026: 83/83 monthly rows and payslips byte-identical.
 - [x] Reports (TDS, CPF, Division-Wise, Paybill) tie to every Sept row including the client's custom fields.
 - Deploy: use `scripts/deploy-cirt-hrms.ps1` (backup, stage build, migrate --force, schema-check, rollback). Do NOT pass `-RepairData` until the dry run `php artisan payroll:repair-data` has been reviewed (it only touches the open July/October drafts).
-- Open for the client: closed Sept has electricity 0 for all 21 employees with units; Prakash DA 60% vs master 63%; employee 043 special allowance sits on an old master revision.
+- Open for the client: closed Sept has electricity 0 for all 21 employees with units; employee 055 DA 60% vs master 63%; employee 043 special allowance sits on an old master revision.

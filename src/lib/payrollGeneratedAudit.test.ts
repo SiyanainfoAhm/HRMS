@@ -51,7 +51,7 @@ const emptyDed: GovernmentDeductionDefaults = {
 function generatedRow(overrides: Partial<Record<string, unknown>> = {}): Record<string, unknown> {
   return {
     employeeUserId: "emp-1",
-    employeeName: "Subhash Duryodhan Katkar",
+    employeeName: "Ravi Demokumar Sampleson",
     monthlyPayrollId: "mp-1",
     payslipId: "ps-1",
     payDays: 31,

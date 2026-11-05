@@ -6,7 +6,7 @@ function eq(actual: unknown, expected: unknown, label: string) {
   if (a !== e) { failures++; console.error(`FAIL ${label}\n  expected ${e}\n  actual   ${a}`); } else console.log(`ok   ${label}`);
 }
 
-// The bug: Masalkar's lines typed quickly. A lookup started when the list was [HPL Sep 4, EOL Sep 1] resolves after the
+// The bug: Four leave lines typed quickly. A lookup started when the list was [HPL Sep 4, EOL Sep 1] resolves after the
 // operator already typed EOL Sep = 2 and added two October lines. The lookup result must only add the Sep basis.
 const staleResolved: LeaveLine[] = [
   { type: "HPL", month: 9, year: 2026, days: 4, grossBasic: 43100, daPercent: 63, daysInMonth: 30 },

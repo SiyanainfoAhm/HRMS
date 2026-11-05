@@ -21,7 +21,7 @@ SHA-256 values at verification time are:
 | `September Salary 2026 - Foxpro.xlsx` | `017222C0BE6B16F29E0AF59C866DD47C75AD6B3E28932CD9927848E124D9C09C` |
 
 The FoxPro detail and employee input each contain 83 records. Eighty identities
-match by CPF number; codes 082 Devendra Singh, 083 Vipin Kumar, and 084 Aditya
+match by CPF number; codes 082, 083, and 084
 Kumar remain manual review. The CIRT saved/export population is 83 rows.
 
 ## Canonical comparison mapping
@@ -40,7 +40,7 @@ into an unrelated allowance.
 | CPF-matched employees (80) | 8,151,268.00 | 8,123,168.43 | -28,099.57 | 2,555,697.00 | 2,534,858.00 | -20,839.00 | 5,595,571.00 | 5,588,310.43 | -7,260.57 |
 
 The detailed-source comparison has 80 mapped employees. Its largest ranked
-employee difference is code 069 (Amol Laxman Zape); the detailed workbook and
+employee difference is code 069; the detailed workbook and
 summary extract do not reconcile consistently for every component, so this is
 diagnostic evidence only and not a new salary input.
 
