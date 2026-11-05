@@ -35,7 +35,7 @@ type Sample = { name: string; gr: GovRecalcPayload; payDays: number; arrear?: { 
 const samples: Sample[] = [
   {
     // The reported case: Master flat electricity 49, units 80, water 314, mess 25.
-    name: "Subhash (units 80, master 49)",
+    name: "Employee A (units 80, master 49)",
     gr: {
       grossBasic: 34590, daPercent: 53, hraPercent: 30, medicalFixed: 0, payLevel: 10,
       electricityUnitsConsumed: 80, electricityMode: "manual_fixed", electricityApplicable: true,
@@ -156,13 +156,13 @@ assertEq(summary.totalEarnings, Math.round(sumGross * 100) / 100, "workbook gros
 assertEq(summary.totalDeductions, Math.round(sumDed * 100) / 100, "workbook deductions");
 assertEq(summary.netPayable, Math.round(sumNet * 100) / 100, "workbook net");
 assertEq(Math.round((summary.totalEarnings - summary.totalDeductions) * 100) / 100, summary.netPayable, "workbook gross - deductions = net (zero tolerance)");
-// Arrears are counted once: 1200 for Subhash, not 2400.
+// Arrears are counted once: 1200 for Employee A, not 2400.
 assertEq(summary.totalArrears, 1200, "workbook total arrears counted once");
 
 // 5. The reported case specifically.
-const subhash = outputs[0].row.governmentMonthly as { deductions: Record<string, number> };
-assertEq(subhash.deductions.electricity === 49, false, "Subhash electricity is not the master 49");
-assertEq(subhash.deductions.water, 314, "water as entered");
-assertEq(subhash.deductions.mess, 30, "mess edited to 30");
+const employeeA = outputs[0].row.governmentMonthly as { deductions: Record<string, number> };
+assertEq(employeeA.deductions.electricity === 49, false, "Employee A electricity is not the master 49");
+assertEq(employeeA.deductions.water, 314, "water as entered");
+assertEq(employeeA.deductions.mess, 30, "mess edited to 30");
 
 console.log("payroll end-to-end totals: ok (" + outputs.length + " employees)");

@@ -188,7 +188,7 @@ final class PostPayrollDownloadTest extends DatabaseTestCase
         $this->assertSame($tot('lic_amount'), $sumCol('Insurance'));
         // Dates are real Excel dates shown mm/dd/yyyy.
         $this->assertSame('mm/dd/yyyy', $ws->getStyle('F2')->getNumberFormat()->getFormatCode());
-        $this->assertSame(['Subhash', 'Duryodhan', 'Katkar'], PostPayrollDownloadService::splitName('Subhash Duryodhan Katkar'));
+        $this->assertSame(['Ravi', 'Demokumar', 'Sampleson'], PostPayrollDownloadService::splitName('Ravi Demokumar Sampleson'));
     }
 
     public function test_reports_cannot_alter_finalized_payroll(): void

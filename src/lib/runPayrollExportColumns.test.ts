@@ -76,9 +76,13 @@ for (let r = 0; r < rows.length; r++) {
   assertEq(col("GrossTotal", r) - col("TotalDeductions", r), col("NetSalary", r), `row ${r}: Gross - Deductions = Net`);
 }
 
-// 4. Monthly Summary: only Run Payroll heads, same labels.
+// 4. Monthly Summary: only Run Payroll heads, same labels. CIRT / FoxPro layout: TR Arrears sit inside Transport and Gross Arrears is an
+// information line, so neither is an earnings head (DA Arrears is its own row, in summary.arrears); HPL / EOL are information, not
+// deduction heads (they are only kept while some row still carries a typed HPL / EOL deduction, as the fixture rows below do).
 const summary = aggregatePayrollSummary(rows);
-assertEq(Object.keys(summary.earnings), screenEarnings.filter((l) => !Object.keys(summary.arrears).includes(l)), "summary earnings heads = Run Payroll labels");
+assertEq(Object.keys(summary.earnings), screenEarnings.filter((l) => !["DA Arrears", "TR Arrears", "Gross Arrears"].includes(l)), "summary earnings heads = Run Payroll labels (without the arrears rows)");
+assertEq(Object.keys(summary.arrears), ["DA Arrears"], "DA Arrears is the one arrears row in the earnings block");
+// These fixture rows carry typed HPL / EOL deduction amounts, so those two heads are kept (monthlySummaryRows.test.ts covers their removal when zero).
 assertEq(Object.keys(summary.deductions), RUN_PAYROLL_DEDUCTION_LINES.map((l) => l.label), "summary deduction heads = Run Payroll labels");
 assertEq(Object.keys(summary.deductions).includes("Std Licence Fee"), false, "no Std Licence Fee head");
 

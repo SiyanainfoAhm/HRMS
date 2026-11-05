@@ -7,7 +7,7 @@ use Illuminate\Support\Facades\Schema;
 
 /**
  * Quarter assignment data fix (confirmed by CIRT):
- *  1. Employee 042 (Vijay Pathare): "Quarter 2" was a placeholder for B2/7. Keep ONE B2/7
+ *  1. Employee 042: "Quarter 2" was a placeholder for B2/7. Keep ONE B2/7
  *     assignment starting on the earliest Quarter 2 start date, open-ended; drop the
  *     Quarter 2 rows and the separate 2026-11-03 start.
  *  2. Collapse repeated rows of the same employee + quarter into one assignment
@@ -18,7 +18,7 @@ use Illuminate\Support\Facades\Schema;
  */
 return new class extends Migration
 {
-    private const PATHARE_CODE = '042';
+    private const EMPLOYEE_042_CODE = '042';
 
     public function up(): void
     {
@@ -26,14 +26,14 @@ return new class extends Migration
             return;
         }
 
-        $this->mergePathare();
+        $this->mergeEmployee042();
         $this->collapseDuplicates();
         $this->deleteDummyQuarters();
     }
 
-    private function mergePathare(): void
+    private function mergeEmployee042(): void
     {
-        $employeeId = DB::table('cirt_payroll_master')->where('employee_code', self::PATHARE_CODE)->whereNull('effective_to')->value('employee_user_id');
+        $employeeId = DB::table('cirt_payroll_master')->where('employee_code', self::EMPLOYEE_042_CODE)->whereNull('effective_to')->value('employee_user_id');
         if (! $employeeId) {
             return;
         }
@@ -43,17 +43,17 @@ return new class extends Migration
         $placeholder = $rows->where('quarter_name', 'Quarter 2')->where('status', 'inactive');
         $real = $rows->where('quarter_name', 'B2/7')->whereNull('assigned_to');
         if ($placeholder->isEmpty() || $real->count() !== 1) {
-            Log::warning('quarter-data-fix: Pathare merge skipped (expected Quarter 2 placeholder rows and exactly one open B2/7 row).', ['rows' => $rows->all()]);
+            Log::warning('quarter-data-fix: Employee 042 merge skipped (expected Quarter 2 placeholder rows and exactly one open B2/7 row).', ['rows' => $rows->all()]);
 
             return;
         }
 
         $keep = $real->first();
         $start = (string) $placeholder->min('assigned_from');
-        Log::info('quarter-data-fix: Pathare BEFORE', ['rows' => $rows->all()]);
+        Log::info('quarter-data-fix: Employee 042 BEFORE', ['rows' => $rows->all()]);
         DB::table('cirt_quarter_assignments')->whereIn('id', $placeholder->pluck('id')->all())->delete();
         DB::table('cirt_quarter_assignments')->where('id', $keep->id)->update(['assigned_from' => $start, 'assigned_to' => null, 'updated_at' => now()]);
-        Log::info('quarter-data-fix: Pathare AFTER', ['rows' => DB::table('cirt_quarter_assignments')->where('employee_id', $employeeId)->get()->all()]);
+        Log::info('quarter-data-fix: Employee 042 AFTER', ['rows' => DB::table('cirt_quarter_assignments')->where('employee_id', $employeeId)->get()->all()]);
     }
 
     private function collapseDuplicates(): void

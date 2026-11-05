@@ -9,10 +9,10 @@ use App\Services\PayrollDraftService;
 use Illuminate\Support\Facades\DB;
 
 /**
- * CIRT-01: 80 units entered for Subhash (code 001) must stay 80 and bill from the tariff through
+ * CIRT-01: 80 units entered for employee code 001 must stay 80 and bill from the tariff through
  * save -> reload -> generate; the Master default (49 in the report) may only apply at 0 units.
  */
-final class SubhashElectricityUnitsTest extends DatabaseTestCase
+final class Employee001ElectricityUnitsTest extends DatabaseTestCase
 {
     use FinalizedPayrollSnapshot;
 

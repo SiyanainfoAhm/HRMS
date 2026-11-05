@@ -24,7 +24,7 @@ final class ExportHeadersAndYearFormatTest extends TestCase
         return [
             'month_year' => '2026-09-01', '_ym' => 202609, 'pay_level' => 7 + $i, 'basic_actual' => 50000, 'basic_paid' => 50000, 'da_paid' => 0,
             'unpaid_days' => 0, 'total_earnings' => 50000, 'total_deductions' => 0, 'net_salary' => 50000, 'custom_earnings' => '{}', 'custom_deductions' => '{}',
-            '_master' => ['employee_code' => sprintf('%03d', $i), 'name' => 'Amar Pandurang Ghotane', 'pan' => 'ABCDE1234F', 'cpf_no' => '300', 'division' => 'Safety', 'date_of_birth' => '1990-05-15'],
+            '_master' => ['employee_code' => sprintf('%03d', $i), 'name' => 'Amit Testrao Example', 'pan' => 'ABCDE1234F', 'cpf_no' => '300', 'division' => 'Safety', 'date_of_birth' => '1990-05-15'],
             '_user' => ['current_postal_code' => '411026'],
         ];
     }

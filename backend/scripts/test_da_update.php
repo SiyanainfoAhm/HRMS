@@ -16,9 +16,12 @@ $rows = DB::table('cirt_payroll_master')
 echo "=== BEFORE ===\n";
 echo json_encode($rows, JSON_PRETTY_PRINT)."\n";
 
-$master = HrmsPayrollMaster::query()->where('name', 'like', '%Punjabi%')->first();
+// usage: php scripts/test_da_update.php "<part of the employee name>"
+$needle = trim((string) ($argv[1] ?? ''));
+$needle !== '' || exit("Give part of the employee name to look for.".PHP_EOL);
+$master = HrmsPayrollMaster::query()->where('name', 'like', '%'.$needle.'%')->first();
 if (! $master) {
-    echo "Punjabi not found\n";
+    echo "{$needle} not found\n";
     exit(1);
 }
 

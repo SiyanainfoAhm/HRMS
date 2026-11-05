@@ -184,3 +184,45 @@ export function normalizeLeaveLines(
   legacy("EOL");
   return out;
 }
+
+/**
+ * Copy the looked-up month basis (Basic, DA %, calendar days, warning) onto the CURRENT lines of the same month that
+ * still lack it. A background lookup started for an older version of the list must never decide what the lines are:
+ * type, month, year and days (and which lines exist) always come from `current`, which is what the operator typed last.
+ */
+export function applyResolvedLeaveBasis(current: readonly LeaveLine[], resolved: readonly LeaveLine[]): LeaveLine[] {
+  const basis = new Map<string, LeaveLine>();
+  for (const r of resolved) {
+    if (r.grossBasic != null && r.daPercent != null && !basis.has(`${r.year}-${r.month}`)) basis.set(`${r.year}-${r.month}`, r);
+  }
+  return current.map((l) => {
+    if (l.grossBasic != null && l.daPercent != null) return l;
+    const b = basis.get(`${l.year}-${l.month}`);
+    if (!b) return l;
+    return {
+      ...l,
+      grossBasic: b.grossBasic,
+      daPercent: b.daPercent,
+      ...(b.daysInMonth != null ? { daysInMonth: b.daysInMonth } : {}),
+      ...(b.warning ? { warning: b.warning } : {}),
+    };
+  });
+}
+
+type LeaveLineKey = Pick<LeaveLine, "type" | "month" | "year" | "days">;
+const keyOfLine = (l: LeaveLineKey) => `${l.type === "EOL" ? "EOL" : "HPL"} ${l.year}-${l.month} x${Math.floor(Number(l.days) || 0)}`;
+
+/**
+ * Save-time safety check: the lines the editor shows must be exactly the lines in the save request (same order, type,
+ * month, year, days). Returns null when they agree, otherwise a description of the first difference.
+ */
+export function leaveLinesMismatch(shown: readonly LeaveLineKey[], sent: readonly LeaveLineKey[] | null | undefined): string | null {
+  const s = sent ?? [];
+  const n = Math.max(shown.length, s.length);
+  for (let i = 0; i < n; i++) {
+    const a = shown[i] ? keyOfLine(shown[i]) : "(no line)";
+    const b = s[i] ? keyOfLine(s[i]) : "(no line)";
+    if (a !== b) return `line ${i + 1}: screen shows ${a}, save would send ${b}`;
+  }
+  return null;
+}

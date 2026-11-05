@@ -14,5 +14,5 @@ Setting up the test database (once):
 2. Load the structure only: `pg_dump --schema-only --no-owner hrms | psql cirt_payroll_test`, plus the `migrations` table rows.
 3. `php artisan migrate --env=testing` (applies migrations newer than the clone). `.env.testing` points at the test database.
 
-Skipped by design (they need the client's real data): `ClientDataCopyTest`, `PrakashAuditTest`, `SubhashElectricityUnitsTest`,
+Skipped by design (they need the client's real data): `ClientDataCopyTest`, `Employee055AuditTest`, `Employee001ElectricityUnitsTest`,
 and the two quarter tests that need a schema without the one-open-assignment index.

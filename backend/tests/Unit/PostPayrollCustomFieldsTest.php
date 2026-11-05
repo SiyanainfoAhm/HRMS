@@ -17,7 +17,7 @@ final class PostPayrollCustomFieldsTest extends TestCase
     private function row(): array
     {
         return [
-            'month_year' => '2026-09-01', '_ym' => 202609, '_master' => ['employee_code' => '037', 'name' => 'Amar Pandurang Ghotane', 'cpf_no' => '300'], '_user' => [],
+            'month_year' => '2026-09-01', '_ym' => 202609, '_master' => ['employee_code' => '037', 'name' => 'Amit Testrao Example', 'cpf_no' => '300'], '_user' => [],
             'pay_level' => 7, 'basic_actual' => 50000, 'basic_paid' => 50000, 'da_paid' => 30000, 'hra_paid' => 0, 'transport_paid' => 5760, 'medical_paid' => 3000,
             'encashment_paid' => 0, 'da_arrears_paid' => 1000, 'transport_arrears_paid' => 200, 'gross_arrear' => 1200,
             'custom_earnings' => '{"arrears": 22636, "encashment_arrears": 869, "special_allowance": 200, "over_time_allowance": 100}',
