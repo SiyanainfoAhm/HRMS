@@ -79,3 +79,6 @@ Encashment_Entry_Oct2026.xlsx
 
 # Scratch space: Playwright replays, verification copies and payroll backups (confidential payroll data)
 /tmp/
+
+# Local user store with a password hash (kept out of git)
+/data/users.json
