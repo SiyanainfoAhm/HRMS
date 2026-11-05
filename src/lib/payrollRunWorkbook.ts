@@ -195,6 +195,12 @@ export function aggregatePayrollSummary(rows: PayrollRunExportRow[]) {
   const arrears: Record<string, number> = Object.fromEntries(arrearLines.map((l) => [l.label, 0]));
   const deductions: Record<string, number> = Object.fromEntries(RUN_PAYROLL_DEDUCTION_LINES.map((l) => [l.label, 0]));
   let encashmentDaTotal = 0; // retired line: shown only while some row still carries an amount
+  // Heads that exist on every export. Free-entry (custom) heads that add up to zero in every row are left out, so a
+  // rebuilt draft that stores 0 for Past Arrears / Encashment Arrears does not add a row and shift the ones below it.
+  const standardEarningLabels = new Set(Object.keys(earnings));
+  const standardDeductionLabels = new Set(Object.keys(deductions));
+  // CIRT-06: the CPF Arr (CPF on arrears) is reported in the DA CPF row, as in the paybill, so the rows add up to Total Deductions.
+  const daCpfLabel = RUN_PAYROLL_DEDUCTION_LINES.find((l) => l.key === "daCpf")?.label;
 
   let totalEarnings = 0;
   let totalDeductions = 0;
@@ -217,6 +223,7 @@ export function aggregatePayrollSummary(rows: PayrollRunExportRow[]) {
 
       const d = gmDeductions(gm);
       for (const l of RUN_PAYROLL_DEDUCTION_LINES) deductions[l.label] += d[l.key] ?? 0;
+      if (daCpfLabel) deductions[daCpfLabel] += gmNum(gm, "cpfArrear", "cpf_arrear");
 
       for (const [key, amount] of Object.entries(
         parseCustomBag(gm.customDeductions ?? gm.custom_deductions),
@@ -240,6 +247,9 @@ export function aggregatePayrollSummary(rows: PayrollRunExportRow[]) {
   }
 
   if (encashmentDaTotal !== 0) earnings["Encashment DA"] = encashmentDaTotal;
+  for (const [map, standard] of [[earnings, standardEarningLabels], [deductions, standardDeductionLabels]] as const) {
+    for (const label of Object.keys(map)) if (!standard.has(label) && roundMoney(map[label]) === 0) delete map[label];
+  }
 
   return {
     employeeCount: rows.length,
