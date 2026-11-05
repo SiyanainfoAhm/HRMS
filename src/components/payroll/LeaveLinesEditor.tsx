@@ -94,6 +94,8 @@ export function LeaveLinesEditor({
   manualOverride,
   fallbackTotal,
   onChange,
+  busy,
+  onShown,
 }: {
   lines: LeaveLine[];
   /** Run month values the cuts are calculated with. Null when the saved row has none (cuts show "—"). */
@@ -104,6 +106,10 @@ export function LeaveLinesEditor({
   /** Total shown when the cuts cannot be calculated (saved rows without payroll inputs). */
   fallbackTotal?: number;
   onChange: (next: LeaveLine[]) => void;
+  /** The row is being recalculated (a month lookup is running): Add is disabled, typing still updates the lines. */
+  busy?: boolean;
+  /** Reports the lines this editor renders (null when it unmounts), for the save-time check against the save request. */
+  onShown?: (lines: LeaveLine[] | null) => void;
 }) {
   const runMonth = ctx?.runMonth ?? new Date().getMonth() + 1;
   const runYear = ctx?.runYear ?? new Date().getFullYear();
@@ -125,6 +131,11 @@ export function LeaveLinesEditor({
     rootRef.current?.querySelector<HTMLElement>(`[data-leave-row="${focusRow}"] [role="radio"][tabindex="0"]`)?.focus();
     setFocusRow(null);
   }, [focusRow, lines.length]);
+
+  useEffect(() => {
+    onShown?.(lines);
+  }, [lines, onShown]);
+  useEffect(() => () => onShown?.(null), [onShown]);
 
   const update = (index: number, patch: Partial<LeaveLine>) =>
     onChange(
@@ -248,7 +259,15 @@ export function LeaveLinesEditor({
   );
 
   const addButton = readOnly ? null : (
-    <Button type="button" variant="secondary" size="sm" onClick={add}>
+    <Button
+      type="button"
+      variant="secondary"
+      size="sm"
+      onClick={add}
+      disabled={busy}
+      title={busy ? "Recalculating this row…" : undefined}
+      aria-busy={busy || undefined}
+    >
       <Plus className="mr-1 h-3.5 w-3.5" aria-hidden /> Add leave line
     </Button>
   );

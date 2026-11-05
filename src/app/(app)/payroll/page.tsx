@@ -5,7 +5,7 @@ import { proportion, roundMoney, sumMoney } from "@/lib/money";
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
-import { FormEvent, useEffect, useState, useRef, useMemo, Suspense } from "react";
+import { FormEvent, useCallback, useEffect, useState, useRef, useMemo, Suspense } from "react";
 import { useToast } from "@/components/ToastProvider";
 import { dispatchHrmsChange, onHrmsChange } from "@/lib/hrmsChangeBus";
 import { AppPageError } from "@/components/ui/AppPageError";
@@ -44,7 +44,7 @@ import {
   isSamePayrollReferencePeriod,
   referenceSalaryFromGovRecalc,
 } from "@/lib/hplEolDeductions";
-import { daysInMonthOf, leaveLineError, type LeaveLine } from "@/lib/leaveDeductions";
+import { applyResolvedLeaveBasis, daysInMonthOf, leaveLineError, leaveLinesMismatch, type LeaveLine } from "@/lib/leaveDeductions";
 import {
   applyGovernmentPayrollRowCompute,
   arrearSnapshotFromRow,
@@ -826,6 +826,15 @@ function PayrollPageContent() {
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
   const [previewSearch, setPreviewSearch] = useState("");
+  /** Employees whose leave-line month lookup is running (Add leave line and Save Draft wait for it). */
+  const leaveLookupsRef = useRef(new Map<string, symbol>());
+  const [leaveLookupBusy, setLeaveLookupBusy] = useState(false);
+  /** The leave lines the open card renders, by employee (absent = card closed): checked against the save request. */
+  const shownLeaveLinesRef = useRef(new Map<string, LeaveLine[]>());
+  const onLeaveShown = useCallback((employeeUserId: string, lines: LeaveLine[] | null) => {
+    if (lines) shownLeaveLinesRef.current.set(employeeUserId, lines);
+    else shownLeaveLinesRef.current.delete(employeeUserId);
+  }, []);
   const debouncedPreviewSearch = useDebouncedValue(previewSearch, SEARCH_DEBOUNCE_MS);
   const [previewPage, setPreviewPage] = useState(1);
   const [previewPerPage, setPreviewPerPage] = useState(DEFAULT_PAGE_SIZE);
@@ -1675,19 +1684,33 @@ function PayrollPageContent() {
               (l) => l.days > 0 && !(l.month === runM && l.year === runY) && (l.grossBasic == null || l.daPercent == null),
             );
             if (unresolved) {
-              void hydrateLeaveLines(employeeUserId, grNext, runY, runM).then((grHydrated) => {
-                if (activePeriodKeyRef.current !== editPeriodKey) return;
-                setEditableRows((prev) =>
-                  prev.map((r) => {
-                    if (r.employeeUserId !== employeeUserId || !r.govRecalc) return r;
-                    const next = recompute(grHydrated, r.payDays, undefined, r, { clearMonetaryOverrides: true });
-                    const cacheKey = payrollRowCacheKey(payrollPeriodKey(runYear, runMonth), employeeUserId);
-                    runRowEditsRef.current.set(cacheKey, next);
-                    resolvedPayrollByUserIdRef.current.set(cacheKey, next as RunPayrollRowLike);
-                    return next;
-                  }),
-                );
-              });
+              // The month lookup is asynchronous. Its result may only add the looked-up Basic / DA % / days to the lines
+              // that are on the row WHEN IT FINISHES; it never replaces the list, so lines and days typed meanwhile survive.
+              const token = Symbol("leave-lookup");
+              leaveLookupsRef.current.set(employeeUserId, token);
+              queueMicrotask(() => setLeaveLookupBusy(leaveLookupsRef.current.size > 0));
+              void hydrateLeaveLines(employeeUserId, grNext, runY, runM)
+                .then((grHydrated) => {
+                  if (activePeriodKeyRef.current !== editPeriodKey) return;
+                  setEditableRows((prev) =>
+                    prev.map((r) => {
+                      if (r.employeeUserId !== employeeUserId || !r.govRecalc) return r;
+                      const grCurrent: GovRecalcPayload = {
+                        ...r.govRecalc,
+                        leaveLines: applyResolvedLeaveBasis(r.govRecalc.leaveLines ?? [], grHydrated.leaveLines ?? []),
+                      };
+                      const next = recompute(grCurrent, r.payDays, undefined, r, { clearMonetaryOverrides: true });
+                      const cacheKey = payrollRowCacheKey(payrollPeriodKey(runYear, runMonth), employeeUserId);
+                      runRowEditsRef.current.set(cacheKey, next);
+                      resolvedPayrollByUserIdRef.current.set(cacheKey, next as RunPayrollRowLike);
+                      return next;
+                    }),
+                  );
+                })
+                .finally(() => {
+                  if (leaveLookupsRef.current.get(employeeUserId) === token) leaveLookupsRef.current.delete(employeeUserId);
+                  setLeaveLookupBusy(leaveLookupsRef.current.size > 0);
+                });
             }
             return recompute(grNext, row.payDays, undefined, row, { clearMonetaryOverrides: true });
           }
@@ -2730,6 +2753,10 @@ function PayrollPageContent() {
       showToast("error", "Finalized payroll cannot be saved as a draft.");
       return false;
     }
+    if (leaveLookupsRef.current.size > 0) {
+      showToast("error", "A leave line is still being recalculated. Wait a moment, then press Save Draft again.");
+      return false;
+    }
     setDraftSaving(true);
     try {
       const rows = await collectAllRunRowsForExport();
@@ -2748,6 +2775,18 @@ function PayrollPageContent() {
         const names = badLeave.length > 3 ? `${badLeave.slice(0, 3).join(", ")} and ${badLeave.length - 3} more` : badLeave.join(", ");
         showToast("error", `Fix leave lines for ${names} before saving.`);
         return false;
+      }
+      // Safety check: the leave lines on screen must be exactly the leave lines in what is about to be saved.
+      for (const r of rows) {
+        const shown = shownLeaveLinesRef.current.get(String(r.employeeUserId));
+        if (!shown) continue;
+        const sentLines = (r as { govRecalc?: { leaveLines?: LeaveLine[] } }).govRecalc?.leaveLines;
+        const diff = leaveLinesMismatch(shown, sentLines);
+        if (diff) {
+          const who = String((r as { employeeName?: string | null }).employeeName || r.employeeUserId);
+          showToast("error", `Not saved: the leave lines on screen for ${who} differ from what would be saved (${diff}). Nothing was saved. Re-enter the leave lines for this employee and try again.`);
+          return false;
+        }
       }
       const periodKey = payrollPeriodKey(runYear, runMonth);
       const rowsToSave = rowsForPayrollDraftSave(
@@ -3790,7 +3829,7 @@ function PayrollPageContent() {
                     : `${previewMeta.total || editableRows.length} employees • Calculated`
             }
             draftSaving={draftSaving}
-            saveDraftDisabled={previewLoading || draftHydrationLoading || Boolean(draftLoadError) || !draftDirty || !!preview?.alreadyRun || editableRows.length === 0 || !payrollLease.ready || !payrollLease.acquired}
+            saveDraftDisabled={leaveLookupBusy || previewLoading || draftHydrationLoading || Boolean(draftLoadError) || !draftDirty || !!preview?.alreadyRun || editableRows.length === 0 || !payrollLease.ready || !payrollLease.acquired}
             onSaveDraft={preview?.alreadyRun ? undefined : () => void savePayrollDraft()}
             onResetUnsavedEdits={preview?.alreadyRun || !draftDirty || !payrollLease.acquired ? undefined : discardUnsavedPayrollEdits}
             onDiscardDraft={preview?.alreadyRun || !draftMeta || !payrollLease.acquired ? undefined : () => void resetPayrollDraft()}
@@ -3896,6 +3935,8 @@ function PayrollPageContent() {
                       payrollFieldDefs={payrollConfig?.fields ?? []}
                       preserveSavedFields={Boolean(preview?.alreadyRun || draftMeta)}
                       onUpdate={updateEditableRow}
+                      leaveBusy={leaveLookupBusy}
+                      onLeaveShown={onLeaveShown}
                     />
                 ) : preview?.daysInMonth ? (
                   <PrivateRunPreviewCards

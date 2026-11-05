@@ -3,7 +3,7 @@
 import { formatMoney, roundMoney } from "@/lib/money";
 import { MoneyInput } from "@/components/ui/MoneyInput";
 
-import { useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import type { PayrollFieldDefinition } from "@/lib/payrollFieldTypes";
 import { cn } from "@/lib/cn";
 import { DaysNumberInput } from "@/components/ui/DaysNumberInput";
@@ -259,6 +259,10 @@ type Props = {
   payrollFieldDefs?: PayrollFieldDefinition[];
   preserveSavedFields?: boolean;
   onUpdate: (employeeUserId: string, field: string, value: number | string) => void;
+  /** A leave-line month lookup is running: the leave editor disables Add leave line. */
+  leaveBusy?: boolean;
+  /** Reports the leave lines the open employee card shows (null when it closes). */
+  onLeaveShown?: (employeeUserId: string, lines: LeaveLine[] | null) => void;
 };
 
 function SummaryStat({ label, value, emphasis }: { label: string; value: string; emphasis?: boolean }) {
@@ -522,6 +526,8 @@ function GovernmentEmployeeDetail({
   payrollFieldDefs,
   preserveSavedFields,
   onUpdate,
+  leaveBusy,
+  onLeaveShown,
 }: {
   row: GovernmentRunPreviewRow;
   runYear: number;
@@ -534,6 +540,8 @@ function GovernmentEmployeeDetail({
   payrollFieldDefs?: PayrollFieldDefinition[];
   preserveSavedFields?: boolean;
   onUpdate: Props["onUpdate"];
+  leaveBusy?: boolean;
+  onLeaveShown?: Props["onLeaveShown"];
 }) {
   const scrollerRef = useRef<PayrollScrollerHandle>(null);
   const g = row.governmentMonthly;
@@ -548,6 +556,8 @@ function GovernmentEmployeeDetail({
       ? (gRecord.leaveLines as LeaveLine[])
       : null;
   const leaveLines = storedLeaveLines ?? normalizeLeaveLines((grLeave ?? {}) as object, runMonth, runYear);
+  const employeeUserIdForLeave = row.employeeUserId;
+  const onShown = useCallback((l: LeaveLine[] | null) => onLeaveShown?.(employeeUserIdForLeave, l), [onLeaveShown, employeeUserIdForLeave]);
   const leaveCtx =
     grLeave && Number(grLeave.grossBasic) > 0
       ? {
@@ -811,6 +821,8 @@ function GovernmentEmployeeDetail({
               manualOverride={Boolean(leave.hplDeductionManualOverride || leave.eolDeductionManualOverride)}
               fallbackTotal={leaveFallbackTotal}
               onChange={(next) => onUpdate(row.employeeUserId, "leaveLines", JSON.stringify(next))}
+              busy={leaveBusy}
+              onShown={onShown}
             />
           </div>
         </div>
@@ -831,6 +843,8 @@ export function GovernmentRunPreviewTable({
   payrollFieldDefs = [],
   preserveSavedFields = false,
   onUpdate,
+  leaveBusy,
+  onLeaveShown,
 }: Props) {
   const [requestedSelectedId, setSelectedId] = useState<string | null>(null);
   const selectedId = rows.some((row) => row.employeeUserId === requestedSelectedId)
@@ -902,6 +916,8 @@ export function GovernmentRunPreviewTable({
               payrollFieldDefs={payrollFieldDefs}
               preserveSavedFields={preserveSavedFields}
               onUpdate={onUpdate}
+              leaveBusy={leaveBusy}
+              onLeaveShown={onLeaveShown}
             />
           ) : (
             <div className="flex h-full items-center justify-center p-6 text-[13px] text-slate-500">
