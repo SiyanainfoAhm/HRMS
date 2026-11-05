@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { draftAuditDetailLines } from "@/lib/payrollDraftAuditDetails";
 import { AppPageLoader } from "@/components/ui/AppPageLoader";
 
 type AuditLog = {
@@ -54,12 +55,9 @@ export function PayrollDraftAuditLogs() {
                 <tr key={log.id} className="border-b border-slate-100">
                   <td className="px-2 py-2 font-medium capitalize">
                     {log.action.replaceAll("_", " ")}
-                    {log.employees?.flatMap((employee, employeeIndex) => Object.entries(employee.changes ?? {}).map(([field, change]) => (
-                      <div key={`${employee.employeeUserId ?? employeeIndex}-${field}`} className="mt-1 text-xs font-normal text-slate-600">
-                        {employee.employeeCode ?? employee.employeeUserId}: {field} {String(change.previous ?? "—")} → {String(change.new ?? "—")}
-                        {employee.reason ? ` (${employee.reason})` : ""}
-                      </div>
-                    )))}
+                    {draftAuditDetailLines(log.employees).map((line) => (
+                      <div key={line.key} className="mt-1 text-xs font-normal normal-case text-slate-600">{line.text}</div>
+                    ))}
                   </td>
                   <td className="px-2 py-2">{String(log.payrollMonth).padStart(2, "0")}/{log.payrollYear}</td>
                   <td className="px-2 py-2 tabular-nums">{log.employeeCount}</td>
