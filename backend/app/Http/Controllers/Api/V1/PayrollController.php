@@ -506,14 +506,14 @@ class PayrollController extends Controller
             }
 
             if ($search !== '') {
-                $term = mb_strtolower($search);
-                $hay = mb_strtolower(implode(' ', array_filter([
+                // Extra spaces in the typed text or in the stored name do not matter (SearchText).
+                if (! \App\Support\SearchText::matches(
+                    $search,
                     (string) ($m->employee_code ?? ''),
                     (string) ($m->name ?? ''),
                     (string) ($m->email ?? ''),
                     (string) ($empUser->name ?? ''),
-                ])));
-                if (! str_contains($hay, $term)) {
+                )) {
                     continue;
                 }
             }
@@ -1961,13 +1961,12 @@ class PayrollController extends Controller
             $employeeCode = $employee?->employee_code ?? $employeeUser?->employee_code;
 
             if ($search !== '') {
-                $term = mb_strtolower($search);
-                $haystack = mb_strtolower(implode(' ', array_filter([
+                if (! \App\Support\SearchText::matches(
+                    $search,
                     (string) $employeeCode,
                     (string) ($employeeUser?->name ?? ''),
                     (string) ($employeeUser?->email ?? ''),
-                ])));
-                if (! str_contains($haystack, $term)) {
+                )) {
                     continue;
                 }
             }
