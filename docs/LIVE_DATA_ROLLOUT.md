@@ -35,7 +35,7 @@ other than exactly one draft row is skipped and reported. The column "Now in app
 | 2 | Retired-fields audit (read-only) | staged build, live DB | nothing |
 | 2b | Special Pay fold (only if the audit lists any) | staged build, live DB | drafts |
 | 3 | Deploy code + migrations (`deploy-cirt-hrms.ps1`) | server | schema, Quarters |
-| 4 | Data steps D1-D8 | live backend | October draft (and July if 2b) |
+| 4 | Data steps D1, D1b, D1c, then D2-D9 (Quarters first, then the October draft) | live backend | Quarters, October draft (and July if 2b) |
 | 5 | Verification (section 5) | live | nothing |
 | 6 | Export Monthly Summary for October | app | nothing |
 
@@ -84,17 +84,28 @@ Migrations that matter for this rollout, in file-name order (any that live alrea
 
 Local starting point is not the same as live's, so each step states what to expect as a **change**; section 7 gets the exact figures from the rehearsal.
 
-### D1. Quarters (done by the migrations in section 3; no separate command)
-Rows identified by quarter name and employee code. Expected local result, to compare after the migrations:
-- Quarters: 21 with status `assigned` + 1 `inactive` ("Q1- 400", see open item A). "Quarter 2" is gone.
-- Assignments: 22 in total, 21 open (`assigned_to` NULL), 0 repeated employee+quarter pairs, 0 employees with two open assignments.
-- Employee 042: exactly one assignment, quarter B2/7, from 2026-07-02, open.
-- Current Payroll Masters with a quarter: 21, `quarter_rent` sum 15,690.
-- `rent_at_assignment` is **not** rewritten by any migration (historical record, payroll ignores it). Locally 4 open assignments differ from the quarter's current rent: 065 E-I, 046 E-2, 040 E-3 (1,650 vs 1,710) and 073 B1/2 (1,000 vs 440). That is expected and not a rollout step.
-- Quarter rents themselves live in the Quarters master. Locally E-I, E-2, E-3 = 1,710, B1/2 = 440, the other 17 quarters = 440 / 880 as listed in the app. No migration or command sets rent: if live's Quarters master rent differs it must be edited in the app, see open item B.
+### D1. Quarters: migrations (section 3), then D1b and D1c (commands)
+Rows identified by quarter name and employee code. After the migrations of section 3 (merge of 042, duplicate collapse, mirror sync, "Quarter 2" removal), run D1b and D1c.
+
+### D1b. Remove the placeholder quarter "Q1- 400" and its orphan assignment
+The delete migration keeps a placeholder quarter that anything references. Locally "Q1- 400" had one closed assignment (2026-07-01 to 2026-10-30) to an employee id that no longer exists in `cirt_users`. This command deletes that orphan assignment and then the quarter, and refuses (changes nothing) unless the quarter is inactive with no assigned employee, nothing in Payroll Master or generated payroll references it, and every assignment of it is closed with a non-existent employee.
+```powershell
+<php> artisan payroll:remove-orphan-quarter "Q1- 400"            # dry run
+<php> artisan payroll:remove-orphan-quarter "Q1- 400" --apply
+```
+Expected: dry run lists "1 orphan closed assignment(s)" (rent_at_assignment 20,000); after --apply a second run says "No quarter named 'Q1- 400': nothing to do". If live refuses, read the reasons: an open assignment or an existing employee means it is not a placeholder, stop and ask. Every deleted row is also written to the Laravel log (`quarter-data-fix`).
+
+### D1c. Quarter rents (by quarter name) and rent_at_assignment
+Sets `monthly_rent` of every quarter from `backend/database/data/quarter_rents.json` (the local Quarters master of 2026-11-06: 21 quarters, A/B quarters 440, D quarters 880, E-I / E-2 / E-3 1,710; the file lists every name), syncs `rent_at_assignment` of the **open** assignments of those quarters, and `quarter_rent` of the current Payroll Master rows holding them. Closed assignments, Payroll Master history and generated / finalized payroll are never touched. It refuses unless every name in the file exists exactly once and no other active quarter exists, and it rolls back unless the result is **21 open assignments with a rent total of 15,690** (rent_at_assignment total equal).
+```powershell
+<php> artisan payroll:set-quarter-rents            # dry run: lists each rent / rent_at_assignment it would change
+<php> artisan payroll:set-quarter-rents --apply
+```
+Locally the dry run listed no rent change and 4 `rent_at_assignment` changes: 073 B1/2 1,000 -> 440; 046 E-2, 040 E-3, 065 E-I 1,650 -> 1,710. On live the dry run is the comparison: any other line is a difference between live's Quarters master and local's, read it before applying.
+Expected end state of D1 (also local's): Quarters 21, all `assigned`, none inactive; assignments 21, all open; 0 repeated employee+quarter pairs; 0 employees with two open assignments; employee 042 has exactly one assignment, B2/7 from 2026-07-02; current Payroll Masters with a quarter 21, `quarter_rent` sum 15,690; open-assignment rent total 15,690.
 
 ### D2. October draft: quarter rent from the Quarters master
-Automatic: the draft takes quarter id / name / type / rent from the Quarters master every time it is opened or saved (`applyAuthoritativeQuarterValues`); there is no command.
+Automatic: the draft takes quarter id / name / type / rent from the Quarters master every time it is opened or saved (`applyAuthoritativeQuarterValues`); there is no command. The draft rows are rewritten by the saves of D4-D9, so run D1b/D1c **first**.
 Expected: quarter rent 15,690 for exactly 21 employees (all others 0), HRA 0 for those 21.
 
 ### D3. (reserved: Special Pay fold, done in 2.3 before the deploy)
@@ -114,7 +125,7 @@ Local: 81 employees changed. Expected after: sum of DA arrears 378,930, TR arrea
 Local: 55 employees. Expected after: sum of Encash. 2,295,106. Local deltas: Gross +2,206,434, Net +2,206,434, deductions 0.
 
 ### D6. Leave lines (017, 005) and Transport 0 (077)
-Needs Node on the server: the row is calculated by the same code the screen uses (`npx --yes tsx scripts/draft-edit-replay.ts`); see open item C.
+Needs Node on the server: the row is calculated by the same code the screen uses, run with the pinned local `tsx` (`node node_modules\tsx\dist\cli.mjs scripts\draft-edit-replay.ts`; `tsx` 4.23.15 is a devDependency installed by `npm ci`, nothing is downloaded at run time, see open item C). Check first: `Test-Path <live>\node_modules\tsx\dist\cli.mjs` must be True, otherwise run `npm ci` in `<live>` (or run this one step from the staged build). The command stops with a clear message if tsx is missing.
 ```powershell
 <php> artisan payroll:apply-leave-lines --year=2026 --month=10 --user=admin@cirtindia.com --note="Leave deduction Ref ADM:Gen:1521 dtd 27.10.2026" --edits=D:\hrms-rollout\leave_edits.json
 <php> artisan payroll:apply-leave-lines --year=2026 --month=10 --user=admin@cirtindia.com --note="Leave deduction Ref ADM:Gen:1521 dtd 27.10.2026" --edits=D:\hrms-rollout\leave_edits.json --apply
@@ -150,7 +161,8 @@ Local draft v22, 82 employees. After all steps on live (to be confirmed by the r
 
 | Check | Expected |
 |---|---|
-| Quarter rent | 15,690 for 21 employees |
+| Quarters | 21 quarters (all assigned), 21 assignments (all open), rent total 15,690, no "Q1- 400" / "Quarter 2" |
+| Quarter rent in the October draft | 15,690 for 21 employees |
 | Gross (Total Earnings) | 1,14,12,817 |
 | Total Deductions | 27,83,121 |
 | Net | 86,29,696 |
@@ -180,12 +192,16 @@ This is the same invocation `deploy-cirt-hrms.ps1` uses for its own backup (`--f
 
 Not done yet: waiting for the live dump. To be filled in: migrations run on `hrms_livecopy`, every step above (dry run, apply) with the counts and totals it produced, the comparison with local October v22, and any difference.
 
-## Open items found while preparing this (decide before the live run)
+## Open items (decisions taken are marked)
 
-A. **"Q1- 400" is NOT deleted locally.** The delete migration keeps a dummy quarter that anything references. It still has one closed assignment (2026-07-01 to 2026-10-30) to an employee id that no longer exists in `cirt_users`. "Quarter 2" is gone. If "Q1- 400" must go too, that assignment row has to be removed first (a decision, not scripted).
-B. **Quarter rent edits are not captured by any script.** Locally E-I / E-2 / E-3 (1,710) and B1/2 (440) differ from `rent_at_assignment`; the Quarters master edits were made in the app (rows last edited 2026-09-25 .. 2026-10-14). Whether live has the same rents is checked in the comparison (step 3); if not, they must be set in the app before D2.
-C. **`tsx` is not a project dependency.** D6 runs `npx --yes tsx`, which downloads it from the npm registry the first time. A server without internet access needs `tsx` added as a devDependency (so `npm ci` installs it) or D6 run from a machine that has it.
-D. **The draft's `employee_code` column differs from the real employee code for 77 of 82 rows** (for example the draft column holds a legacy number while `employeeCode` in the row is the payslip code). The commands match by name/user, not by that column, and report both; the draft column itself was not changed by this work.
-E. **Employee 001's assignment and Payroll Master were both updated at 11:17 on 2026-11-06 (same second)**, apparently an edit in the app; assigned-from date and rent are unchanged. Not scripted; the comparison will show whether live differs.
+A. **"Q1- 400"**: decided, scripted as D1b. Applied to local `hrms` on 2026-11-06 (backup `hrms_before_quarter_cleanup_20261106.dump`), so local no longer has it.
+B. **Quarter rents**: decided, scripted as D1c (`quarter_rents.json` = local Quarters master). Applied to local `hrms` the same day: 4 `rent_at_assignment` values synced, no rent changed.
+C. **`tsx`**: decided, pinned as devDependency `tsx@4.23.15` (published 2026-09-20, 47 days before the pin) and run from `node_modules` by `payroll:apply-leave-lines` and by `npm test`; no `npx --yes` remains in code.
+D. **The draft `employee_code` column** differs from the real employee code in 77 of 82 October rows (for example a legacy number instead of the payslip code). Report only, nothing changed. Where it is printed:
+   - **Settings > payroll draft audit log** (`PayrollDraftAuditLogs`): every line starts with the audit entry's `employeeCode` (or the user id if there is none). Entries written by a normal draft save carry the **draft column value** (the legacy number); entries written by `payroll:fold-special-pay` carry the real code. So one employee can appear under two different codes on that screen.
+   - The draft **reset** record stores the same column value in its employee snapshot (same screen).
+   - Run Payroll rows: the app takes `employeeCode` from the draft column first, then the row payload. The value rides along in the row objects passed to the draft save and to the workbook builders, but **no screen column, Excel / Employee Detail / Monthly Summary column or payslip prints it**: the Employee Detail header has no EmployeeCode column (checked), the Monthly Summary has none.
+   - **Not affected:** generated payroll, payslips and the post-payroll reports (TDS, CPF, Division-wise, Paybill) read the code from Payroll Master / the employee, never from the draft column.
+E. **Employee 001, 2026-11-06 11:16-11:17: who changed what.** The activity log has no entry for it (its last `payroll_master.changed` is 2026-10-30 16:25, and today has only three logins by admin@cirtindia.com at 09:14, 09:20 and 13:27). The Laravel log shows it: user admin@cirtindia.com (user id a1deb014, the same one that made every other edit) saved employee 001's Payroll Master from the screen three times (`payroll_master.http_update`, master id ending ...4473f): 11:16:41 saved, DA 63 unchanged, `structure_changed=false`; 11:17:02 **rejected** by the concurrency check ("Payroll was updated in another tab or session"); 11:17:05 saved again. The only data difference left in the database is a **new recurring Special Allowance value of 500** for 001 (`cirt_payroll_field_values`, created 11:17:05, no end date); the master row, its full-history row and 001's quarter assignment got `updated_at` 11:17:05 as a side effect of that save (DA 63, HRA 30, quarter D2/3, rent 880 are unchanged). The October draft does **not** include this 500 (it was built earlier and does not re-read Master values), so October Special Allowance stays 8,600. Open question for you: should live's Payroll Master for 001 also get Special Allowance 500 (recurring)? It is not scripted: say so and I add a step, otherwise it is a local-only master change that the comparison will report.
 F. **Employee 010 has one no-pay-effect screen save (2026-11-05 08:56)**: leave lines `[]`, a Transport override of 5,868 cleared, `prBonus` / `incentive` / `reimbursement` stored as 0. Pay is identical either way; it can show up as a cosmetic payload difference in the field-by-field comparison.
 G. **Not covered here:** the July draft is stale against the corrected Quarters (stored vs shown differ in all 83 rows). It is not part of this rollout.

@@ -13,13 +13,14 @@ function walk(dir) {
   });
 }
 
+const tsxCli = join(process.cwd(), "node_modules", "tsx", "dist", "cli.mjs");
 const files = walk(root).filter((f) => /\.test\.(ts|mjs)$/.test(f)).sort();
 const failed = [];
 for (const file of files) {
   const isTs = file.endsWith(".ts");
-  const cmd = isTs ? "npx" : "node";
-  const args = isTs ? ["--yes", "tsx", file] : [file];
-  const result = spawnSync(cmd, args, { stdio: "pipe", encoding: "utf8", shell: process.platform === "win32" });
+  // tsx is a pinned devDependency: run it from node_modules, never through npx (no registry access).
+  const args = isTs ? [tsxCli, file] : [file];
+  const result = spawnSync(process.execPath, args, { stdio: "pipe", encoding: "utf8" });
   const label = relative(process.cwd(), file);
   if (result.status === 0) {
     console.log(`ok    ${label}`);
