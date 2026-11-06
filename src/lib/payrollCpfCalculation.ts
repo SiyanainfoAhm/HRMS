@@ -78,7 +78,6 @@ export function runPayrollBasisAmountsFromComputed(computed: {
   hraPaid: number;
   medicalPaid: number;
   transportPaid: number;
-  spPayPaid: number;
   extraWorkAllowancePaid: number;
   nightAllowancePaid: number;
   uniformAllowancePaid: number;
@@ -92,7 +91,6 @@ export function runPayrollBasisAmountsFromComputed(computed: {
     hra: computed.hraPaid,
     medical: computed.medicalPaid,
     transport: computed.transportPaid,
-    sp_pay: computed.spPayPaid,
     extra_work_allowance: computed.extraWorkAllowancePaid,
     night_allowance: computed.nightAllowancePaid,
     uniform_allowance: computed.uniformAllowancePaid,
@@ -244,7 +242,6 @@ export function resolveMasterCpfBasisAmount(
     hra: calc.hra_amount ?? 0,
     medical: calc.medical ?? 0,
     transport: calc.transport_total ?? 0,
-    sp_pay: 0,
     extra_work_allowance: 0,
     night_allowance: 0,
     uniform_allowance: 0,

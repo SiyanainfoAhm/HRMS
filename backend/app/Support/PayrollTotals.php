@@ -10,7 +10,7 @@ namespace App\Support;
 final class PayrollTotals
 {
     public const EARNING_KEYS = [
-        'basicPaid', 'spPayPaid', 'daPaid', 'transportPaid', 'hraPaid', 'medicalPaid',
+        'basicPaid', 'daPaid', 'transportPaid', 'hraPaid', 'medicalPaid',
         'extraWorkAllowancePaid', 'nightAllowancePaid', 'uniformAllowancePaid', 'educationAllowancePaid',
         'daArrearsPaid', 'transportArrearsPaid', 'encashmentPaid', 'encashmentDaPaid',
         'incentive', 'prBonus', 'reimbursement',
@@ -18,7 +18,7 @@ final class PayrollTotals
 
     public const DEDUCTION_KEYS = [
         'incomeTax', 'pt', 'lic', 'cpf', 'daCpf', 'vpf', 'pfLoan', 'postOffice', 'creditSociety',
-        'stdLicenceFee', 'electricity', 'water', 'mess', 'loanRecovery', 'welfare', 'hpl', 'eol',
+        'electricity', 'water', 'mess', 'loanRecovery', 'welfare', 'hpl', 'eol',
         'vehCharge', 'other', 'quarterRent',
     ];
 
@@ -53,6 +53,35 @@ final class PayrollTotals
             self::amount($gm['transportArrearsPaid'] ?? $gm['transport_arrears_paid'] ?? 0),
             self::amount($gm['cpfArrear'] ?? $gm['cpf_arrear'] ?? ($gm['arrearDeductions']['cpfArrear'] ?? 0)),
         ];
+    }
+
+    /** @return array<string, mixed> a row, snapshot or Eloquent model as a plain array */
+    private static function asArray(array|object $source): array
+    {
+        if (is_array($source)) return $source;
+
+        return $source instanceof \Illuminate\Contracts\Support\Arrayable ? $source->toArray() : (array) $source;
+    }
+
+    /**
+     * THE DA CPF of an employee-month = CPF on the DA arrears = the CPF Arr line (mirror: daCpfOf in src/lib/daCpf.ts).
+     * deductions.daCpf / da_cpf_amount is never read: it is not an input any more (always 0), and the amount is already
+     * inside Total Deductions through CPF Arr. Accepts a monthly row (array or object, snake keys) or a monthly snapshot (camel keys).
+     */
+    public static function daCpf(array|object $source): float
+    {
+        $a = self::asArray($source);
+
+        return self::amount($a['cpfArrear'] ?? $a['cpf_arrear'] ?? ($a['arrearDeductions']['cpfArrear'] ?? 0));
+    }
+
+    /** Total CPF = CPF + DA CPF (the employee's whole CPF recovery for the month). */
+    public static function totalCpf(array|object $source): float
+    {
+        $a = self::asArray($source);
+        $ded = is_array($a['deductions'] ?? null) ? $a['deductions'] : [];
+
+        return Money::roundMoney(self::amount($ded['cpf'] ?? $a['cpf_amount'] ?? $a['cpf'] ?? 0) + self::daCpf($a));
     }
 
     /** Total arrears in a month = Gross Arrears = DA + TR, counted once. */

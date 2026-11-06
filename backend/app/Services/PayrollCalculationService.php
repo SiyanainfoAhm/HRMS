@@ -165,7 +165,6 @@ final class PayrollCalculationService
      *   pf_loan: float,
      *   post_office: float,
      *   credit_society: float,
-     *   standard_licence_fee: float,
      *   electricity: float,
      *   water: float,
      *   loan_recovery: float,
@@ -258,7 +257,7 @@ final class PayrollCalculationService
         $totalDeductions = $this->roundMoney(
             $incomeTax + $professionalTax + $deductions['lic'] + $cpfEffective + $daCpf
             + $deductions['vpf'] + $deductions['pf_loan'] + $deductions['post_office']
-            + $deductions['credit_society'] + $deductions['standard_licence_fee']
+            + $deductions['credit_society']
             + $deductions['electricity'] + $deductions['water'] + $deductions['mess']
             + $deductions['loan_recovery'] + $deductions['welfare'] + $deductions['hpl'] + $deductions['eol']
             + $deductions['vehicle_charge']
@@ -295,7 +294,6 @@ final class PayrollCalculationService
             'pf_loan' => $deductions['pf_loan'],
             'post_office' => $deductions['post_office'],
             'credit_society' => $deductions['credit_society'],
-            'standard_licence_fee' => $deductions['standard_licence_fee'],
             'electricity' => $deductions['electricity'],
             'water' => $deductions['water'],
             'loan_recovery' => $deductions['loan_recovery'],
@@ -361,7 +359,6 @@ final class PayrollCalculationService
             'pf_loan' => $g(['pf_loan', 'pfLoan', 'pf_loan_default', 'pfLoanDefault'], 0),
             'post_office' => $g(['post_office', 'post_office_default', 'postOffice'], 0),
             'credit_society' => $g(['credit_society', 'credit_society_default', 'creditSociety'], 0),
-            'standard_licence_fee' => $g(['standard_licence_fee', 'standardLicenceFee', 'std_licence_fee_default', 'stdLicenceFeeDefault'], 0),
             'electricity' => $g(['electricity', 'electricity_default'], 0),
             'water' => $g(['water', 'water_default'], 0),
             'mess' => $g(['mess', 'mess_default'], 0),

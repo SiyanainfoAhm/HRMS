@@ -21,7 +21,7 @@ final class PayrollFieldRegistry
 
     /** Other standard components payroll accepts as a CPF basis (shared by Settings validation and preflight). */
     public const EXTRA_CPF_BASIS_KEYS = [
-        'sp_pay', 'telephone_allowance', 'education_allowance', 'encashment', 'gpf',
+        'telephone_allowance', 'education_allowance', 'encashment', 'gpf',
         'extra_work_allowance', 'night_allowance', 'uniform_allowance', 'da_arrears',
         'transport_arrears', 'gross_arrears', 'net_arrears',
     ];
@@ -77,7 +77,6 @@ final class PayrollFieldRegistry
         return [
             $row(['field_label' => 'Increment Month', 'field_key' => 'increment_month', 'field_group' => 'basic', 'field_type' => 'dropdown', 'dropdown_options' => ['January', 'July'], 'is_required' => true]),
             $row(['field_label' => 'Basic', 'field_key' => 'gross_basic', 'field_group' => 'earnings', 'field_type' => 'number', 'include_in_total_earnings' => true]),
-            $row(['field_label' => 'SP Pay', 'field_key' => 'sp_pay', 'field_group' => 'earnings', 'field_type' => 'number', 'include_in_total_earnings' => true]),
             $row(['field_label' => 'DA', 'field_key' => 'da', 'field_group' => 'earnings', 'field_type' => 'percentage', 'include_in_total_earnings' => true]),
             $row(['field_label' => 'Transport', 'field_key' => 'transport', 'field_group' => 'earnings', 'field_type' => 'number', 'include_in_total_earnings' => true]),
             $row(['field_label' => 'HRA', 'field_key' => 'hra', 'field_group' => 'earnings', 'field_type' => 'percentage', 'include_in_total_earnings' => true]),
@@ -134,7 +133,7 @@ final class PayrollFieldRegistry
     }
 
     /** System components which deliberately store employee-specific values in the dynamic-value table. */
-    public const MASTER_VALUE_SYSTEM_KEYS = ['sp_pay', 'education_allowance', 'telephone_allowance', 'encashment'];
+    public const MASTER_VALUE_SYSTEM_KEYS = ['education_allowance', 'telephone_allowance', 'encashment'];
 
     /**
      * Resolve earning amounts for CPF basis from master calculation context.
@@ -149,7 +148,6 @@ final class PayrollFieldRegistry
             'hra' => (float) ($calc['hra_amount'] ?? 0),
             'medical' => (float) ($calc['medical'] ?? 0),
             'transport' => (float) ($calc['transport_total'] ?? 0),
-            'sp_pay' => 0.0,
             'extra_work_allowance' => 0.0,
             'night_allowance' => 0.0,
             'uniform_allowance' => 0.0,

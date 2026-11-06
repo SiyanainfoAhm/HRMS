@@ -17,6 +17,22 @@ Rules: finalized payroll never changes (proved: md5 of monthly/payslips/periods/
 - [x] CIRT-11 Post Payroll Downloads: TDS (month range), CPF, Division-Wise (live formulas)
 - [x] CIRT-12 Post Payroll Downloads: Paybill (flat + print sheet); 16 columns have no payroll source
 
+- [x] CIRT-13 Remove "Special Pay" (SP Pay) and "Std Licence Fee": removed from Run Payroll, Payroll Master, calculations, payslip, exports, paybill, reports, amendments, field registry; the two `cirt_payroll_field_definitions` rows deleted; migration `2026_11_06_100000_remove_sp_pay_and_std_licence_fee` drops the 7 columns and strips the keys from JSON payloads. The TDS Data layout keeps its fixed "SP PAY" column (blank). Local: the three July 2026 draft Special Pay amounts (Mandavgade 200, Kedari 1,000, Desai 200) were moved to Special Allowance by a direct JSON edit (stored totals unchanged), audited as admin@cirtindia.com.
+
+#### Deployment checklist: CIRT-13 (remove Special Pay / Std Licence Fee)
+Live server and database are NOT touched by this commit. Before the deploy script runs:
+- [ ] 1. Back up the live database (the deploy script's verified `pg_dump` is the minimum; take a manual one first, because this migration DROPS COLUMNS and rewrites JSON payloads and cannot be undone from the app).
+- [ ] 2. Run the audit on LIVE first (read-only), from `<live>\backend`: `php artisan payroll:retired-fields-audit`. It must end with "No non-zero ... anywhere" (exit 0). If it lists anything, STOP and do not deploy: move the amount to Special Allowance first (live data differs from the local copy; the three July amounts above were only found locally).
+- [ ] 3. Deploy with `scripts/deploy-cirt-hrms.ps1` as usual. Its `php artisan migrate --force` runs `2026_11_06_100000_remove_sp_pay_and_std_licence_fee`, which re-checks the same values itself and refuses (changes nothing) if any is non-zero. Do not pass `-RepairData` for this change.
+- [ ] 4. `php artisan payroll:schema-check` passes; Run Payroll for the open month shows no "Special Pay" column, Monthly Summary has no "Special Pay" row, and Gross / Total Deductions / Net of the open drafts are the same as before the deploy (note them down before step 3).
+- [ ] 5. Before step 3, run `php artisan migrate:status` on live and write down what is pending. `migrate --force` runs every pending migration in file-name order. For this release that is, in this order (skip any that live already ran):
+  1. `2026_11_04_100000_add_org_name_snapshot_to_monthly_payroll`: adds nullable `division_name` / `designation_name` to `cirt_monthly_payroll` and fills them once from each row's Payroll Master version (history text only, no amounts; rows with no master stay NULL). Touches generated/finalized rows' new columns only. NOT yet run locally.
+  2. `2026_11_05_110000_add_employer_share_rule_to_calculation_settings`: adds three nullable CPF employer-share settings (`pension_percentage`, `pension_wage_ceiling`, `employer_contribution_percentage`) to `cirt_payroll_calculation_settings`. All NULL, so the CPF sheet leaves PENSION / EMP_ CONTR. empty until the Trust rule is entered. Additive, no amounts touched. Run locally on 6 Nov.
+  3. `2026_11_06_100000_remove_sp_pay_and_std_licence_fee` (this change): refuses to run if anything non-zero exists; deletes the two field definitions, strips the JSON keys, drops the 7 columns. Destructive, so it is the last one, after the step-1 backup and the step-2 audit.
+  Any older pending migration on live also runs first, in the same order by date.
+- Rollback: restore the step-1 backup (`-RestoreDatabase -ConfirmDatabaseRestore`); `migrate:rollback` only re-creates the empty columns.
+- Not rewritten by design: activity-log rows and the "changes" paths of draft audit entries (history).
+
 ### Needs clarification
 Unpaid Arrears exact field; the two extra arrears fields (which is "second" = Past Arrears); Net Arrears approved formula (kept Gross - CPF Arr); night duty rounding (NIGHT_DUTY_UNITS_DECIMALS=2, ROUND_TO_RUPEE=true) and per-duty rates (seeded hourly x 8); "DA Arr" = DA CPF or CPF Arr; where Mess/Credit Society/Electricity defaults are maintained now; employee category and division-to-report-group mapping; PENSION/EMP_CONTR split; latest report samples.
 

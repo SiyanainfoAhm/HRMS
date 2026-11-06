@@ -54,6 +54,6 @@ Artisan::command('cirt:reconcile-september-2026 {--dry-run : Read and validate o
         $this->info('No write required: both verified corrections are already persisted.');
     }
     $totals = DB::table('cirt_monthly_payroll')->where('payroll_period_id', $periodId)->selectRaw('sum(total_earnings) gross, sum(total_deductions) deductions, sum(net_salary) net')->first();
-    $this->line(json_encode(['mode' => $this->option('apply') ? 'apply' : 'dry_run', 'run_id' => $periodId, 'backup_bytes' => filesize($backup), 'snapshots' => $snapshotCount, 'payslips' => $payslipCount, 'verified_components' => $report, 'totals' => $totals, 'unresolved' => ['CPF policy', 'Transport policy', 'Electricity tariff/meter evidence', 'GPF identity', 'Arrears classification', 'Special Pay/Telephone split', '082/083/084 identity review']], JSON_PRETTY_PRINT));
+    $this->line(json_encode(['mode' => $this->option('apply') ? 'apply' : 'dry_run', 'run_id' => $periodId, 'backup_bytes' => filesize($backup), 'snapshots' => $snapshotCount, 'payslips' => $payslipCount, 'verified_components' => $report, 'totals' => $totals, 'unresolved' => ['CPF policy', 'Transport policy', 'Electricity tariff/meter evidence', 'GPF identity', 'Arrears classification', '082/083/084 identity review']], JSON_PRETTY_PRINT));
     return 0;
 })->purpose('Validate and idempotently reconcile only source-verified September 2026 CIRT corrections');

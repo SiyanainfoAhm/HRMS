@@ -52,7 +52,6 @@ export type PayrollMasterPreviewInput = {
   pfLoan?: number | string;
   postOffice?: number | string;
   creditSociety?: number | string;
-  standardLicenceFee?: number | string;
   electricity?: number | string;
   water?: number | string;
   loanRecovery?: number | string;
@@ -210,8 +209,6 @@ export function computePayrollMasterPreview(input: PayrollMasterPreviewInput): P
   const pfLoan = input.pfLoan === "" ? 0 : roundMoney(num(input.pfLoan, 0));
   const postOffice = input.postOffice === "" ? 0 : roundMoney(num(input.postOffice, 0));
   const creditSociety = input.creditSociety === "" ? 0 : roundMoney(num(input.creditSociety, 0));
-  const standardLicenceFee =
-    input.standardLicenceFee === "" ? 0 : roundMoney(num(input.standardLicenceFee, 0));
   const electricity = input.electricity === "" ? 0 : roundMoney(num(input.electricity, 0));
   const water = input.water === "" ? 0 : roundMoney(num(input.water, 0));
   const loanRecovery = input.loanRecovery === "" ? 0 : roundMoney(num(input.loanRecovery, 0));
@@ -236,7 +233,6 @@ export function computePayrollMasterPreview(input: PayrollMasterPreviewInput): P
       pfLoan +
       postOffice +
       creditSociety +
-      standardLicenceFee +
       electricity +
       water +
       mess +

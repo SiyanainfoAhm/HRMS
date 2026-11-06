@@ -12,7 +12,7 @@ use Tests\Support\TestWorld;
 /**
  * Boots the Laravel app against the LOCAL development database and wraps every
  * test in a transaction that is always rolled back, so nothing is persisted.
- * Refuses to run against a non-local host. Skips when the database is down.
+ * Refuses to run against a non-local host. FAILS (never skips) on PHP below 8.4 or when the test database is down.
  */
 abstract class DatabaseTestCase extends TestCase
 {
@@ -36,6 +36,10 @@ abstract class DatabaseTestCase extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        // Database tests must never be skipped by accident: an old PHP or a missing test database is a failure, not a pass.
+        if (PHP_VERSION_ID < 80400) {
+            $this->fail('Database tests need PHP 8.4 or newer (running '.PHP_VERSION.'). Run them with C:\php84\php.exe vendor/bin/phpunit.');
+        }
         $this->app = self::$booted;
 
         // Hard stop: the suite may only touch a database whose name ends in _test (cirt_payroll_test), never hrms.
@@ -50,7 +54,7 @@ abstract class DatabaseTestCase extends TestCase
         try {
             DB::connection()->getPdo();
         } catch (\Throwable $e) {
-            $this->markTestSkipped('Local database unavailable: '.$e->getMessage());
+            $this->fail('Test database unavailable (create cirt_payroll_test, see tests/README.md): '.$e->getMessage());
         }
         // The cache (in-memory under phpunit) must not remember a company id from a previous, rolled-back test.
         Cache::flush();

@@ -50,12 +50,12 @@ final class CpfSheetTest extends TestCase
     {
         $ws = $this->sheet();
         $this->assertSame(
-            ['SR NO', 'UAN', 'NAME AS PER UAN', 'CPF  NO', 'GBASIC', 'NCP DAYS', 'BASIC', 'DA', 'HRA', 'TPT', 'MEDICAL', 'Total', 'CPF', 'DA CPF', 'VPF', 'PENSION', 'EMP_ CONTR.'],
-            array_map(fn ($c) => $ws->getCell([$c, 4])->getValue(), range(1, 17)),
+            ['SR NO', 'UAN', 'NAME AS PER UAN', 'CPF  NO', 'GBASIC', 'NCP DAYS', 'BASIC', 'DA', 'HRA', 'TPT', 'MEDICAL', 'Total', 'CPF', 'DA CPF', 'Total CPF', 'VPF', 'PENSION', 'EMP_ CONTR.'],
+            array_map(fn ($c) => $ws->getCell([$c, 4])->getValue(), range(1, 18)),
         );
         $this->assertEquals([9264, 5868, 0], [$ws->getCell('M5')->getValue(), $ws->getCell('M6')->getValue(), $ws->getCell('M7')->getValue()], 'CPF');
         $this->assertEquals([500, 250, 0], [$ws->getCell('N5')->getValue(), $ws->getCell('N6')->getValue(), $ws->getCell('N7')->getValue()], 'DA CPF = CPF Arr');
-        $this->assertEquals([3000, 0, 0], [$ws->getCell('O5')->getValue(), $ws->getCell('O6')->getValue(), $ws->getCell('O7')->getValue()], 'VPF moved one column right');
+        $this->assertEquals([3000, 0, 0], [$ws->getCell('P5')->getValue(), $ws->getCell('P6')->getValue(), $ws->getCell('P7')->getValue()], 'VPF moved two columns right');
     }
 
     public function test_totals_rows_include_the_da_cpf_column(): void
@@ -64,14 +64,15 @@ final class CpfSheetTest extends TestCase
         $cirt = $this->find($ws, 'CIRT TOTAL');
         $contract = $this->find($ws, 'CONTRACT TOTAL');
         $grand = $this->find($ws, 'GRAND TOTAL');
-        foreach (['M', 'N', 'O', 'P', 'Q'] as $col) {
+        foreach (['M', 'N', 'O', 'P', 'Q', 'R'] as $col) {
             $this->assertStringStartsWith("=SUBTOTAL(109,{$col}5:{$col}", (string) $ws->getCell("{$col}{$cirt}")->getValue(), "CIRT TOTAL {$col}");
             $this->assertSame(0, $ws->getCell("{$col}{$contract}")->getValue(), "CONTRACT TOTAL {$col} (no contract employees)");
             $this->assertSame("={$col}{$cirt}+{$col}{$contract}", $ws->getCell("{$col}{$grand}")->getValue(), "GRAND TOTAL {$col}");
         }
         $this->assertEquals(15132, $ws->getCell("M{$grand}")->getCalculatedValue(), 'CPF total');
         $this->assertEquals(750, $ws->getCell("N{$grand}")->getCalculatedValue(), 'DA CPF total');
-        $this->assertEquals(3000, $ws->getCell("O{$grand}")->getCalculatedValue(), 'VPF total');
+        $this->assertEquals(15882, $ws->getCell("O{$grand}")->getCalculatedValue(), 'Total CPF = CPF + DA CPF');
+        $this->assertEquals(3000, $ws->getCell("P{$grand}")->getCalculatedValue(), 'VPF total');
     }
 
     public function test_summary_block_formulas_and_total(): void
@@ -86,8 +87,8 @@ final class CpfSheetTest extends TestCase
         $this->assertSame([$cpfRow + 1, $cpfRow + 2], [$vpfRow, $employerRow], 'order: CPF Recovery, VPF Recovery, Employers P F Contribution');
         $this->assertSame([1, 2, 3], [$ws->getCell("B{$cpfRow}")->getValue(), $ws->getCell("B{$vpfRow}")->getValue(), $ws->getCell("B{$employerRow}")->getValue()]);
         $this->assertSame("=M{$grand}+N{$grand}", $ws->getCell("D{$cpfRow}")->getValue(), 'CPF Recovery = CPF + DA CPF (employee deductions)');
-        $this->assertSame("=O{$grand}", $ws->getCell("D{$vpfRow}")->getValue(), 'VPF Recovery = VPF');
-        $this->assertSame("=P{$grand}+Q{$grand}", $ws->getCell("D{$employerRow}")->getValue(), 'Employers P F Contribution = PENSION + EMP_ CONTR.');
+        $this->assertSame("=P{$grand}", $ws->getCell("D{$vpfRow}")->getValue(), 'VPF Recovery = VPF');
+        $this->assertSame("=Q{$grand}+R{$grand}", $ws->getCell("D{$employerRow}")->getValue(), 'Employers P F Contribution = PENSION + EMP_ CONTR.');
         $this->assertSame('=SUM(D'.$cpfRow.':D'.$employerRow.')', $ws->getCell("D{$total}")->getValue(), 'TOTAL = sum of the three');
         $this->assertEquals(15882, $ws->getCell("D{$cpfRow}")->getCalculatedValue());
         $this->assertEquals(3000, $ws->getCell("D{$vpfRow}")->getCalculatedValue());
@@ -99,8 +100,8 @@ final class CpfSheetTest extends TestCase
     {
         $ws = $this->sheet(null);
         foreach ([5, 6, 7] as $r) {
-            $this->assertNull($ws->getCell("P{$r}")->getValue(), "PENSION row {$r} empty");
-            $this->assertNull($ws->getCell("Q{$r}")->getValue(), "EMP_ CONTR. row {$r} empty");
+            $this->assertNull($ws->getCell("Q{$r}")->getValue(), "PENSION row {$r} empty");
+            $this->assertNull($ws->getCell("R{$r}")->getValue(), "EMP_ CONTR. row {$r} empty");
         }
         $total = $this->find($ws, 'TOTAL');
         $this->assertSame(
@@ -113,16 +114,16 @@ final class CpfSheetTest extends TestCase
     {
         // Pension 8.33% of the CPF wage (Total) capped at 15,000; employer contribution 3.67% of the wage.
         $ws = $this->sheet(['pensionPercentage' => 8.33, 'pensionWageCeiling' => 15000.0, 'employerContributionPercentage' => 3.67]);
-        $this->assertEquals(1250, $ws->getCell('P5')->getValue(), 'Alpha: 8.33% of min(77,200; 15,000) = 1,249.50 -> 1,250');
-        $this->assertEquals(1250, $ws->getCell('P6')->getValue(), 'Beta: capped at 15,000 too');
-        $this->assertEquals(2833, $ws->getCell('Q5')->getValue(), 'Alpha: 3.67% of 77,200 = 2,833.24');
-        $this->assertEquals(1795, $ws->getCell('Q6')->getValue(), 'Beta: 3.67% of 48,900 = 1,794.63');
-        $this->assertNull($ws->getCell('P7')->getValue(), 'GPF member pays no CPF, so no employer share');
-        $this->assertNull($ws->getCell('Q7')->getValue());
+        $this->assertEquals(1250, $ws->getCell('Q5')->getValue(), 'Alpha: 8.33% of min(77,200; 15,000) = 1,249.50 -> 1,250');
+        $this->assertEquals(1250, $ws->getCell('Q6')->getValue(), 'Beta: capped at 15,000 too');
+        $this->assertEquals(2833, $ws->getCell('R5')->getValue(), 'Alpha: 3.67% of 77,200 = 2,833.24');
+        $this->assertEquals(1795, $ws->getCell('R6')->getValue(), 'Beta: 3.67% of 48,900 = 1,794.63');
+        $this->assertNull($ws->getCell('Q7')->getValue(), 'GPF member pays no CPF, so no employer share');
+        $this->assertNull($ws->getCell('R7')->getValue());
 
         $grand = $this->find($ws, 'GRAND TOTAL');
-        $this->assertEquals(2500, $ws->getCell("P{$grand}")->getCalculatedValue());
-        $this->assertEquals(4628, $ws->getCell("Q{$grand}")->getCalculatedValue());
+        $this->assertEquals(2500, $ws->getCell("Q{$grand}")->getCalculatedValue());
+        $this->assertEquals(4628, $ws->getCell("R{$grand}")->getCalculatedValue());
         $employer = $this->find($ws, 'Employers P F Contribution');
         $this->assertEquals(7128, $ws->getCell("D{$employer}")->getCalculatedValue(), 'Employers P F Contribution = Pension + Emp Contr.');
         $total = $this->find($ws, 'TOTAL');

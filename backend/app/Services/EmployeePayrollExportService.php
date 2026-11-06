@@ -576,7 +576,6 @@ class EmployeePayrollExportService
         $money('HRA Paid', 'earning', $col('hra_paid'));
         $money('Transport Paid', 'earning', $col('transport_paid'));
         $money('Medical Paid', 'earning', $col('medical_paid'));
-        $money('Special Pay', 'earning', $col('sp_pay_paid'));
         $money('Night Allowance', 'earning', fn (array $c): float => $c['n']($c['gov']->night_allowance_paid ?? $c['gov']->night_allowance_amount ?? 0));
         $money('Education Allowance', 'earning', fn (array $c): float => $c['n']($c['gov']->education_allowance_paid ?? 0));
         $money('Telephone Allowance', 'earning', fn (array $c): float => $c['n']($c['customEarnings']['telephone_allowance'] ?? 0));
@@ -585,6 +584,8 @@ class EmployeePayrollExportService
         $money('DA Arrear', 'earning', fn (array $c): float => $c['n']($c['gov']->da_arrears_paid ?? 0));
         $money('Transport Arrear', 'earning', fn (array $c): float => $c['n']($c['gov']->transport_arrears_paid ?? 0));
         $money(PayrollLabels::GROSS_ARREARS, 'earning', fn (array $c): float => $c['n']($c['gov']->gross_arrear ?? 0));
+        // CPF Arr belongs to the arrears group (DA, TR, Gross, CPF Arr, Net). Its amount is the DA CPF deduction, so it is a memo here, not a deduction column.
+        $money(PayrollLabels::CPF_ARREARS, 'info', fn (array $c): float => $c['n']($c['gov']->cpf_arrear ?? 0));
         $money('Incentive', 'earning', fn (array $c): float => $c['n']($c['gov']->payslip?->incentive ?? 0));
         $money('PR Bonus', 'earning', fn (array $c): float => $c['n']($c['gov']->payslip?->pr_bonus ?? 0));
         $money('Reimbursement', 'earning', fn (array $c): float => $c['n']($c['gov']->payslip?->reimbursement ?? 0));
@@ -599,13 +600,12 @@ class EmployeePayrollExportService
         $money('Professional Tax', 'deduction', fn (array $c): float => $c['n']($c['gov']->pt_amount ?? 0));
         $money('LIC', 'deduction', fn (array $c): float => $c['n']($c['gov']->lic_amount ?? 0));
         $money('CPF', 'deduction', fn (array $c): float => $c['n']($c['gov']->cpf_amount ?? 0));
-        $money('DA CPF', 'deduction', fn (array $c): float => $c['n']($c['gov']->da_cpf_amount ?? 0));
+        $money('DA CPF', 'deduction', fn (array $c): float => $c['n'](\App\Support\PayrollTotals::daCpf($c['gov'])));
         $money('GPF', 'deduction', fn (array $c): float => $c['n']($c['customDeductions']['gpf'] ?? 0));
         $money('VPF', 'deduction', fn (array $c): float => $c['n']($c['gov']->vpf_amount ?? 0));
         $money('PF Loan', 'deduction', fn (array $c): float => $c['n']($c['gov']->pf_loan_amount ?? 0));
         $money('Post Office', 'deduction', fn (array $c): float => $c['n']($c['gov']->post_office_amount ?? 0));
         $money('Credit Society', 'deduction', fn (array $c): float => $c['n']($c['gov']->credit_society_amount ?? 0));
-        $money('Standard Licence Fee', 'deduction', fn (array $c): float => $c['n']($c['gov']->std_licence_fee_amount ?? 0));
         $money('Electricity', 'deduction', fn (array $c): float => $c['n']($c['gov']->electricity_amount ?? $c['gov']->electricity_total ?? 0));
         $money('Electricity Units', 'info', fn (array $c): float => $c['n']($c['gov']->electricity_units_consumed ?? 0));
         $money('Water', 'deduction', fn (array $c): float => $c['n']($c['gov']->water_amount ?? 0));
@@ -617,7 +617,6 @@ class EmployeePayrollExportService
         $money('Vehicle Charge', 'deduction', fn (array $c): float => $c['n']($c['gov']->veh_charge_amount ?? 0));
         $money('Quarter Rent', 'deduction', fn (array $c): float => $c['n']($c['gov']->quarter_rent_amount ?? 0));
         $money('Other Deduction', 'deduction', fn (array $c): float => $c['n']($c['gov']->other_deduction_amount ?? 0));
-        $money(PayrollLabels::CPF_ARREARS, 'deduction', fn (array $c): float => $c['n']($c['gov']->cpf_arrear ?? 0));
         foreach ($customKeys['deductions'] as $key) {
             $money($this->uniqueHeader(array_column($cols, 'header'), $this->customHeaderLabel($customKeys['labels'][$key] ?? $key)), 'deduction',
                 fn (array $c) => isset($c['customDeductions'][$key]) ? $c['n']($c['customDeductions'][$key]) : '');

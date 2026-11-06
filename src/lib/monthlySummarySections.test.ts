@@ -13,7 +13,8 @@ for (const addr of Object.keys(ws)) {
   if (addr.startsWith("!")) continue;
   const v = (ws as Record<string, XLSX.CellObject>)[addr]?.v;
   if (typeof v !== "string") continue;
-  const m = /^([A-Z])\. [A-Z]/.exec(v);
+  // Section titles are all caps ("A. GROSS SALARY"); line labels such as "N. All." (night allowance) are not headings.
+  const m = /^([A-Z])\. [A-Z]{2,}/.exec(v);
   if (m && XLSX.utils.decode_cell(addr).c === 0) {
     letters.push(m[1]);
     titles.push(v);

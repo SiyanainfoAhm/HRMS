@@ -13,7 +13,7 @@ namespace App\Support;
 final class PayrollExportTotals
 {
     private const EARNING_COLUMNS = [
-        'basic_paid', 'sp_pay_paid', 'da_paid', 'transport_paid', 'hra_paid', 'medical_paid',
+        'basic_paid', 'da_paid', 'transport_paid', 'hra_paid', 'medical_paid',
         'extra_work_allowance_paid', 'night_allowance_paid', 'uniform_allowance_paid', 'education_allowance_paid',
         'da_arrears_paid', 'transport_arrears_paid', 'encashment_paid', 'encashment_da_paid',
         'incentive', 'pr_bonus', 'reimbursement',
@@ -21,7 +21,7 @@ final class PayrollExportTotals
 
     private const DEDUCTION_COLUMNS = [
         'income_tax_amount', 'pt_amount', 'lic_amount', 'cpf_amount', 'da_cpf_amount', 'vpf_amount', 'pf_loan_amount',
-        'post_office_amount', 'credit_society_amount', 'std_licence_fee_amount', 'electricity_amount', 'water_amount',
+        'post_office_amount', 'credit_society_amount', 'electricity_amount', 'water_amount',
         'mess_amount', 'loan_recovery_amount', 'welfare_amount', 'hpl_amount', 'eol_amount', 'veh_charge_amount',
         'other_deduction_amount', 'quarter_rent_amount', 'cpf_arrear',
     ];

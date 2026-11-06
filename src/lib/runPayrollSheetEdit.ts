@@ -29,7 +29,6 @@ export type GovernmentMonthlySheetState = Record<string, unknown> & {
 
 export const SHEET_EARNING_KEYS = [
   "basicPaid",
-  "spPayPaid",
   "daPaid",
   "transportPaid",
   "hraPaid",
@@ -64,7 +63,6 @@ export const SHEET_DEDUCTION_KEYS = [
   "pfLoan",
   "postOffice",
   "creditSociety",
-  "stdLicenceFee",
   "electricity",
   "water",
   "mess",

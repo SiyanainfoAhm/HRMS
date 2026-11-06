@@ -34,7 +34,7 @@ assertEq(totalArrearsPaid(1000, 200, 99999), 1200, "total arrears = DA + TR what
 // 2. A row, computed like the Run Payroll screen does.
 const ded = {
   incomeTax: 0, pt: 200, lic: 0, cpf: 0, daCpf: 0, vpf: 0, pfLoan: 0, postOffice: 0, creditSociety: 0,
-  stdLicenceFee: 0, electricity: 0, water: 0, mess: 0, loanRecovery: 0, welfare: 0, hpl: 0, eol: 0,
+  electricity: 0, water: 0, mess: 0, loanRecovery: 0, welfare: 0, hpl: 0, eol: 0,
   vehCharge: 0, other: 0, quarterRent: 0,
 };
 const gr: GovRecalcPayload = {
@@ -139,7 +139,8 @@ const pair = (pairs: [string, number][], label: string) => pairs.find(([l]) => l
 assertEq(pair(earningPairs, "DA Arrears"), 2000, "payslip DA arrears");
 assertEq(pair(earningPairs, "TR Arrears"), 100, "payslip TR arrears");
 assertEq(pair(earningPairs, "Gross Arrears"), 0, "payslip: Gross Arrears is not printed again on top of its two lines");
-assertEq(pair(deductionPairs, "CPF Arr"), 243, "payslip CPF arrears");
+assertEq(pair(deductionPairs, "DA CPF"), 243, "payslip DA CPF = CPF Arr");
+assertEq(deductionPairs.some(([l]) => l === "CPF Arr"), false, "CPF Arr is not printed a second time");
 assertEq(sumMoney(...earningPairs.map(([, v]) => v)), rg.totalEarnings, "payslip earning lines add up to Gross");
 assertEq(rg.totalEarnings - rg.totalDeductions, rg.netSalary, "payslip: gross - deductions = net pay");
 const excel = buildPayrollExcelRow({ payroll_mode: "government", employee_user_id: "u" }, "Emp", { kind: "row", row: slip as never });

@@ -35,7 +35,7 @@ const emptyDed: GovernmentDeductionDefaults = {
   pfLoan: 0,
   postOffice: 0,
   creditSociety: 0,
-  stdLicenceFee: 0,
+ 
   electricity: 0,
   water: 0,
   mess: 0,
@@ -62,7 +62,7 @@ function generatedRow(overrides: Partial<Record<string, unknown>> = {}): Record<
     governmentMonthly: {
       id: "mp-1",
       basicPaid: 65000,
-      spPayPaid: 0,
+     
       daPaid: 0,
       transportPaid: 0,
       hraPaid: 0,

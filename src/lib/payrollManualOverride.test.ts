@@ -23,7 +23,7 @@ const emptyDeductions = {
   pfLoan: 0,
   postOffice: 0,
   creditSociety: 0,
-  stdLicenceFee: 0,
+ 
   electricity: 0,
   water: 0,
   mess: 0,

@@ -69,7 +69,7 @@ assertEq(Number.isFinite(calculateElectricityBill({ units: 1e9, tariff, mode: "u
 // ---- Whole-row scenario: the screen's engine, master seeded as manual_fixed/49 ----
 const ded = {
   incomeTax: 0, pt: 200, lic: 0, cpf: 0, daCpf: 0, vpf: 0, pfLoan: 0, postOffice: 0, creditSociety: 0,
-  stdLicenceFee: 0, electricity: MASTER_FIXED, water: 314, mess: 25, loanRecovery: 0, welfare: 0, hpl: 0,
+  electricity: MASTER_FIXED, water: 314, mess: 25, loanRecovery: 0, welfare: 0, hpl: 0,
   eol: 0, vehCharge: 0, other: 0, quarterRent: 0,
 };
 const gr: GovRecalcPayload = {

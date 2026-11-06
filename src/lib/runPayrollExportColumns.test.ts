@@ -27,8 +27,8 @@ function employee(i: number): PayrollRunExportRow {
   gm.grossArrear = (gm.daArrearsPaid as number) + (gm.transportArrearsPaid as number);
   const deductions: Record<string, number> = {};
   let ded = 0;
-  dedKeys.forEach((k, j) => { deductions[k] = (i + 1) * 10 + j; ded += deductions[k]; });
-  deductions.stdLicenceFee = 0;
+  // daCpf is not an input any more (DA CPF is the CPF Arr below), so the stored deduction is 0 and is not counted.
+  dedKeys.forEach((k, j) => { deductions[k] = k === "daCpf" ? 0 : (i + 1) * 10 + j; ded += deductions[k]; });
   gm.deductions = deductions;
   gm.cpfArrear = 5 * (i + 1);
   ded += gm.cpfArrear as number;
@@ -48,16 +48,16 @@ const head = grid[hi] as string[];
 
 // 1. Columns = the Run Payroll field list, same order and labels.
 const screenEarnings = RUN_PAYROLL_EARNING_LINES.filter((l) => !l.memo).map((l) => l.label);
-const screenDeductions = [...RUN_PAYROLL_DEDUCTION_LINES.map((l) => l.label), RUN_PAYROLL_CPF_ARREAR_LINE.label];
+const screenDeductions = RUN_PAYROLL_DEDUCTION_LINES.map((l) => l.label); // CPF Arr is the DA CPF amount: a memo column, not a second deduction
 const exportedEarnings = head.filter((h) => PAYROLL_EXCEL_GROUPS[h] === "earning" && screenEarnings.includes(h));
 assertEq(exportedEarnings, screenEarnings, "earning columns are the Run Payroll earnings, in screen order and labels");
 const exportedDeductions = head.filter((h) => PAYROLL_EXCEL_GROUPS[h] === "deduction" && screenDeductions.includes(h));
-assertEq(exportedDeductions, screenDeductions, "deduction columns are the Run Payroll deductions (incl. CPF Arr), in screen order and labels");
+assertEq(exportedDeductions, screenDeductions, "deduction columns are the Run Payroll deductions (DA CPF = CPF Arr), in screen order and labels");
 assertEq(head.slice(0, 7), ["AccountNumber", "EmployeeName", "Division", "Department", "Designation", "PayLevel", "PayDays"], "identity columns");
 assertEq(head, buildPayrollExcelHeaders([], retiredEmptyExcelColumns(rows.map((r) => r.governmentMonthly as Record<string, unknown>))), "sheet header row is the shared header list");
 
 // 2. Nothing that is not on Run Payroll.
-for (const gone of ["StdLicenceFee", "CTC", "TDS", "EmployeePF", "EmployerPF", "EmployeeESIC", "EmployerESIC", "NightHours", "NightAllowanceRate",
+for (const gone of ["StdLicenceFee", "SPPay", "Special Pay", "CTC", "TDS", "EmployeePF", "EmployerPF", "EmployeeESIC", "EmployerESIC", "NightHours", "NightAllowanceRate",
   "NightAllowanceCeiling", "NightAllowanceEligible", "QuarterRentDeduction", "QuarterRent", "NetPay", "ElectricityUnits"]) {
   assertEq(head.includes(gone), false, `${gone} is not exported`);
   assertEq(PAYROLL_EXCEL_HEADER.includes(gone), false, `${gone} is not in the fixed column list`);

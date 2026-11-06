@@ -89,7 +89,10 @@ class ApplyLeaveLines extends Command
         $out = $dir.DIRECTORY_SEPARATOR.'out.json';
         file_put_contents($in, json_encode(['preview' => $preview, 'draft' => $shown->values()->all(), 'edits' => $edits, 'year' => $year, 'month' => $month]));
         $root = dirname(base_path());
-        $cmd = 'npx --yes tsx scripts/draft-edit-replay.ts '.escapeshellarg($in).' '.escapeshellarg($out);
+        // tsx is a pinned devDependency (npm ci installs it); never fetched from the registry at run time.
+        $tsx = $root.DIRECTORY_SEPARATOR.'node_modules'.DIRECTORY_SEPARATOR.'tsx'.DIRECTORY_SEPARATOR.'dist'.DIRECTORY_SEPARATOR.'cli.mjs';
+        if (! is_file($tsx)) { $this->error("tsx is not installed ($tsx). Run npm ci in $root."); return self::FAILURE; }
+        $cmd = 'node '.escapeshellarg($tsx).' scripts/draft-edit-replay.ts '.escapeshellarg($in).' '.escapeshellarg($out);
         $proc = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, $root);
         $stdout = stream_get_contents($pipes[1]); $stderr = stream_get_contents($pipes[2]);
         $code = proc_close($proc);

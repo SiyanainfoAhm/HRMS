@@ -2,6 +2,11 @@
 
 Run with PHP 8.4: `C:\php84\php.exe vendor/bin/phpunit` (from `backend/`).
 
+**Tests must be run with `C:\php84\php.exe`.** The default `php` on this machine is 8.2, which cannot load the vendor
+packages cleanly. The database tests **fail (they do not skip)** when PHP is below 8.4 or when the test database
+(`cirt_payroll_test`) is unavailable, so a green run always means the database tests really ran. Only tests that need
+the client's real data skip, by design (listed below).
+
 **The tests never touch the real payroll database (`hrms`).** `phpunit.xml` forces `DB_DATABASE=cirt_payroll_test`
 (schema cloned from `hrms`, no data), an in-memory cache/session, and `DatabaseTestCase` refuses to run against any
 database not named `*_test`. Every database test runs in a transaction that is rolled back, on top of

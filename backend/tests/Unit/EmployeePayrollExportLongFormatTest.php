@@ -112,7 +112,6 @@ final class EmployeePayrollExportLongFormatTest extends TestCase
             'pf_loan_amount' => 0,
             'post_office_amount' => 0,
             'credit_society_amount' => 0,
-            'std_licence_fee_amount' => 0,
             'electricity_amount' => 4870,
             'electricity_units_consumed' => 350,
             'water_amount' => 0,

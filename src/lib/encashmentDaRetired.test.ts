@@ -24,13 +24,13 @@ function assertEq(a: unknown, b: unknown, msg: string) {
   if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error(`${msg}: expected ${JSON.stringify(b)}, got ${JSON.stringify(a)}`);
 }
 
-const ded = { incomeTax: 0, pt: 200, lic: 0, cpf: 4151, daCpf: 0, vpf: 0, pfLoan: 0, postOffice: 0, creditSociety: 0, stdLicenceFee: 0, electricity: 0, water: 0, mess: 0, loanRecovery: 0, welfare: 0, hpl: 0, eol: 0, vehCharge: 0, other: 0, quarterRent: 0 };
+const ded = { incomeTax: 0, pt: 200, lic: 0, cpf: 4151, daCpf: 0, vpf: 0, pfLoan: 0, postOffice: 0, creditSociety: 0, electricity: 0, water: 0, mess: 0, loanRecovery: 0, welfare: 0, hpl: 0, eol: 0, vehCharge: 0, other: 0, quarterRent: 0 };
 
 function gmWith(encashment: number, encashmentDa: number) {
   const earnings = 34590 + 5760 + 25830 + 3000 + encashment + encashmentDa;
   const deductions = 4151 + 200;
   return {
-    basicPaid: 34590, spPayPaid: 0, daPaid: 0, transportPaid: 5760, hraPaid: 25830, medicalPaid: 3000, extraWorkAllowancePaid: 0, nightAllowancePaid: 0,
+    basicPaid: 34590, daPaid: 0, transportPaid: 5760, hraPaid: 25830, medicalPaid: 3000, extraWorkAllowancePaid: 0, nightAllowancePaid: 0,
     uniformAllowancePaid: 0, educationAllowancePaid: 0, daArrearsPaid: 0, transportArrearsPaid: 0, encashmentPaid: encashment, encashmentDaPaid: encashmentDa,
     customEarnings: {}, customDeductions: {}, deductions: { ...ded }, totalEarnings: earnings, totalDeductions: deductions, netSalary: earnings - deductions,
   };
@@ -83,7 +83,7 @@ assertEq((legacyEdited.governmentMonthly as { encashmentDaPaid: number }).encash
 // 6. Payslip: the printed earning lines add up to gross, with and without a stored ENC. DA.
 function slip(da: number) {
   return {
-    basic_paid: 34590, sp_pay_paid: 0, da_paid: 0, transport_paid: 5760, hra_paid: 25830, medical_paid: 3000, extra_work_allowance_paid: 0, night_allowance_paid: 0,
+    basic_paid: 34590, da_paid: 0, transport_paid: 5760, hra_paid: 25830, medical_paid: 3000, extra_work_allowance_paid: 0, night_allowance_paid: 0,
     uniform_allowance_paid: 0, education_allowance_paid: 0, da_arrears_paid: 0, transport_arrears_paid: 0, gross_arrear: 0, encashment_paid: 0, encashment_da_paid: da,
   } as never;
 }

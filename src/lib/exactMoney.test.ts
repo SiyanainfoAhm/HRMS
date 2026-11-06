@@ -76,7 +76,7 @@ assertEq(fmtIn(197.2), "197", "197.20 shows as 197");
 // 4. A whole row: every line is a whole rupee; gross and net are exactly the sum of the lines.
 const ded = {
   incomeTax: 0, pt: 200, lic: 0, cpf: 0, daCpf: 0, vpf: 0, pfLoan: 0, postOffice: 0, creditSociety: 0,
-  stdLicenceFee: 0, electricity: 0, water: 0, mess: 0, loanRecovery: 0, welfare: 0, hpl: 0, eol: 0,
+  electricity: 0, water: 0, mess: 0, loanRecovery: 0, welfare: 0, hpl: 0, eol: 0,
   vehCharge: 0, other: 0, quarterRent: 0,
 };
 const gr = (extra: Partial<GovRecalcPayload> = {}): GovRecalcPayload => ({
@@ -95,7 +95,7 @@ assertEq(full.daPaid, 17666, "row DA 33,333 x 53% = 17,666.49 -> 17,666");
 const partial = run(gr({ nightHours: 8.5, nightAllowanceRate: 23.2, nightAllowanceRateBasis: "duty" }), 30);
 assertEq(partial.hraPaid, proportion(10000, 30, 31), "HRA prorated 30/31");
 assertEq(partial.basicPaid, proportion(33333, 30, 31), "Basic prorated 30/31");
-const lines = ["basicPaid", "daPaid", "hraPaid", "medicalPaid", "transportPaid", "spPayPaid", "extraWorkAllowancePaid", "nightAllowancePaid", "uniformAllowancePaid", "educationAllowancePaid", "daArrearsPaid", "transportArrearsPaid", "encashmentPaid", "encashmentDaPaid"];
+const lines = ["basicPaid", "daPaid", "hraPaid", "medicalPaid", "transportPaid", "extraWorkAllowancePaid", "nightAllowancePaid", "uniformAllowancePaid", "educationAllowancePaid", "daArrearsPaid", "transportArrearsPaid", "encashmentPaid", "encashmentDaPaid"];
 for (const row of [full, partial]) {
   for (const [k, v] of Object.entries(row)) {
     if (typeof v === "number" && /Paid$|Actual$|^total|^net/.test(k)) assertEq(Number.isInteger(v), true, `${k} (${v}) is a whole rupee`);

@@ -151,7 +151,6 @@ export type PayrollMasterRecord = {
   pfLoan?: number | null;
   postOffice?: number | null;
   creditSociety?: number | null;
-  standardLicenceFee?: number | null;
   electricity?: number | null;
   electricityApplicable?: boolean;
   electricityMode?: "unit_based" | "manual_fixed" | string | null;
@@ -243,7 +242,6 @@ type MasterFormState = {
   pfLoan: string;
   postOffice: string;
   creditSociety: string;
-  standardLicenceFee: string;
   electricity: string;
   electricityApplicable: boolean;
   electricityMode: "unit_based" | "manual_fixed";
@@ -459,7 +457,6 @@ const emptyForm = (defaultDa = DEFAULT_DA_PERCENT, defaultHra = DEFAULT_HRA_PERC
     pfLoan: "0",
     postOffice: "0",
     creditSociety: "0",
-    standardLicenceFee: "0",
     electricity: "0",
     electricityApplicable: true,
     electricityMode: "manual_fixed" as const,
@@ -530,7 +527,6 @@ function formFromRecord(r: PayrollMasterRecord): MasterFormState {
     pfLoan: String(r.pfLoan ?? 0),
     postOffice: String(r.postOffice ?? 0),
     creditSociety: String(r.creditSociety ?? 0),
-    standardLicenceFee: String(r.standardLicenceFee ?? 0),
     electricity: String(r.electricity ?? 0),
     electricityApplicable: r.electricityApplicable !== false,
     electricityMode: (r.electricityMode === "unit_based" ? "unit_based" : "manual_fixed") as
@@ -633,7 +629,6 @@ function formToPayload(form: MasterFormState, payrollFieldDefs: PayrollFieldDefi
     pfLoan: form.pfLoan,
     postOffice: form.postOffice,
     creditSociety: form.creditSociety,
-    standardLicenceFee: form.standardLicenceFee,
     electricity: form.electricity,
     water: form.water,
     loanRecovery: form.loanRecovery,
@@ -700,7 +695,6 @@ function formToPayload(form: MasterFormState, payrollFieldDefs: PayrollFieldDefi
     pfLoan: parseAmountOrZero(form.pfLoan),
     postOffice: parseAmountOrZero(form.postOffice),
     creditSociety: parseAmountOrZero(form.creditSociety),
-    standardLicenceFee: parseAmountOrZero(form.standardLicenceFee),
     electricity: parseAmountOrZero(form.electricity),
     electricityApplicable: form.electricityApplicable,
     electricityMode: form.electricityMode,
@@ -767,7 +761,6 @@ function payrollStructureChanged(form: MasterFormState, baseline: MasterFormStat
     form.pfLoan !== baseline.pfLoan ||
     form.postOffice !== baseline.postOffice ||
     form.creditSociety !== baseline.creditSociety ||
-    form.standardLicenceFee !== baseline.standardLicenceFee ||
     form.electricity !== baseline.electricity ||
     form.electricityApplicable !== baseline.electricityApplicable ||
     form.electricityMode !== baseline.electricityMode ||
@@ -1672,7 +1665,6 @@ export function PayrollMasterScreen({ canManage = false }: Props) {
         pfLoan: form.pfLoan,
         postOffice: form.postOffice,
         creditSociety: form.creditSociety,
-        standardLicenceFee: form.standardLicenceFee,
         electricity: form.electricity,
         water: form.water,
         loanRecovery: form.loanRecovery,

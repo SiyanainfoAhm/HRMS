@@ -1,0 +1,30 @@
+{
+    "_comment": "Quarters master as on the CIRT local database, 2026-11-06 (quarter name => monthly rent). Applied by payroll:set-quarter-rents.",
+    "expect": {
+        "openAssignments": 21,
+        "rentTotal": 15690
+    },
+    "rents": {
+        "A1": 440,
+        "A5": 440,
+        "A8": 440,
+        "B1/2": 440,
+        "B1/4": 440,
+        "B1/7": 440,
+        "B1/8": 440,
+        "B2/3": 440,
+        "B2/7": 440,
+        "B3/2": 440,
+        "B3/6": 440,
+        "B3/8": 440,
+        "D1": 880,
+        "D1/1": 880,
+        "D1/2": 880,
+        "D1/3": 880,
+        "D2/2": 880,
+        "D2/3": 880,
+        "E-2": 1710,
+        "E-3": 1710,
+        "E-I": 1710
+    }
+}

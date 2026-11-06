@@ -13,7 +13,7 @@ final class PayrollFieldUsageService
 {
     /** field_key => cirt_monthly_payroll numeric column (system fields). */
     public const MONTHLY_COLUMNS = [
-        'gross_basic' => 'basic_paid', 'sp_pay' => 'sp_pay_paid', 'da' => 'da_paid', 'transport' => 'transport_paid',
+        'gross_basic' => 'basic_paid', 'da' => 'da_paid', 'transport' => 'transport_paid',
         'hra' => 'hra_paid', 'medical' => 'medical_paid', 'extra_work_allowance' => 'extra_work_allowance_paid',
         'night_allowance' => 'night_allowance_paid', 'uniform_allowance' => 'uniform_allowance_paid',
         'education_allowance' => 'education_allowance_paid', 'encashment' => 'encashment_paid',
@@ -22,7 +22,7 @@ final class PayrollFieldUsageService
         'income_tax' => 'income_tax_amount', 'professional_tax' => 'pt_amount', 'lic' => 'lic_amount',
         'cpf' => 'cpf_amount', 'da_cpf' => 'da_cpf_amount', 'vpf' => 'vpf_amount', 'pf_loan' => 'pf_loan_amount',
         'post_office' => 'post_office_amount', 'credit_society' => 'credit_society_amount',
-        'cpf_arrears' => 'cpf_arrear', 'standard_licence_fee' => 'std_licence_fee_amount',
+        'cpf_arrears' => 'cpf_arrear',
         'electricity' => 'electricity_amount', 'water' => 'water_amount', 'mess' => 'mess_amount',
         'loan_recovery' => 'loan_recovery_amount', 'welfare' => 'welfare_amount', 'vehicle_charge' => 'veh_charge_amount',
         'other_deduction' => 'other_deduction_amount', 'quarter_rent' => 'quarter_rent_amount',

@@ -1378,7 +1378,7 @@ final class PayrollMasterService
     {
         return [
             'income_tax', 'lic', 'mess', 'welfare', 'vpf', 'pf_loan', 'post_office',
-            'credit_society', 'standard_licence_fee', 'electricity', 'water', 'loan_recovery', 'vehicle_charge',
+            'credit_society', 'electricity', 'water', 'loan_recovery', 'vehicle_charge',
             'other_deduction', 'advance',
         ];
     }
@@ -1521,7 +1521,6 @@ final class PayrollMasterService
             'pf_loan' => 0,
             'post_office' => 0,
             'credit_society' => 0,
-            'standard_licence_fee' => 0,
             'electricity' => 0,
             'water' => 0,
             'loan_recovery' => 0,
@@ -1738,7 +1737,7 @@ final class PayrollMasterService
         // canonical key would beat an edited alias (medicalFixed vs medical, pt vs
         // professional_tax). Treat every alias as "present".
         $norm = static fn (string $k): string => (string) preg_replace('/default$/', '', strtolower((string) preg_replace('/[^a-z0-9]/i', '', $k)));
-        $alias = ['medical' => ['medicalfixed'], 'professionaltax' => ['pt'], 'standardlicencefee' => ['stdlicencefee'],
+        $alias = ['medical' => ['medicalfixed'], 'professionaltax' => ['pt'],
             'grossbasicpay' => ['grossbasic', 'grosssalary'], 'loanrecovery' => ['horticulture'], 'vehiclecharge' => ['vehcharge'],
             'otherdeduction' => ['other'], 'advance' => ['advancebonus'], 'incometax' => ['tds'], 'dacpf' => ['dacpf']];
         $present = [];
@@ -1853,7 +1852,6 @@ final class PayrollMasterService
             'pfLoan' => (float) ($m->pf_loan ?? $m->pf_loan_default ?? 0),
             'postOffice' => (float) ($m->post_office ?? $m->post_office_default ?? 0),
             'creditSociety' => (float) ($m->credit_society ?? $m->credit_society_default ?? 0),
-            'standardLicenceFee' => (float) ($m->standard_licence_fee ?? $m->std_licence_fee_default ?? 0),
             'electricity' => (float) ($m->electricity ?? $m->electricity_default ?? 0),
             'electricityApplicable' => (bool) ($m->electricity_applicable ?? true),
             'electricityMode' => (string) ($m->electricity_mode ?? 'manual_fixed'),
@@ -2221,7 +2219,7 @@ final class PayrollMasterService
 
         $deductionKeys = [
             'income_tax', 'professional_tax', 'lic', 'mess', 'welfare', 'vpf', 'pf_loan',
-            'post_office', 'credit_society', 'standard_licence_fee', 'electricity', 'water',
+            'post_office', 'credit_society', 'electricity', 'water',
             'loan_recovery', 'vehicle_charge', 'other_deduction', 'advance',
         ];
         foreach ($deductionKeys as $key) {
@@ -2281,7 +2279,6 @@ final class PayrollMasterService
             'pf_loan' => $master->pf_loan ?? $master->pf_loan_default,
             'post_office' => $master->post_office ?? $master->post_office_default,
             'credit_society' => $master->credit_society ?? $master->credit_society_default,
-            'standard_licence_fee' => $master->standard_licence_fee ?? $master->std_licence_fee_default,
             'electricity' => $master->electricity ?? $master->electricity_default,
             'water' => $master->water ?? $master->water_default,
             'loan_recovery' => $master->loan_recovery ?? $master->loan_recovery_default,
@@ -3216,8 +3213,6 @@ final class PayrollMasterService
             'post_office_default' => $calc['post_office'],
             'credit_society' => $calc['credit_society'],
             'credit_society_default' => $calc['credit_society'],
-            'standard_licence_fee' => $calc['standard_licence_fee'],
-            'std_licence_fee_default' => $calc['standard_licence_fee'],
             'electricity' => $calc['electricity'],
             'electricity_default' => $calc['electricity'],
             'electricity_applicable' => filter_var(
@@ -3589,7 +3584,7 @@ final class PayrollMasterService
             'income_tax', 'income_tax_default', 'tds', 'professional_tax', 'pt', 'pt_default',
             'lic', 'lic_default', 'mess', 'mess_default', 'welfare', 'welfare_default',
             'vpf', 'vpf_default', 'pf_loan', 'pf_loan_default', 'post_office', 'post_office_default',
-            'credit_society', 'credit_society_default', 'standard_licence_fee', 'std_licence_fee_default',
+            'credit_society', 'credit_society_default',
             'electricity', 'electricity_default', 'electricity_applicable', 'electricity_mode',
             'water', 'water_default', 'loan_recovery', 'loan_recovery_default',
             'vehicle_charge', 'veh_charge_default', 'other_deduction', 'other_deduction_default',

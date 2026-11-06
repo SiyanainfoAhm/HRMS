@@ -1,4 +1,5 @@
 import { roundMoney } from "./money";
+import { daCpfOf } from "./daCpf";
 import { PAYROLL_LABELS } from "./payrollLabels";
 import * as XLSX from "xlsx-js-style";
 import { calendarDaysInMonth, equivalentPayableDays } from "@/lib/payrollLeaveDays";
@@ -164,12 +165,11 @@ function gmDeductions(gm: Record<string, unknown> | null | undefined): Record<st
     pt: num(d.pt ?? d.professionalTax ?? gm?.pt_amount),
     lic: num(d.lic ?? gm?.lic_amount),
     cpf: num(d.cpf ?? gm?.cpf_amount),
-    daCpf: num(d.daCpf ?? d.da_cpf ?? gm?.da_cpf_amount),
+    daCpf: daCpfOf(gm),
     vpf: num(d.vpf ?? gm?.vpf_amount),
     pfLoan: num(d.pfLoan ?? d.pf_loan ?? gm?.pf_loan_amount),
     postOffice: num(d.postOffice ?? d.post_office ?? gm?.post_office_amount),
     creditSociety: num(d.creditSociety ?? d.credit_society ?? gm?.credit_society_amount),
-    stdLicenceFee: num(d.stdLicenceFee ?? d.std_licence_fee ?? gm?.std_licence_fee_amount),
     electricity: num(d.electricity ?? gm?.electricity_amount),
     water: num(d.water ?? gm?.water_amount),
     mess: num(d.mess ?? gm?.mess_amount),
@@ -199,8 +199,7 @@ export function aggregatePayrollSummary(rows: PayrollRunExportRow[]) {
   // rebuilt draft that stores 0 for Past Arrears / Encashment Arrears does not add a row and shift the ones below it.
   const standardEarningLabels = new Set(Object.keys(earnings));
   const standardDeductionLabels = new Set(Object.keys(deductions));
-  // CIRT-06: the CPF Arr (CPF on arrears) is reported in the DA CPF row, as in the paybill, so the rows add up to Total Deductions.
-  const daCpfLabel = RUN_PAYROLL_DEDUCTION_LINES.find((l) => l.key === "daCpf")?.label;
+  // The DA CPF row (gmDeductions.daCpf) is the CPF Arr, read through daCpfOf, so the rows add up to Total Deductions.
   const labelOf = (key: string): string => RUN_PAYROLL_EARNING_LINES.find((l) => l.key === key)?.label ?? key;
   let cpfArrearTotal = 0;
   // Leave is already deducted from Basic / DA / HRA / Medical, so it is reported as information, never as a deduction.
@@ -229,7 +228,6 @@ export function aggregatePayrollSummary(rows: PayrollRunExportRow[]) {
       for (const l of RUN_PAYROLL_DEDUCTION_LINES) deductions[l.label] += d[l.key] ?? 0;
       const cpfArr = gmNum(gm, "cpfArrear", "cpf_arrear");
       cpfArrearTotal += cpfArr;
-      if (daCpfLabel) deductions[daCpfLabel] += cpfArr;
       for (const t of ["hpl", "eol"] as const) {
         const days = gmNum(gm, `${t}Days`, `${t}_days`);
         // hplAdjustment / eolAdjustment is the amount cut for leave; hplBasisAmount / eolBasisAmount is only the reference basis.
@@ -618,7 +616,6 @@ function governmentMonthlyToDbShape(
     hra_paid: gmNum(gm, "hraPaid", "hra_paid"),
     medical_paid: gmNum(gm, "medicalPaid", "medical_paid"),
     transport_paid: gmNum(gm, "transportPaid", "transport_paid"),
-    sp_pay_paid: gmNum(gm, "spPayPaid", "sp_pay_paid"),
     extra_work_allowance_paid: gmNum(gm, "extraWorkAllowancePaid", "extra_work_allowance_paid"),
     night_allowance_paid: gmNum(gm, "nightAllowancePaid", "night_allowance_paid"),
     uniform_allowance_paid: gmNum(gm, "uniformAllowancePaid", "uniform_allowance_paid"),
@@ -636,7 +633,6 @@ function governmentMonthlyToDbShape(
     pf_loan_amount: d.pfLoan,
     post_office_amount: d.postOffice,
     credit_society_amount: d.creditSociety,
-    std_licence_fee_amount: d.stdLicenceFee,
     electricity_amount: d.electricity,
     electricity_units_consumed: gmNum(gm, "electricityUnitsConsumed", "electricity_units_consumed"),
     days_in_month: gmNum(gm, "daysInMonth", "days_in_month"),

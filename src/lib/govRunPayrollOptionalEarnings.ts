@@ -5,7 +5,6 @@ export function govOptionalFromComputedMonthly(
   g: Record<string, unknown> | null | undefined,
 ): GovernmentOptionalMonthlyEarnings | undefined {
   if (!g || typeof g !== "object") return undefined;
-  const spPay = Number(g.spPayPaid) || 0;
   const extraWorkAllowance = Number(g.extraWorkAllowancePaid) || 0;
   const uniformAllowance = Number(g.uniformAllowancePaid) || 0;
   const educationAllowance = Number(g.educationAllowancePaid) || 0;
@@ -14,7 +13,6 @@ export function govOptionalFromComputedMonthly(
   const encashment = Number(g.encashmentPaid) || 0;
   const encashmentDa = Number(g.encashmentDaPaid) || 0;
   if (
-    !spPay &&
     !extraWorkAllowance &&
     !uniformAllowance &&
     !educationAllowance &&
@@ -26,7 +24,6 @@ export function govOptionalFromComputedMonthly(
     return undefined;
   }
   return {
-    spPay,
     extraWorkAllowance,
     uniformAllowance,
     educationAllowance,

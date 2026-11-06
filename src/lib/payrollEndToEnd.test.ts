@@ -25,7 +25,7 @@ function assertClose(a: number, b: number, msg: string, eps = 0.011) {
 
 const baseDed = {
   incomeTax: 0, pt: 200, lic: 0, cpf: 0, daCpf: 0, vpf: 0, pfLoan: 0, postOffice: 0, creditSociety: 0,
-  stdLicenceFee: 0, electricity: 0, water: 0, mess: 0, loanRecovery: 0, welfare: 0, hpl: 0, eol: 0,
+  electricity: 0, water: 0, mess: 0, loanRecovery: 0, welfare: 0, hpl: 0, eol: 0,
   vehCharge: 0, other: 0, quarterRent: 0,
 };
 const cpfConfig = { cpfPercentage: 12, cpfBasisFieldKeys: ["gross_basic", "da", "hra"], cpfCalculationMode: "percentage" as const, cpfFixedAmount: 0 };
@@ -103,7 +103,7 @@ const toSlip = (gm: Record<string, unknown>) => {
   // The saved monthly snapshot uses snake_case columns; map the camelCase sheet to it.
   const ded = (gm.deductions ?? {}) as Record<string, number>;
   const snake: Record<string, number> = {
-    basic_paid: gm.basicPaid as number, sp_pay_paid: gm.spPayPaid as number, da_paid: gm.daPaid as number,
+    basic_paid: gm.basicPaid as number, da_paid: gm.daPaid as number,
     transport_paid: gm.transportPaid as number, hra_paid: gm.hraPaid as number, medical_paid: gm.medicalPaid as number,
     extra_work_allowance_paid: gm.extraWorkAllowancePaid as number, night_allowance_paid: gm.nightAllowancePaid as number,
     uniform_allowance_paid: gm.uniformAllowancePaid as number, education_allowance_paid: gm.educationAllowancePaid as number,
@@ -114,7 +114,7 @@ const toSlip = (gm: Record<string, unknown>) => {
     vpf_amount: ded.vpf, post_office_amount: ded.postOffice, credit_society_amount: ded.creditSociety,
     electricity_amount: ded.electricity, water_amount: ded.water, mess_amount: ded.mess, loan_recovery_amount: ded.loanRecovery,
     welfare_amount: ded.welfare, quarter_rent_amount: ded.quarterRent, other_deduction_amount: ded.other,
-    pf_loan_amount: ded.pfLoan, std_licence_fee_amount: ded.stdLicenceFee, veh_charge_amount: ded.vehCharge,
+    pf_loan_amount: ded.pfLoan, veh_charge_amount: ded.vehCharge,
     hpl_amount: ded.hpl, eol_amount: ded.eol,
   };
   return snake;

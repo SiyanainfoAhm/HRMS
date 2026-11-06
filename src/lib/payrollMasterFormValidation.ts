@@ -49,7 +49,6 @@ export type MasterFormLike = {
   pfLoan: string;
   postOffice: string;
   creditSociety: string;
-  standardLicenceFee: string;
   electricity: string;
   water: string;
   loanRecovery: string;

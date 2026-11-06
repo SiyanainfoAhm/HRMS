@@ -47,7 +47,7 @@ assertGroupRules(buildPayrollExcelHeaders([]), payrollExcelHeaderGroups([]), "fi
   assertEq(h.indexOf("NetSalary"), h.indexOf("TotalDeductions") + 1, "NetSalary directly follows TotalDeductions");
   assertEq(PAYROLL_EXCEL_GROUPS["Net Arrears"], "info", "Net Arrears is a memo column");
   assertEq(h.indexOf("Net Arrears") > h.indexOf("NetSalary"), true, "after Net Salary, with the other memo columns");
-  assertEq(PAYROLL_EXCEL_GROUPS["CPF Arr"], "deduction", "CPF Arr is a deduction");
+  assertEq(PAYROLL_EXCEL_GROUPS["CPF Arr"], "info", "CPF Arr is a memo: its amount is the DA CPF deduction");
   for (const e of ["Incentive", "PRBonus", "Reimbursement"]) assertEq(PAYROLL_EXCEL_GROUPS[e], "earning", `${e} is an earning`);
   assertEq(PAYROLL_EXCEL_GROUPS["Professional Tax"], "deduction", "Professional Tax is a deduction");
 }
@@ -73,14 +73,14 @@ const groups = payrollExcelHeaderGroups(dyn);
 assertGroupRules(headers, groups, "with custom fields");
 const at = (h: string) => headers.indexOf(h);
 assertEq(at("Brand New Pay") < at("GrossTotal") && at("Brand New Pay") > at("Reimbursement"), true, "a new earning lands before GrossTotal");
-assertEq(at("Brand New Recovery") < at("TotalDeductions") && at("Brand New Recovery") > at("CPF Arr"), true, "a new deduction lands before TotalDeductions");
+assertEq(at("Brand New Recovery") < at("TotalDeductions") && at("Brand New Recovery") > at("DA CPF"), true, "a new deduction lands before TotalDeductions");
 assertEq(at("Advance") < at("TotalDeductions") && at("Advance") > at("GrossTotal"), true, "Advance is a deduction");
 assertEq(headers[at("TotalDeductions") + 1], "NetSalary", "Net follows Total Deductions with custom fields too");
 
 // 3. A real generated sheet: header row equals the shared header list, totals row present, values in the right columns.
 const ded = {
   incomeTax: 0, pt: 200, lic: 0, cpf: 0, daCpf: 0, vpf: 0, pfLoan: 0, postOffice: 0, creditSociety: 0,
-  stdLicenceFee: 0, electricity: 0, water: 0, mess: 0, loanRecovery: 0, welfare: 0, hpl: 0, eol: 0,
+  electricity: 0, water: 0, mess: 0, loanRecovery: 0, welfare: 0, hpl: 0, eol: 0,
   vehCharge: 0, other: 0, quarterRent: 0,
 };
 const gr: GovRecalcPayload = {

@@ -63,7 +63,7 @@ assertEq(
 // Whole compute: 24 night hours at Level 7 adds 1210 to gross; the same row on a legacy hourly rate is unchanged.
 const ded = {
   incomeTax: 0, pt: 0, lic: 0, cpf: 0, daCpf: 0, vpf: 0, pfLoan: 0, postOffice: 0, creditSociety: 0,
-  stdLicenceFee: 0, electricity: 0, water: 0, mess: 0, loanRecovery: 0, welfare: 0, hpl: 0, eol: 0,
+  electricity: 0, water: 0, mess: 0, loanRecovery: 0, welfare: 0, hpl: 0, eol: 0,
   vehCharge: 0, other: 0, quarterRent: 0,
 };
 const gr = (extra: Partial<GovRecalcPayload>): GovRecalcPayload => ({
