@@ -204,7 +204,7 @@ export function PostPayrollReportsMenu({
     setBusy(true);
     try {
       let name: string;
-      if (report === "tds" || report === "division-wise") {
+      if (report === "tds") {
         if (tdsMonths.length === 0) throw new Error("Select at least one month.");
         name = await downloadPostPayrollMonths(report, tdsMonths);
         setPreviewOpen(false);
@@ -325,7 +325,7 @@ export function PostPayrollReportsMenu({
         </button>
         <p className="text-[13px] font-semibold text-slate-800">{title}</p>
       </div>
-      {report === "tds" || report === "division-wise" ? (
+      {report === "tds" ? (
         <div>
           <span className="label-field">Months</span>
           <PeriodMultiSelect periods={periods ?? []} selected={tdsMonths} onChange={setTdsMonths} />
@@ -349,7 +349,7 @@ export function PostPayrollReportsMenu({
         </div>
       )}
       <div className="flex justify-end gap-2">
-        {report === "tds" || report === "division-wise" ? (
+        {report === "tds" ? (
           <button
             type="button"
             className="btn btn-outline btn-sm"
@@ -365,7 +365,7 @@ export function PostPayrollReportsMenu({
         <button
           type="button"
           className="btn btn-primary btn-sm inline-flex items-center gap-1.5"
-          disabled={busy || (report === "tds" || report === "division-wise" ? tdsMonths.length === 0 : !singleYm)}
+          disabled={busy || (report === "tds" ? tdsMonths.length === 0 : !singleYm)}
           onClick={() => void download()}
         >
           {busy ? <Spinner /> : <Download className="h-3.5 w-3.5" aria-hidden />}
@@ -442,7 +442,7 @@ export function PostPayrollReportsMenu({
       <PeriodReportPreview
         open={previewOpen}
         onClose={() => setPreviewOpen(false)}
-        type={report === "division-wise" ? "division-wise" : "tds"}
+        type="tds"
         months={tdsMonths}
         downloading={busy}
         onDownload={() => void download()}

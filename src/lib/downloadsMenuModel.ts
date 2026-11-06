@@ -121,7 +121,7 @@ export function buildPostPayrollMenu(ctx: PostPayrollMenuContext): PostPayrollMe
     description: r.description,
     tag: "Excel" as const,
     disabledReason: reason,
-    flow: r.type === "tds" || r.type === "division-wise" ? ("multi-month" as const) : ("single-month" as const),
+    flow: r.type === "tds" ? ("multi-month" as const) : ("single-month" as const),
   }));
   items.push({
     id: "bank-letter",
