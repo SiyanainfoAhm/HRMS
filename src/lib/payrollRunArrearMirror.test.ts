@@ -49,7 +49,7 @@ assertEq(isCustomEarningVisibleOnRow("arrears", -50), true, "generic Arrears sho
 // 4. The table renders mirrors without any write path to onUpdate.
 const src = readFileSync(new URL("../components/payroll/GovernmentRunPreviewTable.tsx", import.meta.url), "utf8").split(String.fromCharCode(13)).join("");
 const mirrorBlocks = src.split("<FieldChip").filter((b) => b.includes("mirrorHint={ARREAR_MIRROR_HINT}"));
-assertEq(mirrorBlocks.length, 2, "two mirror chip sites (earnings + CPF Arr)");
+assertEq(mirrorBlocks.length, 1, "one ARREAR_MIRROR_HINT chip site (earnings); DA CPF has its own from-Arrears chip");
 for (const b of mirrorBlocks) {
   const head = b.slice(0, b.indexOf("/>"));
   assertEq(head.includes("onUpdate"), false, "mirror chip never calls onUpdate");

@@ -1,3 +1,4 @@
+import { daCpfOf } from "./daCpf";
 import { roundMoney } from "./money";
 import { PAYROLL_LABELS } from "./payrollLabels";
 /**
@@ -159,8 +160,7 @@ export function governmentPayslipDeductionPairs(
     ["P.Tax", gnum(gov, "pt_amount")],
     ["LIC", gnum(gov, "lic_amount")],
     ["CPF", gnum(gov, "cpf_amount")],
-    ["DA CPF", gnum(gov, "da_cpf_amount")],
-    [PAYROLL_LABELS.cpfArrears, gnum(gov, "cpf_arrear")],
+    ["DA CPF", daCpfOf(gov)], // = CPF Arr; shown once so the printed lines add up to Total Deductions
     ["VPF", gnum(gov, "vpf_amount")],
     ["Post Office", gnum(gov, "post_office_amount")],
     ["Credit Society", gnum(gov, "credit_society_amount")],

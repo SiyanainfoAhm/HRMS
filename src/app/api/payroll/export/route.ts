@@ -1,3 +1,4 @@
+import { daCpfOf } from "@/lib/daCpf";
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { COOKIE_NAME, TOKEN_COOKIE_NAME, getSessionFromCookie } from "@/lib/auth";
@@ -132,7 +133,7 @@ function camelGov(g: GovernmentMonthlyRow): Record<string, unknown> {
       pt: g.pt_amount,
       lic: g.lic_amount,
       cpf: g.cpf_amount,
-      daCpf: g.da_cpf_amount,
+      daCpf: daCpfOf(g),
       vpf: g.vpf_amount,
       pfLoan: g.pf_loan_amount,
       postOffice: g.post_office_amount,

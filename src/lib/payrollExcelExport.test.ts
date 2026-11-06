@@ -14,7 +14,7 @@ const stored = {
   uniform_allowance_paid: 110, education_allowance_paid: 111,
   da_arrears_paid: 112, transport_arrears_paid: 113, gross_arrear: 114,
   encashment_paid: 115, encashment_da_paid: 116, total_earnings: 117,
-  income_tax_amount: 118, lic_amount: 119, cpf_amount: 120, da_cpf_amount: 121,
+  income_tax_amount: 118, lic_amount: 119, cpf_amount: 120, da_cpf_amount: 999, cpf_arrear: 121, // the stale da_cpf_amount is never read: DA CPF is the CPF Arr
   vpf_amount: 122, pf_loan_amount: 123, post_office_amount: 124,
   credit_society_amount: 125, std_licence_fee_amount: 126, electricity_amount: 127,
   electricity_units_consumed: 12, water_amount: 128, mess_amount: 129,

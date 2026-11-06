@@ -139,7 +139,8 @@ const pair = (pairs: [string, number][], label: string) => pairs.find(([l]) => l
 assertEq(pair(earningPairs, "DA Arrears"), 2000, "payslip DA arrears");
 assertEq(pair(earningPairs, "TR Arrears"), 100, "payslip TR arrears");
 assertEq(pair(earningPairs, "Gross Arrears"), 0, "payslip: Gross Arrears is not printed again on top of its two lines");
-assertEq(pair(deductionPairs, "CPF Arr"), 243, "payslip CPF arrears");
+assertEq(pair(deductionPairs, "DA CPF"), 243, "payslip DA CPF = CPF Arr");
+assertEq(deductionPairs.some(([l]) => l === "CPF Arr"), false, "CPF Arr is not printed a second time");
 assertEq(sumMoney(...earningPairs.map(([, v]) => v)), rg.totalEarnings, "payslip earning lines add up to Gross");
 assertEq(rg.totalEarnings - rg.totalDeductions, rg.netSalary, "payslip: gross - deductions = net pay");
 const excel = buildPayrollExcelRow({ payroll_mode: "government", employee_user_id: "u" }, "Emp", { kind: "row", row: slip as never });

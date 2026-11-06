@@ -47,7 +47,7 @@ assertGroupRules(buildPayrollExcelHeaders([]), payrollExcelHeaderGroups([]), "fi
   assertEq(h.indexOf("NetSalary"), h.indexOf("TotalDeductions") + 1, "NetSalary directly follows TotalDeductions");
   assertEq(PAYROLL_EXCEL_GROUPS["Net Arrears"], "info", "Net Arrears is a memo column");
   assertEq(h.indexOf("Net Arrears") > h.indexOf("NetSalary"), true, "after Net Salary, with the other memo columns");
-  assertEq(PAYROLL_EXCEL_GROUPS["CPF Arr"], "deduction", "CPF Arr is a deduction");
+  assertEq(PAYROLL_EXCEL_GROUPS["CPF Arr"], "info", "CPF Arr is a memo: its amount is the DA CPF deduction");
   for (const e of ["Incentive", "PRBonus", "Reimbursement"]) assertEq(PAYROLL_EXCEL_GROUPS[e], "earning", `${e} is an earning`);
   assertEq(PAYROLL_EXCEL_GROUPS["Professional Tax"], "deduction", "Professional Tax is a deduction");
 }

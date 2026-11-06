@@ -1,5 +1,6 @@
 import { roundMoney } from "./money";
 import { RUN_PAYROLL_CPF_ARREAR_LINE, RUN_PAYROLL_DEDUCTION_LINES, RUN_PAYROLL_EARNING_LINES, type RunPayrollLine } from "./runPayrollFields";
+import { daCpfOf } from "./daCpf";
 import type { GovernmentMonthlyComputed } from "@/lib/governmentPayroll";
 import { calendarDaysInMonth, equivalentPayableDays, leaveSalaryAdjustment } from "@/lib/payrollLeaveDays";
 
@@ -147,7 +148,7 @@ const PAYROLL_EXCEL_LEGACY_GROUPS: Record<(typeof PAYROLL_EXCEL_LEGACY_HEADER)[n
   "VehCharge": "deduction",
   "OtherDeduction": "deduction",
   "QuarterRentDeduction": "deduction",
-  "CPF Arr": "deduction",
+  "CPF Arr": "info",
   "TotalDeductions": "total_deductions",
   "NetSalary": "net",
   "CTC": "info",
@@ -209,7 +210,7 @@ const EXPORT_COLUMNS: readonly ExportColumn[] = (() => {
   }
   out.push(col("Incentive", "earning"), col("PRBonus", "earning"), col("Reimbursement", "earning"), col("GrossTotal", "total_earnings"));
   for (const l of RUN_PAYROLL_DEDUCTION_LINES) out.push(lineColumn(l, "deduction"));
-  out.push(lineColumn(RUN_PAYROLL_CPF_ARREAR_LINE, "deduction"), col("GPF", "deduction"), col("TotalDeductions", "total_deductions"), col("NetSalary", "net"));
+  out.push(lineColumn(RUN_PAYROLL_CPF_ARREAR_LINE, "info"), col("GPF", "deduction"), col("TotalDeductions", "total_deductions"), col("NetSalary", "net"));
   for (const l of RUN_PAYROLL_EARNING_LINES) if (l.memo) out.push(lineColumn(l, "info"));
   return out;
 })();
@@ -551,7 +552,7 @@ function govFromComputed(
     IncomeTax: d.incomeTax,
     LIC: d.lic,
     CPF: d.cpf,
-    DACPF: d.daCpf,
+    DACPF: daCpfOf(c),
     GPF: customAmount(c.customDeductions, "gpf"),
     VPF: d.vpf,
     PFLoan: d.pfLoan,
@@ -630,7 +631,7 @@ function govFromDbRow(
     IncomeTax: n(r.income_tax_amount),
     LIC: n(r.lic_amount),
     CPF: n(r.cpf_amount),
-    DACPF: n(r.da_cpf_amount),
+    DACPF: daCpfOf(r),
     GPF: customAmount(r.custom_deductions, "gpf"),
     VPF: n(r.vpf_amount),
     PFLoan: n(r.pf_loan_amount),

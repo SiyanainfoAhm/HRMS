@@ -32,10 +32,10 @@ final class PostPayrollDownloadService
     public const UNASSIGNED = 'Unassigned';
 
     /** Division-Wise Salary detail sheet (preview and Excel share these): one row per employee per month, grouped by division. */
-    public const DIVISION_WISE_HEADERS = ['Division', 'Employee Code', 'Name', 'Designation', 'Pay Level', 'Month', 'Year', 'Category', 'Gross Salary', 'Total Deductions', 'Net Pay', 'CPF Employer Contr.'];
+    public const DIVISION_WISE_HEADERS = ['Division', 'Employee Code', 'Name', 'Designation', 'Pay Level', 'Month', 'Year', 'Category', 'Gross Salary', 'Total Deductions', 'Net Pay', 'CPF Employer Contr.', 'DA CPF', 'Total CPF'];
 
     /** 0-based money columns of DIVISION_WISE_HEADERS. */
-    public const DIVISION_WISE_MONEY = [8, 9, 10, 11];
+    public const DIVISION_WISE_MONEY = [8, 9, 10, 11, 12, 13];
 
     /** Pay level groups of the Pay Level sheet. */
     public const PAY_GROUPS = ['A Pay Leave 10 - 18' => [10, 18], 'B Pay Leavel 6-9' => [6, 9], 'C Pay Level 1 -5' => [1, 5]];
@@ -64,7 +64,7 @@ final class PostPayrollDownloadService
         'INT.VEH' => null, 'HB.ADV' => null, 'INT.HB' => null, 'WEL' => ['welfare_amount'],
         'OTHER' => ['other_deduction_amount'],
         // The paybill's "DA CPF" column carries the renamed CPF Arr (CIRT-06): CPF on arrears + the DA CPF deduction.
-        PayrollLabels::CPF_ARREARS => ['da_cpf_amount', 'cpf_arrear'], 'Lib.' => null, 'Union' => null,
+        PayrollLabels::CPF_ARREARS => ['@da_cpf'], 'Lib.' => null, 'Union' => null,
         // No legacy column: shown so the deduction columns add up to TOT.DED.
         'Quarter Rent' => ['quarter_rent_amount'], 'HPL+EOL' => ['hpl_amount', 'eol_amount'],
         'Custom Deductions' => ['@custom_deductions'], 'TOT.DED.' => ['total_deductions'],
@@ -177,6 +177,7 @@ final class PostPayrollDownloadService
     private static function sum(array $row, array $keys): float
     {
         if (($keys[0] ?? '') === '@arrears') return round(self::arrearsTotal($row), 2);
+        if (($keys[0] ?? '') === '@da_cpf') return \App\Support\PayrollTotals::daCpf($row);
         if (($keys[0] ?? '') === '@custom_earnings') return round(array_sum(self::customBag($row, 'custom_earnings')), 2);
         if (($keys[0] ?? '') === '@custom_deductions') return round(array_sum(self::customBag($row, 'custom_deductions')), 2);
         return array_sum(array_map(fn ($k) => self::n($row, $k), $keys));
@@ -256,11 +257,11 @@ final class PostPayrollDownloadService
     {
         $wb = new Spreadsheet;
         $ws = $wb->getActiveSheet()->setTitle('Sheet1');
-        $ws->setCellValue('A1', self::INSTITUTE)->mergeCells('A1:Q1');
-        $ws->setCellValue('A2', 'Details of CPF, VPF, etc. for the month '.self::monthName($ym))->mergeCells('A2:Q2');
+        $ws->setCellValue('A1', self::INSTITUTE)->mergeCells('A1:R1');
+        $ws->setCellValue('A2', 'Details of CPF, VPF, etc. for the month '.self::monthName($ym))->mergeCells('A2:R2');
         $ws->getStyle('A1:A2')->getFont()->setBold(true)->setSize(12);
         $ws->getStyle('A1:A2')->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
-        $this->sheetHeader($ws, 4, ['SR NO', 'UAN', 'NAME AS PER UAN', 'CPF  NO', 'GBASIC', 'NCP DAYS', 'BASIC', 'DA', 'HRA', 'TPT', 'MEDICAL', 'Total', 'CPF', 'DA CPF', 'VPF', 'PENSION', 'EMP_ CONTR.']);
+        $this->sheetHeader($ws, 4, ['SR NO', 'UAN', 'NAME AS PER UAN', 'CPF  NO', 'GBASIC', 'NCP DAYS', 'BASIC', 'DA', 'HRA', 'TPT', 'MEDICAL', 'Total', 'CPF', 'DA CPF', 'Total CPF', 'VPF', 'PENSION', 'EMP_ CONTR.']);
         $pensionPct = $employerRule['pensionPercentage'] ?? null;
         $pensionCeiling = $employerRule['pensionWageCeiling'] ?? null;
         $employerPct = $employerRule['employerContributionPercentage'] ?? null;
@@ -282,6 +283,7 @@ final class PostPayrollDownloadService
             foreach ($set as $r) {
                 $m = $r['_master'];
                 $basis = self::sum($r, ['basic_paid', 'da_paid', 'hra_paid', 'transport_paid', 'medical_paid']);
+                $daCpf = \App\Support\PayrollTotals::daCpf($r);
                 $ws->setCellValue("A{$line}", $sr++);
                 $ws->setCellValueExplicit("B{$line}", (string) ($m['uan'] ?? ''), \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
                 $ws->setCellValue("C{$line}", $m['name'] ?? '');
@@ -290,8 +292,8 @@ final class PostPayrollDownloadService
                     'E' => self::n($r, 'basic_actual'), 'F' => self::n($r, 'unpaid_days'), 'G' => self::n($r, 'basic_paid'),
                     'H' => self::n($r, 'da_paid'), 'I' => self::n($r, 'hra_paid'), 'J' => self::n($r, 'transport_paid'),
                     'K' => self::n($r, 'medical_paid'), 'L' => $basis, 'M' => self::n($r, 'cpf_amount'),
-                    // DA CPF = CPF on the DA arrears (the Run Payroll "CPF Arr" line).
-                    'N' => self::n($r, 'cpf_arrear'), 'O' => self::n($r, 'vpf_amount'),
+                    // DA CPF = CPF on the DA arrears (the Run Payroll "CPF Arr" line), through the one shared function.
+                    'N' => $daCpf, 'O' => \App\Support\Money::roundMoney(self::n($r, 'cpf_amount') + $daCpf), 'P' => self::n($r, 'vpf_amount'),
                 ] as $col => $v) {
                     $ws->setCellValue("{$col}{$line}", $v);
                 }
@@ -299,35 +301,35 @@ final class PostPayrollDownloadService
                 if ($employerRule !== null && self::n($r, 'cpf_amount') > 0) {
                     if ($pensionPct !== null) {
                         $wage = $pensionCeiling !== null && $pensionCeiling > 0 ? min($basis, $pensionCeiling) : $basis;
-                        $ws->setCellValue("P{$line}", \App\Support\Money::percentOf($wage, $pensionPct));
+                        $ws->setCellValue("Q{$line}", \App\Support\Money::percentOf($wage, $pensionPct));
                     }
                     if ($employerPct !== null) {
-                        $ws->setCellValue("Q{$line}", \App\Support\Money::percentOf($basis, $employerPct));
+                        $ws->setCellValue("R{$line}", \App\Support\Money::percentOf($basis, $employerPct));
                     }
                 }
                 $line++;
             }
             $last = $line - 1;
             $ws->setCellValue('B'.$line, $name.' TOTAL');
-            foreach (['E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q'] as $col) {
+            foreach (['E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R'] as $col) {
                 $ws->setCellValue("{$col}{$line}", $last >= $first ? "=SUBTOTAL(109,{$col}{$first}:{$col}{$last})" : 0);
             }
-            $ws->getStyle("A{$line}:Q{$line}")->getFont()->setBold(true);
+            $ws->getStyle("A{$line}:R{$line}")->getFont()->setBold(true);
             $totalRows[] = $line;
             $line += 2;
         }
         $grand = $line - 1;
         $ws->setCellValue('C'.$grand, 'GRAND TOTAL');
-        foreach (['E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q'] as $col) {
+        foreach (['E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R'] as $col) {
             $ws->setCellValue("{$col}{$grand}", "={$col}{$totalRows[0]}+{$col}{$totalRows[1]}");
         }
-        $ws->getStyle("A{$grand}:Q{$grand}")->getFont()->setBold(true);
+        $ws->getStyle("A{$grand}:R{$grand}")->getFont()->setBold(true);
         $s = $grand + 3;
         $this->sheetHeader($ws, $s, ['SL', 'PARTICULAR', 'AMOUNT'], 2); // the summary table starts in column B: no blank header cell in A
         // Employee deductions first (CPF + DA CPF, then VPF); the employer's share is Pension + Employer contribution.
         $ws->setCellValue('B'.($s + 1), 1)->setCellValue('C'.($s + 1), 'CPF Recovery')->setCellValue('D'.($s + 1), "=M{$grand}+N{$grand}");
-        $ws->setCellValue('B'.($s + 2), 2)->setCellValue('C'.($s + 2), 'VPF Recovery')->setCellValue('D'.($s + 2), "=O{$grand}");
-        $ws->setCellValue('B'.($s + 3), 3)->setCellValue('C'.($s + 3), 'Employers P F Contribution')->setCellValue('D'.($s + 3), "=P{$grand}+Q{$grand}");
+        $ws->setCellValue('B'.($s + 2), 2)->setCellValue('C'.($s + 2), 'VPF Recovery')->setCellValue('D'.($s + 2), "=P{$grand}");
+        $ws->setCellValue('B'.($s + 3), 3)->setCellValue('C'.($s + 3), 'Employers P F Contribution')->setCellValue('D'.($s + 3), "=Q{$grand}+R{$grand}");
         $ws->setCellValue('C'.($s + 5), 'TOTAL');
         $ws->setCellValue('D'.($s + 5), '=SUM(D'.($s + 1).':D'.($s + 3).')');
         $ws->getStyle('C'.($s + 5).':D'.($s + 5))->getFont()->setBold(true);
@@ -336,10 +338,10 @@ final class PostPayrollDownloadService
             $ws->getStyle('C'.($s + 6))->getFont()->setBold(true)->setItalic(true)->getColor()->setRGB('C00000');
         }
         $ws->setCellValue('A'.($s + 8), 'Put up for approval for remittance to ASRTU CPF Trust')->getStyle('A'.($s + 8))->getFont()->setBold(true);
-        $ws->getStyle("E5:Q{$grand}")->getNumberFormat()->setFormatCode('#,##0');
+        $ws->getStyle("E5:R{$grand}")->getNumberFormat()->setFormatCode('#,##0');
         $ws->getStyle("F5:F{$grand}")->getNumberFormat()->setFormatCode(SpreadsheetLayout::FORMAT_ID); // NCP DAYS: a day count, no separator
         SpreadsheetLayout::finish($ws, [
-            'header_row' => 4, 'last_header_row' => $s, 'freeze' => 'D5', 'autofilter' => 'A4:Q'.($grand - 1),
+            'header_row' => 4, 'last_header_row' => $s, 'freeze' => 'D5', 'autofilter' => 'A4:R'.($grand - 1),
             'landscape' => true, 'fit_width' => true,
         ]);
 
@@ -429,6 +431,7 @@ final class PostPayrollDownloadService
         $metrics = fn (array $r): array => [
             'gross' => self::n($r, 'total_earnings'), 'ded' => self::n($r, 'total_deductions'),
             'net' => self::n($r, 'net_salary'), 'cpf' => self::n($r, 'cpf_amount'),
+            'dacpf' => \App\Support\PayrollTotals::daCpf($r), 'totalcpf' => \App\Support\PayrollTotals::totalCpf($r),
         ];
         $countText = function (array $set): string {
             $people = count(array_unique(array_map(fn ($r) => (string) ($r['employee_user_id'] ?? ''), $set)));
@@ -441,9 +444,9 @@ final class PostPayrollDownloadService
         $out = [];
         $kinds = [];
         $divisions = [];
-        $grand = ['gross' => 0.0, 'ded' => 0.0, 'net' => 0.0, 'cpf' => 0.0, 'rows' => 0];
+        $grand = ['gross' => 0.0, 'ded' => 0.0, 'net' => 0.0, 'cpf' => 0.0, 'dacpf' => 0.0, 'totalcpf' => 0.0, 'rows' => 0];
         foreach ($this->divisionGroups($rows, $settingsNames) as $g) {
-            $sum = ['gross' => 0.0, 'ded' => 0.0, 'net' => 0.0, 'cpf' => 0.0];
+            $sum = ['gross' => 0.0, 'ded' => 0.0, 'net' => 0.0, 'cpf' => 0.0, 'dacpf' => 0.0, 'totalcpf' => 0.0];
             foreach ($g['rows'] as $r) {
                 $m = $r['_master'] ?? [];
                 $u = $r['_user'] ?? [];
@@ -455,11 +458,11 @@ final class PostPayrollDownloadService
                 $out[] = [
                     $g['name'], (string) ($m['employee_code'] ?? ''), (string) ($m['name'] ?? $u['name'] ?? ''), $designation,
                     is_numeric($level) ? (int) $level : null, $ts ? date('F Y', $ts) : '', $ts ? (int) date('Y', $ts) : null, self::category($r),
-                    $x['gross'], $x['ded'], $x['net'], $x['cpf'],
+                    $x['gross'], $x['ded'], $x['net'], $x['cpf'], $x['dacpf'], $x['totalcpf'],
                 ];
                 $kinds[] = 'detail';
             }
-            $out[] = [$g['name'].' - Subtotal', '', $countText($g['rows']), '', null, '', null, '', $sum['gross'], $sum['ded'], $sum['net'], $sum['cpf']];
+            $out[] = [$g['name'].' - Subtotal', '', $countText($g['rows']), '', null, '', null, '', $sum['gross'], $sum['ded'], $sum['net'], $sum['cpf'], $sum['dacpf'], $sum['totalcpf']];
             $kinds[] = 'subtotal';
             $divisions[$g['name']] = $sum + ['rows' => count($g['rows'])];
             foreach ($sum as $k => $v) $grand[$k] += $v;
@@ -467,7 +470,7 @@ final class PostPayrollDownloadService
         }
 
         // The divisions must add up to the month total, taken straight from the rows (not from the groups).
-        $direct = ['gross' => 0.0, 'ded' => 0.0, 'net' => 0.0, 'cpf' => 0.0];
+        $direct = ['gross' => 0.0, 'ded' => 0.0, 'net' => 0.0, 'cpf' => 0.0, 'dacpf' => 0.0, 'totalcpf' => 0.0];
         foreach ($rows as $r) foreach ($metrics($r) as $k => $v) $direct[$k] += $v;
         foreach ($direct as $k => $v) {
             if (abs($v - $grand[$k]) > 0.004) {
@@ -479,7 +482,7 @@ final class PostPayrollDownloadService
         }
 
         $totals = $rows === [] ? array_fill(0, count($headers), null)
-            : ['Grand Total', '', $countText($rows), '', null, '', null, '', $grand['gross'], $grand['ded'], $grand['net'], $grand['cpf']];
+            : ['Grand Total', '', $countText($rows), '', null, '', null, '', $grand['gross'], $grand['ded'], $grand['net'], $grand['cpf'], $grand['dacpf'], $grand['totalcpf']];
 
         return ['headers' => $headers, 'rows' => $out, 'totals' => $totals, 'moneyColumns' => self::DIVISION_WISE_MONEY, 'kinds' => $kinds, 'divisions' => $divisions];
     }
@@ -500,15 +503,15 @@ final class PostPayrollDownloadService
         foreach ($t['rows'] as $n => $values) {
             $this->writeDivisionWiseRow($ws, $line, $values);
             if ($t['kinds'][$n] === 'subtotal') {
-                $ws->getStyle("A{$line}:L{$line}")->getFont()->setBold(true);
-                $ws->getStyle("A{$line}:L{$line}")->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setRGB('F2F2F2');
+                $ws->getStyle("A{$line}:N{$line}")->getFont()->setBold(true);
+                $ws->getStyle("A{$line}:N{$line}")->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setRGB('F2F2F2');
             }
             $line++;
         }
         if ($rows !== []) {
             $this->writeDivisionWiseRow($ws, $line, $t['totals']);
-            $ws->getStyle("A{$line}:L{$line}")->getFont()->setBold(true);
-            $ws->getStyle("A{$line}:L{$line}")->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setRGB('D9D9D9');
+            $ws->getStyle("A{$line}:N{$line}")->getFont()->setBold(true);
+            $ws->getStyle("A{$line}:N{$line}")->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setRGB('D9D9D9');
         }
         SpreadsheetLayout::finish($ws, [
             'header_row' => 1, 'freeze' => 'D2', 'landscape' => true, 'fit_width' => true,

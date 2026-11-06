@@ -25,7 +25,6 @@ import { equivalentPayableDays } from "@/lib/payrollLeaveDays";
 import { normalizeLeaveLines, type LeaveLine } from "@/lib/leaveDeductions";
 import { LeaveLinesEditor } from "./LeaveLinesEditor";
 import {
-  GOV_PREVIEW_CPF_ARREAR_LINE,
   GOV_PREVIEW_DEDUCTION_FIELDS,
   GOV_PREVIEW_EARNING_FIELDS,
   FieldChip,
@@ -778,7 +777,19 @@ function GovernmentEmployeeDetail({
                     ))}
                 </PayrollSectionRow>
                 <PayrollSectionRow title="Deductions" titleClassName="text-rose-900">
-                  {GOV_PREVIEW_DEDUCTION_FIELDS.filter((field) => isVisibleConfiguredField(field.fieldKey)).map(({ key, label }) => (
+                  {GOV_PREVIEW_DEDUCTION_FIELDS.filter((field) => isVisibleConfiguredField(field.fieldKey)).map(({ key, label }) =>
+                    key === "daCpf" ? (
+                      // DA CPF is the CPF Arr of the Arrears section (daCpfOf): shown read-only, never typed here and never
+                      // added to the deductions a second time (CPF Arr is already one of the deduction lines).
+                      <FieldChip
+                        key={key}
+                        label={label}
+                        readOnly
+                        mirrorHint="from Arrears"
+                        value={mirroredArrearValue(row, "cpfArrear")}
+                        onChange={() => {}}
+                      />
+                    ) : (
                     <FieldChip
                       key={key}
                       label={label}
@@ -791,15 +802,7 @@ function GovernmentEmployeeDetail({
                       }
                       onChange={(n) => onUpdate(row.employeeUserId, `govDeduction_${key}`, n)}
                     />
-                  ))}
-                  {isVisibleConfiguredField(GOV_PREVIEW_CPF_ARREAR_LINE.fieldKey) && (
-                    <FieldChip
-                      label={GOV_PREVIEW_CPF_ARREAR_LINE.label}
-                      readOnly
-                      mirrorHint={ARREAR_MIRROR_HINT}
-                      value={mirroredArrearValue(row, "cpfArrear")}
-                      onChange={() => {}}
-                    />
+                    ),
                   )}
                   {customDeductionFields.map((f) => (
                     <FieldChip

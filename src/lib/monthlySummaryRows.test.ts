@@ -29,10 +29,10 @@ const a = row(1, {
   hplDays: 2, hplAdjustment: 1200,
   customEarnings: { past_arrears: 0, encashment_arrears: 0, special_allowance: 200 },
 });
-// b: no arrears, 1 EOL day (900), DA CPF 100, custom deduction 50.
+// b: no arrears, 1 EOL day (900), CPF Arr 100 (= its DA CPF), custom deduction 50.
 const b = row(2, {
   basicPaid: 30000, daPaid: 18000, transportPaid: 5000, totalEarnings: 53000,
-  deductions: { pt: 200, cpf: 5760, daCpf: 100, hpl: 0, eol: 0 }, cpfArrear: 0, totalDeductions: 6110, netSalary: 46890,
+  deductions: { pt: 200, cpf: 5760, daCpf: 0, hpl: 0, eol: 0 }, cpfArrear: 100, totalDeductions: 6110, netSalary: 46890,
   eolDays: 1, eolAdjustment: 900,
   customEarnings: { past_arrears: 0, encashment_arrears: 0, special_allowance: 0 }, customDeductions: { welfare_extra: 0, gpf_extra: 50 },
 });
@@ -50,7 +50,7 @@ eq(s.earnings["Special Allowance"], 200, "a non-zero custom head stays (one row)
 eq(earningLabels.includes("Special Pay"), true, "a standard head stays at zero");
 
 // B. deductions
-eq(s.deductions["DA CPF"], 550, "DA CPF row = DA CPF deduction (100) + CPF Arr (450)");
+eq(s.deductions["DA CPF"], 550, "DA CPF row = CPF Arr of the employees (450 + 100), read through daCpfOf");
 eq(Object.keys(s.deductions).includes("HPL") || Object.keys(s.deductions).includes("EOL"), false, "no HPL / EOL deduction rows");
 eq(sum(s.deductions), s.totalDeductions, "deduction rows add up exactly to Total Deductions (14,560)");
 eq(s.totalDeductions, 14560, "total deductions");
@@ -58,7 +58,7 @@ eq(Object.keys(s.deductions).includes("Welfare Extra"), false, "zero custom dedu
 eq(s.deductions["Gpf Extra"], 50, "non-zero custom deduction head stays");
 
 // information blocks
-eq(s.arrearsInfo, { daArrears: 1000, trArrears: 300, grossArrears: 1300, cpfArrear: 450, netArrears: 850 }, "arrears information block");
+eq(s.arrearsInfo, { daArrears: 1000, trArrears: 300, grossArrears: 1300, cpfArrear: 550, netArrears: 750 }, "arrears information block");
 eq(s.leaveInfo, { hpl: { employees: 1, days: 2, amount: 1200 }, eol: { employees: 1, days: 1, amount: 900 }, total: 2100 }, "leave adjustments information block");
 
 // A legacy typed HPL deduction is kept as a row so the deduction rows still add up.

@@ -599,7 +599,7 @@ class EmployeePayrollExportService
         $money('Professional Tax', 'deduction', fn (array $c): float => $c['n']($c['gov']->pt_amount ?? 0));
         $money('LIC', 'deduction', fn (array $c): float => $c['n']($c['gov']->lic_amount ?? 0));
         $money('CPF', 'deduction', fn (array $c): float => $c['n']($c['gov']->cpf_amount ?? 0));
-        $money('DA CPF', 'deduction', fn (array $c): float => $c['n']($c['gov']->da_cpf_amount ?? 0));
+        $money('DA CPF', 'deduction', fn (array $c): float => $c['n'](\App\Support\PayrollTotals::daCpf($c['gov'])));
         $money('GPF', 'deduction', fn (array $c): float => $c['n']($c['customDeductions']['gpf'] ?? 0));
         $money('VPF', 'deduction', fn (array $c): float => $c['n']($c['gov']->vpf_amount ?? 0));
         $money('PF Loan', 'deduction', fn (array $c): float => $c['n']($c['gov']->pf_loan_amount ?? 0));
@@ -617,7 +617,8 @@ class EmployeePayrollExportService
         $money('Vehicle Charge', 'deduction', fn (array $c): float => $c['n']($c['gov']->veh_charge_amount ?? 0));
         $money('Quarter Rent', 'deduction', fn (array $c): float => $c['n']($c['gov']->quarter_rent_amount ?? 0));
         $money('Other Deduction', 'deduction', fn (array $c): float => $c['n']($c['gov']->other_deduction_amount ?? 0));
-        $money(PayrollLabels::CPF_ARREARS, 'deduction', fn (array $c): float => $c['n']($c['gov']->cpf_arrear ?? 0));
+        // CPF Arr is the same amount as DA CPF above (one shared value); it is a memo here so the deduction columns add up to Total Deductions.
+        $money(PayrollLabels::CPF_ARREARS, 'info', fn (array $c): float => $c['n']($c['gov']->cpf_arrear ?? 0));
         foreach ($customKeys['deductions'] as $key) {
             $money($this->uniqueHeader(array_column($cols, 'header'), $this->customHeaderLabel($customKeys['labels'][$key] ?? $key)), 'deduction',
                 fn (array $c) => isset($c['customDeductions'][$key]) ? $c['n']($c['customDeductions'][$key]) : '');

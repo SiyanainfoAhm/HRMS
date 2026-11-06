@@ -41,7 +41,7 @@ const ded = Object.fromEntries(governmentPayslipDeductionPairs(gov));
 assertEq(earn[PAYROLL_LABELS.daArrears], 100, "payslip DA Arrears");
 assertEq(earn[PAYROLL_LABELS.transportArrears], 50, "payslip TR Arrears");
 assertEq(earn[PAYROLL_LABELS.grossArrears], 350, "payslip Gross Arrears shows the remainder so lines add to gross");
-assertEq(ded[PAYROLL_LABELS.cpfArrears], 60, "payslip CPF Arr");
+assertEq(ded["DA CPF"], 60, "payslip DA CPF = CPF Arr");
 
 // 4. Preview lists carry CPF Arr (deduction) and Net Arrears (earnings, memo) and route arrear edits.
 const shared = readFileSync(new URL("./runPayrollFields.ts", import.meta.url), "utf8");
