@@ -453,7 +453,6 @@ class EmployeeController extends Controller
             'pf_loan_default' => 0,
             'post_office_default' => 0,
             'credit_society_default' => 0,
-            'std_licence_fee_default' => 0,
             'electricity_default' => 0,
             'water_default' => 0,
             'mess_default' => 0,

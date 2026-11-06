@@ -47,7 +47,7 @@ eq(sum(s.earnings) + sum(s.arrears), s.totalEarnings, "earnings rows add up exac
 eq(s.totalEarnings, 124500, "gross");
 eq(earningLabels.includes("Past Arrears") || earningLabels.includes("Encashment Arrears"), false, "zero custom rows are left out");
 eq(s.earnings["Special Allowance"], 200, "a non-zero custom head stays (one row)");
-eq(earningLabels.includes("Special Pay"), true, "a standard head stays at zero");
+eq(earningLabels.includes("Special Pay"), false, "the retired Special Pay head is gone");
 
 // B. deductions
 eq(s.deductions["DA CPF"], 550, "DA CPF row = CPF Arr of the employees (450 + 100), read through daCpfOf");

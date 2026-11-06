@@ -13,7 +13,6 @@ export type RunPayrollLine = { key: string; label: string; fieldKey?: string; ar
 
 export const RUN_PAYROLL_EARNING_LINES: readonly RunPayrollLine[] = [
   { key: "basicPaid", label: "Basic", fieldKey: "gross_basic" },
-  { key: "spPayPaid", label: "Special Pay", fieldKey: "sp_pay" },
   { key: "daPaid", label: "DA", fieldKey: "da" },
   { key: "transportPaid", label: "Transport", fieldKey: "transport" },
   { key: "hraPaid", label: "HRA", fieldKey: "hra" },

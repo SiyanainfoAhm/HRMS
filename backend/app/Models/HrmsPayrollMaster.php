@@ -30,7 +30,7 @@ class HrmsPayrollMaster extends Model
         'lic_default', 'lic', 'cpf_default', 'cpf_effective', 'da_cpf_default', 'da_cpf',
         'vpf_default', 'vpf', 'pf_loan_default', 'pf_loan',
         'post_office_default', 'post_office', 'credit_society_default', 'credit_society',
-        'std_licence_fee_default', 'standard_licence_fee', 'electricity_default', 'electricity',
+        'electricity_default', 'electricity',
         'electricity_applicable', 'electricity_mode',
         'water_default', 'water', 'mess_default', 'mess',
         'loan_recovery_default', 'loan_recovery', 'welfare_default', 'welfare',

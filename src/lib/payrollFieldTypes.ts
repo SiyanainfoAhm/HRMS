@@ -2,6 +2,7 @@ import { roundMoney } from "./money";
 export const RETIRED_PAYROLL_FIELD_KEYS = new Set([
   "pf_loan",
   "standard_licence_fee",
+  "sp_pay",
   "vehicle_charge",
 ]);
 

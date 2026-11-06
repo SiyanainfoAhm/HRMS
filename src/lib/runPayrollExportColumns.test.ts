@@ -29,7 +29,6 @@ function employee(i: number): PayrollRunExportRow {
   let ded = 0;
   // daCpf is not an input any more (DA CPF is the CPF Arr below), so the stored deduction is 0 and is not counted.
   dedKeys.forEach((k, j) => { deductions[k] = k === "daCpf" ? 0 : (i + 1) * 10 + j; ded += deductions[k]; });
-  deductions.stdLicenceFee = 0;
   gm.deductions = deductions;
   gm.cpfArrear = 5 * (i + 1);
   ded += gm.cpfArrear as number;
@@ -58,7 +57,7 @@ assertEq(head.slice(0, 7), ["AccountNumber", "EmployeeName", "Division", "Depart
 assertEq(head, buildPayrollExcelHeaders([], retiredEmptyExcelColumns(rows.map((r) => r.governmentMonthly as Record<string, unknown>))), "sheet header row is the shared header list");
 
 // 2. Nothing that is not on Run Payroll.
-for (const gone of ["StdLicenceFee", "CTC", "TDS", "EmployeePF", "EmployerPF", "EmployeeESIC", "EmployerESIC", "NightHours", "NightAllowanceRate",
+for (const gone of ["StdLicenceFee", "SPPay", "Special Pay", "CTC", "TDS", "EmployeePF", "EmployerPF", "EmployeeESIC", "EmployerESIC", "NightHours", "NightAllowanceRate",
   "NightAllowanceCeiling", "NightAllowanceEligible", "QuarterRentDeduction", "QuarterRent", "NetPay", "ElectricityUnits"]) {
   assertEq(head.includes(gone), false, `${gone} is not exported`);
   assertEq(PAYROLL_EXCEL_HEADER.includes(gone), false, `${gone} is not in the fixed column list`);

@@ -107,7 +107,6 @@ function camelGov(g: GovernmentMonthlyRow): Record<string, unknown> {
     hraPaid: g.hra_paid,
     medicalPaid: g.medical_paid,
     transportPaid: g.transport_paid,
-    spPayPaid: g.sp_pay_paid,
     extraWorkAllowancePaid: g.extra_work_allowance_paid,
     nightAllowancePaid: g.night_allowance_paid,
     uniformAllowancePaid: g.uniform_allowance_paid,

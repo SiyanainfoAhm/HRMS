@@ -42,7 +42,7 @@ final class PostPayrollDownloadService
 
     /** Paybill column => cirt_monthly_payroll field(s); null = no source field in payroll. */
     public const PAYBILL_EARNINGS = [
-        'Basic' => ['basic_paid'], 'sp.pay' => ['sp_pay_paid'], 'D.A.' => ['da_paid'], 'H.R.A.' => ['hra_paid'],
+        'Basic' => ['basic_paid'], 'D.A.' => ['da_paid'], 'H.R.A.' => ['hra_paid'],
         'UNIFORM' => ['uniform_allowance_paid'], 'EWA' => ['extra_work_allowance_paid'], 'Trpt.' => ['transport_paid'],
         'Medical' => ['medical_paid'],
         // All arrears (DA + transport + gross-only remainder): the legacy paybill has a single arrears column.
@@ -58,7 +58,7 @@ final class PostPayrollDownloadService
         'I.T.' => ['income_tax_amount'], 'P.T.' => ['pt_amount'], 'L.I.C.' => ['lic_amount'], 'PF(C)' => ['cpf_amount'],
         'FP' => null, 'PF(V)' => ['vpf_amount'], 'PF(L)' => ['pf_loan_amount'], 'P.O.' => ['post_office_amount'],
         'CR.SOCY' => ['credit_society_amount'], 'Veh.' => ['veh_charge_amount'], 'O.T.' => null,
-        'Std.Lic.Fee' => ['std_licence_fee_amount'], 'Elec.' => ['electricity_amount'], 'TV' => null,
+        'Elec.' => ['electricity_amount'], 'TV' => null,
         'Water' => ['water_amount'], 'Furn.' => null, 'Mess' => ['mess_amount'], 'HOR' => ['loan_recovery_amount'],
         'TEL' => null, 'FEST.ADV' => null, 'CAR ADV' => null, 'SC.ADV' => null, 'CY.ADV' => null, 'INT.CY' => null,
         'INT.VEH' => null, 'HB.ADV' => null, 'INT.HB' => null, 'WEL' => ['welfare_amount'],
@@ -672,7 +672,7 @@ final class PostPayrollDownloadService
             $m['designation'] ?? '', $u['current_address_line1'] ?? '', $u['current_address_line2'] ?? '', $u['current_city'] ?? '',
             $u['current_state'] ?? '', $u['current_country'] ?? '', $u['current_postal_code'] ?? '', $u['current_state'] ?? '',
             $m['phone'] ?? $u['phone'] ?? '', $r['_ym'],
-            self::n($r, 'basic_paid'), self::n($r, 'da_paid') + self::n($r, 'da_arrears_paid'), null, self::n($r, 'sp_pay_paid'), null,
+            self::n($r, 'basic_paid'), self::n($r, 'da_paid') + self::n($r, 'da_arrears_paid'), null, null, null,
             self::n($r, 'medical_paid'), self::n($r, 'extra_work_allowance_paid') + $custom['OT ALLOWANCE'],
             self::n($r, 'encashment_paid') + self::n($r, 'encashment_da_paid') + $custom['ENCASHMENT+ENCA DA'], null, self::n($r, 'education_allowance_paid'), $custom[self::TDS_CUSTOM_FALLBACK] ?: null,
             self::n($r, 'uniform_allowance_paid'), null, null,

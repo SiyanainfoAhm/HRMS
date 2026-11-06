@@ -176,7 +176,7 @@ function testStaleDraftZeroDoesNotWipeMasterWater() {
           pfLoan: 0,
           postOffice: 0,
           creditSociety: 0,
-          stdLicenceFee: 0,
+         
           loanRecovery: 0,
           welfare: 0,
           hpl: 0,

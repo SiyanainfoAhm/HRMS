@@ -41,7 +41,7 @@ const emptyDed = {
   pfLoan: 0,
   postOffice: 0,
   creditSociety: 0,
-  stdLicenceFee: 0,
+ 
   electricity: 0,
   water: 400,
   mess: 0,

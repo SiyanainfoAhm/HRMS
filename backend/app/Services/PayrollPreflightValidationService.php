@@ -85,7 +85,7 @@ class PayrollPreflightValidationService
                 foreach ((array) ($row['customFieldValues'] ?? []) as $key => $value) {
                     if ($value !== '' && $value !== null && !is_numeric($value)) $add('error', 'CUSTOM_COMPONENT_INVALID', "Custom component {$key} is not numeric.");
                 }
-                $canonical = ['sp_pay' => 'spPayPaid', 'education_allowance' => 'educationAllowancePaid', 'encashment' => 'encashmentPaid'];
+                $canonical = ['education_allowance' => 'educationAllowancePaid', 'encashment' => 'encashmentPaid'];
                 foreach ($canonical as $key => $override) {
                     if ((float) (($gov['customEarnings'][$key] ?? 0)) !== 0 && isset($gov['earningPaidOverrides'][$override]) && (float) $gov['earningPaidOverrides'][$override] !== 0) {
                         $add('error', 'COMPONENT_DUPLICATED', "{$key} appears both as a canonical and a custom earning.");

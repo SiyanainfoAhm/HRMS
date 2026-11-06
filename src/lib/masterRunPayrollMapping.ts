@@ -57,13 +57,6 @@ export function masterRecordToDeductionDefaults(
       m.credit_society,
       m.credit_society_default,
     ),
-    stdLicenceFee: masterAmountOr(
-      0,
-      m.standardLicenceFee,
-      m.stdLicenceFeeDefault,
-      m.standard_licence_fee,
-      m.std_licence_fee_default,
-    ),
     electricity: masterAmountOr(0, m.electricity, m.electricityDefault, m.electricity_default),
     water: masterAmountOr(0, m.water, m.waterDefault, m.water_default),
     mess: masterAmountOr(0, m.mess, m.messDefault, m.mess_default),

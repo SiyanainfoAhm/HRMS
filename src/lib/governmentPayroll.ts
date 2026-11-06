@@ -58,7 +58,6 @@ export type GovernmentDeductionDefaults = {
   pfLoan: number;
   postOffice: number;
   creditSociety: number;
-  stdLicenceFee: number;
   electricity: number;
   water: number;
   mess: number;
@@ -72,7 +71,6 @@ export type GovernmentDeductionDefaults = {
 };
 
 export type GovernmentOptionalMonthlyEarnings = {
-  spPay?: number;
   extraWorkAllowance?: number;
   nightAllowance?: number;
   uniformAllowance?: number;
@@ -86,7 +84,6 @@ export type GovernmentOptionalMonthlyEarnings = {
 /** Admin overrides for paid-month amounts (Run Payroll preview / one-off run). When a key is set, it replaces the computed paid value for that line. */
 export type GovernmentEarningPaidOverrides = Partial<{
   basicPaid: number;
-  spPayPaid: number;
   daPaid: number;
   transportPaid: number;
   hraPaid: number;
@@ -230,8 +227,6 @@ export type GovernmentMonthlyComputed = {
   transportPaid: number;
   basicActual: number;
   basicPaid: number;
-  spPayActual: number;
-  spPayPaid: number;
   daActual: number;
   daPaid: number;
   hraActual: number;
@@ -334,7 +329,6 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
   const medicalPaid = paidAfterUnpaidDays(medicalActual, dim, unpaid);
 
   const opt = input.optionalEarnings ?? {};
-  const sp = roundMoney(Number(opt.spPay) || 0);
   const ewa = roundMoney(Number(opt.extraWorkAllowance) || 0);
   const ua = roundMoney(Number(opt.uniformAllowance) || 0);
   const eda = roundMoney(Number(opt.educationAllowance) || 0);
@@ -356,7 +350,6 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
   const medicalPaidF = pickPaid(medicalPaid, "medicalPaid");
   const transportPaidF = pickPaid(transportPaid, "transportPaid");
 
-  const spF = pickPaid(sp, "spPayPaid");
   const ewaF = pickPaid(ewa, "extraWorkAllowancePaid");
   const uaF = pickPaid(ua, "uniformAllowancePaid");
   const edaF = pickPaid(eda, "educationAllowancePaid");
@@ -446,14 +439,13 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
   });
   const naF = nightResolved.amount;
 
-  // Sum order matches government payslip line sequence (Basic → DA → HRA → Medical → TA → SP Pay → others).
+  // Sum order matches government payslip line sequence (Basic → DA → HRA → Medical → TA → others).
   const totalEarnings = sumMoney(
     basicOut,
     daOut,
     hraOut,
     medicalOut,
     transportPaidF,
-    spF,
     ewaF,
     naF,
     uaF,
@@ -471,7 +463,6 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
     hraPaid: hraOut,
     medicalPaid: medicalOut,
     transportPaid: transportPaidF,
-    spPayPaid: spF,
     extraWorkAllowancePaid: ewaF,
     nightAllowancePaid: naF,
     uniformAllowancePaid: uaF,
@@ -551,7 +542,6 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
     pfLoan: roundMoney(d.pfLoan),
     postOffice: roundMoney(d.postOffice),
     creditSociety: roundMoney(d.creditSociety),
-    stdLicenceFee: roundMoney(d.stdLicenceFee),
     electricity: electricityAmount,
     water: roundMoney(d.water),
     mess: roundMoney(d.mess),
@@ -574,7 +564,6 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
     deductions.pfLoan,
     deductions.postOffice,
     deductions.creditSociety,
-    deductions.stdLicenceFee,
     deductions.electricity,
     deductions.water,
     deductions.mess,
@@ -596,8 +585,6 @@ export function computeGovernmentMonthlyPayroll(input: GovernmentMonthlyInput): 
     transportPaid: transportPaidF,
     basicActual,
     basicPaid: basicOut,
-    spPayActual: spF,
-    spPayPaid: spF,
     daActual,
     daPaid: daOut,
     hraActual,

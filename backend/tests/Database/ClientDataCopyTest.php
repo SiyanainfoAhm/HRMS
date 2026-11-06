@@ -71,7 +71,7 @@ final class ClientDataCopyTest extends DatabaseTestCase
         $bag = json_decode($row->custom_earnings, true);
         $this->assertSame(22636, $bag['arrears'], 'value under the old `arrears` key is intact');
         $this->assertEqualsWithDelta(0.0, (float) $row->gross_arrear, 0.01, 'system Gross Arrears is separate and empty, so nothing is counted twice');
-        $fixed = (float) $row->basic_paid + $row->sp_pay_paid + $row->da_paid + $row->transport_paid + $row->hra_paid + $row->medical_paid + $row->extra_work_allowance_paid + $row->night_allowance_paid
+        $fixed = (float) $row->basic_paid + $row->da_paid + $row->transport_paid + $row->hra_paid + $row->medical_paid + $row->extra_work_allowance_paid + $row->night_allowance_paid
             + $row->uniform_allowance_paid + $row->education_allowance_paid + $row->da_arrears_paid + $row->transport_arrears_paid + $row->encashment_paid + $row->encashment_da_paid;
         $this->assertEqualsWithDelta((float) $row->total_earnings, $fixed + array_sum($bag), 0.01, 'earnings = fixed lines + custom bag, once');
         $keys = DB::table('cirt_payroll_field_definitions')->whereIn('field_key', ['arrears', 'gross_arrears'])->pluck('field_label', 'field_key')->all();

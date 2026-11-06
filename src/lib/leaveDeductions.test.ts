@@ -86,7 +86,7 @@ eq(leaveLineError({ month: 9, year: 2026, days: 1 }), null, "1 day is fine");
 // Through the real Run Payroll compute (what the screen and the draft use): spec cases and no-leave.
 import { runGovernmentPayrollCompute, type GovRecalcPayload } from "./govRunPayrollCompute";
 {
-  const ded = { incomeTax: 0, pt: 0, lic: 0, cpf: 0, daCpf: 0, vpf: 0, pfLoan: 0, postOffice: 0, creditSociety: 0, stdLicenceFee: 0, electricity: 0, water: 0, mess: 0, loanRecovery: 0, welfare: 0, hpl: 0, eol: 0, vehCharge: 0, other: 0, quarterRent: 0 };
+  const ded = { incomeTax: 0, pt: 0, lic: 0, cpf: 0, daCpf: 0, vpf: 0, pfLoan: 0, postOffice: 0, creditSociety: 0, electricity: 0, water: 0, mess: 0, loanRecovery: 0, welfare: 0, hpl: 0, eol: 0, vehCharge: 0, other: 0, quarterRent: 0 };
   const gr = (grossBasic: number, extra: Partial<GovRecalcPayload> = {}): GovRecalcPayload => ({
     grossBasic, daPercent: 63, hraPercent: 30, medicalFixed: 3000, payLevel: 1, deductionDefaults: ded,
     cpfConfig: { cpfPercentage: 12, cpfBasisFieldKeys: ["gross_basic"], cpfCalculationMode: "percentage", cpfFixedAmount: 0 },

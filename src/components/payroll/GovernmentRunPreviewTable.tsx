@@ -104,7 +104,6 @@ function leaveMetaFromRow(row: GovernmentRunPreviewRow) {
 /** Monthly compute snapshot from `/api/payroll/run` preview (same shape as `computeGovernmentMonthlyPayroll` result). */
 export type GovernmentPreviewMonthly = {
   basicPaid: number;
-  spPayPaid: number;
   daPaid: number;
   transportPaid: number;
   hraPaid: number;
@@ -161,7 +160,6 @@ export type GovernmentPreviewMonthly = {
     pfLoan: number;
     postOffice: number;
     creditSociety: number;
-    stdLicenceFee: number;
     electricity: number;
     water: number;
     mess: number;

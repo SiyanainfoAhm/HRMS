@@ -186,7 +186,6 @@ class PayrollController extends Controller
                         'pfLoanDefault' => $this->masterNumeric($m, 'pf_loan', 'pf_loan_default'),
                         'postOfficeDefault' => $this->masterNumeric($m, 'post_office', 'post_office_default'),
                         'creditSocietyDefault' => $this->masterNumeric($m, 'credit_society', 'credit_society_default'),
-                        'stdLicenceFeeDefault' => $this->masterNumeric($m, 'standard_licence_fee', 'std_licence_fee_default'),
                         'electricityDefault' => $this->masterNumeric($m, 'electricity', 'electricity_default'),
                         'waterDefault' => $this->masterNumeric($m, 'water', 'water_default'),
                         'messDefault' => $this->masterNumeric($m, 'mess', 'mess_default'),
@@ -210,7 +209,6 @@ class PayrollController extends Controller
                         'incomeTax' => $this->masterNumeric($m, 'income_tax', 'income_tax_default', 'tds'),
                         'professionalTax' => $this->masterNumeric($m, 'professional_tax', 'pt_default', 'pt'),
                         'daCpf' => $this->masterNumeric($m, 'da_cpf', 'da_cpf_default'),
-                        'standardLicenceFee' => $this->masterNumeric($m, 'standard_licence_fee', 'std_licence_fee_default'),
                     ],
                 ];
             });
@@ -635,7 +633,6 @@ class PayrollController extends Controller
                         'pfLoan' => $this->masterNumeric($m, 'pf_loan', 'pf_loan_default'),
                         'postOffice' => $this->masterNumeric($m, 'post_office', 'post_office_default'),
                         'creditSociety' => $this->masterNumeric($m, 'credit_society', 'credit_society_default'),
-                        'stdLicenceFee' => $this->masterNumeric($m, 'standard_licence_fee', 'std_licence_fee_default'),
                         'electricity' => $this->masterNumeric($m, 'electricity', 'electricity_default'),
                         'water' => $this->masterNumeric($m, 'water', 'water_default'),
                         'mess' => $this->masterNumeric($m, 'mess', 'mess_default'),
@@ -663,7 +660,6 @@ class PayrollController extends Controller
                 // must feed their canonical payroll lines, not a generic custom
                 // bucket (which would duplicate them in gross/export output).
                 $componentOverrides = [
-                    'spPayPaid' => $customValues['sp_pay'] ?? null,
                     'educationAllowancePaid' => $customValues['education_allowance'] ?? null,
                     'encashmentPaid' => $customValues['encashment'] ?? null,
                 ];
@@ -2125,7 +2121,6 @@ class PayrollController extends Controller
                     'pfLoan' => (float) ($gov->pf_loan_amount ?? 0),
                     'postOffice' => (float) ($gov->post_office_amount ?? 0),
                     'creditSociety' => (float) ($gov->credit_society_amount ?? 0),
-                    'stdLicenceFee' => (float) ($gov->std_licence_fee_amount ?? 0),
                     'electricity' => (float) ($gov->electricity_amount ?? 0),
                     'water' => (float) ($gov->water_amount ?? 0),
                     'mess' => (float) ($gov->mess_amount ?? 0),
@@ -2218,8 +2213,6 @@ class PayrollController extends Controller
             'id' => $gov->id,
             'basicActual' => $num($gov->basic_actual),
             'basicPaid' => $num($gov->basic_paid),
-            'spPayActual' => $num($gov->sp_pay_actual),
-            'spPayPaid' => $num($gov->sp_pay_paid),
             'daActual' => $num($gov->da_actual),
             'daPaid' => $num($gov->da_paid),
             'transportActual' => $num($gov->transport_actual),
@@ -2302,7 +2295,6 @@ class PayrollController extends Controller
                 'pfLoan' => $num($gov->pf_loan_amount),
                 'postOffice' => $num($gov->post_office_amount),
                 'creditSociety' => $num($gov->credit_society_amount),
-                'stdLicenceFee' => $num($gov->std_licence_fee_amount),
                 'electricity' => $num($gov->electricity_amount),
                 'water' => $num($gov->water_amount),
                 'mess' => $num($gov->mess_amount),
@@ -2452,8 +2444,6 @@ class PayrollController extends Controller
             'transport_da_percent' => $daPercent,
             'basic_actual' => $num($gm['basicActual'] ?? $gm['basic_actual'] ?? 0),
             'basic_paid' => $num($gm['basicPaid'] ?? $gm['basic_paid'] ?? 0),
-            'sp_pay_actual' => $num($gm['spPayActual'] ?? $gm['sp_pay_actual'] ?? 0),
-            'sp_pay_paid' => $num($gm['spPayPaid'] ?? $gm['sp_pay_paid'] ?? 0),
             'da_actual' => $num($gm['daActual'] ?? $gm['da_actual'] ?? 0),
             'da_paid' => $num($gm['daPaid'] ?? $gm['da_paid'] ?? 0),
             'transport_actual' => $num($gm['transportActual'] ?? $gm['transport_actual'] ?? 0),
@@ -2487,7 +2477,6 @@ class PayrollController extends Controller
             'pf_loan_amount' => $num($ded['pfLoan'] ?? $ded['pf_loan'] ?? 0),
             'post_office_amount' => $num($ded['postOffice'] ?? $ded['post_office'] ?? 0),
             'credit_society_amount' => $num($ded['creditSociety'] ?? $ded['credit_society'] ?? 0),
-            'std_licence_fee_amount' => $num($ded['stdLicenceFee'] ?? $ded['std_licence_fee'] ?? 0),
             'electricity_amount' => $num($ded['electricity'] ?? 0),
             'water_amount' => $num($ded['water'] ?? 0),
             'mess_amount' => $num($ded['mess'] ?? 0),

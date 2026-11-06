@@ -10,7 +10,7 @@ namespace App\Support;
 final class PayrollTotals
 {
     public const EARNING_KEYS = [
-        'basicPaid', 'spPayPaid', 'daPaid', 'transportPaid', 'hraPaid', 'medicalPaid',
+        'basicPaid', 'daPaid', 'transportPaid', 'hraPaid', 'medicalPaid',
         'extraWorkAllowancePaid', 'nightAllowancePaid', 'uniformAllowancePaid', 'educationAllowancePaid',
         'daArrearsPaid', 'transportArrearsPaid', 'encashmentPaid', 'encashmentDaPaid',
         'incentive', 'prBonus', 'reimbursement',
@@ -18,7 +18,7 @@ final class PayrollTotals
 
     public const DEDUCTION_KEYS = [
         'incomeTax', 'pt', 'lic', 'cpf', 'daCpf', 'vpf', 'pfLoan', 'postOffice', 'creditSociety',
-        'stdLicenceFee', 'electricity', 'water', 'mess', 'loanRecovery', 'welfare', 'hpl', 'eol',
+        'electricity', 'water', 'mess', 'loanRecovery', 'welfare', 'hpl', 'eol',
         'vehCharge', 'other', 'quarterRent',
     ];
 

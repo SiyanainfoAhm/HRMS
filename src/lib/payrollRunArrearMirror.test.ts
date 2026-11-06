@@ -61,7 +61,7 @@ assertEq(src.includes("ArrearsUnpaidSection"), true, "unpaid section kept");
 // 5. gross - deductions = net with arrears entered in the unpaid section.
 const ded = {
   incomeTax: 0, pt: 200, lic: 0, cpf: 0, daCpf: 0, vpf: 0, pfLoan: 0, postOffice: 0, creditSociety: 0,
-  stdLicenceFee: 0, electricity: 0, water: 0, mess: 0, loanRecovery: 0, welfare: 0, hpl: 0, eol: 0,
+  electricity: 0, water: 0, mess: 0, loanRecovery: 0, welfare: 0, hpl: 0, eol: 0,
   vehCharge: 0, other: 0, quarterRent: 0,
 };
 const gr: GovRecalcPayload = {

@@ -576,7 +576,6 @@ class EmployeePayrollExportService
         $money('HRA Paid', 'earning', $col('hra_paid'));
         $money('Transport Paid', 'earning', $col('transport_paid'));
         $money('Medical Paid', 'earning', $col('medical_paid'));
-        $money('Special Pay', 'earning', $col('sp_pay_paid'));
         $money('Night Allowance', 'earning', fn (array $c): float => $c['n']($c['gov']->night_allowance_paid ?? $c['gov']->night_allowance_amount ?? 0));
         $money('Education Allowance', 'earning', fn (array $c): float => $c['n']($c['gov']->education_allowance_paid ?? 0));
         $money('Telephone Allowance', 'earning', fn (array $c): float => $c['n']($c['customEarnings']['telephone_allowance'] ?? 0));
@@ -607,7 +606,6 @@ class EmployeePayrollExportService
         $money('PF Loan', 'deduction', fn (array $c): float => $c['n']($c['gov']->pf_loan_amount ?? 0));
         $money('Post Office', 'deduction', fn (array $c): float => $c['n']($c['gov']->post_office_amount ?? 0));
         $money('Credit Society', 'deduction', fn (array $c): float => $c['n']($c['gov']->credit_society_amount ?? 0));
-        $money('Standard Licence Fee', 'deduction', fn (array $c): float => $c['n']($c['gov']->std_licence_fee_amount ?? 0));
         $money('Electricity', 'deduction', fn (array $c): float => $c['n']($c['gov']->electricity_amount ?? $c['gov']->electricity_total ?? 0));
         $money('Electricity Units', 'info', fn (array $c): float => $c['n']($c['gov']->electricity_units_consumed ?? 0));
         $money('Water', 'deduction', fn (array $c): float => $c['n']($c['gov']->water_amount ?? 0));

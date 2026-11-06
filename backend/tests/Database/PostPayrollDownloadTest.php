@@ -74,8 +74,8 @@ final class PostPayrollDownloadTest extends DatabaseTestCase
         $before = $this->finalizedSnapshot();
         $ws = $this->roundTrip($this->svc->buildPaybill($this->rows, self::YM))->getSheetByName('Paybill');
         $h = $this->headerMap($ws, 3);
-        $expectedOrder = ['Sr', 'Name', 'Emp.Code', 'CPF No.', 'P Level', 'Basic @', 'Basic', 'sp.pay', 'D.A.', 'H.R.A.', 'UNIFORM', 'EWA', 'Trpt.', 'Medical', 'DA Arrs.', 'En.DA', 'T.Fees.', 'CCA', 'NDA', 'Encash', 'Custom Earnings', 'Tot. Pay',
-            'I.T.', 'P.T.', 'L.I.C.', 'PF(C)', 'FP', 'PF(V)', 'PF(L)', 'P.O.', 'CR.SOCY', 'Veh.', 'O.T.', 'Std.Lic.Fee', 'Elec.', 'TV', 'Water', 'Furn.', 'Mess', 'HOR', 'TEL', 'FEST.ADV', 'CAR ADV', 'SC.ADV', 'CY.ADV', 'INT.CY', 'INT.VEH', 'HB.ADV', 'INT.HB', 'WEL', 'OTHER', 'CPF Arr', 'Lib.', 'Union', 'Quarter Rent', 'HPL+EOL', 'Custom Deductions', 'TOT.DED.',
+        $expectedOrder = ['Sr', 'Name', 'Emp.Code', 'CPF No.', 'P Level', 'Basic @', 'Basic', 'D.A.', 'H.R.A.', 'UNIFORM', 'EWA', 'Trpt.', 'Medical', 'DA Arrs.', 'En.DA', 'T.Fees.', 'CCA', 'NDA', 'Encash', 'Custom Earnings', 'Tot. Pay',
+            'I.T.', 'P.T.', 'L.I.C.', 'PF(C)', 'FP', 'PF(V)', 'PF(L)', 'P.O.', 'CR.SOCY', 'Veh.', 'O.T.', 'Elec.', 'TV', 'Water', 'Furn.', 'Mess', 'HOR', 'TEL', 'FEST.ADV', 'CAR ADV', 'SC.ADV', 'CY.ADV', 'INT.CY', 'INT.VEH', 'HB.ADV', 'INT.HB', 'WEL', 'OTHER', 'CPF Arr', 'Lib.', 'Union', 'Quarter Rent', 'HPL+EOL', 'Custom Deductions', 'TOT.DED.',
             'Total Pay', 'Total Deduction', 'Net Pay', 'Remark'];
         $this->assertSame($expectedOrder, array_keys($h), 'columns and order as requested (DA CPF renamed CPF Arr)');
         $last = 3 + count($this->rows);

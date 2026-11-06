@@ -199,7 +199,6 @@ type MasterGridRow = {
   pfLoanDefault: number;
   postOfficeDefault: number;
   creditSocietyDefault: number;
-  stdLicenceFeeDefault: number;
   electricityDefault: number;
   waterDefault: number;
   loanRecoveryDefault: number;
@@ -328,7 +327,6 @@ function govDeductionDefaultsFromMasterRow(row: MasterGridRow): GovernmentDeduct
     pfLoanDefault: row.pfLoanDefault,
     postOfficeDefault: row.postOfficeDefault,
     creditSocietyDefault: row.creditSocietyDefault,
-    stdLicenceFeeDefault: row.stdLicenceFeeDefault,
     electricityDefault: row.electricityDefault,
     waterDefault: row.waterDefault,
     messDefault: row.messDefault,
@@ -485,7 +483,6 @@ function emptyGovFields(): Pick<
   | "pfLoanDefault"
   | "postOfficeDefault"
   | "creditSocietyDefault"
-  | "stdLicenceFeeDefault"
   | "electricityDefault"
   | "waterDefault"
   | "loanRecoveryDefault"
@@ -512,7 +509,6 @@ function emptyGovFields(): Pick<
     pfLoanDefault: 0,
     postOfficeDefault: 0,
     creditSocietyDefault: 0,
-    stdLicenceFeeDefault: 0,
     electricityDefault: 0,
     waterDefault: 0,
     loanRecoveryDefault: 0,
@@ -609,13 +605,6 @@ function buildMasterGridRow(
       m.credit_society_default,
       m.credit_society,
     );
-    const stdLicenceFeeDefault = masterAmountOr(
-      0,
-      m.stdLicenceFeeDefault,
-      m.standardLicenceFee,
-      m.std_licence_fee_default,
-      m.standard_licence_fee,
-    );
     const electricityDefault = masterAmountOr(
       0,
       m.electricityDefault,
@@ -675,7 +664,6 @@ function buildMasterGridRow(
       pfLoanDefault,
       postOfficeDefault,
       creditSocietyDefault,
-      stdLicenceFeeDefault,
       electricityDefault,
       waterDefault,
       loanRecoveryDefault,
@@ -2170,7 +2158,6 @@ function PayrollPageContent() {
             pfLoan: 0,
             postOffice: 0,
             creditSociety: 0,
-            stdLicenceFee: 0,
             electricity: 0,
             water: 0,
             mess: 0,
@@ -2398,7 +2385,6 @@ function PayrollPageContent() {
             pfLoanDefault: row.pfLoanDefault,
             postOfficeDefault: row.postOfficeDefault,
             creditSocietyDefault: row.creditSocietyDefault,
-            stdLicenceFeeDefault: row.stdLicenceFeeDefault,
             electricityDefault: row.electricityDefault,
             waterDefault: row.waterDefault,
             loanRecoveryDefault: row.loanRecoveryDefault,

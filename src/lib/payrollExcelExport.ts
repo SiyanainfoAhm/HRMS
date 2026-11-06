@@ -25,7 +25,6 @@ const PAYROLL_EXCEL_LEGACY_HEADER = [
   "HRA",
   "Medical",
   "TransportTA",
-  "SPPay",
   "ExtraWorkAllowance",
   "NightAllowance",
   "NightHours",
@@ -54,7 +53,6 @@ const PAYROLL_EXCEL_LEGACY_HEADER = [
   "PFLoan",
   "PostOffice",
   "CreditSociety",
-  "StdLicenceFee",
   "Electricity",
   "ElectricityUnits",
   "Water",
@@ -106,7 +104,6 @@ const PAYROLL_EXCEL_LEGACY_GROUPS: Record<(typeof PAYROLL_EXCEL_LEGACY_HEADER)[n
   "HRA": "earning",
   "Medical": "earning",
   "TransportTA": "earning",
-  "SPPay": "earning",
   "ExtraWorkAllowance": "earning",
   "NightAllowance": "earning",
   "NightHours": "info",
@@ -135,7 +132,6 @@ const PAYROLL_EXCEL_LEGACY_GROUPS: Record<(typeof PAYROLL_EXCEL_LEGACY_HEADER)[n
   "PFLoan": "deduction",
   "PostOffice": "deduction",
   "CreditSociety": "deduction",
-  "StdLicenceFee": "deduction",
   "Electricity": "deduction",
   "ElectricityUnits": "info",
   "Water": "deduction",
@@ -175,7 +171,7 @@ type PayrollExcelHeader = (typeof PAYROLL_EXCEL_LEGACY_HEADER)[number];
 
 /** Run Payroll line key -> internal row key (the row builders below were written against these names). */
 const LEGACY_KEY_BY_LINE: Record<string, string> = {
-  basicPaid: "Basic", spPayPaid: "SPPay", daPaid: "DA", transportPaid: "TransportTA", hraPaid: "HRA", medicalPaid: "Medical",
+  basicPaid: "Basic", daPaid: "DA", transportPaid: "TransportTA", hraPaid: "HRA", medicalPaid: "Medical",
   extraWorkAllowancePaid: "ExtraWorkAllowance", nightAllowancePaid: "NightAllowance", uniformAllowancePaid: "UniformAllowance",
   educationAllowancePaid: "EducationAllowance", daArrearsPaid: "DAArrears", transportArrearsPaid: "TransportArrears",
   encashmentPaid: "Encashment", grossArrear: "GrossArrears", netArrear: "Net Arrears",
@@ -193,7 +189,7 @@ const lineColumn = (l: RunPayrollLine, group: PayrollExcelGroup): ExportColumn =
  * earnings lines (screen order and labels, CPF Arr right after Gross Arrears), the deduction lines, then the totals and the Net Arrears memo.
  * Telephone Allowance and GPF are configurable fields with a fixed place; Incentive / PR Bonus / Reimbursement are the
  * side-panel earnings of the screen; EncashmentDA is a retired line that is only emitted while a row still carries it.
- * Nothing that is not on Run Payroll (StdLicenceFee, CTC, TDS, PF/ESIC, night-allowance internals, a second Quarter Rent
+ * Nothing that is not on Run Payroll (CTC, TDS, PF/ESIC, night-allowance internals, a second Quarter Rent
  * or second Net column, ...) is exported.
  */
 const EXPORT_COLUMNS: readonly ExportColumn[] = (() => {
@@ -266,7 +262,6 @@ export type GovernmentMonthlyRow = {
   hra_paid?: number | null;
   medical_paid?: number | null;
   transport_paid?: number | null;
-  sp_pay_paid?: number | null;
   extra_work_allowance_paid?: number | null;
   night_allowance_paid?: number | null;
   uniform_allowance_paid?: number | null;
@@ -287,7 +282,6 @@ export type GovernmentMonthlyRow = {
   pf_loan_amount?: number | null;
   post_office_amount?: number | null;
   credit_society_amount?: number | null;
-  std_licence_fee_amount?: number | null;
   electricity_amount?: number | null;
   electricity_units_consumed?: number | null;
   days_in_month?: number | null;
@@ -363,7 +357,7 @@ function titleFromFieldKey(key: string): string {
 // dynamic tail prevents a second GPF/Telephone column.
 const CANONICAL_CUSTOM_EXPORT_KEYS = new Set(["telephone_allowance", "gpf"]);
 const FIXED_PAYROLL_EXPORT_KEYS = new Set([
-  "gross_basic", "basic", "sp_pay", "da", "transport", "hra", "medical",
+  "gross_basic", "basic", "da", "transport", "hra", "medical",
   "extra_work_allowance", "night_allowance", "uniform_allowance", "education_allowance",
   "telephone_allowance", "encashment", "da_arrears", "transport_arrears", "gross_arrears",
   "income_tax", "professional_tax", "lic", "cpf", "da_cpf", "gpf", "vpf", "post_office",
@@ -535,7 +529,6 @@ function govFromComputed(
     HRA: c.hraPaid,
     Medical: c.medicalPaid,
     TransportTA: c.transportPaid,
-    SPPay: c.spPayPaid,
     ExtraWorkAllowance: c.extraWorkAllowancePaid,
     NightAllowance: c.nightAllowancePaid,
     NightHours: c.nightHours ?? 0,
@@ -560,7 +553,6 @@ function govFromComputed(
     PFLoan: d.pfLoan,
     PostOffice: d.postOffice,
     CreditSociety: d.creditSociety,
-    StdLicenceFee: d.stdLicenceFee,
     Electricity: d.electricity,
     ElectricityUnits: c.electricityUnitsConsumed ?? 0,
     CalendarDays: 0,
@@ -614,7 +606,6 @@ function govFromDbRow(
     HRA: n(r.hra_paid),
     Medical: n(r.medical_paid),
     TransportTA: n(r.transport_paid),
-    SPPay: n(r.sp_pay_paid),
     ExtraWorkAllowance: n(r.extra_work_allowance_paid),
     NightAllowance: n(r.night_allowance_paid),
     NightHours: n(r.night_hours),
@@ -639,7 +630,6 @@ function govFromDbRow(
     PFLoan: n(r.pf_loan_amount),
     PostOffice: n(r.post_office_amount),
     CreditSociety: n(r.credit_society_amount),
-    StdLicenceFee: n(r.std_licence_fee_amount),
     Electricity: n(r.electricity_amount),
     ElectricityUnits: n(r.electricity_units_consumed),
     CalendarDays: n(r.days_in_month),
@@ -722,7 +712,6 @@ function buildLegacyPayrollExcelRow(
     HRA: n(p.hra),
     Medical: n(p.medical),
     TransportTA: n(p.trans),
-    SPPay: 0,
     ExtraWorkAllowance: 0,
     NightAllowance: 0,
     NightHours: 0,
@@ -747,7 +736,6 @@ function buildLegacyPayrollExcelRow(
     PFLoan: 0,
     PostOffice: 0,
     CreditSociety: 0,
-    StdLicenceFee: 0,
     Electricity: 0,
     ElectricityUnits: 0,
     CalendarDays: n(p.days_in_month),

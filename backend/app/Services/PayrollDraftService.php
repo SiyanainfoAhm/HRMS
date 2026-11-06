@@ -571,7 +571,7 @@ class PayrollDraftService
             ['grossArrear', 'gross_arrear', 'cpfArrear', 'cpf_arrear', 'netArrear', 'net_arrear', 'quarterRent', 'quarter_rent'],
         );
         foreach ($gm as $key => $value) {
-            $isActual = is_string($key) && preg_match('/^(basic|da|hra|medical|transport|spPay|extraWorkAllowance|nightAllowance|uniformAllowance|educationAllowance)Actual$/', $key) === 1;
+            $isActual = is_string($key) && preg_match('/^(basic|da|hra|medical|transport|extraWorkAllowance|nightAllowance|uniformAllowance|educationAllowance)Actual$/', $key) === 1;
             if ((in_array($key, $lineKeys, true) || $isActual) && is_numeric($value) && ! is_int($value)) {
                 $gm[$key] = \App\Support\Money::roundMoney($value);
             }
@@ -612,13 +612,13 @@ class PayrollDraftService
         }
 
         $amount = static fn (mixed $value): float => is_numeric($value) ? max(0, \App\Support\Money::roundMoney($value)) : 0.0;
-        $earningKeys = ['basicPaid', 'spPayPaid', 'daPaid', 'transportPaid', 'hraPaid', 'medicalPaid', 'extraWorkAllowancePaid', 'nightAllowancePaid', 'uniformAllowancePaid', 'educationAllowancePaid', 'daArrearsPaid', 'transportArrearsPaid', 'encashmentPaid', 'encashmentDaPaid', 'incentive', 'prBonus', 'reimbursement'];
+        $earningKeys = ['basicPaid', 'daPaid', 'transportPaid', 'hraPaid', 'medicalPaid', 'extraWorkAllowancePaid', 'nightAllowancePaid', 'uniformAllowancePaid', 'educationAllowancePaid', 'daArrearsPaid', 'transportArrearsPaid', 'encashmentPaid', 'encashmentDaPaid', 'incentive', 'prBonus', 'reimbursement'];
         $earningTotal = 0.0;
         foreach ($earningKeys as $key) $earningTotal += $amount($gm[$key] ?? 0);
         // Gross Arrears = DA + TR is already inside the two arrear earning lines above: counted once.
 
         $ded = $gm['deductions'] ?? [];
-        $deductionKeys = ['incomeTax', 'pt', 'lic', 'cpf', 'daCpf', 'vpf', 'pfLoan', 'postOffice', 'creditSociety', 'stdLicenceFee', 'electricity', 'water', 'mess', 'loanRecovery', 'welfare', 'hpl', 'eol', 'vehCharge', 'other', 'quarterRent'];
+        $deductionKeys = ['incomeTax', 'pt', 'lic', 'cpf', 'daCpf', 'vpf', 'pfLoan', 'postOffice', 'creditSociety', 'electricity', 'water', 'mess', 'loanRecovery', 'welfare', 'hpl', 'eol', 'vehCharge', 'other', 'quarterRent'];
         $deductionTotal = 0.0;
         foreach ($deductionKeys as $key) $deductionTotal += $amount(is_array($ded) ? ($ded[$key] ?? 0) : 0);
         $deductionTotal += $amount($gm['cpfArrear'] ?? $gm['cpf_arrear'] ?? 0);
@@ -889,7 +889,7 @@ class PayrollDraftService
 
         $lines = [
             'gross_basic' => 'basicPaid', 'da' => 'daPaid', 'hra' => 'hraPaid', 'medical' => 'medicalPaid', 'transport' => 'transportPaid',
-            'sp_pay' => 'spPayPaid', 'extra_work_allowance' => 'extraWorkAllowancePaid', 'night_allowance' => 'nightAllowancePaid',
+            'extra_work_allowance' => 'extraWorkAllowancePaid', 'night_allowance' => 'nightAllowancePaid',
             'uniform_allowance' => 'uniformAllowancePaid', 'education_allowance' => 'educationAllowancePaid',
             'da_arrears' => 'daArrearsPaid', 'transport_arrears' => 'transportArrearsPaid',
         ];

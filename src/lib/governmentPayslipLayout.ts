@@ -129,7 +129,6 @@ export function governmentPayslipEarningPairs(
 ): [string, number][] {
   const base: [string, number][] = [
     ["Basic", gnum(gov, "basic_paid")],
-    ["SP. Pay", gnum(gov, "sp_pay_paid")],
     ["DA", gnum(gov, "da_paid")],
     ["Transport", gnum(gov, "transport_paid")],
     ["HRA", gnum(gov, "hra_paid")],
@@ -179,7 +178,6 @@ export function governmentPayslipDeductionPairs(
   // shown only when present so a normal slip keeps its familiar layout.
   for (const [label, key] of [
     ["PF Loan", "pf_loan_amount"],
-    ["Std. Licence Fee", "std_licence_fee_amount"],
     ["Vehicle Charge", "veh_charge_amount"],
     ["HPL", "hpl_amount"],
     ["EOL", "eol_amount"],
