@@ -32,7 +32,7 @@ final class PostPayrollDownloadService
     public const UNASSIGNED = 'Unassigned';
 
     /** Division-Wise Salary detail sheet (preview and Excel share these): one row per employee per month, grouped by division. */
-    public const DIVISION_WISE_HEADERS = ['Division', 'Employee Code', 'Name', 'Designation', 'Pay Level', 'Month', 'Year', 'Category', 'Gross Salary', 'Total Deductions', 'Net Pay', 'CPF Employer Contr.', 'DA CPF', 'Total CPF'];
+    public const DIVISION_WISE_HEADERS = ['Division', 'Employee Code', 'Name', 'Designation', 'Pay Level', 'Month', 'Year', 'Category', 'Gross Salary', 'Total Deductions', 'Net Pay', 'CPF', 'DA CPF', 'Total CPF'];
 
     /** 0-based money columns of DIVISION_WISE_HEADERS. */
     public const DIVISION_WISE_MONEY = [8, 9, 10, 11, 12, 13];
@@ -563,9 +563,9 @@ final class PostPayrollDownloadService
         // Sheet 2: Division (gross by category)
         $ws = $wb->createSheet()->setTitle('Division');
         $ws->setCellValue('A1', 'Salary Details for '.$month)->setCellValue('A2', 'Gross Salary');
-        $this->sheetHeader($ws, 3, ['PARTICULAR', ...self::CATEGORIES, 'CPF EMPLOYER CONTR.']);
+        $this->sheetHeader($ws, 3, ['PARTICULAR', ...self::CATEGORIES, 'CPF']);
         $ws->setCellValue('H4', 'CIRT')->setCellValue('I4', 'CONTRACT');
-        $ws->mergeCells('H3:I3'); // "CPF EMPLOYER CONTR." spans both sub-columns, so I3 is not a blank header
+        $ws->mergeCells('H3:I3'); // "CPF" spans both sub-columns, so I3 is not a blank header
         $r0 = 5;
         foreach ($divisions as $i => $div) {
             $row = $r0 + $i;

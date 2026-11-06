@@ -190,7 +190,7 @@ const lineColumn = (l: RunPayrollLine, group: PayrollExcelGroup): ExportColumn =
 
 /**
  * The exported fixed columns, in order, built from the Run Payroll field list (lib/runPayrollFields): identity, the
- * earnings lines (screen order and labels), the deduction lines, CPF Arr, then the totals and the Net Arrears memo.
+ * earnings lines (screen order and labels, CPF Arr right after Gross Arrears), the deduction lines, then the totals and the Net Arrears memo.
  * Telephone Allowance and GPF are configurable fields with a fixed place; Incentive / PR Bonus / Reimbursement are the
  * side-panel earnings of the screen; EncashmentDA is a retired line that is only emitted while a row still carries it.
  * Nothing that is not on Run Payroll (StdLicenceFee, CTC, TDS, PF/ESIC, night-allowance internals, a second Quarter Rent
@@ -207,10 +207,12 @@ const EXPORT_COLUMNS: readonly ExportColumn[] = (() => {
     out.push(lineColumn(l, "earning"));
     if (l.key === "educationAllowancePaid") out.push(col("TelephoneAllowance", "earning"));
     if (l.key === "encashmentPaid") out.push(col("EncashmentDA", "earning"));
+    // CPF Arr sits with the arrears (DA, TR, Gross, CPF Arr, Net): a memo whose amount is the DA CPF deduction, not a deduction column.
+    if (l.key === "grossArrear") out.push(lineColumn(RUN_PAYROLL_CPF_ARREAR_LINE, "info"));
   }
   out.push(col("Incentive", "earning"), col("PRBonus", "earning"), col("Reimbursement", "earning"), col("GrossTotal", "total_earnings"));
   for (const l of RUN_PAYROLL_DEDUCTION_LINES) out.push(lineColumn(l, "deduction"));
-  out.push(lineColumn(RUN_PAYROLL_CPF_ARREAR_LINE, "info"), col("GPF", "deduction"), col("TotalDeductions", "total_deductions"), col("NetSalary", "net"));
+  out.push(col("GPF", "deduction"), col("TotalDeductions", "total_deductions"), col("NetSalary", "net"));
   for (const l of RUN_PAYROLL_EARNING_LINES) if (l.memo) out.push(lineColumn(l, "info"));
   return out;
 })();

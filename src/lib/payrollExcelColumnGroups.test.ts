@@ -73,7 +73,7 @@ const groups = payrollExcelHeaderGroups(dyn);
 assertGroupRules(headers, groups, "with custom fields");
 const at = (h: string) => headers.indexOf(h);
 assertEq(at("Brand New Pay") < at("GrossTotal") && at("Brand New Pay") > at("Reimbursement"), true, "a new earning lands before GrossTotal");
-assertEq(at("Brand New Recovery") < at("TotalDeductions") && at("Brand New Recovery") > at("CPF Arr"), true, "a new deduction lands before TotalDeductions");
+assertEq(at("Brand New Recovery") < at("TotalDeductions") && at("Brand New Recovery") > at("DA CPF"), true, "a new deduction lands before TotalDeductions");
 assertEq(at("Advance") < at("TotalDeductions") && at("Advance") > at("GrossTotal"), true, "Advance is a deduction");
 assertEq(headers[at("TotalDeductions") + 1], "NetSalary", "Net follows Total Deductions with custom fields too");
 

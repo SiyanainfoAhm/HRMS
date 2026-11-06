@@ -585,6 +585,8 @@ class EmployeePayrollExportService
         $money('DA Arrear', 'earning', fn (array $c): float => $c['n']($c['gov']->da_arrears_paid ?? 0));
         $money('Transport Arrear', 'earning', fn (array $c): float => $c['n']($c['gov']->transport_arrears_paid ?? 0));
         $money(PayrollLabels::GROSS_ARREARS, 'earning', fn (array $c): float => $c['n']($c['gov']->gross_arrear ?? 0));
+        // CPF Arr belongs to the arrears group (DA, TR, Gross, CPF Arr, Net). Its amount is the DA CPF deduction, so it is a memo here, not a deduction column.
+        $money(PayrollLabels::CPF_ARREARS, 'info', fn (array $c): float => $c['n']($c['gov']->cpf_arrear ?? 0));
         $money('Incentive', 'earning', fn (array $c): float => $c['n']($c['gov']->payslip?->incentive ?? 0));
         $money('PR Bonus', 'earning', fn (array $c): float => $c['n']($c['gov']->payslip?->pr_bonus ?? 0));
         $money('Reimbursement', 'earning', fn (array $c): float => $c['n']($c['gov']->payslip?->reimbursement ?? 0));
@@ -617,8 +619,6 @@ class EmployeePayrollExportService
         $money('Vehicle Charge', 'deduction', fn (array $c): float => $c['n']($c['gov']->veh_charge_amount ?? 0));
         $money('Quarter Rent', 'deduction', fn (array $c): float => $c['n']($c['gov']->quarter_rent_amount ?? 0));
         $money('Other Deduction', 'deduction', fn (array $c): float => $c['n']($c['gov']->other_deduction_amount ?? 0));
-        // CPF Arr is the same amount as DA CPF above (one shared value); it is a memo here so the deduction columns add up to Total Deductions.
-        $money(PayrollLabels::CPF_ARREARS, 'info', fn (array $c): float => $c['n']($c['gov']->cpf_arrear ?? 0));
         foreach ($customKeys['deductions'] as $key) {
             $money($this->uniqueHeader(array_column($cols, 'header'), $this->customHeaderLabel($customKeys['labels'][$key] ?? $key)), 'deduction',
                 fn (array $c) => isset($c['customDeductions'][$key]) ? $c['n']($c['customDeductions'][$key]) : '');

@@ -54,7 +54,7 @@ final class DaCpfTest extends TestCase
     {
         $t = (new PostPayrollDownloadService)->divisionWiseTable($this->rows(), []);
         $h = $t['headers'];
-        $this->assertSame(['CPF Employer Contr.', 'DA CPF', 'Total CPF'], array_slice($h, 11, 3), 'DA CPF right after CPF, then Total CPF');
+        $this->assertSame(['CPF', 'DA CPF', 'Total CPF'], array_slice($h, 11, 3), 'DA CPF right after CPF, then Total CPF');
         $this->assertSame([8, 9, 10, 11, 12, 13], $t['moneyColumns']);
 
         $detail = array_values(array_filter($t['rows'], fn ($r) => $r[1] !== ''));
@@ -74,7 +74,7 @@ final class DaCpfTest extends TestCase
     public function test_division_wise_workbook_carries_the_new_columns(): void
     {
         $ws = (new PostPayrollDownloadService)->buildDivisionWise($this->rows(), 202610, [])->getSheet(0);
-        $this->assertSame(['CPF Employer Contr.', 'DA CPF', 'Total CPF'], [$ws->getCell('L1')->getValue(), $ws->getCell('M1')->getValue(), $ws->getCell('N1')->getValue()]);
+        $this->assertSame(['CPF', 'DA CPF', 'Total CPF'], [$ws->getCell('L1')->getValue(), $ws->getCell('M1')->getValue(), $ws->getCell('N1')->getValue()]);
         $last = $ws->getHighestRow();
         $this->assertSame('Grand Total', $ws->getCell("A{$last}")->getValue());
         $this->assertEquals([22780, 748, 23528], [$ws->getCell("L{$last}")->getValue(), $ws->getCell("M{$last}")->getValue(), $ws->getCell("N{$last}")->getValue()]);
